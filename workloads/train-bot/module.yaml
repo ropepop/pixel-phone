@@ -1,0 +1,19 @@
+schema: 1
+module_id: train_bot
+owner: pixel-ops
+runtime:
+  type: service
+  healthcheck: /data/local/pixel-stack/apps/train-bot/run/train-bot.pid
+  run_id_env: PIXEL_RUN_ID
+components:
+  - id: train_bot
+    start: sh /data/local/pixel-stack/bin/pixel-train-start.sh
+    stop: sh /data/local/pixel-stack/bin/pixel-train-stop.sh
+    health: pid=$(cat /data/local/pixel-stack/apps/train-bot/run/train-bot.pid 2>/dev/null || true); [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1
+    redeploy:
+      mode: artifact_release
+      artifact_id: train-bot-bundle
+      release_root: /data/local/pixel-stack/apps/train-bot/releases
+observability:
+  event_source: train_bot
+  evidence_root: ops/evidence/train-bot

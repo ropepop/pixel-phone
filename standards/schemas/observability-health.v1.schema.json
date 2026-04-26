@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pixel-ops.local/schemas/observability-health.v1.schema.json",
+  "title": "Observability Health Snapshot v1",
+  "type": "object",
+  "required": [
+    "generated_epoch_seconds",
+    "module_health",
+    "legacy_compat",
+    "evidence"
+  ],
+  "properties": {
+    "generated_epoch_seconds": { "type": "integer", "minimum": 0 },
+    "module_health": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["healthy"],
+        "properties": {
+          "healthy": { "type": "boolean" },
+          "status": { "type": "string" },
+          "details": { "type": "object", "additionalProperties": true }
+        },
+        "additionalProperties": true
+      }
+    },
+    "legacy_compat": {
+      "type": "object",
+      "required": [
+        "rootGranted",
+        "dnsHealthy",
+        "remoteHealthy",
+        "managementHealthy",
+        "sshHealthy",
+        "vpnHealthy",
+        "trainBotHealthy",
+        "siteNotifierHealthy",
+        "ddnsHealthy",
+        "supervisorHealthy"
+      ],
+      "properties": {
+        "rootGranted": { "type": "boolean" },
+        "dnsHealthy": { "type": "boolean" },
+        "remoteHealthy": { "type": "boolean" },
+        "managementHealthy": { "type": "boolean" },
+        "sshHealthy": { "type": "boolean" },
+        "vpnHealthy": { "type": "boolean" },
+        "trainBotHealthy": { "type": "boolean" },
+        "siteNotifierHealthy": { "type": "boolean" },
+        "ddnsHealthy": { "type": "boolean" },
+        "supervisorHealthy": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

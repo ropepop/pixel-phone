@@ -1,0 +1,18 @@
+[Unit]
+Description=Arbuzas DNS AdGuardHome core
+Wants=network-online.target
+After=network-online.target
+Before=arbuzas-dns-identity-web.service arbuzas-dns-frontend.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/adguardhome
+ExecStartPre=/usr/local/bin/prepare-arbuzas-adguardhome-config.sh /etc/arbuzas/dns/AdGuardHome.source.yaml /opt/adguardhome/conf/AdGuardHome.yaml
+ExecStart=/opt/adguardhome/AdGuardHome --no-check-update --pidfile /run/arbuzas-dns-adguardhome.pid -c /opt/adguardhome/conf/AdGuardHome.yaml -w /opt/adguardhome/work
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
+Alias=pixel-dns-adguardhome.service

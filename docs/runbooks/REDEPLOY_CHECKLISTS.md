@@ -1,0 +1,4 @@
+# REDEPLOY CHECKLISTS
+
+Compatibility pointer:
+- [ROOT_OPERATIONS](./ROOT_OPERATIONS.md)

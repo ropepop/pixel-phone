@@ -1,0 +1,131 @@
+version: "3.9"
+
+x-default-deploy: &default_deploy
+  replicas: 1
+  restart_policy:
+    condition: any
+    delay: 5s
+  update_config:
+    parallelism: 1
+    order: stop-first
+    failure_action: rollback
+    monitor: 45s
+  rollback_config:
+    parallelism: 1
+    order: stop-first
+
+services:
+  adguardhome:
+    image: ${ARBUZAS_DNS_ADGUARDHOME_IMAGE}
+    environment:
+      ARBUZAS_DNS_RUNTIME_ENV_FILE: /etc/arbuzas/dns/runtime.env
+      ARBUZAS_DNS_SOURCE_CONFIG_FILE: /etc/arbuzas/dns/AdGuardHome.source.yaml
+      ARBUZAS_DNS_RENDERED_CONFIG_FILE: /srv/arbuzas/dns/adguardhome/conf/AdGuardHome.yaml
+      ARBUZAS_DNS_WORK_DIR: /srv/arbuzas/dns/adguardhome/work
+      ARBUZAS_DNS_WEB_BIND_HOST: 0.0.0.0
+      PIHOLE_REMOTE_TLS_CERT_FILE: /etc/arbuzas/dns/tls/fullchain.pem
+      PIHOLE_REMOTE_TLS_KEY_FILE: /etc/arbuzas/dns/tls/privkey.pem
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    volumes:
+      - /etc/arbuzas/dns:/etc/arbuzas/dns:ro
+      - /srv/arbuzas/dns/adguardhome:/srv/arbuzas/dns/adguardhome
+    networks:
+      - dns_backend
+    deploy: *default_deploy
+
+  identity_web:
+    image: ${ARBUZAS_DNS_IDENTITY_WEB_IMAGE}
+    environment:
+      ADGUARDHOME_DOH_IDENTITY_WEB_HOST: 0.0.0.0
+      ADGUARDHOME_DOH_IDENTITY_WEB_PORT: "8097"
+      ADGUARDHOME_DOH_IDENTITYCTL: /usr/local/bin/adguardhome-doh-identityctl
+      ADGUARDHOME_DOH_IDENTITIES_FILE: /srv/arbuzas/dns/state/doh-identities.json
+      ADGUARDHOME_DOH_USAGE_EVENTS_FILE: /srv/arbuzas/dns/state/doh-usage-events.jsonl
+      ADGUARDHOME_DOH_USAGE_CURSOR_FILE: /srv/arbuzas/dns/state/doh-usage-cursor.json
+      ADGUARDHOME_DOH_OBSERVABILITY_DB_FILE: /srv/arbuzas/dns/state/identity-observability.sqlite
+      ADGUARDHOME_DOH_ACCESS_LOG_FILE: /var/log/arbuzas/dns/remote-nginx-doh-access.log
+      ADGUARDHOME_DOT_ACCESS_LOG_FILE: /var/log/arbuzas/dns/remote-nginx-dot-access.log
+      ADGUARDHOME_DOH_IDENTITY_WEB_QUERYLOG_VIEW_PREFERENCE_FILE: /srv/arbuzas/dns/state/querylog-view-preference.json
+      ADGUARDHOME_DOH_IDENTITY_WEB_IPINFO_CACHE_FILE: /srv/arbuzas/dns/state/ipinfo-lite-cache.json
+      ADGUARDHOME_DOH_IDENTITY_WEB_IPINFO_LITE_TOKEN_FILE: /etc/arbuzas/dns/secrets/ipinfo-lite-token
+      ADGUARDHOME_DOH_IDENTITY_WEB_DISABLE_RELOAD: "1"
+      PIHOLE_WEB_HOST: dns_adguardhome
+      PIHOLE_WEB_PORT: "8080"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:8097/pixel-stack/identity/inject.js >/dev/null",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    volumes:
+      - /etc/arbuzas/dns:/etc/arbuzas/dns:ro
+      - /srv/arbuzas/dns/state:/srv/arbuzas/dns/state
+      - /srv/arbuzas/dns/logs:/var/log/arbuzas/dns
+    networks:
+      - dns_backend
+    deploy: *default_deploy
+
+  frontend:
+    image: ${ARBUZAS_DNS_FRONTEND_IMAGE}
+    environment:
+      ARBUZAS_DNS_RUNTIME_ENV_FILE: /etc/arbuzas/dns/runtime.env
+      ARBUZAS_DNS_DIR: /etc/arbuzas/dns
+      ARBUZAS_DNS_NGINX_TEMPLATE_FILE: /usr/local/share/arbuzas-dns/arbuzas-dns-nginx.conf.template
+      ARBUZAS_DNS_NGINX_CONF_FILE: /srv/arbuzas/dns/runtime/arbuzas-dns-nginx.conf
+      ARBUZAS_DNS_NGINX_PID_FILE: /run/arbuzas-dns-frontend.pid
+      ARBUZAS_DNS_RENDER_INTERVAL_SECONDS: "20"
+      PIHOLE_WEB_HOST: dns_adguardhome
+      PIHOLE_WEB_PORT: "8080"
+      ADGUARDHOME_DOH_IDENTITY_WEB_HOST: dns_identity_web
+      ADGUARDHOME_DOH_IDENTITY_WEB_PORT: "8097"
+      ADGUARDHOME_REMOTE_DOT_INTERNAL_HOST: dns_adguardhome
+      ADGUARDHOME_REMOTE_DOT_INTERNAL_PORT: "8853"
+      ADGUARDHOME_DOH_IDENTITIES_FILE: /srv/arbuzas/dns/state/doh-identities.json
+      ADGUARDHOME_DOH_USAGE_EVENTS_FILE: /srv/arbuzas/dns/state/doh-usage-events.jsonl
+      ADGUARDHOME_DOH_USAGE_CURSOR_FILE: /srv/arbuzas/dns/state/doh-usage-cursor.json
+      ADGUARDHOME_DOH_OBSERVABILITY_DB_FILE: /srv/arbuzas/dns/state/identity-observability.sqlite
+      ADGUARDHOME_DOH_ACCESS_LOG_FILE: /var/log/arbuzas/dns/remote-nginx-doh-access.log
+      PIHOLE_DDNS_LAST_IPV4_FILE: /srv/arbuzas/dns/state/ddns-last-ipv4
+      PIHOLE_REMOTE_TLS_CERT_FILE: /etc/arbuzas/dns/tls/fullchain.pem
+      PIHOLE_REMOTE_TLS_KEY_FILE: /etc/arbuzas/dns/tls/privkey.pem
+    ports:
+      - target: ${ARBUZAS_DNS_HTTPS_PORT}
+        published: ${ARBUZAS_DNS_HTTPS_PORT}
+        protocol: tcp
+        mode: host
+      - target: ${ARBUZAS_DNS_DOT_PORT}
+        published: ${ARBUZAS_DNS_DOT_PORT}
+        protocol: tcp
+        mode: host
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "host=$$(awk -F= '/^PIHOLE_REMOTE_HOSTNAME=/{print $$2}' /etc/arbuzas/dns/runtime.env | tail -n 1); host=$${host:-dns.example.com}; curl -skf -H \"Host: $$host\" https://127.0.0.1:$${PIHOLE_REMOTE_HTTPS_PORT:-2789}/pixel-stack/identity/inject.js >/dev/null && nc -z 127.0.0.1 $${PIHOLE_REMOTE_DOT_PORT:-2790}",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    volumes:
+      - /etc/arbuzas/dns:/etc/arbuzas/dns:ro
+      - /srv/arbuzas/dns/state:/srv/arbuzas/dns/state
+      - /srv/arbuzas/dns/runtime:/srv/arbuzas/dns/runtime
+      - /srv/arbuzas/dns/logs:/var/log/arbuzas/dns
+    networks:
+      - dns_backend
+    deploy: *default_deploy
+
+networks:
+  dns_backend:
+    driver: overlay
+    attachable: true

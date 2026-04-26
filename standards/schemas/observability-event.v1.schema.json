@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pixel-ops.local/schemas/observability-event.v1.schema.json",
+  "title": "Observability Event v1",
+  "type": "object",
+  "required": [
+    "timestamp",
+    "run_id",
+    "module_id",
+    "component_id",
+    "source",
+    "event_type",
+    "status",
+    "metrics",
+    "evidence_refs"
+  ],
+  "properties": {
+    "timestamp": { "type": "string", "format": "date-time" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "module_id": { "type": "string", "minLength": 1 },
+    "component_id": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "minLength": 1 },
+    "event_type": { "type": "string", "minLength": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["ok", "degraded", "error", "start", "stop", "restart", "info"]
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": {
+        "type": ["string", "number", "integer", "boolean", "null"]
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

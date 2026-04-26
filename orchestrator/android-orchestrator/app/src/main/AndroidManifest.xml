@@ -1,0 +1,95 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:tools="http://schemas.android.com/tools">
+
+  <queries>
+    <package android:name="org.zwanoo.android.speedtest" />
+    <package android:name="cellmapper.net.cellmapper" />
+    <intent>
+      <action android:name="android.intent.action.MAIN" />
+      <category android:name="android.intent.category.LAUNCHER" />
+    </intent>
+  </queries>
+
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+  <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+  <uses-permission
+    android:name="android.permission.WRITE_SECURE_SETTINGS"
+    tools:ignore="ProtectedPermissions" />
+
+  <application
+    android:allowBackup="false"
+    android:label="@string/app_name"
+    android:usesCleartextTraffic="true"
+    android:supportsRtl="true"
+    android:theme="@style/Theme.PixelRootOrchestrator">
+
+    <activity
+      android:name=".app.MainActivity"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+
+    <receiver
+      android:name=".app.BootReceiver"
+      android:enabled="true"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+        <action android:name="android.intent.action.TIME_SET" />
+        <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+      </intent-filter>
+    </receiver>
+
+    <receiver
+      android:name=".app.OrchestratorActionReceiver"
+      android:enabled="true"
+      android:exported="true" />
+
+    <service
+      android:name=".app.SupervisorService"
+      android:enabled="true"
+      android:exported="false"
+      android:foregroundServiceType="specialUse">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="rooted_device_supervision_and_local_phone_automation" />
+    </service>
+
+    <service
+      android:name=".app.phoneautomation.PhoneAutomationAccessibilityService"
+      android:enabled="true"
+      android:exported="false"
+      android:label="@string/phone_automation_accessibility_service_label"
+      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+      <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService" />
+      </intent-filter>
+      <meta-data
+        android:name="android.accessibilityservice"
+        android:resource="@xml/phone_automation_accessibility_service" />
+    </service>
+
+    <service
+      android:name=".app.phoneautomation.PhoneAutomationNotificationListenerService"
+      android:enabled="true"
+      android:exported="false"
+      android:label="@string/phone_automation_notification_listener_label"
+      android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+      <intent-filter>
+        <action android:name="android.service.notification.NotificationListenerService" />
+      </intent-filter>
+    </service>
+
+  </application>
+
+</manifest>

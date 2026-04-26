@@ -1,0 +1,19 @@
+[Unit]
+Description=Arbuzas DNS nginx frontend
+Wants=network-online.target arbuzas-dns-adguardhome.service arbuzas-dns-identity-web.service
+After=network-online.target arbuzas-dns-adguardhome.service arbuzas-dns-identity-web.service
+Requires=arbuzas-dns-adguardhome.service arbuzas-dns-identity-web.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/local/bin/arbuzas-dns-frontctl.sh render
+ExecStart=/usr/sbin/nginx -c /etc/arbuzas/dns/arbuzas-dns-nginx.conf -p /usr/share/nginx
+ExecReload=/usr/local/bin/arbuzas-dns-frontctl.sh reload
+ExecStop=/usr/sbin/nginx -c /etc/arbuzas/dns/arbuzas-dns-nginx.conf -p /usr/share/nginx -s quit
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
+Alias=pixel-dns-frontend.service

@@ -1,0 +1,24 @@
+[Unit]
+Description=Arbuzas DNS identity web sidecar
+Wants=network-online.target arbuzas-dns-adguardhome.service
+After=network-online.target arbuzas-dns-adguardhome.service
+Requires=arbuzas-dns-adguardhome.service
+Before=arbuzas-dns-frontend.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/arbuzas/dns/runtime.env
+Environment=ADGUARDHOME_DOH_OBSERVABILITY_DB_FILE=/etc/arbuzas/dns/state/identity-observability.sqlite
+Environment=ADGUARDHOME_DOH_INGEST_SOCKET_FILE=/etc/arbuzas/dns/state/doh-ingest.sock
+Environment=ADGUARDHOME_DOT_INGEST_SOCKET_FILE=/etc/arbuzas/dns/state/dot-ingest.sock
+Environment=ADGUARDHOME_DOH_IDENTITY_WEB_IPINFO_LITE_TOKEN_FILE=/etc/arbuzas/dns/secrets/ipinfo-lite-token
+Environment=ADGUARDHOME_DOH_IDENTITY_WEB_RESTART_ENTRY=/usr/local/bin/arbuzas-dns-frontctl.sh
+Environment=ADGUARDHOME_DOH_IDENTITY_WEB_RESTART_MODE=reload
+ExecStart=/usr/bin/python3 /usr/local/bin/adguardhome-doh-identity-web.py --host 127.0.0.1 --port 8097 --adguard-web-port 8080 --identityctl /usr/local/bin/adguardhome-doh-identityctl
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
+Alias=pixel-dns-identity-web.service

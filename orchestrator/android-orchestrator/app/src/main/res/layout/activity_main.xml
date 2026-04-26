@@ -1,0 +1,355 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:fillViewport="true">
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+      android:id="@+id/title"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:text="Pixel Root Orchestrator"
+      android:textSize="22sp"
+      android:textStyle="bold" />
+
+    <TextView
+      android:id="@+id/subtitle"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="6dp"
+      android:text="Boot, supervise, observe, and recover rooted Pi-hole + SSH + VPN"
+      android:textSize="14sp" />
+
+    <TextView
+      android:id="@+id/phoneAutomationTitle"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="20dp"
+      android:text="@string/phone_automation_title"
+      android:textSize="18sp"
+      android:textStyle="bold" />
+
+    <TextView
+      android:id="@+id/phoneAutomationDescription"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="6dp"
+      android:text="@string/phone_automation_description"
+      android:textSize="14sp" />
+
+    <androidx.appcompat.widget.SwitchCompat
+      android:id="@+id/phoneAutomationToggle"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="12dp"
+      android:text="@string/phone_automation_toggle_label" />
+
+    <androidx.appcompat.widget.SwitchCompat
+      android:id="@+id/phoneAutomationCellMapperToggle"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:text="@string/phone_automation_cellmapper_toggle_label" />
+
+    <androidx.appcompat.widget.SwitchCompat
+      android:id="@+id/phoneAutomationReturnToOrchestratorToggle"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:text="@string/phone_automation_return_to_orchestrator_toggle_label"
+      android:visibility="gone" />
+
+    <TextView
+      android:id="@+id/phoneAutomationIntervalText"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:textSize="13sp" />
+
+    <com.google.android.material.slider.Slider
+      android:id="@+id/phoneAutomationIntervalSlider"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="4dp" />
+
+    <TextView
+      android:id="@+id/phoneAutomationSetupText"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:textSize="13sp" />
+
+    <TextView
+      android:id="@+id/phoneAutomationRuntimeText"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="4dp"
+      android:textSize="13sp" />
+
+    <TextView
+      android:id="@+id/touchBrightnessTitle"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="20dp"
+      android:text="@string/touch_brightness_title"
+      android:textSize="18sp"
+      android:textStyle="bold" />
+
+    <TextView
+      android:id="@+id/touchBrightnessDescription"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="6dp"
+      android:text="@string/touch_brightness_description"
+      android:textSize="14sp" />
+
+    <androidx.appcompat.widget.SwitchCompat
+      android:id="@+id/touchBrightnessToggle"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="12dp"
+      android:text="@string/touch_brightness_toggle_label" />
+
+    <TextView
+      android:id="@+id/touchBrightnessRuntimeText"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:textSize="13sp" />
+
+    <TextView
+      android:id="@+id/touchBrightnessDebugText"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="4dp"
+      android:textSize="13sp" />
+
+    <TextView
+      android:id="@+id/cpuFrequencyTitle"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="20dp"
+      android:text="@string/cpu_frequency_title"
+      android:textSize="18sp"
+      android:textStyle="bold" />
+
+    <TextView
+      android:id="@+id/cpuFrequencyDescription"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="6dp"
+      android:text="@string/cpu_frequency_description"
+      android:textSize="14sp" />
+
+    <androidx.appcompat.widget.SwitchCompat
+      android:id="@+id/cpuFrequencyToggle"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="12dp"
+      android:text="@string/cpu_frequency_toggle_label" />
+
+    <TextView
+      android:id="@+id/cpuFrequencyRuntimeText"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:textSize="13sp" />
+
+    <TextView
+      android:id="@+id/cpuFrequencyThermalText"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="4dp"
+      android:textSize="13sp" />
+
+    <TextView
+      android:id="@+id/cpuFrequencyLittleText"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="10dp"
+      android:textSize="13sp" />
+
+    <com.google.android.material.slider.Slider
+      android:id="@+id/cpuFrequencyLittleSlider"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:stepSize="1" />
+
+    <TextView
+      android:id="@+id/cpuFrequencyMidText"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:textSize="13sp" />
+
+    <com.google.android.material.slider.Slider
+      android:id="@+id/cpuFrequencyMidSlider"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:stepSize="1" />
+
+    <TextView
+      android:id="@+id/cpuFrequencyBigText"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:textSize="13sp" />
+
+    <com.google.android.material.slider.Slider
+      android:id="@+id/cpuFrequencyBigSlider"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:stepSize="1" />
+
+    <TextView
+      android:id="@+id/cpuFrequencyGpuText"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:textSize="13sp" />
+
+    <com.google.android.material.slider.Slider
+      android:id="@+id/cpuFrequencyGpuSlider"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:stepSize="1" />
+
+    <Button
+      android:id="@+id/cpuFrequencyRestoreStockButton"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="10dp"
+      android:text="@string/cpu_frequency_restore_stock" />
+
+    <Button
+      android:id="@+id/openAccessibilitySettingsButton"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="10dp"
+      android:text="@string/phone_automation_open_accessibility" />
+
+    <Button
+      android:id="@+id/openNotificationAccessButton"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:text="@string/phone_automation_open_notification_access" />
+
+    <Button
+      android:id="@+id/bootstrapButton"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="20dp"
+      android:text="Bootstrap + Cutover" />
+
+    <Button
+      android:id="@+id/startAllButton"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:text="Start All" />
+
+    <Button
+      android:id="@+id/stopAllButton"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:text="Stop All" />
+
+    <Button
+      android:id="@+id/healthButton"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:text="Run Health Check" />
+
+    <Button
+      android:id="@+id/ddnsButton"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:text="Sync DDNS Now" />
+
+    <Button
+      android:id="@+id/exportButton"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:text="Export Support Bundle" />
+
+    <Button
+      android:id="@+id/backgroundReliabilityToggleButton"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="20dp"
+      android:text="@string/background_reliability_show_button" />
+
+    <LinearLayout
+      android:id="@+id/backgroundReliabilitySection"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:orientation="vertical"
+      android:visibility="gone">
+
+      <TextView
+        android:id="@+id/backgroundReliabilityTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/background_reliability_title"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+      <TextView
+        android:id="@+id/backgroundReliabilityDescription"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="@string/background_reliability_description"
+        android:textSize="14sp" />
+
+      <TextView
+        android:id="@+id/backgroundReliabilityBatteryText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:textSize="13sp" />
+
+      <Button
+        android:id="@+id/openBackgroundReliabilityBatteryButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="@string/background_reliability_open_battery" />
+
+      <TextView
+        android:id="@+id/backgroundReliabilityExactAlarmText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:textSize="13sp" />
+
+      <Button
+        android:id="@+id/openBackgroundReliabilityExactAlarmButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="@string/background_reliability_open_exact_alarm" />
+    </LinearLayout>
+
+    <TextView
+      android:id="@+id/statusText"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="16dp"
+      android:textIsSelectable="true"
+      android:textSize="13sp" />
+  </LinearLayout>
+
+</ScrollView>

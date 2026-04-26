@@ -1,0 +1,18 @@
+schema: 1
+module_id: adguardhome
+owner: pixel-ops
+runtime:
+  type: external
+  healthcheck: orchestrator/scripts/ops/service-availability-report.sh
+  run_id_env: PIXEL_RUN_ID
+components:
+  - id: dns_runtime
+    start: sh /data/local/pixel-stack/bin/pixel-dns-start.sh
+    stop: sh /data/local/pixel-stack/bin/pixel-dns-stop.sh
+    health: dns and listener probes
+    redeploy:
+      mode: artifact_release
+      artifact_id: adguardhome-rootfs
+observability:
+  event_source: adguardhome
+  evidence_root: ops/evidence/adguardhome

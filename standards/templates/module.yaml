@@ -1,0 +1,16 @@
+schema: 1
+module_id: example_module
+owner: team-or-owner
+description: "Short description"
+runtime:
+  type: service
+  healthcheck: "/path/to/healthcheck"
+  run_id_env: PIXEL_RUN_ID
+components:
+  - id: example_component
+    start: ""
+    stop: ""
+    health: ""
+observability:
+  event_source: example
+  evidence_root: ops/evidence/example_module

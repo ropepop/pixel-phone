@@ -1,0 +1,4 @@
+# ANDROID ROOT ORCHESTRATOR
+
+Compatibility pointer:
+- [ROOT_OPERATIONS](./runbooks/ROOT_OPERATIONS.md)

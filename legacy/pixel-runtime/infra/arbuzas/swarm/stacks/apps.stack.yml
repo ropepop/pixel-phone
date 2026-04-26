@@ -1,0 +1,239 @@
+version: "3.9"
+
+x-default-deploy: &default_deploy
+  replicas: 1
+  restart_policy:
+    condition: any
+    delay: 5s
+  update_config:
+    parallelism: 1
+    order: stop-first
+    failure_action: rollback
+    monitor: 45s
+  rollback_config:
+    parallelism: 1
+    order: stop-first
+
+services:
+  train_bot:
+    image: ${ARBUZAS_TRAIN_BOT_IMAGE}
+    working_dir: /srv/train-bot
+    environment:
+      TZ: ${ARBUZAS_TZ}
+      TRAIN_WEB_ENABLED: "true"
+      TRAIN_WEB_BIND_ADDR: 0.0.0.0
+      TRAIN_WEB_PORT: ${ARBUZAS_TRAIN_BOT_PORT}
+      SCHEDULE_DIR: /srv/train-bot/data/schedules
+      SCRAPER_OUTPUT_DIR: /srv/train-bot/data/schedules
+      TRAIN_WEB_BUNDLE_DIR: /srv/train-bot/data/public-bundles
+      TRAIN_WEB_PUBLIC_EDGE_CACHE_STATE_FILE: /srv/train-bot/state/public-edge-cache.json
+      SINGLE_INSTANCE_LOCK_PATH: /srv/train-bot/run/train-bot.lock
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        set -a
+        . /srv/train-bot/.env
+        set +a
+        export TRAIN_WEB_ENABLED="true"
+        export TRAIN_WEB_BIND_ADDR="0.0.0.0"
+        export TRAIN_WEB_PORT="${ARBUZAS_TRAIN_BOT_PORT}"
+        export SCHEDULE_DIR="/srv/train-bot/data/schedules"
+        export SCRAPER_OUTPUT_DIR="/srv/train-bot/data/schedules"
+        export TRAIN_WEB_BUNDLE_DIR="/srv/train-bot/data/public-bundles"
+        export TRAIN_WEB_PUBLIC_EDGE_CACHE_STATE_FILE="/srv/train-bot/state/public-edge-cache.json"
+        export SINGLE_INSTANCE_LOCK_PATH="/srv/train-bot/run/train-bot.lock"
+        mkdir -p /srv/train-bot/run /srv/train-bot/state /srv/train-bot/data/schedules /srv/train-bot/data/public-bundles
+        exec /usr/local/bin/train-bot
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:${ARBUZAS_TRAIN_BOT_PORT}/api/v1/health >/dev/null",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - /srv/arbuzas/train-bot:/srv/train-bot
+      - /etc/arbuzas/env/train-bot.env:/srv/train-bot/.env:ro
+      - /etc/arbuzas/secrets:/etc/arbuzas/secrets:ro
+    networks:
+      - apps_backend
+    deploy: *default_deploy
+
+  satiksme_bot:
+    image: ${ARBUZAS_SATIKSME_BOT_IMAGE}
+    working_dir: /srv/satiksme-bot
+    environment:
+      TZ: ${ARBUZAS_TZ}
+      SATIKSME_WEB_ENABLED: "true"
+      SATIKSME_WEB_BIND_ADDR: 0.0.0.0
+      SATIKSME_WEB_PORT: ${ARBUZAS_SATIKSME_BOT_PORT}
+      DB_PATH: /srv/satiksme-bot/state/satiksme_bot.db
+      SINGLE_INSTANCE_LOCK_PATH: /srv/satiksme-bot/run/satiksme-bot.lock
+      SATIKSME_CATALOG_MIRROR_DIR: /srv/satiksme-bot/data/catalog/source
+      SATIKSME_CATALOG_OUTPUT_PATH: /srv/satiksme-bot/data/catalog/generated/catalog.json
+      SATIKSME_WEB_BUNDLE_DIR: /srv/satiksme-bot/data/public-bundles
+      SATIKSME_WEB_LIVE_SNAPSHOT_DIR: /srv/satiksme-bot/state/live-snapshot
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        set -a
+        . /srv/satiksme-bot/.env
+        set +a
+        export SATIKSME_WEB_ENABLED="true"
+        export SATIKSME_WEB_BIND_ADDR="0.0.0.0"
+        export SATIKSME_WEB_PORT="${ARBUZAS_SATIKSME_BOT_PORT}"
+        export DB_PATH="/srv/satiksme-bot/state/satiksme_bot.db"
+        export SINGLE_INSTANCE_LOCK_PATH="/srv/satiksme-bot/run/satiksme-bot.lock"
+        export SATIKSME_CATALOG_MIRROR_DIR="/srv/satiksme-bot/data/catalog/source"
+        export SATIKSME_CATALOG_OUTPUT_PATH="/srv/satiksme-bot/data/catalog/generated/catalog.json"
+        export SATIKSME_WEB_BUNDLE_DIR="/srv/satiksme-bot/data/public-bundles"
+        export SATIKSME_WEB_LIVE_SNAPSHOT_DIR="/srv/satiksme-bot/state/live-snapshot"
+        mkdir -p \
+          /srv/satiksme-bot/run \
+          /srv/satiksme-bot/state \
+          /srv/satiksme-bot/data/catalog/source \
+          /srv/satiksme-bot/data/catalog/generated \
+          /srv/satiksme-bot/data/public-bundles
+        exec /usr/local/bin/satiksme-bot
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:${ARBUZAS_SATIKSME_BOT_PORT}/api/v1/health >/dev/null",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - /srv/arbuzas/satiksme-bot:/srv/satiksme-bot
+      - /etc/arbuzas/env/satiksme-bot.env:/srv/satiksme-bot/.env:ro
+      - /etc/arbuzas/secrets:/etc/arbuzas/secrets:ro
+    networks:
+      - apps_backend
+    deploy: *default_deploy
+
+  subscription_bot:
+    image: ${ARBUZAS_SUBSCRIPTION_BOT_IMAGE}
+    working_dir: /srv/subscription-bot
+    environment:
+      TZ: ${ARBUZAS_TZ}
+      SUBSCRIPTION_BOT_WEB_ENABLED: "true"
+      SUBSCRIPTION_BOT_WEB_BIND_ADDR: 0.0.0.0
+      SUBSCRIPTION_BOT_WEB_PORT: ${ARBUZAS_SUBSCRIPTION_BOT_PORT}
+      SUBSCRIPTION_BOT_DB_PATH: /srv/subscription-bot/state/subscription_bot.db
+      SUBSCRIPTION_BOT_SINGLE_INSTANCE_LOCK_PATH: /srv/subscription-bot/run/subscription-bot.lock
+      SUBSCRIPTION_BOT_SESSION_SECRET_FILE: /srv/subscription-bot/state/subscription-bot.session.secret
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        set -a
+        . /srv/subscription-bot/.env
+        set +a
+        export SUBSCRIPTION_BOT_WEB_ENABLED="true"
+        export SUBSCRIPTION_BOT_WEB_BIND_ADDR="0.0.0.0"
+        export SUBSCRIPTION_BOT_WEB_PORT="${ARBUZAS_SUBSCRIPTION_BOT_PORT}"
+        export SUBSCRIPTION_BOT_DB_PATH="/srv/subscription-bot/state/subscription_bot.db"
+        export SUBSCRIPTION_BOT_SINGLE_INSTANCE_LOCK_PATH="/srv/subscription-bot/run/subscription-bot.lock"
+        export SUBSCRIPTION_BOT_SESSION_SECRET_FILE="/srv/subscription-bot/state/subscription-bot.session.secret"
+        mkdir -p /srv/subscription-bot/run /srv/subscription-bot/state
+        exec /usr/local/bin/subscription-bot
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:${ARBUZAS_SUBSCRIPTION_BOT_PORT}/pixel-stack/subscription/api/v1/health >/dev/null",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - /srv/arbuzas/subscription-bot:/srv/subscription-bot
+      - /etc/arbuzas/env/subscription-bot.env:/srv/subscription-bot/.env:ro
+      - /etc/arbuzas/secrets:/etc/arbuzas/secrets:ro
+    networks:
+      - apps_backend
+    deploy: *default_deploy
+
+  site_notifications:
+    image: ${ARBUZAS_SITE_NOTIFICATIONS_IMAGE}
+    working_dir: /opt/site-notifications
+    environment:
+      TZ: ${ARBUZAS_TZ}
+      RUNTIME_CONTEXT_POLICY: systemd_service
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        mkdir -p /opt/site-notifications/state
+        exec python /opt/site-notifications/app.py daemon
+    healthcheck:
+      test: ["CMD-SHELL", "python /opt/site-notifications/app.py healthcheck >/dev/null"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 45s
+    volumes:
+      - /srv/arbuzas/site-notifications/state:/opt/site-notifications/state
+      - /etc/arbuzas/env/site-notifications.env:/opt/site-notifications/.env:ro
+      - /etc/arbuzas/secrets:/etc/arbuzas/secrets:ro
+    networks:
+      - apps_backend
+    deploy: *default_deploy
+
+  train_tunnel:
+    image: ${ARBUZAS_CLOUDFLARED_IMAGE}
+    user: "0:0"
+    command:
+      - tunnel
+      - --config
+      - /etc/cloudflared/config.yml
+      - run
+    volumes:
+      - /etc/arbuzas/swarm/cloudflared/train-bot.yml:/etc/cloudflared/config.yml:ro
+      - /etc/arbuzas/cloudflared/train-bot.json:/run/arbuzas/cloudflared/credentials.json:ro
+    networks:
+      - apps_backend
+    deploy: *default_deploy
+
+  satiksme_tunnel:
+    image: ${ARBUZAS_CLOUDFLARED_IMAGE}
+    user: "0:0"
+    command:
+      - tunnel
+      - --config
+      - /etc/cloudflared/config.yml
+      - run
+    volumes:
+      - /etc/arbuzas/swarm/cloudflared/satiksme-bot.yml:/etc/cloudflared/config.yml:ro
+      - /etc/arbuzas/cloudflared/satiksme-bot.json:/run/arbuzas/cloudflared/credentials.json:ro
+    networks:
+      - apps_backend
+    deploy: *default_deploy
+
+  subscription_tunnel:
+    image: ${ARBUZAS_CLOUDFLARED_IMAGE}
+    user: "0:0"
+    command:
+      - tunnel
+      - --config
+      - /etc/cloudflared/config.yml
+      - run
+    volumes:
+      - /etc/arbuzas/swarm/cloudflared/subscription-bot.yml:/etc/cloudflared/config.yml:ro
+      - /etc/arbuzas/cloudflared/subscription-bot.json:/run/arbuzas/cloudflared/credentials.json:ro
+    networks:
+      - apps_backend
+    deploy: *default_deploy
+
+networks:
+  apps_backend:
+    driver: overlay
+    attachable: true

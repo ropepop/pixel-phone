@@ -1,0 +1,30 @@
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Node/build caches
+node_modules/
+.gradle/
+build/
+out/
+dist/
+
+# Local runtime scratch
+.browser-use/
+.playwright-cli/
+.tmp-rootfs/
+.artifacts/
+
+# Keep evidence tracked by default under ops/evidence
+# Keep secrets tracked by explicit user decision.

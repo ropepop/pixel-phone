@@ -1,0 +1,40 @@
+name: Drain Runner Smoke
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/drain_runner.sh'
+      - 'scripts/drain_runner_smoke_test.sh'
+      - '.github/workflows/stalled-runner-cron.yml'
+      - '.github/workflows/stalled-runner-nested-playground.yml'
+      - '.github/workflows/drain-runner-smoke.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'scripts/drain_runner.sh'
+      - 'scripts/drain_runner_smoke_test.sh'
+      - '.github/workflows/stalled-runner-cron.yml'
+      - '.github/workflows/stalled-runner-nested-playground.yml'
+      - '.github/workflows/drain-runner-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Bash syntax checks
+        run: |
+          set -euo pipefail
+          bash -n scripts/drain_runner.sh
+          bash -n scripts/drain_runner_smoke_test.sh
+
+      - name: Run drain runner smoke tests
+        run: |
+          set -euo pipefail
+          ./scripts/drain_runner_smoke_test.sh
