@@ -81,3 +81,13 @@ Use the manifest-driven onboarding flow:
 - Consolidated modules: `orchestrator`, `telegram train app`, `site-notifications`, `task-executor`, `pihole`, `vpn-access`.
 - White-label notifier repository remains out of scope.
 - History was intentionally reset for this monorepo.
+
+<!-- github-manager-readme:start -->
+## Public Copy Notes
+
+This repository is refreshed by GitHub Manager from a sanitized staging copy.
+Files that look private, generated, or unsafe for public release are left out before each update.
+
+- Risky files removed in the latest sanitation pass: 39
+- Top-level items in this public copy: `.github/`, `automation/`, `docs/`, `infra/`, `legacy/`, `ops/`, `orchestrator/`, `standards/`
+<!-- github-manager-readme:end -->
