@@ -14,7 +14,7 @@ SELF_PID="$$"
 pid_cmdline() {
   pid="$1"
   if [ -r "/proc/${pid}/cmdline" ]; then
-    tr '\000' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true
+    timeout 1 tr '\000' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true
     return 0
   fi
   ps -p "${pid}" -o ARGS= 2>/dev/null || true

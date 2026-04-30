@@ -705,8 +705,8 @@ class MainActivity : ComponentActivity() {
 
   companion object {
     private const val TAG = "OrchestratorMain"
-    private const val PHONE_AUTOMATION_RENDER_INTERVAL_MILLIS = 1_000L
-    private const val CPU_FREQUENCY_RENDER_INTERVAL_MILLIS = 2_000L
+    private const val PHONE_AUTOMATION_RENDER_INTERVAL_MILLIS = 5_000L
+    private const val CPU_FREQUENCY_RENDER_INTERVAL_MILLIS = 15_000L
     private const val ACTIVITY_RESUME_REFRESH_DEBOUNCE_MILLIS = 2_000L
     const val EXTRA_ORCHESTRATOR_ACTION = OrchestratorShellCommand.EXTRA_ACTION
     const val EXTRA_ORCHESTRATOR_COMPONENT = OrchestratorShellCommand.EXTRA_COMPONENT

@@ -60,6 +60,12 @@
       "startCommand": "sh /data/local/pixel-stack/bin/pixel-subscription-start.sh",
       "stopCommand": "sh /data/local/pixel-stack/bin/pixel-subscription-stop.sh",
       "healthCommand": "sh /data/local/pixel-stack/bin/pixel-subscription-health.sh"
+    },
+    {
+      "id": "ticket_screen",
+      "startCommand": "sh /data/local/pixel-stack/bin/pixel-ticket-start.sh",
+      "stopCommand": "sh /data/local/pixel-stack/bin/pixel-ticket-stop.sh",
+      "healthCommand": "sh /data/local/pixel-stack/bin/pixel-ticket-health.sh"
     }
   ]
 }

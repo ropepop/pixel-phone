@@ -38,7 +38,7 @@ chmod 0700 "${AUTH_KEYS_DST_DIR}" >/dev/null 2>&1 || true
 pid_cmdline() {
   pid="$1"
   if [ -r "/proc/${pid}/cmdline" ]; then
-    tr '\000' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true
+    timeout 1 tr '\000' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true
     return 0
   fi
   if command -v ps >/dev/null 2>&1; then

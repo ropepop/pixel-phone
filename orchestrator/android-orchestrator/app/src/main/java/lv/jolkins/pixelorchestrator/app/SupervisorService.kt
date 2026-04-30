@@ -64,6 +64,8 @@ import lv.jolkins.pixelorchestrator.app.phoneautomation.hasQueuedPendingRecovery
 import lv.jolkins.pixelorchestrator.app.phoneautomation.issueFor
 import lv.jolkins.pixelorchestrator.app.phoneautomation.isProtectedSpeedtestHandoffInProgress
 import lv.jolkins.pixelorchestrator.app.phoneautomation.shouldDeferPhoneAutomationPrerequisiteRecovery
+import lv.jolkins.pixelorchestrator.app.ticket.TicketScreenConfig
+import lv.jolkins.pixelorchestrator.app.ticket.TicketStreamService
 import lv.jolkins.pixelorchestrator.rootexec.SuRootExecutor
 
 class SupervisorService : Service() {
@@ -188,6 +190,28 @@ class SupervisorService : Service() {
         ACTION_HEALTH_COMPONENT -> facade.healthComponent(component)
         ACTION_SYNC_DDNS -> facade.syncDdnsNow()
         ACTION_EXPORT_BUNDLE -> facade.exportSupportBundle(includeSecrets = false)
+        ACTION_TICKET_START_SERVER -> {
+          val result = startTicketStreamService(TicketScreenConfig.ACTION_START_SERVER)
+          FacadeOperationResult(
+            result.ok,
+            if (result.ok) {
+              "Ticket remote server start requested"
+            } else {
+              "Ticket remote server start failed: ${result.stderr.ifBlank { result.stdout }.trim()}"
+            }
+          )
+        }
+        ACTION_TICKET_STOP_SERVER -> {
+          val result = startTicketStreamService(TicketScreenConfig.ACTION_STOP_SERVER)
+          FacadeOperationResult(
+            result.ok,
+            if (result.ok) {
+              "Ticket remote server stop requested"
+            } else {
+              "Ticket remote server stop failed: ${result.stderr.ifBlank { result.stdout }.trim()}"
+            }
+          )
+        }
         ACTION_REFRESH_PHONE_AUTOMATION -> FacadeOperationResult(true, "Phone automation refreshed")
         ACTION_REFRESH_CPU_FREQUENCY -> FacadeOperationResult(true, "CPU and GPU cap control refreshed")
         ACTION_PHONE_AUTOMATION_WAKE -> FacadeOperationResult(
@@ -286,6 +310,11 @@ class SupervisorService : Service() {
 
   override fun onBind(intent: Intent?): IBinder? = null
 
+  private suspend fun startTicketStreamService(action: String) =
+    SuRootExecutor().run(
+      "am startservice -n ${ComponentName(this, TicketStreamService::class.java).flattenToString()} -a $action"
+    )
+
   companion object {
     private const val TAG = "SupervisorService"
     private const val PREFS_NAME = "supervisor_service"
@@ -304,6 +333,8 @@ class SupervisorService : Service() {
     const val ACTION_HEALTH_COMPONENT = "lv.jolkins.pixelorchestrator.action.HEALTH_COMPONENT"
     const val ACTION_SYNC_DDNS = "lv.jolkins.pixelorchestrator.action.SYNC_DDNS"
     const val ACTION_EXPORT_BUNDLE = "lv.jolkins.pixelorchestrator.action.EXPORT_BUNDLE"
+    const val ACTION_TICKET_START_SERVER = "lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER"
+    const val ACTION_TICKET_STOP_SERVER = "lv.jolkins.pixelorchestrator.action.TICKET_STOP_SERVER"
     const val ACTION_REFRESH_PHONE_AUTOMATION = "lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION"
     const val ACTION_REFRESH_CPU_FREQUENCY = "lv.jolkins.pixelorchestrator.action.REFRESH_CPU_FREQUENCY"
     const val ACTION_PHONE_AUTOMATION_WAKE = "lv.jolkins.pixelorchestrator.action.PHONE_AUTOMATION_WAKE"

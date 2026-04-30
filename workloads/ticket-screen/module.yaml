@@ -1,0 +1,17 @@
+schema: 1
+module_id: ticket_screen
+owner: pixel-ops
+runtime:
+  type: service
+  healthcheck: sh /data/local/pixel-stack/bin/pixel-ticket-health.sh
+  run_id_env: PIXEL_RUN_ID
+components:
+  - id: ticket_screen
+    start: sh /data/local/pixel-stack/bin/pixel-ticket-start.sh
+    stop: sh /data/local/pixel-stack/bin/pixel-ticket-stop.sh
+    health: sh /data/local/pixel-stack/bin/pixel-ticket-health.sh
+    redeploy:
+      mode: job
+observability:
+  event_source: ticket_screen
+  evidence_root: ops/evidence/ticket-screen

@@ -398,7 +398,7 @@ class RuntimeInstaller(
       null -> {
         installTemplateGroups(
           assets,
-          listOf("rooted", "ssh", "vpn", "train", "satiksme", "notifier", "subscription")
+          listOf("rooted", "ssh", "vpn", "train", "satiksme", "notifier", "subscription", "ticket")
         )
         installOrchestratorEntrypoints(assets, orchestratorEntrypoints())
       }
@@ -439,6 +439,13 @@ class RuntimeInstaller(
           orchestratorEntrypoints("pixel-subscription-start.sh", "pixel-subscription-stop.sh", "pixel-subscription-health.sh")
         )
       }
+      "ticket_screen" -> {
+        installTemplateGroups(assets, listOf("ticket"))
+        installOrchestratorEntrypoints(
+          assets,
+          orchestratorEntrypoints("pixel-ticket-start.sh", "pixel-ticket-stop.sh", "pixel-ticket-health.sh")
+        )
+      }
       else -> error("Unsupported component runtime asset sync target: $component")
     }
   }
@@ -451,7 +458,8 @@ class RuntimeInstaller(
       "train" to "${StackPaths.BASE}/templates/train",
       "satiksme" to "${StackPaths.BASE}/templates/satiksme",
       "notifier" to "${StackPaths.BASE}/templates/notifier",
-      "subscription" to "${StackPaths.BASE}/templates/subscription"
+      "subscription" to "${StackPaths.BASE}/templates/subscription",
+      "ticket" to "${StackPaths.BASE}/templates/ticket"
     )
 
     for (group in groups) {
@@ -486,7 +494,10 @@ class RuntimeInstaller(
       "runtime/entrypoints/pixel-notifier-stop.sh" to "${StackPaths.BIN}/pixel-notifier-stop.sh",
       "runtime/entrypoints/pixel-subscription-start.sh" to "${StackPaths.BIN}/pixel-subscription-start.sh",
       "runtime/entrypoints/pixel-subscription-stop.sh" to "${StackPaths.BIN}/pixel-subscription-stop.sh",
-      "runtime/entrypoints/pixel-subscription-health.sh" to "${StackPaths.BIN}/pixel-subscription-health.sh"
+      "runtime/entrypoints/pixel-subscription-health.sh" to "${StackPaths.BIN}/pixel-subscription-health.sh",
+      "runtime/entrypoints/pixel-ticket-start.sh" to "${StackPaths.BIN}/pixel-ticket-start.sh",
+      "runtime/entrypoints/pixel-ticket-stop.sh" to "${StackPaths.BIN}/pixel-ticket-stop.sh",
+      "runtime/entrypoints/pixel-ticket-health.sh" to "${StackPaths.BIN}/pixel-ticket-health.sh"
     )
     if (names.isEmpty()) {
       return scripts
@@ -540,7 +551,9 @@ class RuntimeInstaller(
     val quotedTemp = ShellEscaper.singleQuote(tempFile.toAbsolutePath().toString())
     val quotedTarget = ShellEscaper.singleQuote(targetPath)
     val quotedParent = ShellEscaper.singleQuote(Paths.get(targetPath).parent.toString())
-    val command = "mkdir -p $quotedParent && cp $quotedTemp $quotedTarget && chmod $mode $quotedTarget"
+    val command =
+      "mkdir -p $quotedParent && cp $quotedTemp $quotedTarget && chmod $mode $quotedTarget && " +
+        "(chcon u:object_r:shell_data_file:s0 $quotedTarget 2>/dev/null || true)"
     val result = rootExecutor.run(command)
     if (!result.ok) {
       error("Failed to install asset $sourceAssetPath -> $targetPath: ${result.stderr}")

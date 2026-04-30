@@ -281,7 +281,7 @@ enum class TouchBrightnessRuntimeState(
   DISABLED("disabled", "Feature is off"),
   STARTING("starting", "Starting touch brightness"),
   BRIGHT("bright", "Saved brightness is active"),
-  BLACKOUT_IDLE("blackout_idle", "Blackout waiting for touch"),
+  BLACKOUT_IDLE("blackout_idle", "Panel dim waiting for touch"),
   SUSPENDED_SCREEN_OFF("suspended_screen_off", "Suspended while the screen is off"),
   STOPPED("stopped", "Stopped"),
   ERROR("error", "Touch brightness error");

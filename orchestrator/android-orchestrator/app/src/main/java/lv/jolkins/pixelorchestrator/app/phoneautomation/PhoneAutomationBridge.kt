@@ -101,6 +101,8 @@ object PhoneAutomationServiceBridge {
   private val lastBlackoutWakeAtMillis = MutableStateFlow(0L)
   private val lastExpectedOrchestratorForegroundAtMillis = MutableStateFlow(0L)
   private val blackoutOverlayRequested = MutableStateFlow(false)
+  private val blackoutOverlaySuppressed = MutableStateFlow(false)
+  private val remoteScreenBrightnessState = MutableStateFlow<ScreenBrightnessState?>(null)
   private val activeNotifications = MutableStateFlow<Map<String, PhoneAutomationObservedNotification>>(emptyMap())
   private val rawNotificationEvents =
     MutableSharedFlow<PhoneAutomationNotificationEvent>(extraBufferCapacity = 64)
@@ -118,7 +120,7 @@ object PhoneAutomationServiceBridge {
 
   internal fun bindAccessibilityService(service: PhoneAutomationAccessibilityHost) {
     accessibilityService.value = service
-    service.syncBlackoutOverlayVisibility(blackoutOverlayRequested.value)
+    service.syncBlackoutOverlayVisibility(blackoutOverlayRequested.value && !blackoutOverlaySuppressed.value)
   }
 
   internal fun unbindAccessibilityService(service: PhoneAutomationAccessibilityHost) {
@@ -211,7 +213,31 @@ object PhoneAutomationServiceBridge {
 
   fun isBlackoutOverlayAvailable(): Boolean = accessibilityService.value != null
 
+  fun isBlackoutOverlaySuppressed(): Boolean = blackoutOverlaySuppressed.value
+
+  internal fun remoteScreenBrightnessState(): ScreenBrightnessState? = remoteScreenBrightnessState.value
+
+  internal fun setRemoteScreenBrightnessState(state: ScreenBrightnessState?) {
+    remoteScreenBrightnessState.value = state
+  }
+
+  fun setBlackoutOverlaySuppressed(suppressed: Boolean) {
+    blackoutOverlaySuppressed.value = suppressed
+    val service = accessibilityService.value ?: return
+    if (suppressed) {
+      blackoutOverlayRequested.value = false
+      service.syncBlackoutOverlayVisibility(false)
+    } else {
+      service.syncBlackoutOverlayVisibility(blackoutOverlayRequested.value)
+    }
+  }
+
   suspend fun setBlackoutOverlayVisible(visible: Boolean): Boolean {
+    if (visible && blackoutOverlaySuppressed.value) {
+      blackoutOverlayRequested.value = false
+      accessibilityService.value?.setBlackoutOverlayVisible(false)
+      return true
+    }
     blackoutOverlayRequested.value = visible
     val service = accessibilityService.value ?: return true
     return service.setBlackoutOverlayVisible(visible)
@@ -407,6 +433,8 @@ object PhoneAutomationServiceBridge {
     lastBlackoutWakeAtMillis.value = 0L
     lastExpectedOrchestratorForegroundAtMillis.value = 0L
     blackoutOverlayRequested.value = false
+    blackoutOverlaySuppressed.value = false
+    remoteScreenBrightnessState.value = null
     activeNotifications.value = emptyMap()
   }
 }

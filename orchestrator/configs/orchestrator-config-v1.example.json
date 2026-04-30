@@ -184,6 +184,9 @@
     },
     "subscription_bot": {
       "enabled": false
+    },
+    "ticket_screen": {
+      "enabled": false
     }
   },
   "observability": {

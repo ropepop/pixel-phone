@@ -252,6 +252,9 @@ class SupervisorEngine(
         restartIfUnhealthy("subscription_bot", if (subscriptionEnabled) snapshot.subscriptionBotHealthy else true, state)
       state = subscriptionOutcome.state
 
+      val genericOutcome = restartGenericScriptComponents(state, config)
+      state = genericOutcome.state
+
       state = syncDdnsIfDue(state, config, snapshot, networkObservation)
       state = observeRemoteHealth(state, snapshot)
       state = observeManagementHealth(state, snapshot)
@@ -266,7 +269,8 @@ class SupervisorEngine(
         trainOutcome.delayMillis,
         satiksmeOutcome.delayMillis,
         notifierOutcome.delayMillis,
-        subscriptionOutcome.delayMillis
+        subscriptionOutcome.delayMillis,
+        genericOutcome.delayMillis
       ).maxOrNull() ?: 0L
       if (restartDelayMillis > 0L) {
         delay(restartDelayMillis)
@@ -350,6 +354,25 @@ class SupervisorEngine(
     }
 
     return restartIfUnhealthy("satiksme_bot", false, state)
+  }
+
+  private suspend fun restartGenericScriptComponents(
+    initialState: StackStateV1,
+    config: StackConfigV1
+  ): RestartOutcome {
+    var state = initialState
+    var maxDelayMillis = 0L
+    components.keys
+      .filter { name -> name !in EXPLICITLY_MANAGED_COMPONENT_NAMES }
+      .filter { name -> isComponentEnabled(name, config) }
+      .forEach { name ->
+        val controller = components[name] ?: return@forEach
+        val healthy = controller.health()
+        val outcome = restartIfUnhealthy(name, healthy, state)
+        state = outcome.state
+        maxDelayMillis = maxOf(maxDelayMillis, outcome.delayMillis)
+      }
+    return RestartOutcome(state = state, delayMillis = maxDelayMillis)
   }
 
   private suspend fun recoverManagementPath(
@@ -1087,6 +1110,22 @@ class SupervisorEngine(
     return copy(
       moduleHealth = updatedModuleHealth,
       evidence = evidence + ("satiksme_bot_tunnel_failure_count" to count.toString())
+    )
+  }
+
+  companion object {
+    private val EXPLICITLY_MANAGED_COMPONENT_NAMES = setOf(
+      "dns",
+      "ssh",
+      "vpn",
+      "ddns",
+      "remote",
+      "management",
+      "cpu_frequency",
+      "train_bot",
+      "satiksme_bot",
+      "site_notifier",
+      "subscription_bot"
     )
   }
 }

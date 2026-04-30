@@ -412,7 +412,7 @@ class CpuFrequencyRuntime(
   }
 
   companion object {
-    private const val POLL_INTERVAL_MILLIS = 5_000L
+    private const val POLL_INTERVAL_MILLIS = 15_000L
   }
 }
 

@@ -72,6 +72,12 @@ components:
       mode: artifact_release
       artifact_id: subscription-bot-bundle
       release_root: /data/local/pixel-stack/apps/subscription-bot/releases
+  - id: ticket_screen
+    start: sh /data/local/pixel-stack/bin/pixel-ticket-start.sh
+    stop: sh /data/local/pixel-stack/bin/pixel-ticket-stop.sh
+    health: sh /data/local/pixel-stack/bin/pixel-ticket-health.sh
+    redeploy:
+      mode: job
 observability:
   event_source: android_orchestrator
   evidence_root: ops/evidence/orchestrator

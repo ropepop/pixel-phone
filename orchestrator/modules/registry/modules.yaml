@@ -134,3 +134,15 @@ modules:
       mode: artifact_release
       artifact_id: subscription-bot-bundle
       release_root: /data/local/pixel-stack/apps/subscription-bot/releases
+  - id: ticket_screen
+    display_name: Ticket Screen
+    domain: workloads
+    runtime_type: rooted_service
+    owner_path: workloads/ticket-screen
+    health_key: ticketScreenHealthy
+    component_id: ticket_screen
+    start_command: sh /data/local/pixel-stack/bin/pixel-ticket-start.sh
+    stop_command: sh /data/local/pixel-stack/bin/pixel-ticket-stop.sh
+    health_command: sh /data/local/pixel-stack/bin/pixel-ticket-health.sh
+    redeploy:
+      mode: job

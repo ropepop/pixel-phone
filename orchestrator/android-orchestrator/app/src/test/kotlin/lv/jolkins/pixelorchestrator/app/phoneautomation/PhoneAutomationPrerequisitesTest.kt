@@ -23,7 +23,25 @@ class PhoneAutomationPrerequisitesTest {
     requireNotNull(issue)
     assertEquals("accessibility_connection", issue.reasonKey)
     assertEquals(true, issue.recoverAutomation)
-    assertEquals(true, issue.recoverTouchBrightness)
+    assertEquals(false, issue.recoverTouchBrightness)
+  }
+
+  @Test
+  fun touchBrightnessOnlyDoesNotRequireAccessibility() {
+    val issue = PhoneAutomationPrerequisiteSnapshot(
+      accessibilityGloballyEnabled = false,
+      accessibilityServiceEnabled = false,
+      notificationListenerEnabled = false,
+      accessibilityConnected = false,
+      notificationConnected = false
+    ).issueFor(
+      PhoneAutomationSettingsSnapshot(
+        enabled = false,
+        touchBrightnessEnabled = true
+      )
+    )
+
+    assertNull(issue)
   }
 
   @Test

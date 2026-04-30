@@ -90,6 +90,31 @@ class RuntimeInstallerBootstrapTest {
   }
 
   @Test
+  fun bundledRuntimeScriptsAreShellReadableAfterInstall() = runBlocking {
+    val rootExecutor = FakeRootExecutor()
+    val installer = RuntimeInstaller(
+      rootExecutor = rootExecutor,
+      artifactSyncer = ArtifactSyncer(createTempDir())
+    )
+
+    val result = installer.syncBundledRuntimeAssets(FakeAssetProvider(), "ticket_screen")
+
+    assertTrue(result.success)
+    assertTrue(
+      rootExecutor.commands.any {
+        it.contains("/data/local/pixel-stack/bin/pixel-ticket-health.sh") &&
+          it.contains("chcon u:object_r:shell_data_file:s0")
+      }
+    )
+    assertTrue(
+      rootExecutor.commands.any {
+        it.contains("/data/local/pixel-stack/templates/ticket/ticket-web-tunnel-service-loop.sh") &&
+          it.contains("chcon u:object_r:shell_data_file:s0")
+      }
+    )
+  }
+
+  @Test
   fun bootstrapFailsWhenRequiredArtifactIsMissing() = runBlocking {
     val installer = RuntimeInstaller(
       rootExecutor = FakeRootExecutor(),
@@ -334,6 +359,7 @@ class RuntimeInstallerBootstrapTest {
       "runtime/templates/notifier/notifier-service-loop.sh" to "#!/system/bin/sh\n".toByteArray(),
       "runtime/templates/subscription/subscription-launch.sh" to "#!/system/bin/sh\n".toByteArray(),
       "runtime/templates/subscription/subscription-service-loop.sh" to "#!/system/bin/sh\n".toByteArray(),
+      "runtime/templates/ticket/ticket-web-tunnel-service-loop.sh" to "#!/system/bin/sh\n".toByteArray(),
       "runtime/entrypoints/pixel-dns-start.sh" to "#!/system/bin/sh\n".toByteArray(),
       "runtime/entrypoints/pixel-dns-stop.sh" to "#!/system/bin/sh\n".toByteArray(),
       "runtime/entrypoints/pixel-ssh-start.sh" to "#!/system/bin/sh\n".toByteArray(),
@@ -353,7 +379,10 @@ class RuntimeInstallerBootstrapTest {
       "runtime/entrypoints/pixel-notifier-stop.sh" to "#!/system/bin/sh\n".toByteArray(),
       "runtime/entrypoints/pixel-subscription-start.sh" to "#!/system/bin/sh\n".toByteArray(),
       "runtime/entrypoints/pixel-subscription-stop.sh" to "#!/system/bin/sh\n".toByteArray(),
-      "runtime/entrypoints/pixel-subscription-health.sh" to "#!/system/bin/sh\n".toByteArray()
+      "runtime/entrypoints/pixel-subscription-health.sh" to "#!/system/bin/sh\n".toByteArray(),
+      "runtime/entrypoints/pixel-ticket-start.sh" to "#!/system/bin/sh\n".toByteArray(),
+      "runtime/entrypoints/pixel-ticket-stop.sh" to "#!/system/bin/sh\n".toByteArray(),
+      "runtime/entrypoints/pixel-ticket-health.sh" to "#!/system/bin/sh\n".toByteArray()
     )
 
     override fun open(path: String): java.io.InputStream {
@@ -372,9 +401,12 @@ class RuntimeInstallerBootstrapTest {
   private class FakeRootExecutor(
     private val failSshCredentialInstall: Boolean = false
   ) : RootExecutor {
+    val commands = mutableListOf<String>()
+
     override suspend fun isRootAvailable(): Boolean = true
 
     override suspend fun run(command: String, timeout: kotlin.time.Duration): RootResult {
+      commands += command
       return RootResult(
         exitCode = 0,
         stdout = if (command.contains("getenforce")) "Permissive\n" else "",
@@ -385,6 +417,7 @@ class RuntimeInstallerBootstrapTest {
     }
 
     override suspend fun runScript(script: String, timeout: kotlin.time.Duration): RootResult {
+      commands += script
       if (failSshCredentialInstall && script.contains("src_auth=") && script.contains("dst_passwd=")) {
         return RootResult(
           exitCode = 13,

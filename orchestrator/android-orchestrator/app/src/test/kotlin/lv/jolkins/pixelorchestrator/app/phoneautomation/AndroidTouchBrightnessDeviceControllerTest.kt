@@ -49,6 +49,10 @@ class AndroidTouchBrightnessDeviceControllerTest {
               mode=0
               value=255
               display_percentage=67.0
+              panel_path=/sys/class/backlight/panel0-backlight
+              panel_brightness=3939
+              panel_actual_brightness=3939
+              panel_max_brightness=3939
             """.trimIndent()
           )
         )

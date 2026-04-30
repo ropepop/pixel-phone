@@ -84,6 +84,12 @@ object ComponentRegistry {
       healthCommand = "sh /data/local/pixel-stack/bin/pixel-subscription-health.sh"
     ),
     ComponentRegistryEntry(
+      id = "ticket_screen",
+      startCommand = "sh /data/local/pixel-stack/bin/pixel-ticket-start.sh",
+      stopCommand = "sh /data/local/pixel-stack/bin/pixel-ticket-stop.sh",
+      healthCommand = "sh /data/local/pixel-stack/bin/pixel-ticket-health.sh"
+    ),
+    ComponentRegistryEntry(
       id = "ddns",
       startCommand = "sh /data/local/pixel-stack/bin/pixel-ddns-sync.sh",
       stopCommand = "true",

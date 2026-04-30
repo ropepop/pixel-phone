@@ -34,22 +34,24 @@ internal fun PhoneAutomationPrerequisiteSnapshot.issueFor(
     return null
   }
 
-  if (!accessibilityPermissionEnabled) {
+  val accessibilityRequired = recoverAutomation
+
+  if (accessibilityRequired && !accessibilityPermissionEnabled) {
     return PhoneAutomationPrerequisiteIssue(
       reasonKey = "accessibility_permission",
       detail = "Accessibility access is not enabled",
       recoverAutomation = recoverAutomation,
-      recoverTouchBrightness = recoverTouchBrightness,
+      recoverTouchBrightness = false,
       connectionOnly = false
     )
   }
 
-  if (!accessibilityConnected) {
+  if (accessibilityRequired && !accessibilityConnected) {
     return PhoneAutomationPrerequisiteIssue(
       reasonKey = "accessibility_connection",
       detail = "Accessibility service is not connected",
       recoverAutomation = recoverAutomation,
-      recoverTouchBrightness = recoverTouchBrightness,
+      recoverTouchBrightness = false,
       connectionOnly = true
     )
   }

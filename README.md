@@ -2,92 +2,55 @@
 
 Unified operations, runtime, workload, and automation repository for Pixel-root orchestrated services.
 
-## Purpose
+## What It Does
 
-This repository consolidates the production Pixel stack into a single operational workspace with:
-- root orchestrator code and runtime scripts,
-- workload modules (train bot and site notifications),
-- automation workflows,
-- pihole secret artifacts (intentionally tracked per current policy),
-- evidence archives and observability contracts.
+- Unified operations, runtime, workload, and automation repository for Pixel-root orchestrated services.
+- root orchestrator code and runtime scripts,.
+- workload modules (train bot and site notifications),.
+- pihole secret artifacts (intentionally tracked per current policy),.
 
-## Repository Map
+## Highlights
 
-- `orchestrator/`: Android orchestrator app, root scripts, templates, orchestrator configs, module registry.
-- `orchestrator/vpn-access`: VPN access module manifest and integration overlays.
-- `workloads/`: runtime applications managed by orchestrator (`train-bot`, `site-notifications`).
-- `automation/`: external scheduler/cron automation (`task-executor`).
-- `infra/`: infrastructure-specific files (`pihole/secrets`).
-- `ops/`: archived evidence and reports.
-- `docs/`: canonical runbooks, onboarding docs, architecture and references.
-- `standards/`: shared schemas and templates.
-- `tools/`: import, observability, and docs utility scripts.
+- Repository structure is summarized so visitors can quickly understand what is included.
+- Primary detected language signals: Shell, Kotlin, Go, Python.
+- Previous public README content is available in README.previous.md.
 
-## Operator Quickstart
+## Tech Stack
 
-1. Review canonical runbook: [ROOT_OPERATIONS](./docs/runbooks/ROOT_OPERATIONS.md).
-2. Normal production redeploy path:
-```bash
-./tools/pixel/redeploy.sh
-```
-2. Validate module layout and contracts:
-```bash
-yq '.modules[]?.id' orchestrator/modules/registry/modules.yaml
-```
-3. Run observability/evidence checks:
-```bash
-./tools/observability/validate_evidence.sh
-./tools/docs/check_links.sh
-```
+- Shell.
+- Kotlin.
+- Go.
+- Python.
+- JavaScript.
+- CSS.
+- HTML.
 
-## Developer Quickstart
+## Quick Start
 
-1. Refresh snapshot imports when needed:
-```bash
-./tools/import/import_snapshot.sh
-```
-2. Validate Android orchestrator project:
-```bash
-cd orchestrator/android-orchestrator
-./gradlew test
-```
-3. Validate automation/workload suites (examples):
-```bash
-cd workloads/site-notifications && python -m venv .venv && . .venv/bin/activate && pip install -r requirements-dev.txt && PYTHONPATH=. pytest -q
-cd workloads/train-bot && go test ./...
-cd automation/task-executor && ./scripts/drain_runner_smoke_test.sh
-```
+No setup command was inferred from the sanitized project files.
 
-## Observability
+## Project Map
 
-- Event schema: [observability-event.v1.schema.json](./standards/schemas/observability-event.v1.schema.json)
-- Health schema: [observability-health.v1.schema.json](./standards/schemas/observability-health.v1.schema.json)
-- Event emitter: `./tools/observability/emit_event.sh`
-- Evidence archive root: `ops/evidence/`
+- `.github/`: GitHub workflow and repository automation files.
+- `automation/`: Automation jobs and supporting scripts.
+- `docs/`: Project documentation and reference material.
+- `infra/`: Public project file or directory included in the sanitized copy.
+- `legacy/`: Public project file or directory included in the sanitized copy.
+- `ops/`: Public project file or directory included in the sanitized copy.
+- `orchestrator/`: Runtime orchestration and deployment support.
+- `scripts/`: Helper scripts for setup, maintenance, or verification.
+- `standards/`: Public project file or directory included in the sanitized copy.
+- `tools/`: Developer and operations tooling.
 
-## Runtime Notes
+## Testing
 
-- `train_bot` treats missing same-day schedule data as degraded after `SCRAPER_DAILY_HOUR` in the runtime timezone (`Europe/Riga` by default).
-- The Android supervisor can auto-restart `train_bot` when heartbeat is healthy but same-day schedule freshness is missing after the daily cutoff.
-- Before the daily cutoff, schedule reads can still return `schedule unavailable` if the current day has not been loaded yet.
-
-## Add New Module
-
-Use the manifest-driven onboarding flow:
-- [ADDING_A_MODULE](./docs/onboarding/ADDING_A_MODULE.md)
-
-## Scope Notes
-
-- Consolidated modules: `orchestrator`, `telegram train app`, `site-notifications`, `task-executor`, `pihole`, `vpn-access`.
-- White-label notifier repository remains out of scope.
-- History was intentionally reset for this monorepo.
+No test command was inferred from the sanitized project files.
 
 <!-- github-manager-readme:start -->
 ## Public Copy Notes
 
-This repository is refreshed by GitHub Manager from a sanitized staging copy.
-Files that look private, generated, or unsafe for public release are left out before each update.
-
+- This README was generated by GitHub Manager for a sanitized public copy.
+- Files that look private, generated, or unsafe for public release are left out before each update.
 - Risky files removed in the latest sanitation pass: 39
-- Top-level items in this public copy: `.github/`, `automation/`, `docs/`, `infra/`, `legacy/`, `ops/`, `orchestrator/`, `standards/`
+- The previous sanitized README is preserved in `README.previous.md`.
 <!-- github-manager-readme:end -->

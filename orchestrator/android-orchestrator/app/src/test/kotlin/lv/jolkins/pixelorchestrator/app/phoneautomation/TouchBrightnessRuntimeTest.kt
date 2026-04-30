@@ -43,7 +43,7 @@ class TouchBrightnessRuntimeTest {
     runCurrent()
 
     assertEquals(listOf(TouchBrightnessRuntime.DIM_PERCENT), deviceController.setBrightnessPercentCalls)
-    assertEquals(1, overlayController.showCalls)
+    assertEquals(0, overlayController.showCalls)
     assertEquals(1, store.load().touchBrightnessRestoreMode)
     assertEquals(127, store.load().touchBrightnessRestoreValue)
     assertEquals(TouchBrightnessRuntimeState.BLACKOUT_IDLE, store.load().touchBrightnessState)
@@ -238,16 +238,16 @@ class TouchBrightnessRuntimeTest {
 
     assertEquals(listOf(TouchBrightnessRuntime.DIM_PERCENT), deviceController.setBrightnessPercentCalls)
     assertEquals(TouchBrightnessRuntimeState.BLACKOUT_IDLE, store.load().touchBrightnessState)
-    assertTrue(store.load().touchBrightnessDetail.contains("fallback"))
+    assertTrue(store.load().touchBrightnessDetail.contains("Panel dim waiting for touch"))
 
     overlayController.setAvailable(true)
     eventSource.emit(TouchBrightnessEvent.OverlayAvailabilityChanged(available = true))
     runCurrent()
 
-    assertEquals(1, overlayController.showCalls)
+    assertEquals(0, overlayController.showCalls)
     assertEquals(listOf(TouchBrightnessRuntime.DIM_PERCENT), deviceController.setBrightnessPercentCalls)
     assertEquals(TouchBrightnessRuntimeState.BLACKOUT_IDLE, store.load().touchBrightnessState)
-    assertTrue(store.load().touchBrightnessDetail.contains("Blackout waiting for touch"))
+    assertTrue(store.load().touchBrightnessDetail.contains("Panel dim waiting for touch"))
   }
 
   @Test
@@ -312,7 +312,7 @@ class TouchBrightnessRuntimeTest {
     runCurrent()
 
     assertEquals(TouchBrightnessRuntimeState.BLACKOUT_IDLE, store.load().touchBrightnessState)
-    assertTrue(store.load().touchBrightnessDetail.contains("fallback"))
+    assertTrue(store.load().touchBrightnessDetail.contains("Panel dim waiting for touch"))
     assertEquals(
       listOf(
         TouchBrightnessRuntime.DIM_PERCENT
@@ -353,6 +353,176 @@ class TouchBrightnessRuntimeTest {
   }
 
   @Test
+  fun panelDimGuardStopsWhileTouchIsActive() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val deviceController = FakeTouchBrightnessDeviceController()
+    val overlayController = FakeBlackoutOverlayController()
+    val eventSource = FakeTouchBrightnessEventSource(
+      interactive = true,
+      activeTouchCount = 0,
+      overlayAvailable = true,
+      source = preferredSource
+    )
+    val runtime = buildRuntime(
+      scope = backgroundScope,
+      store = store,
+      deviceController = deviceController,
+      overlayController = overlayController,
+      eventSource = eventSource,
+      uptimeClock = { testScheduler.currentTime },
+      dimGuardEnabled = true
+    )
+
+    runtime.start()
+    runCurrent()
+    advanceTimeBy(TouchBrightnessRuntime.PANEL_DIM_GUARD_INTERVAL_MILLIS)
+    runCurrent()
+
+    assertEquals(
+      listOf(
+        TouchBrightnessRuntime.DIM_PERCENT,
+        TouchBrightnessRuntime.DIM_PERCENT
+      ),
+      deviceController.setBrightnessPercentCalls
+    )
+
+    eventSource.emit(
+      TouchBrightnessEvent.TouchCountChanged(
+        activeTouchCount = 1,
+        observedAtUptimeMillis = testScheduler.currentTime
+      )
+    )
+    runCurrent()
+    advanceTimeBy(TouchBrightnessRuntime.PANEL_DIM_GUARD_INTERVAL_MILLIS * 2)
+    runCurrent()
+
+    assertEquals(
+      listOf(
+        TouchBrightnessRuntime.DIM_PERCENT,
+        TouchBrightnessRuntime.DIM_PERCENT
+      ),
+      deviceController.setBrightnessPercentCalls
+    )
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+  }
+
+  @Test
+  fun panelDimGuardRetriesTransientForegroundBrightnessPushBeforeFailingSession() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val deviceController = FakeTouchBrightnessDeviceController().apply {
+      setBrightnessResults += PhoneAutomationActionResult(true, "initial dim")
+      setBrightnessResults += PhoneAutomationActionResult(false, "foreground app pushed brightness")
+      setBrightnessResults += PhoneAutomationActionResult(true, "guard recovered")
+    }
+    val overlayController = FakeBlackoutOverlayController()
+    val eventSource = FakeTouchBrightnessEventSource(
+      interactive = true,
+      activeTouchCount = 0,
+      overlayAvailable = true,
+      source = preferredSource
+    )
+    val runtime = buildRuntime(
+      scope = backgroundScope,
+      store = store,
+      deviceController = deviceController,
+      overlayController = overlayController,
+      eventSource = eventSource,
+      uptimeClock = { testScheduler.currentTime },
+      dimGuardEnabled = true
+    )
+
+    runtime.start()
+    runCurrent()
+    advanceTimeBy(TouchBrightnessRuntime.PANEL_DIM_GUARD_INTERVAL_MILLIS)
+    runCurrent()
+
+    assertEquals(TouchBrightnessRuntimeState.BLACKOUT_IDLE, store.load().touchBrightnessState)
+    assertTrue(store.load().touchBrightnessDetail.contains("retrying"))
+
+    advanceTimeBy(TouchBrightnessRuntime.PANEL_DIM_GUARD_INTERVAL_MILLIS)
+    runCurrent()
+
+    assertEquals(TouchBrightnessRuntimeState.BLACKOUT_IDLE, store.load().touchBrightnessState)
+    assertEquals(
+      listOf(
+        TouchBrightnessRuntime.DIM_PERCENT,
+        TouchBrightnessRuntime.DIM_PERCENT,
+        TouchBrightnessRuntime.DIM_PERCENT
+      ),
+      deviceController.setBrightnessPercentCalls
+    )
+  }
+
+  @Test
+  fun panelDimGuardStopsWhenScreenTurnsOff() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val deviceController = FakeTouchBrightnessDeviceController()
+    val overlayController = FakeBlackoutOverlayController()
+    val eventSource = FakeTouchBrightnessEventSource(
+      interactive = true,
+      activeTouchCount = 0,
+      overlayAvailable = true,
+      source = preferredSource
+    )
+    val runtime = buildRuntime(
+      scope = backgroundScope,
+      store = store,
+      deviceController = deviceController,
+      overlayController = overlayController,
+      eventSource = eventSource,
+      uptimeClock = { testScheduler.currentTime },
+      dimGuardEnabled = true
+    )
+
+    runtime.start()
+    runCurrent()
+    eventSource.emit(TouchBrightnessEvent.ScreenInteractiveChanged(interactive = false))
+    runCurrent()
+    advanceTimeBy(TouchBrightnessRuntime.PANEL_DIM_GUARD_INTERVAL_MILLIS * 2)
+    runCurrent()
+
+    assertEquals(listOf(TouchBrightnessRuntime.DIM_PERCENT), deviceController.setBrightnessPercentCalls)
+    assertEquals(TouchBrightnessRuntimeState.SUSPENDED_SCREEN_OFF, store.load().touchBrightnessState)
+  }
+
+  @Test
+  fun panelDimGuardStopsWhenFeatureIsDisabled() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val deviceController = FakeTouchBrightnessDeviceController()
+    val overlayController = FakeBlackoutOverlayController()
+    val eventSource = FakeTouchBrightnessEventSource(
+      interactive = true,
+      activeTouchCount = 0,
+      overlayAvailable = true,
+      source = preferredSource
+    )
+    val runtime = buildRuntime(
+      scope = backgroundScope,
+      store = store,
+      deviceController = deviceController,
+      overlayController = overlayController,
+      eventSource = eventSource,
+      uptimeClock = { testScheduler.currentTime },
+      dimGuardEnabled = true
+    )
+
+    runtime.start()
+    runCurrent()
+    store.setTouchBrightnessEnabled(false)
+    runtime.stop(reason = "disabled:test")
+    runCurrent()
+    advanceTimeBy(TouchBrightnessRuntime.PANEL_DIM_GUARD_INTERVAL_MILLIS * 2)
+    runCurrent()
+
+    assertEquals(listOf(TouchBrightnessRuntime.DIM_PERCENT), deviceController.setBrightnessPercentCalls)
+    assertEquals(
+      listOf(ScreenBrightnessState(mode = 1, value = 127)),
+      deviceController.restoreBrightnessStateCalls
+    )
+    assertEquals(TouchBrightnessRuntimeState.DISABLED, store.load().touchBrightnessState)
+  }
+
+  @Test
   fun disablingRestoresSavedBrightnessStateAndHidesOverlay() = runTest {
     val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
     val deviceController = FakeTouchBrightnessDeviceController()
@@ -376,7 +546,7 @@ class TouchBrightnessRuntimeTest {
       listOf(ScreenBrightnessState(mode = 1, value = 127)),
       deviceController.restoreBrightnessStateCalls
     )
-    assertEquals(1, overlayController.hideCalls)
+    assertEquals(2, overlayController.hideCalls)
     assertEquals(null, store.load().touchBrightnessRestoreMode)
     assertEquals(null, store.load().touchBrightnessRestoreValue)
     assertEquals(TouchBrightnessRuntimeState.DISABLED, store.load().touchBrightnessState)
@@ -453,7 +623,7 @@ class TouchBrightnessRuntimeTest {
     runCurrent()
 
     assertEquals(TouchBrightnessRuntimeState.BLACKOUT_IDLE, store.load().touchBrightnessState)
-    assertEquals(2, overlayController.showCalls)
+    assertEquals(0, overlayController.showCalls)
     assertEquals(
       listOf(
         TouchBrightnessRuntime.DIM_PERCENT,
@@ -500,6 +670,7 @@ class TouchBrightnessRuntimeTest {
     overlayController: FakeBlackoutOverlayController,
     eventSource: FakeTouchBrightnessEventSource,
     eventSourceFactory: (() -> TouchBrightnessEventSource)? = null,
+    dimGuardEnabled: Boolean = false,
     uptimeClock: () -> Long
   ): TouchBrightnessRuntime {
     return TouchBrightnessRuntime(
@@ -511,7 +682,8 @@ class TouchBrightnessRuntimeTest {
       deviceController = deviceController,
       overlayController = overlayController,
       eventSourceFactory = eventSourceFactory ?: { eventSource },
-      uptimeClock = uptimeClock
+      uptimeClock = uptimeClock,
+      dimGuardEnabled = dimGuardEnabled
     )
   }
 }
@@ -598,6 +770,7 @@ private class FakeTouchBrightnessDeviceController : TouchBrightnessDeviceControl
   var setBrightnessResult = PhoneAutomationActionResult(true, "set")
   var restoreBrightnessResult = PhoneAutomationActionResult(true, "restored")
   var restoreDelayMillis = 0L
+  val setBrightnessResults = ArrayDeque<PhoneAutomationActionResult>()
   val setBrightnessPercentCalls = mutableListOf<Int>()
   val restoreBrightnessStateCalls = mutableListOf<ScreenBrightnessState>()
 
@@ -612,7 +785,7 @@ private class FakeTouchBrightnessDeviceController : TouchBrightnessDeviceControl
       value = ScreenBrightnessControl.legacySystemValue(percent),
       displayPercentage = percent.toFloat()
     )
-    return setBrightnessResult
+    return setBrightnessResults.removeFirstOrNull() ?: setBrightnessResult
   }
 
   override suspend fun restoreBrightnessState(state: ScreenBrightnessState): PhoneAutomationActionResult {

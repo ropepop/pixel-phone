@@ -9,6 +9,7 @@ source "${WORKSPACE_ROOT}/tools/pixel/transport.sh"
 APK_PATH="${APP_ROOT}/app/build/outputs/apk/debug/app-debug.apk"
 PKG="lv.jolkins.pixelorchestrator"
 RECEIVER="${PKG}/.app.OrchestratorActionReceiver"
+SUPERVISOR="${PKG}/.app.SupervisorService"
 RUNTIME_ASSET_FRESHNESS_SCRIPT="${REPO_ROOT}/scripts/android/runtime_asset_freshness.sh"
 ACTION_RESULT_REMOTE_DIR="/data/local/pixel-stack/run/orchestrator-action-results"
 
@@ -55,7 +56,7 @@ Options:
                                redeploy_component|start_component|stop_component|
                                restart_component|health_component)
   --component NAME            required when action is component-scoped
-                              (dns|ssh|vpn|ddns|remote|train_bot|satiksme_bot|site_notifier|subscription_bot)
+                              (dns|ssh|vpn|ddns|remote|train_bot|satiksme_bot|site_notifier|subscription_bot|ticket_screen)
   --runtime-bundle-dir PATH   local runtime bundle dir containing runtime-manifest.json and artifacts/
   --component-release-dir PATH
                               local component release dir containing release-manifest.json and artifacts/
@@ -218,9 +219,9 @@ fi
 case "${ACTION}" in
   start_component|stop_component|restart_component|health_component|redeploy_component)
     case "${COMPONENT}" in
-      dns|ssh|vpn|ddns|remote|train_bot|satiksme_bot|site_notifier|subscription_bot) ;;
+      dns|ssh|vpn|ddns|remote|train_bot|satiksme_bot|site_notifier|subscription_bot|ticket_screen) ;;
       *)
-        echo "--component must be one of: dns|ssh|vpn|ddns|remote|train_bot|satiksme_bot|site_notifier|subscription_bot" >&2
+        echo "--component must be one of: dns|ssh|vpn|ddns|remote|train_bot|satiksme_bot|site_notifier|subscription_bot|ticket_screen" >&2
         exit 2
         ;;
     esac
@@ -390,7 +391,18 @@ PY
   fi
 }
 
-repair_phone_automation_permissions || true
+should_repair_phone_automation_permissions() {
+  if [[ "${COMPONENT}" == "ticket_screen" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+if should_repair_phone_automation_permissions; then
+  repair_phone_automation_permissions || true
+else
+  echo "Skipping phone automation accessibility repair for ticket_screen least-permission deploy"
+fi
 
 remote_sha256_file() {
   pixel_transport_remote_sha256_file "$1"
@@ -729,6 +741,13 @@ component_release_owner_component() {
   esac
 }
 
+component_requires_release_manifest() {
+  case "${1}" in
+    ddns|ticket_screen) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 component_release_manifest_component() {
   local release_dir="$1"
   python3 - "${release_dir}/release-manifest.json" <<'PY'
@@ -905,9 +924,29 @@ wait_for_action_result() {
 dispatch_orchestrator_action() {
   local shell_cmd=""
   local dispatch_output=""
+  local supervisor_action=""
   local rc=0
 
-  shell_cmd="am broadcast -n ${RECEIVER} --es orchestrator_action ${ACTION} --es pixel_run_id ${PIXEL_RUN_ID}"
+  case "${ACTION}" in
+    bootstrap) supervisor_action="lv.jolkins.pixelorchestrator.action.BOOTSTRAP" ;;
+    start_all) supervisor_action="lv.jolkins.pixelorchestrator.action.START_ALL" ;;
+    stop_all) supervisor_action="lv.jolkins.pixelorchestrator.action.STOP_ALL" ;;
+    health) supervisor_action="lv.jolkins.pixelorchestrator.action.HEALTH" ;;
+    start_component) supervisor_action="lv.jolkins.pixelorchestrator.action.START_COMPONENT" ;;
+    stop_component) supervisor_action="lv.jolkins.pixelorchestrator.action.STOP_COMPONENT" ;;
+    restart_component) supervisor_action="lv.jolkins.pixelorchestrator.action.RESTART_COMPONENT" ;;
+    redeploy_component) supervisor_action="lv.jolkins.pixelorchestrator.action.REDEPLOY_COMPONENT" ;;
+    health_component) supervisor_action="lv.jolkins.pixelorchestrator.action.HEALTH_COMPONENT" ;;
+    sync_ddns) supervisor_action="lv.jolkins.pixelorchestrator.action.SYNC_DDNS" ;;
+    export_bundle) supervisor_action="lv.jolkins.pixelorchestrator.action.EXPORT_BUNDLE" ;;
+    cleanup) supervisor_action="lv.jolkins.pixelorchestrator.action.CLEANUP" ;;
+    *)
+      echo "Unsupported action dispatch: ${ACTION}" >&2
+      return 1
+      ;;
+  esac
+
+  shell_cmd="am start-foreground-service -n ${SUPERVISOR} -a ${supervisor_action} --es orchestrator_action ${ACTION} --es pixel_run_id ${PIXEL_RUN_ID}"
   if [[ -n "${COMPONENT}" ]]; then
     shell_cmd="${shell_cmd} --es orchestrator_component ${COMPONENT}"
   fi
@@ -916,13 +955,13 @@ dispatch_orchestrator_action() {
   fi
 
   set +e
-  dispatch_output="$(pixel_transport_shell "${shell_cmd}" 2>&1)"
+  dispatch_output="$(pixel_transport_root_shell "${shell_cmd}" 2>&1)"
   rc=$?
   set -e
   printf '%s\n' "${dispatch_output}"
 
-  if (( rc != 0 )) || ! grep -Fq 'Broadcast completed:' <<<"${dispatch_output}"; then
-    echo "Failed to dispatch action ${ACTION} via ${RECEIVER}" >&2
+  if (( rc != 0 )) || ! grep -Eq 'Starting service:|Foreground service' <<<"${dispatch_output}"; then
+    echo "Failed to dispatch action ${ACTION} via ${SUPERVISOR}" >&2
     return 1
   fi
 }
@@ -974,7 +1013,7 @@ fi
 if [[ "${ACTION}" == "bootstrap" ]]; then
   ensure_runtime_manifest_staged
 fi
-if [[ "${ACTION}" == "redeploy_component" ]]; then
+if [[ "${ACTION}" == "redeploy_component" ]] && component_requires_release_manifest "${COMPONENT}"; then
   ensure_component_release_manifest_staged "${COMPONENT}"
 fi
 
@@ -1010,7 +1049,9 @@ fi
 action_wait_rc=0
 wait_for_action_result "${wait_timeout_sec}" || action_wait_rc=$?
 
-if (( action_wait_rc != 0 )) && [[ "${ACTION}" == "redeploy_component" && "${ACTION_RESULT_SOURCE}" == "none" ]]; then
+if (( action_wait_rc != 0 )) &&
+  [[ "${ACTION}" == "redeploy_component" && "${ACTION_RESULT_SOURCE}" == "none" ]] &&
+  component_requires_release_manifest "${COMPONENT}"; then
   expected_release_id="$(component_expected_release_id "${COMPONENT_RELEASE_DIR}")"
   ACTION_RESULT_SUMMARY="$(collect_component_redeploy_timeout_summary "${expected_release_id}")"
   echo "Redeploy recovery summary:"

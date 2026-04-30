@@ -18,6 +18,8 @@ object OrchestratorShellCommand {
   const val ACTION_SYNC_DDNS = "sync_ddns"
   const val ACTION_EXPORT_BUNDLE = "export_bundle"
   const val ACTION_CLEANUP = "cleanup"
+  const val ACTION_TICKET_START_SERVER = "ticket_start_server"
+  const val ACTION_TICKET_STOP_SERVER = "ticket_stop_server"
 
   fun normalizeAction(value: String?): String = value?.trim()?.lowercase().orEmpty()
 
@@ -35,6 +37,8 @@ object OrchestratorShellCommand {
       ACTION_SYNC_DDNS -> SupervisorService.ACTION_SYNC_DDNS
       ACTION_EXPORT_BUNDLE -> SupervisorService.ACTION_EXPORT_BUNDLE
       ACTION_CLEANUP -> SupervisorService.ACTION_CLEANUP
+      ACTION_TICKET_START_SERVER -> SupervisorService.ACTION_TICKET_START_SERVER
+      ACTION_TICKET_STOP_SERVER -> SupervisorService.ACTION_TICKET_STOP_SERVER
       else -> null
     }
 
@@ -52,6 +56,8 @@ object OrchestratorShellCommand {
       SupervisorService.ACTION_SYNC_DDNS -> ACTION_SYNC_DDNS
       SupervisorService.ACTION_EXPORT_BUNDLE -> ACTION_EXPORT_BUNDLE
       SupervisorService.ACTION_CLEANUP -> ACTION_CLEANUP
+      SupervisorService.ACTION_TICKET_START_SERVER -> ACTION_TICKET_START_SERVER
+      SupervisorService.ACTION_TICKET_STOP_SERVER -> ACTION_TICKET_STOP_SERVER
       else -> null
     }
 }

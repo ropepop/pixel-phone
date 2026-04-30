@@ -111,6 +111,43 @@ class PhoneAutomationBridgeTest {
   }
 
   @Test
+  fun blackoutSuppressionHidesOverlayAndIgnoresShowRequests() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    val host = FakeAccessibilityHost()
+    PhoneAutomationServiceBridge.bindAccessibilityService(host)
+
+    PhoneAutomationServiceBridge.setBlackoutOverlaySuppressed(true)
+    assertTrue(PhoneAutomationServiceBridge.isBlackoutOverlaySuppressed())
+    assertTrue(PhoneAutomationServiceBridge.setBlackoutOverlayVisible(true))
+
+    assertEquals(listOf(false), host.requestedVisibility)
+    assertEquals(listOf(false), host.syncedVisibility.drop(1))
+
+    PhoneAutomationServiceBridge.setBlackoutOverlaySuppressed(false)
+    assertFalse(PhoneAutomationServiceBridge.isBlackoutOverlaySuppressed())
+  }
+
+  @Test
+  fun remoteScreenBrightnessStateIsSharedAndReset() {
+    PhoneAutomationServiceBridge.resetForTests()
+    val state = ScreenBrightnessState(
+      mode = 0,
+      value = 6,
+      panelPath = "/sys/class/backlight/panel0-backlight",
+      panelBrightness = 830,
+      panelMaxBrightness = 3939
+    )
+
+    PhoneAutomationServiceBridge.setRemoteScreenBrightnessState(state)
+
+    assertEquals(state, PhoneAutomationServiceBridge.remoteScreenBrightnessState())
+
+    PhoneAutomationServiceBridge.resetForTests()
+
+    assertEquals(null, PhoneAutomationServiceBridge.remoteScreenBrightnessState())
+  }
+
+  @Test
   fun notificationBootstrapWaitsForListenerAndSnapshot() = runTest {
     PhoneAutomationServiceBridge.resetForTests()
 
