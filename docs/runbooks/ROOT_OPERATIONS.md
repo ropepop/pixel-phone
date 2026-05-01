@@ -712,10 +712,7 @@ bash orchestrator/scripts/docs/generate_config_reference.sh
 
 Compatibility docs (slim pointers):
 - `docs/README.md`
-- `docs/ANDROID_ROOT_ORCHESTRATOR.md`
-- `docs/ADGUARDHOME_ROOTED_ROLLOUT.md`
 - `docs/ROOTED_PIXEL_SSH_RUNBOOK.md`
-- `docs/ADGUARDHOME_REMOTE_DOH.md`
 - `docs/runbooks/DISASTER_RECOVERY.md`
 - `docs/runbooks/ADGUARDHOME_ROOTED_STABILITY_RECOVERY.md`
 - `docs/runbooks/REDEPLOY_CHECKLISTS.md`

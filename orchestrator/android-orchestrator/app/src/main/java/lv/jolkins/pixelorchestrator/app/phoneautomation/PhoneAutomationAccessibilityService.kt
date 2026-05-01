@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomationAccessibilityHost {
   private lateinit var windowManager: WindowManager
   private var blackoutOverlayView: View? = null
+  private var blackoutOverlayActivePointerCount = 0
 
   override fun onServiceConnected() {
     super.onServiceConnected()
@@ -203,13 +204,53 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     if (blackoutOverlayView != null) {
       return true
     }
+    blackoutOverlayActivePointerCount = 0
     val overlay = FrameLayout(this).apply {
       setBackgroundColor(Color.BLACK)
       isClickable = true
       importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+      var lastWakeEventTime = 0L
       setOnTouchListener { _, event ->
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-          PhoneAutomationServiceBridge.recordBlackoutOverlayWakeRequested(event.eventTime)
+        val previousCount = blackoutOverlayActivePointerCount
+        val gestureEnded = when (event.actionMasked) {
+          MotionEvent.ACTION_DOWN -> {
+            blackoutOverlayActivePointerCount = 1
+            false
+          }
+          MotionEvent.ACTION_POINTER_DOWN -> {
+            blackoutOverlayActivePointerCount = event.pointerCount.coerceAtLeast(previousCount + 1)
+            false
+          }
+          MotionEvent.ACTION_POINTER_UP -> {
+            blackoutOverlayActivePointerCount = (event.pointerCount - 1).coerceAtLeast(0)
+            false
+          }
+          MotionEvent.ACTION_UP,
+          MotionEvent.ACTION_CANCEL -> {
+            blackoutOverlayActivePointerCount = 0
+            true
+          }
+          else -> {
+            blackoutOverlayActivePointerCount = event.pointerCount.coerceAtLeast(previousCount)
+            false
+          }
+        }
+        val shouldReport = when (event.actionMasked) {
+          MotionEvent.ACTION_DOWN,
+          MotionEvent.ACTION_POINTER_DOWN,
+          MotionEvent.ACTION_POINTER_UP,
+          MotionEvent.ACTION_UP,
+          MotionEvent.ACTION_CANCEL -> true
+          MotionEvent.ACTION_MOVE -> event.eventTime - lastWakeEventTime >= OVERLAY_WAKE_REFRESH_MILLIS
+          else -> false
+        }
+        if (shouldReport) {
+          lastWakeEventTime = event.eventTime
+          PhoneAutomationServiceBridge.recordBlackoutOverlayWakeRequested(
+            observedAtUptimeMillis = event.eventTime,
+            activePointerCount = blackoutOverlayActivePointerCount,
+            gestureEnded = gestureEnded
+          )
         }
         true
       }
@@ -234,6 +275,7 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
 
   private fun hideBlackoutOverlay(): Boolean {
     val overlay = blackoutOverlayView ?: return true
+    blackoutOverlayActivePointerCount = 0
     return runCatching {
       windowManager.removeViewImmediate(overlay)
       blackoutOverlayView = null
@@ -242,5 +284,9 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
       blackoutOverlayView = null
       false
     }
+  }
+
+  private companion object {
+    private const val OVERLAY_WAKE_REFRESH_MILLIS = 250L
   }
 }

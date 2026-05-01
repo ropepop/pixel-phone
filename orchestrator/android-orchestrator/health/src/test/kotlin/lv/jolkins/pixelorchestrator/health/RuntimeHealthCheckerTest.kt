@@ -126,7 +126,7 @@ class RuntimeHealthCheckerTest {
         ok = true,
         stdout = probeOutput(
           idU = "0",
-          listeners = "LISTEN 0 128 0.0.0.0:53\nLISTEN 0 128 0.0.0.0:2222\nLISTEN 0 128 0.0.0.0:443\nLISTEN 0 128 0.0.0.0:853\n",
+          listeners = "LISTEN 0 128 0.0.0.0:53\nLISTEN 0 128 0.0.0.0:2222\nLISTEN 0 128 0.0.0.0:443\nLISTEN 0 128 0.0.0.0:853\nLISTEN 0 50 127.0.0.1:9388\n",
           ddnsEpoch = (System.currentTimeMillis() / 1000).toString(),
           trainBotPid = "1234",
           trainBotHeartbeat = (System.currentTimeMillis() / 1000).toString(),
@@ -174,6 +174,8 @@ class RuntimeHealthCheckerTest {
     assertEquals("true", snapshot.evidence["direct_public_path_healthy"])
     assertEquals("running", snapshot.moduleHealth["management"]?.status)
     assertEquals("running", snapshot.moduleHealth["subscription_bot"]?.status)
+    assertEquals("running", snapshot.moduleHealth["ticket_screen"]?.status)
+    assertEquals("1", snapshot.moduleHealth["ticket_screen"]?.details?.get("listener"))
   }
 
   @Test

@@ -32,8 +32,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
@@ -48,7 +50,7 @@ import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationServiceBr
 import lv.jolkins.pixelorchestrator.app.phoneautomation.ScreenBrightnessControl
 import lv.jolkins.pixelorchestrator.app.phoneautomation.ScreenBrightnessState
 import lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntimeState
-import lv.jolkins.pixelorchestrator.rootexec.SuRootExecutor
+import lv.jolkins.pixelorchestrator.rootexec.RootResult
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.net.InetAddress
@@ -56,6 +58,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.ByteBuffer
+import java.util.ArrayDeque
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
@@ -63,11 +66,27 @@ import kotlin.math.roundToInt
 class TicketStreamService : Service() {
   private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-  private val rootExecutor = SuRootExecutor()
+  private val rootExecutor = TicketRootCommandWorker()
+  private val runtimeStateStore = TicketRuntimeStateStore(rootExecutor, json)
   private val serverMutex = Mutex()
-  private val clients = Collections.synchronizedSet(mutableSetOf<TicketWebSocket>())
+  private val controlClients = Collections.synchronizedSet(mutableSetOf<TicketWebSocket>())
+  private val videoClients = Collections.synchronizedSet(mutableSetOf<TicketWebSocket>())
+  private val recentClientTelemetry = ArrayDeque<Pair<Long, String>>()
   private val encoderLock = Any()
+  private val sessionMutex = Mutex()
   private val running = AtomicBoolean(false)
+  private val rootCaptureEngine = TicketRootCaptureEngine(
+    scope = serviceScope,
+    rootExecutor = rootExecutor,
+    onFrame = ::handleRootCaptureFrame,
+    onStateChanged = { health ->
+      rootCaptureSnapshot = health
+      if (streamActive) {
+        broadcastStatus()
+        persistRuntimeState("root_capture_state")
+      }
+    }
+  )
 
   private var serverJob: Job? = null
   private var serverSocket: ServerSocket? = null
@@ -83,15 +102,37 @@ class TicketStreamService : Service() {
   private var foregroundGuardJob: Job? = null
   private var clientDisconnectStopJob: Job? = null
   @Volatile private var viviForegroundGraceUntilMillis: Long = 0L
+  @Volatile private var lastViviPageEnforceAtMillis: Long = 0L
   @Volatile private var startupDisconnectGraceUntilMillis: Long = 0L
   @Volatile private var pendingStartAfterProjection: Boolean = false
   @Volatile private var streamActive: Boolean = false
+  @Volatile private var activeCaptureMode: String = CAPTURE_MODE_IDLE
+  @Volatile private var fallbackReason: String? = null
+  @Volatile private var rootCaptureSnapshot: TicketRootCaptureHealth = TicketRootCaptureHealth()
   @Volatile private var lastViewerInputAtMillis: Long = SystemClock.elapsedRealtime()
+  @Volatile private var lastSessionStopReason: String? = null
   @Volatile private var lastMessage: String = "Ticket server is starting"
+  @Volatile private var capturePermissionLaunchedAtMillis: Long = 0L
+  @Volatile private var lastEncoderStartAtMillis: Long = 0L
+  @Volatile private var lastConfigSentAtMillis: Long = 0L
+  @Volatile private var lastFrameEncodedAtMillis: Long = 0L
+  @Volatile private var lastKeyFrameEncodedAtMillis: Long = 0L
+  @Volatile private var lastFrameSentAtMillis: Long = 0L
+  @Volatile private var lastKeyFrameRequestedAtMillis: Long = 0L
+  @Volatile private var lastVideoClientConnectedAtMillis: Long = 0L
+  @Volatile private var secureWindowCaptureBypassActive: Boolean = false
+  @Volatile private var secureWindowCaptureBypassMessage: String = "Secure-window capture bypass is inactive"
+  @Volatile private var encodedFrames: Long = 0L
+  @Volatile private var sentFrames: Long = 0L
+  @Volatile private var keyFrames: Long = 0L
+  @Volatile private var keyFrameRequests: Long = 0L
 
   override fun onCreate() {
     super.onCreate()
     ensureNotificationChannel()
+    serviceScope.launch {
+      rootCaptureEngine.probe()
+    }
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -118,9 +159,12 @@ class TicketStreamService : Service() {
     cancelForegroundGuard()
     PhoneAutomationServiceBridge.setRemoteScreenBrightnessState(null)
     PhoneAutomationServiceBridge.setBlackoutOverlaySuppressed(false)
+    rootCaptureEngine.stop("service_destroyed")
     stopEncoder()
     stopProjection()
+    runCatching { runBlocking { disableSecureWindowCaptureBypass() } }
     stopLocalServer()
+    rootExecutor.close()
     serviceScope.cancel()
     super.onDestroy()
   }
@@ -201,8 +245,10 @@ class TicketStreamService : Service() {
         }
       }
       Log.i(TAG, "ticket_http_request method=$method path=$path upgrade=${headers["upgrade"].orEmpty()}")
-      if (headers["upgrade"]?.equals("websocket", ignoreCase = true) == true && path == "/api/v1/session") {
-        acceptWebSocket(socket, input, output, headers)
+      if (headers["upgrade"]?.equals("websocket", ignoreCase = true) == true &&
+        (path == "/api/v1/session" || path == "/api/v1/stream")
+      ) {
+        acceptWebSocket(socket, input, output, headers, video = path == "/api/v1/stream")
         return@runCatching
       }
       val bodyLength = headers["content-length"]?.toIntOrNull() ?: 0
@@ -214,6 +260,7 @@ class TicketStreamService : Service() {
         method == "POST" && path == "/api/v1/session/stop" -> sendJson(output, stopTicketSession("browser_requested"))
         method == "POST" && path == "/api/v1/client-log" -> {
           val message = body.toString(Charsets.UTF_8).take(MAX_CLIENT_LOG_BYTES)
+          recordClientTelemetry(message)
           Log.i(TAG, "ticket_client_log $message")
           sendJsonPayload(output, """{"ok":true}""")
         }
@@ -231,7 +278,8 @@ class TicketStreamService : Service() {
     socket: Socket,
     input: BufferedInputStream,
     output: BufferedOutputStream,
-    headers: Map<String, String>
+    headers: Map<String, String>,
+    video: Boolean
   ) {
     val key = headers["sec-websocket-key"].orEmpty()
     if (key.isBlank()) {
@@ -249,31 +297,50 @@ class TicketStreamService : Service() {
     )
     output.flush()
     socket.soTimeout = 0
-    Log.i(TAG, "ticket_websocket_open clients=${clients.size + 1}")
+    Log.i(TAG, "ticket_websocket_open kind=${if (video) "video" else "control"} clients=${totalClientCount() + 1}")
 
     lateinit var client: TicketWebSocket
     client = TicketWebSocket(
       socket = socket,
       input = input,
       output = output,
-      onText = { message -> handleClientCommand(client, message) },
+      onText = { message ->
+        if (video) {
+          handleVideoClientCommand(message)
+        } else {
+          handleClientCommand(client, message)
+        }
+      },
       onClose = {
-        clients.remove(client)
-        Log.i(TAG, "ticket_websocket_close clients=${clients.size}")
-        if (clients.isEmpty()) {
+        if (video) {
+          videoClients.remove(client)
+        } else {
+          controlClients.remove(client)
+        }
+        Log.i(TAG, "ticket_websocket_close kind=${if (video) "video" else "control"} clients=${totalClientCount()}")
+        if (totalClientCount() == 0) {
           scheduleClientDisconnectStop()
         }
       }
     )
-    clients.add(client)
+    if (video) {
+      videoClients.add(client)
+      lastVideoClientConnectedAtMillis = SystemClock.elapsedRealtime()
+    } else {
+      controlClients.add(client)
+    }
     clientDisconnectStopJob?.cancel()
     clientDisconnectStopJob = null
-    if (ticketSessionOpen()) {
+    if (!video && ticketSessionOpen()) {
+      sendStatus(client)
       sendInactivityStatus(client)
     }
-    streamSize?.let { size ->
+    if (video) {
+      streamSize?.let { size ->
       client.sendText(configMessage(size))
+        lastConfigSentAtMillis = SystemClock.elapsedRealtime()
       requestKeyFrame()
+    }
     }
     ensureEncoderIfPossible()
     client.readLoop()
@@ -301,6 +368,18 @@ class TicketStreamService : Service() {
         val y = element["y"]?.jsonPrimitive?.intOrNull ?: return
         tap(x, y)
       }
+      "keyframe" -> requestKeyFrame()
+      "restart_stream" -> {
+        if (streamActive && activeCaptureMode == CAPTURE_MODE_ROOT_H264) {
+          rootCaptureEngine.restart("browser_restart_stream")
+          ensureEncoderIfPossible()
+        } else if (streamActive && mediaProjection != null) {
+          stopEncoder()
+          ensureEncoderIfPossible()
+          requestKeyFrame()
+        }
+        sendStatus(client)
+      }
       "long_press", "longpress", "hold" -> {
         blockLongPress()
       }
@@ -311,23 +390,67 @@ class TicketStreamService : Service() {
     }
   }
 
-  private suspend fun startTicketSession(): TicketSessionResponse {
+  private fun handleVideoClientCommand(message: String) {
+    val element = runCatching { json.parseToJsonElement(message).jsonObject }.getOrNull() ?: return
+    when (element["type"]?.jsonPrimitive?.contentOrNull) {
+      "keyframe" -> requestKeyFrame()
+    }
+  }
+
+  private suspend fun startTicketSession(): TicketSessionResponse = sessionMutex.withLock {
     if (!TicketPackageSupport.isInstalled(this, TicketScreenConfig.VIVI_PACKAGE)) {
-      return TicketSessionResponse(
+      return@withLock TicketSessionResponse(
         ok = false,
         state = "vivi_missing",
         message = "ViVi is not installed from a local Pixel app store yet"
       )
     }
-    if (!TicketAv1Support.isHardwareEncoderAvailable()) {
-      return TicketSessionResponse(
+    val rootCaptureAvailable = rootCaptureEngine.probe()
+    val av1Available = TicketAv1Support.isHardwareEncoderAvailable()
+    if (pendingStartAfterProjection && mediaProjection == null) {
+      extendStartupDisconnectGrace()
+      markViewerInput("capture_permission_already_pending")
+      lastMessage = "Screen capture permission is waiting on the Pixel"
+      broadcastStatus()
+      return@withLock TicketSessionResponse(
         ok = false,
-        state = "av1_unsupported",
-        message = "Hardware AV1 encoding is unavailable on this Pixel"
+        state = "capture_permission_required",
+        message = lastMessage
       )
     }
+    lastSessionStopReason = null
     rememberTicketBrightnessState()
     suppressBlackoutOverlayForRemote()
+    if (rootCaptureAvailable) {
+      enableSecureWindowCaptureBypass()
+      pendingStartAfterProjection = false
+      fallbackReason = null
+      activeCaptureMode = CAPTURE_MODE_ROOT_H264
+      streamActive = true
+      markViewerInput("session_start_root_capture")
+      lastMessage = "Ticket session is active through root capture"
+      launchVivi()
+      startForegroundGuard()
+      ensureEncoderIfPossible()
+      broadcastStatus()
+      persistRuntimeState("session_start_root_capture")
+      return@withLock TicketSessionResponse(ok = true, state = "active", message = lastMessage)
+    }
+    fallbackReason = rootCaptureSnapshot.message.ifBlank { "Root capture is unavailable" }
+    if (!av1Available) {
+      cancelInactivityTimer()
+      restoreTicketBrightness("capture_unavailable")
+      releaseBlackoutOverlaySuppression()
+      lastMessage = "Root capture is unavailable and MediaProjection AV1 fallback is unavailable"
+      activeCaptureMode = CAPTURE_MODE_IDLE
+      persistRuntimeState("capture_unavailable")
+      return@withLock TicketSessionResponse(
+        ok = false,
+        state = "capture_unavailable",
+        message = lastMessage
+      )
+    }
+    activeCaptureMode = CAPTURE_MODE_MEDIAPROJECTION_AV1
     if (mediaProjection == null) {
       pendingStartAfterProjection = true
       extendStartupDisconnectGrace()
@@ -340,43 +463,52 @@ class TicketStreamService : Service() {
         disableSecureWindowCaptureBypass()
         restoreTicketBrightness("capture_permission_blocked")
         releaseBlackoutOverlaySuppression()
-        return TicketSessionResponse(
+        return@withLock TicketSessionResponse(
           ok = false,
           state = "capture_permission_blocked",
           message = "Screen capture permission could not be opened on the Pixel"
         )
       }
-      return TicketSessionResponse(
+      return@withLock TicketSessionResponse(
         ok = false,
         state = "capture_permission_required",
         message = "Screen capture permission is waiting on the Pixel"
       )
     }
     streamActive = true
+    activeCaptureMode = CAPTURE_MODE_MEDIAPROJECTION_AV1
     markViewerInput("session_start")
-    lastMessage = "Ticket session is active"
+    lastMessage = "Ticket session is active through MediaProjection fallback"
     launchVivi()
     startForegroundGuard()
     ensureEncoderIfPossible()
     broadcastStatus()
-    return TicketSessionResponse(ok = true, state = "active", message = lastMessage)
+    persistRuntimeState("session_start_mediaprojection_fallback")
+    return@withLock TicketSessionResponse(ok = true, state = "active", message = lastMessage)
   }
 
-  private suspend fun stopTicketSession(reason: String): TicketSessionResponse {
+  private suspend fun stopTicketSession(reason: String): TicketSessionResponse = sessionMutex.withLock {
     clientDisconnectStopJob?.cancel()
     clientDisconnectStopJob = null
     startupDisconnectGraceUntilMillis = 0L
     pendingStartAfterProjection = false
     streamActive = false
+    activeCaptureMode = CAPTURE_MODE_IDLE
     brightnessGuardJob?.cancel()
     brightnessGuardJob = null
     cancelInactivityTimer()
     cancelForegroundGuard()
+    rootCaptureEngine.stop(reason)
     stopEncoder()
     stopProjection()
     disableSecureWindowCaptureBypass()
     lastMessage = "Ticket session stopped: $reason"
-    returnToOrchestrator()
+    lastSessionStopReason = reason
+    if (TicketSessionStopPolicy.shouldResetViviToTicket(reason)) {
+      resetViviToTicket(reason)
+    } else {
+      returnToOrchestrator()
+    }
     restoreTicketBrightness("session_stopped")
     releaseBlackoutOverlaySuppression()
     hideBlackoutOverlay()
@@ -384,7 +516,8 @@ class TicketStreamService : Service() {
     PhoneAutomationServiceBridge.setRemoteScreenBrightnessState(null)
     broadcastStatus()
     broadcastInactivityStatus()
-    return TicketSessionResponse(ok = true, state = "stopped", message = lastMessage)
+    persistRuntimeState("session_stop_$reason")
+    return@withLock TicketSessionResponse(ok = true, state = "stopped", message = lastMessage)
   }
 
   private fun ticketSessionOpen(): Boolean {
@@ -410,7 +543,7 @@ class TicketStreamService : Service() {
       if (delayMillis > 0L) {
         delay(delayMillis)
       }
-      if (clients.isEmpty()) {
+      if (totalClientCount() == 0) {
         clientDisconnectStopJob = null
         stopTicketSession("browser_left_ticket_screen")
       } else {
@@ -448,6 +581,7 @@ class TicketStreamService : Service() {
           stopTicketSession(violation)
           return@launch
         }
+        enforceViviTicketPageIfNeeded("foreground_guard")
         delay(VIVI_FOREGROUND_CHECK_MILLIS)
       }
       foregroundGuardJob = null
@@ -458,23 +592,35 @@ class TicketStreamService : Service() {
     foregroundGuardJob?.cancel()
     foregroundGuardJob = null
     viviForegroundGraceUntilMillis = 0L
+    lastViviPageEnforceAtMillis = 0L
   }
 
-  private suspend fun foregroundViolationReason(): String? {
+  private suspend fun foregroundViolationReason(allowStartupSystemUi: Boolean = true): String? {
     val output = focusedWindowSnapshot() ?: return "foreground_check_failed"
-    systemEscapeReason(output)?.let { return it }
-    if (SystemClock.elapsedRealtime() < viviForegroundGraceUntilMillis) {
+    val normalized = output.lowercase()
+    val now = SystemClock.elapsedRealtime()
+    systemEscapeReason(normalized)?.let { reason ->
+      if (
+        reason == "remote_system_ui_blocked" &&
+        allowStartupSystemUi &&
+        now < viviForegroundGraceUntilMillis &&
+        (FOCUSED_CAPTURE_PERMISSION_TOKENS.any { token -> normalized.contains(token) } || normalized.contains("systemui"))
+      ) {
+        return null
+      }
+      return reason
+    }
+    if (now < viviForegroundGraceUntilMillis) {
       return null
     }
     return if (output.contains(TicketScreenConfig.VIVI_PACKAGE)) null else "left_vivi_app"
   }
 
-  private fun systemEscapeReason(focusedWindow: String): String? {
-    val normalized = focusedWindow.lowercase()
+  private fun systemEscapeReason(normalizedFocusedWindow: String): String? {
     return when {
-      FOCUSED_POWER_TOKENS.any { token -> normalized.contains(token) } -> "remote_power_controls_blocked"
-      FOCUSED_NETWORK_TOKENS.any { token -> normalized.contains(token) } -> "remote_network_controls_blocked"
-      FOCUSED_SYSTEM_UI_TOKENS.any { token -> normalized.contains(token) } -> "remote_system_ui_blocked"
+      FOCUSED_POWER_TOKENS.any { token -> normalizedFocusedWindow.contains(token) } -> "remote_power_controls_blocked"
+      FOCUSED_NETWORK_TOKENS.any { token -> normalizedFocusedWindow.contains(token) } -> "remote_network_controls_blocked"
+      FOCUSED_SYSTEM_UI_TOKENS.any { token -> normalizedFocusedWindow.contains(token) } -> "remote_system_ui_blocked"
       else -> null
     }
   }
@@ -490,6 +636,33 @@ class TicketStreamService : Service() {
     }
     Log.w(TAG, "ticket_foreground_check_failed stderr=${result.stderr}")
     return null
+  }
+
+  private suspend fun enforceViviTicketPageIfNeeded(reason: String) {
+    val now = SystemClock.elapsedRealtime()
+    if (now < viviForegroundGraceUntilMillis ||
+      now - lastViviPageEnforceAtMillis < VIVI_PAGE_ENFORCE_INTERVAL_MILLIS
+    ) {
+      return
+    }
+    lastViviPageEnforceAtMillis = now
+    val dump = rootExecutor.runScript(
+      """
+      uiautomator dump /sdcard/pixel-ticket-window.xml >/dev/null 2>&1
+      cat /sdcard/pixel-ticket-window.xml 2>/dev/null || true
+      """.trimIndent()
+    )
+    if (!dump.ok) {
+      Log.w(TAG, "ticket_vivi_page_dump_failed reason=$reason stderr=${dump.stderr}")
+      return
+    }
+    val action = TicketViviPageEnforcer.actionForHierarchy(dump.stdout) ?: return
+    val tap = rootExecutor.run("input tap ${action.x} ${action.y}")
+    if (tap.ok) {
+      Log.i(TAG, "ticket_vivi_page_enforced reason=$reason action=${action.reason} x=${action.x} y=${action.y}")
+    } else {
+      Log.w(TAG, "ticket_vivi_page_enforce_failed reason=$reason action=${action.reason} stderr=${tap.stderr}")
+    }
   }
 
   private fun inactivityRemainingMillis(nowMillis: Long = SystemClock.elapsedRealtime()): Long {
@@ -522,7 +695,7 @@ class TicketStreamService : Service() {
 
   private fun broadcastInactivityStatus() {
     val message = json.encodeToString(inactivityStatus())
-    clientSnapshot().forEach { client -> client.sendText(message) }
+    controlClientSnapshot().forEach { client -> client.sendText(message) }
   }
 
   private fun ensureInactivityTimer() {
@@ -575,6 +748,12 @@ class TicketStreamService : Service() {
   }
 
   private suspend fun requestCapturePermission(): Boolean {
+    val now = SystemClock.elapsedRealtime()
+    if (now - capturePermissionLaunchedAtMillis < CAPTURE_PERMISSION_LAUNCH_COOLDOWN_MILLIS) {
+      lastMessage = "Screen capture permission is already pending on the Pixel"
+      return true
+    }
+    capturePermissionLaunchedAtMillis = now
     enableSecureWindowCaptureBypass()
     val component = "$packageName/.app.ticket.TicketCapturePermissionActivity"
     val result = rootExecutor.run("am start -n $component")
@@ -597,6 +776,7 @@ class TicketStreamService : Service() {
     val resultData = intent.getParcelableExtra<Intent>(TicketScreenConfig.EXTRA_RESULT_DATA)
     if (resultCode == 0 || resultData == null) {
       pendingStartAfterProjection = false
+      activeCaptureMode = CAPTURE_MODE_IDLE
       lastMessage = "Screen capture permission was not granted"
       cancelInactivityTimer()
       serviceScope.launch {
@@ -613,6 +793,7 @@ class TicketStreamService : Service() {
       manager.getMediaProjection(resultCode, resultData)
     } catch (error: SecurityException) {
       pendingStartAfterProjection = false
+      activeCaptureMode = CAPTURE_MODE_IDLE
       lastMessage = "Screen capture permission was rejected by Android"
       cancelInactivityTimer()
       Log.e(TAG, "media_projection_permission_rejected", error)
@@ -628,6 +809,7 @@ class TicketStreamService : Service() {
       override fun onStop() {
         lastMessage = "Screen capture stopped by Android"
         streamActive = false
+        activeCaptureMode = CAPTURE_MODE_IDLE
         cancelInactivityTimer()
         cancelForegroundGuard()
         stopEncoder()
@@ -646,9 +828,10 @@ class TicketStreamService : Service() {
     if (pendingStartAfterProjection) {
       pendingStartAfterProjection = false
       streamActive = true
+      activeCaptureMode = CAPTURE_MODE_MEDIAPROJECTION_AV1
       extendStartupDisconnectGrace()
       markViewerInput("projection_granted")
-      lastMessage = "Ticket session is active"
+      lastMessage = "Ticket session is active through MediaProjection fallback"
       serviceScope.launch { suppressBlackoutOverlayForRemote() }
       launchVivi()
       startForegroundGuard()
@@ -670,7 +853,7 @@ class TicketStreamService : Service() {
   }
 
   private suspend fun enableSecureWindowCaptureBypass() {
-    val result = rootExecutor.runScript(
+    val script =
       """
       state_dir="/data/local/pixel-stack/apps/ticket-screen/state"
       state_file="${'$'}state_dir/ro-debuggable-before-ticket"
@@ -694,14 +877,20 @@ class TicketStreamService : Service() {
       reset_debuggable 1
       settings put secure disable_secure_windows 1
       """.trimIndent()
-    )
+    val result = runSecureWindowCaptureBypassScript(script)
     if (!result.ok) {
+      secureWindowCaptureBypassActive = false
+      secureWindowCaptureBypassMessage = "Secure-window capture bypass enable failed"
       Log.w(TAG, "secure_window_capture_bypass_enable_failed stderr=${result.stderr}")
+    } else {
+      secureWindowCaptureBypassActive = true
+      secureWindowCaptureBypassMessage = "Secure-window capture bypass is active"
+      Log.i(TAG, "secure_window_capture_bypass_enabled")
     }
   }
 
   private suspend fun disableSecureWindowCaptureBypass() {
-    val result = rootExecutor.runScript(
+    val script =
       """
       state_file="/data/local/pixel-stack/apps/ticket-screen/state/ro-debuggable-before-ticket"
       reset_debuggable() {
@@ -727,14 +916,65 @@ class TicketStreamService : Service() {
       esac
       rm -f "${'$'}state_file" >/dev/null 2>&1 || true
       """.trimIndent()
-    )
+    val result = runSecureWindowCaptureBypassScript(script)
     if (!result.ok) {
+      secureWindowCaptureBypassMessage = "Secure-window capture bypass disable failed"
       Log.w(TAG, "secure_window_capture_bypass_disable_failed stderr=${result.stderr}")
+    } else {
+      secureWindowCaptureBypassActive = false
+      secureWindowCaptureBypassMessage = "Secure-window capture bypass is inactive"
+      Log.i(TAG, "secure_window_capture_bypass_disabled")
+    }
+  }
+
+  private suspend fun runSecureWindowCaptureBypassScript(script: String): RootResult {
+    val primary = rootExecutor.runScript(script)
+    if (primary.ok) {
+      return primary
+    }
+    val start = SystemClock.elapsedRealtime()
+    return withContext(Dispatchers.IO) {
+      try {
+        val process = ProcessBuilder("su", "-c", script)
+          .redirectErrorStream(true)
+          .start()
+        val output = process.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        val exitCode = process.waitFor()
+        val fallback = RootResult(
+          exitCode = exitCode,
+          stdout = output,
+          stderr = if (exitCode == 0) "" else output,
+          command = script,
+          durationMs = SystemClock.elapsedRealtime() - start
+        )
+        if (!fallback.ok) {
+          Log.w(
+            TAG,
+            "secure_window_capture_bypass_direct_root_failed primary=${primary.stderr} fallback=${fallback.stderr}"
+          )
+        }
+        fallback
+      } catch (error: Throwable) {
+        RootResult(
+          exitCode = 1,
+          stdout = "",
+          stderr = "primary=${primary.stderr}; fallback=${error.message ?: error::class.java.simpleName}",
+          command = script,
+          durationMs = SystemClock.elapsedRealtime() - start
+        )
+      }
     }
   }
 
   private fun ensureEncoderIfPossible() {
-    if (!streamActive || clients.isEmpty() || mediaProjection == null) {
+    if (!streamActive || videoClients.isEmpty()) {
+      return
+    }
+    if (activeCaptureMode == CAPTURE_MODE_ROOT_H264) {
+      ensureRootCaptureIfPossible()
+      return
+    }
+    if (mediaProjection == null) {
       return
     }
     synchronized(encoderLock) {
@@ -742,6 +982,20 @@ class TicketStreamService : Service() {
         return
       }
       startEncoderLocked()
+    }
+  }
+
+  private fun ensureRootCaptureIfPossible() {
+    synchronized(encoderLock) {
+      val sourceSize = currentDisplaySize()
+      val size = TicketStreamSizing.rootH264(sourceSize.first, sourceSize.second)
+      streamSize = size
+      activeCaptureMode = CAPTURE_MODE_ROOT_H264
+      lastEncoderStartAtMillis = SystemClock.elapsedRealtime()
+      broadcastConfig(size)
+      rootCaptureEngine.start(sourceSize.first, sourceSize.second)
+      rootCaptureSnapshot = rootCaptureEngine.snapshot()
+      Log.i(TAG, "ticket_root_capture_requested width=${size.width} height=${size.height} video_clients=${videoClients.size}")
     }
   }
 
@@ -787,6 +1041,8 @@ class TicketStreamService : Service() {
     encoder = localEncoder
     virtualDisplay = display
     localEncoder.start()
+    lastEncoderStartAtMillis = SystemClock.elapsedRealtime()
+    Log.i(TAG, "ticket_encoder_started width=${size.width} height=${size.height} video_clients=${videoClients.size}")
     broadcastConfig(size)
     encoderJob = serviceScope.launch {
       drainEncoder(localEncoder)
@@ -808,6 +1064,12 @@ class TicketStreamService : Service() {
               val payload = ByteArray(info.size)
               output.get(payload)
               val keyFrame = (info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0
+              encodedFrames += 1
+              lastFrameEncodedAtMillis = SystemClock.elapsedRealtime()
+              if (keyFrame) {
+                keyFrames += 1
+                lastKeyFrameEncodedAtMillis = lastFrameEncodedAtMillis
+              }
               broadcastFrame(keyFrame = keyFrame, timestampUs = info.presentationTimeUs, payload = payload)
             }
             localEncoder.releaseOutputBuffer(index, false)
@@ -839,14 +1101,23 @@ class TicketStreamService : Service() {
   }
 
   private fun configMessage(size: TicketStreamSize): String {
+    val codec = if (activeCaptureMode == CAPTURE_MODE_ROOT_H264) {
+      TicketScreenConfig.H264_CODEC_STRING
+    } else {
+      TicketScreenConfig.AV1_CODEC_STRING
+    }
+    val transport = if (activeCaptureMode == CAPTURE_MODE_ROOT_H264) "h264-annexb" else "av1-webcodecs"
+    val rootCapture = activeCaptureMode == CAPTURE_MODE_ROOT_H264
     return """
-      {"type":"config","codec":"${TicketScreenConfig.AV1_CODEC_STRING}","width":${size.width},"height":${size.height},"fps":${TicketScreenConfig.MAX_FPS}}
+      {"type":"config","serverVersion":"$SERVER_VERSION","codec":"$codec","transport":"$transport","rootCapture":$rootCapture,"width":${size.width},"height":${size.height},"fps":${TicketScreenConfig.MAX_FPS}}
     """.trimIndent()
   }
 
   private fun broadcastConfig(size: TicketStreamSize) {
     val message = configMessage(size)
-    clientSnapshot().forEach { client -> client.sendText(message) }
+    lastConfigSentAtMillis = SystemClock.elapsedRealtime()
+    Log.i(TAG, "ticket_stream_config_sent width=${size.width} height=${size.height} video_clients=${videoClients.size}")
+    videoClientSnapshot().forEach { client -> client.sendText(message) }
   }
 
   private fun broadcastFrame(keyFrame: Boolean, timestampUs: Long, payload: ByteArray) {
@@ -856,10 +1127,39 @@ class TicketStreamService : Service() {
     buffer.putLong(timestampUs)
     buffer.put(payload)
     val frame = buffer.array()
-    clientSnapshot().forEach { client -> client.sendBinary(frame) }
+    sentFrames += 1
+    lastFrameSentAtMillis = SystemClock.elapsedRealtime()
+    videoClientSnapshot().forEach { client -> client.sendBinary(frame) }
+  }
+
+  private fun handleRootCaptureFrame(frame: TicketRootCaptureFrame) {
+    if (!streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_H264) {
+      return
+    }
+    encodedFrames += 1
+    lastFrameEncodedAtMillis = SystemClock.elapsedRealtime()
+    if (frame.keyFrame) {
+      keyFrames += 1
+      lastKeyFrameEncodedAtMillis = lastFrameEncodedAtMillis
+    }
+    broadcastFrame(
+      keyFrame = frame.keyFrame,
+      timestampUs = frame.timestampUs,
+      payload = frame.payload
+    )
+    rootCaptureSnapshot = rootCaptureEngine.snapshot()
   }
 
   private fun requestKeyFrame() {
+    lastKeyFrameRequestedAtMillis = SystemClock.elapsedRealtime()
+    keyFrameRequests += 1
+    if (activeCaptureMode == CAPTURE_MODE_ROOT_H264) {
+      val lastKeyFrameAgo = rootCaptureEngine.snapshot(lastKeyFrameRequestedAtMillis).lastKeyFrameAgoMillis
+      if (lastKeyFrameAgo == null || lastKeyFrameAgo > ROOT_KEYFRAME_RESTART_AFTER_MILLIS) {
+        rootCaptureEngine.restart("keyframe_requested")
+      }
+      return
+    }
     runCatching {
       encoder?.setParameters(
         Bundle().apply {
@@ -879,39 +1179,154 @@ class TicketStreamService : Service() {
   }
 
   private fun broadcastStatus() {
-    clientSnapshot().forEach(::sendStatus)
+    controlClientSnapshot().forEach(::sendStatus)
   }
 
-  private fun clientSnapshot(): List<TicketWebSocket> {
-    return synchronized(clients) {
-      clients.toList()
+  private fun controlClientSnapshot(): List<TicketWebSocket> {
+    return synchronized(controlClients) {
+      controlClients.toList()
     }
   }
 
+  private fun videoClientSnapshot(): List<TicketWebSocket> {
+    return synchronized(videoClients) {
+      videoClients.toList()
+    }
+  }
+
+  private fun totalClientCount(): Int = controlClients.size + videoClients.size
+
+  private fun recordClientTelemetry(message: String) {
+    synchronized(recentClientTelemetry) {
+      recentClientTelemetry.addLast(SystemClock.elapsedRealtime() to message)
+      while (recentClientTelemetry.size > RECENT_CLIENT_TELEMETRY_LIMIT) {
+        recentClientTelemetry.removeFirst()
+      }
+    }
+  }
+
+  private fun recentClientTelemetrySnapshot(nowMillis: Long): List<TicketClientTelemetry> {
+    return synchronized(recentClientTelemetry) {
+      recentClientTelemetry.map { (atMillis, message) ->
+        TicketClientTelemetry(
+          atAgoMillis = (nowMillis - atMillis).coerceAtLeast(0L),
+          message = message
+        )
+      }
+    }
+  }
+
+  private fun persistRuntimeState(sessionState: String) {
+    val nowMillis = SystemClock.elapsedRealtime()
+    val snapshot = TicketRuntimeSnapshot(
+      savedAtElapsedMillis = nowMillis,
+      sessionState = sessionState,
+      streamActive = streamActive,
+      captureMode = activeCaptureMode,
+      rootCapture = rootCaptureEngine.snapshot(nowMillis),
+      lastGoodStreamAgoMillis = ageMillis(lastFrameSentAtMillis, nowMillis),
+      fallbackReason = fallbackReason,
+      recoveryCounters = TicketRecoveryCounters(
+        rootCaptureRestarts = rootCaptureEngine.snapshot(nowMillis).restarts,
+        keyFrameRequests = keyFrameRequests,
+        encodedFrames = encodedFrames,
+        sentFrames = sentFrames
+      )
+    )
+    serviceScope.launch {
+      runCatching { runtimeStateStore.save(snapshot) }
+        .onFailure { error -> Log.w(TAG, "ticket_runtime_state_persist_failed", error) }
+    }
+  }
+
+  private fun ageMillis(timestampMillis: Long, nowMillis: Long): Long? {
+    return timestampMillis.takeIf { it > 0L }?.let { (nowMillis - it).coerceAtLeast(0L) }
+  }
+
+  private fun streamPipelineSnapshot(nowMillis: Long): TicketStreamPipeline {
+    return TicketStreamPipeline(
+      controlClients = controlClients.size,
+      videoClients = videoClients.size,
+      encoderRunning = encoderJob?.isActive == true || rootCaptureEngine.snapshot(nowMillis).active,
+      streamConfigured = streamSize != null,
+      encodedFrames = encodedFrames,
+      sentFrames = sentFrames,
+      keyFrames = keyFrames,
+      lastEncoderStartAgoMillis = ageMillis(lastEncoderStartAtMillis, nowMillis),
+      lastConfigSentAgoMillis = ageMillis(lastConfigSentAtMillis, nowMillis),
+      lastFrameEncodedAgoMillis = ageMillis(lastFrameEncodedAtMillis, nowMillis),
+      lastKeyFrameEncodedAgoMillis = ageMillis(lastKeyFrameEncodedAtMillis, nowMillis),
+      lastFrameSentAgoMillis = ageMillis(lastFrameSentAtMillis, nowMillis),
+      lastKeyFrameRequestedAgoMillis = ageMillis(lastKeyFrameRequestedAtMillis, nowMillis),
+      lastVideoClientConnectedAgoMillis = ageMillis(lastVideoClientConnectedAtMillis, nowMillis),
+      secureWindowCaptureBypassActive = secureWindowCaptureBypassActive,
+      secureWindowCaptureBypassMessage = secureWindowCaptureBypassMessage
+    )
+  }
+
   private fun health(): TicketStreamHealth {
+    val nowMillis = SystemClock.elapsedRealtime()
     val installedStores = TicketPackageSupport.installedLocalStores(this)
     val av1 = TicketAv1Support.isHardwareEncoderAvailable()
+    val h264 = TicketH264Support.isHardwareEncoderAvailable()
+    val rootCapture = rootCaptureEngine.snapshot(nowMillis)
     val vivi = TicketPackageSupport.isInstalled(this, TicketScreenConfig.VIVI_PACKAGE)
-    val ok = running.get() && av1 && vivi
+    val ok = running.get() && vivi && (rootCapture.supported || av1)
+    val visibleFrameCodec = when (activeCaptureMode) {
+      CAPTURE_MODE_ROOT_H264 -> TicketScreenConfig.H264_CODEC_STRING
+      CAPTURE_MODE_MEDIAPROJECTION_AV1 -> TicketScreenConfig.AV1_CODEC_STRING
+      else -> ""
+    }
     return TicketStreamHealth(
       ok = ok,
+      serverVersion = SERVER_VERSION,
       serverRunning = running.get(),
       av1HardwareEncoderAvailable = av1,
+      h264HardwareEncoderAvailable = h264,
       projectionReady = mediaProjection != null,
+      capturePermissionPending = pendingStartAfterProjection,
       viviInstalled = vivi,
       accrescentInstalled = TicketScreenConfig.ACCRESCENT_PACKAGE in installedStores,
       installedStorePackages = installedStores,
       streamActive = streamActive,
-      clients = clients.size,
+      clients = totalClientCount(),
       inactivityActive = ticketSessionOpen(),
       inactivityTimeoutMillis = TicketInactivityPolicy.TIMEOUT_MILLIS,
-      inactivityRemainingMillis = inactivityRemainingMillis(),
-      autoStartAllowed = true,
-      autoStartBlockedReason = null,
+      inactivityRemainingMillis = inactivityRemainingMillis(nowMillis),
+      autoStartAllowed = TicketSessionStopPolicy.browserAutoStartAllowedAfterStop(lastSessionStopReason),
+      autoStartBlockedReason = lastSessionStopReason?.takeUnless {
+        TicketSessionStopPolicy.browserAutoStartAllowedAfterStop(it)
+      },
+      rootCapture = rootCapture,
+      webrtc = TicketWebRtcHealth(
+        enabled = false,
+        message = "WebRTC is served by ticket_remote; Pixel emits H.264 root frames"
+      ),
+      inputGate = TicketInputGateHealth(
+        tapOnly = true,
+        active = streamActive,
+        allowed = streamActive && activeCaptureMode != CAPTURE_MODE_IDLE,
+        reason = if (streamActive) "tap_gate_active" else "no_active_control"
+      ),
+      visibleFrame = TicketVisibleFrameHealth(
+        codec = visibleFrameCodec,
+        lastFrameAgoMillis = ageMillis(lastFrameSentAtMillis, nowMillis),
+        lastKeyFrameAgoMillis = ageMillis(lastKeyFrameEncodedAtMillis, nowMillis),
+        message = when {
+          lastFrameSentAtMillis > 0L -> "Frames are being sent to connected viewers"
+          streamActive -> "Waiting to send the first visible frame"
+          else -> "No visible frame has been sent yet"
+        }
+      ),
+      streamPipeline = streamPipelineSnapshot(nowMillis),
+      recentClientTelemetry = recentClientTelemetrySnapshot(nowMillis),
       message = when {
         !vivi -> "ViVi is not installed from a local Pixel app store yet"
-        !av1 -> "Hardware AV1 encoding is unavailable on this Pixel"
-        mediaProjection == null -> "Screen capture permission is not ready"
+        streamActive -> lastMessage
+        rootCapture.supported -> lastMessage
+        av1 && pendingStartAfterProjection -> "Screen capture permission is waiting on the Pixel"
+        !rootCapture.supported && !av1 -> "Root capture is unavailable and MediaProjection AV1 fallback is unavailable"
+        activeCaptureMode == CAPTURE_MODE_MEDIAPROJECTION_AV1 && mediaProjection == null -> "Screen capture permission is not ready"
         else -> lastMessage
       }
     )
@@ -925,6 +1340,41 @@ class TicketStreamService : Service() {
     }
     startActivity(launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     scheduleTicketBrightnessGuard("vivi_launch")
+  }
+
+  private suspend fun resetViviToTicket(reason: String) {
+    val launchIntent = packageManager.getLaunchIntentForPackage(TicketScreenConfig.VIVI_PACKAGE)
+    if (launchIntent == null) {
+      Log.w(TAG, "ticket_vivi_reset_launch_intent_missing reason=$reason")
+      returnToOrchestrator()
+      return
+    }
+    try {
+      startActivity(
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+      )
+    } catch (error: Throwable) {
+      Log.w(TAG, "ticket_vivi_reset_initial_launch_failed reason=$reason", error)
+      returnToOrchestrator()
+      return
+    }
+    delay(VIVI_TICKET_RESET_SETTLE_MILLIS)
+    val backResult = rootExecutor.run("input keyevent KEYCODE_BACK")
+    if (!backResult.ok) {
+      Log.w(TAG, "ticket_vivi_reset_back_failed reason=$reason stderr=${backResult.stderr}")
+    }
+    delay(VIVI_TICKET_RESET_SETTLE_MILLIS)
+    try {
+      val relaunchIntent = packageManager.getLaunchIntentForPackage(TicketScreenConfig.VIVI_PACKAGE)
+        ?: launchIntent
+      startActivity(
+        relaunchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+      )
+      Log.i(TAG, "ticket_vivi_reset_to_ticket reason=$reason")
+    } catch (error: Throwable) {
+      Log.w(TAG, "ticket_vivi_reset_relaunch_failed reason=$reason", error)
+      returnToOrchestrator()
+    }
   }
 
   private suspend fun returnToOrchestrator() {
@@ -1097,7 +1547,7 @@ class TicketStreamService : Service() {
     if (!streamActive) {
       return false
     }
-    val violation = foregroundViolationReason()
+    val violation = foregroundViolationReason(allowStartupSystemUi = false)
     if (violation == null) {
       return true
     }
@@ -1262,7 +1712,13 @@ class TicketStreamService : Service() {
         append("HTTP/1.1 $status $statusText\r\n")
         append("Content-Type: $contentType\r\n")
         append("Content-Length: ${body.size}\r\n")
-        append("Cache-Control: no-store\r\n")
+        append("Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n")
+        append("Pragma: no-cache\r\n")
+        append("Expires: 0\r\n")
+        append("Surrogate-Control: no-store\r\n")
+        append("CDN-Cache-Control: no-store\r\n")
+        append("Cloudflare-CDN-Cache-Control: no-store\r\n")
+        append("Clear-Site-Data: \"cache\"\r\n")
         append("Connection: close\r\n")
         append("\r\n")
       }.toByteArray(Charsets.ISO_8859_1)
@@ -1309,15 +1765,24 @@ class TicketStreamService : Service() {
     private const val SERVER_BACKLOG = 4
     private const val SOCKET_TIMEOUT_MILLIS = 30_000
     private const val MAX_HEADER_LINE_BYTES = 131_072
-    private const val MAX_CLIENT_LOG_BYTES = 512
+    private const val MAX_CLIENT_LOG_BYTES = 2_048
+    private const val RECENT_CLIENT_TELEMETRY_LIMIT = 12
+    const val SERVER_VERSION = "ticket-stream-2026-05-01-v2"
+    private const val CAPTURE_MODE_IDLE = "idle"
+    private const val CAPTURE_MODE_ROOT_H264 = "root_h264"
+    private const val CAPTURE_MODE_MEDIAPROJECTION_AV1 = "mediaprojection_av1"
     private const val DEFAULT_BITRATE = 1_500_000
     private const val ENCODER_TIMEOUT_US = 50_000L
+    private const val ROOT_KEYFRAME_RESTART_AFTER_MILLIS = 2_000L
+    private const val CAPTURE_PERMISSION_LAUNCH_COOLDOWN_MILLIS = 15_000L
     private const val PRE_CAPTURE_APP_SETTLE_MILLIS = 800L
     private const val STARTUP_CLIENT_DISCONNECT_GRACE_MILLIS = 5_000L
     private const val CLIENT_DISCONNECT_IDLE_GRACE_MILLIS = 10_000L
     private const val VIVI_FOREGROUND_INITIAL_DELAY_MILLIS = 1_500L
     private const val VIVI_FOREGROUND_CHECK_MILLIS = 750L
-    private const val VIVI_FOREGROUND_GRACE_MILLIS = 3_000L
+    private const val VIVI_FOREGROUND_GRACE_MILLIS = 8_000L
+    private const val VIVI_PAGE_ENFORCE_INTERVAL_MILLIS = 2_000L
+    private const val VIVI_TICKET_RESET_SETTLE_MILLIS = 350L
     private const val REMOTE_TOP_SYSTEM_EDGE_FRACTION = 0.055f
     private const val REMOTE_BOTTOM_SYSTEM_EDGE_FRACTION = 0.03f
     private const val REMOTE_SIDE_SYSTEM_EDGE_FRACTION = 0.025f
@@ -1361,6 +1826,11 @@ class TicketStreamService : Service() {
       "control center",
       "qscontainer"
     )
+    private val FOCUSED_CAPTURE_PERMISSION_TOKENS = listOf(
+      "mediaprojectionpermissionactivity",
+      "media projection permission",
+      "com.android.systemui/.mediaprojection.permission"
+    )
 
     fun start(context: Context) {
       val intent = Intent(context, TicketStreamService::class.java)
@@ -1375,28 +1845,41 @@ class TicketStreamService : Service() {
   }
 }
 
-private fun browserPage(): String {
+internal fun browserPage(): String {
   return """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>Ticket</title>
+  <link rel="icon" href="data:,">
   <style>
-    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #05070a; color: #f3f7fb; }
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #05070a; color: #f3f7fb; --ticket-stage-height: 100vh; --ticket-controls-offset: 16px; }
     * { box-sizing: border-box; }
-    body { margin: 0; width: 100vw; height: 100vh; min-height: 100vh; overflow: hidden; background: #05070a; }
-    header { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; background: #05070a; }
-    body.streaming header { display: none; }
+    html { min-height: 100%; background: #05070a; }
+    body { margin: 0; width: 100%; min-height: 100%; overflow-x: hidden; overflow-y: auto; background: #05070a; overscroll-behavior-y: contain; scroll-snap-type: y mandatory; -webkit-overflow-scrolling: touch; }
+    main { width: 100%; min-height: calc(var(--ticket-stage-height) + var(--ticket-controls-offset) + var(--ticket-stage-height)); background: #05070a; }
+    .stream-page { position: relative; width: 100vw; height: calc(var(--ticket-stage-height) + var(--ticket-controls-offset)); min-height: calc(var(--ticket-stage-height) + var(--ticket-controls-offset)); background: #05070a; scroll-snap-align: start; }
+    .stream-stage { position: fixed; inset: 0; z-index: 2; width: 100vw; height: var(--ticket-stage-height); min-height: var(--ticket-stage-height); overflow: hidden; background: #05070a; isolation: isolate; contain: layout paint; opacity: 1; visibility: visible; transition: opacity 140ms ease, visibility 140ms ease; }
+    body.details-visible .stream-stage { opacity: 0; visibility: hidden; pointer-events: none; }
+    .stream-frame { position: absolute; inset: 0; overflow: hidden; background: #05070a; }
+    .stream-placeholder { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; padding: 24px; color: #d7deeb; font-size: 14px; line-height: 1.35; text-align: center; background: #05070a; transition: opacity 160ms ease; }
+    body[data-stream-ready="true"] .stream-placeholder { opacity: 0; pointer-events: none; }
+    .controls-panel { position: relative; z-index: 1; width: 100vw; min-height: var(--ticket-stage-height); display: grid; align-content: center; justify-items: center; gap: 16px; padding: 32px max(20px, env(safe-area-inset-left)) calc(32px + env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-right)); background: #07101b; scroll-snap-align: start; transition: background 160ms ease; }
+    body:not(.details-visible) .controls-panel { background: #05070a; }
+    .controls-panel > * { transition: opacity 160ms ease; }
+    body:not(.details-visible) .controls-panel > * { visibility: hidden; opacity: 0; pointer-events: none; }
     .start-panel { display: grid; justify-items: center; gap: 12px; }
     button { border: 1px solid #37445a; background: #1d2634; color: #f3f7fb; min-height: 36px; padding: 0 12px; border-radius: 6px; }
     button.primary { min-width: 112px; min-height: 44px; padding: 0 20px; background: #1f6feb; border-color: #4387ff; font-size: 16px; font-weight: 650; }
     button:disabled { opacity: .5; }
-    main { position: relative; width: 100vw; height: 100vh; min-width: 0; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 0; overflow: hidden; }
-    canvas { display: none; width: var(--stream-css-width, 240px); height: var(--stream-css-height, 540px); max-width: 100%; max-height: 100%; background: #000; touch-action: none; }
-    body.streaming canvas { display: block; }
-    #idleTimer { position: absolute; top: 12px; right: 12px; z-index: 4; min-width: 58px; padding: 4px 8px; border-radius: 999px; background: rgba(10, 13, 18, .72); border: 1px solid rgba(185, 194, 207, .26); color: #edf3fb; font-size: 12px; line-height: 1.2; text-align: center; pointer-events: none; backdrop-filter: blur(6px); }
+    canvas { position: absolute; left: 50%; top: 50%; display: block; width: var(--stream-css-width, 100vw); height: var(--stream-css-height, var(--ticket-stage-height)); max-width: none; max-height: none; background: #000; opacity: 0; transform: translate3d(-50%, -50%, 0); transition: opacity 160ms ease; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+    body[data-stream-ready="true"] canvas { opacity: 1; }
+    #idleTimer { min-width: 58px; padding: 4px 8px; border-radius: 999px; background: rgba(10, 13, 18, .72); border: 1px solid rgba(185, 194, 207, .26); color: #edf3fb; font-size: 12px; line-height: 1.2; text-align: center; pointer-events: none; backdrop-filter: blur(6px); }
     #idleTimer[hidden] { display: none; }
     #idleTimer.urgent { color: #ffd6d6; border-color: rgba(255, 115, 115, .45); background: rgba(70, 18, 18, .74); }
     #status { max-width: min(420px, calc(100vw - 32px)); color: #b9c2cf; font-size: 13px; line-height: 1.35; text-align: center; pointer-events: none; }
@@ -1404,46 +1887,126 @@ private fun browserPage(): String {
   </style>
 </head>
 <body>
-  <header>
-    <div class="start-panel">
-      <button id="start" data-testid="start" type="button" class="primary">Start</button>
-      <span id="status"></span>
-    </div>
-  </header>
-  <main>
-    <div id="idleTimer" data-testid="idle-timer" hidden>10:00</div>
-    <canvas id="screen" width="540" height="1080"></canvas>
+  <main id="ticketRoot">
+    <section class="stream-page" id="streamPage" aria-label="Pixel stream">
+      <div class="stream-stage" id="streamStage">
+        <div class="stream-frame">
+          <canvas id="screen" width="540" height="1080"></canvas>
+          <div id="streamPlaceholder" class="stream-placeholder">Connecting</div>
+        </div>
+      </div>
+    </section>
+    <section class="controls-panel" id="controlsPanel" aria-label="Stream controls" aria-hidden="true">
+      <div id="idleTimer" data-testid="idle-timer" hidden>10:00</div>
+      <div class="start-panel">
+        <button id="start" data-testid="start" type="button" class="primary">Start</button>
+        <span id="status"></span>
+      </div>
+    </section>
   </main>
   <script>
+    const PAGE_VERSION = "${TicketStreamService.SERVER_VERSION}";
     const statusEl = document.getElementById('status');
     const idleTimerEl = document.getElementById('idleTimer');
+    const streamPage = document.getElementById('streamPage');
+    const streamStage = document.getElementById('streamStage');
+    const controlsPanel = document.getElementById('controlsPanel');
+    const streamPlaceholder = document.getElementById('streamPlaceholder');
     const canvas = document.getElementById('screen');
     const startButton = document.getElementById('start');
     const ctx = canvas.getContext('2d');
+    document.body.dataset.streamReady = 'false';
+    document.body.dataset.streamState = 'booting';
+    if ('scrollRestoration' in history) {
+      history.scrollRestoration = 'manual';
+    }
+    window.scrollTo(0, 0);
     let ws;
+    let videoWs;
     let decoder;
     let configured = false;
+    let firstFrameReceived = false;
     let needsKeyFrame = true;
     let pointerStart = null;
     let desiredActive = false;
     let startCommandSent = false;
     let connecting = null;
+    let videoConnecting = null;
     let keepaliveTimer = null;
     let reconnectTimer = null;
     let selfHealTimer = null;
+    let streamWatchdogTimer = null;
     let selfHealInFlight = false;
     let startupReconnectAttempts = 0;
+    let autoStartSuspended = false;
+    let capturePermissionPending = false;
+    let versionReloading = false;
+    let visibleSampleLogged = false;
     let lastActivitySentAt = 0;
+    let lastConfigAt = 0;
+    let lastFrameAt = 0;
     let streamDimensions = {width: 540, height: 1080};
     const maxTapDurationMs = 450;
     const maxTapTravelPx = 12;
+    const streamMessages = {
+      booting: 'Connecting',
+      connecting: 'Connecting',
+      permission: 'Confirm screen capture on the Pixel',
+      waiting: 'Waiting for ticket stream...',
+      reconnecting: 'Reconnecting stream...',
+      streaming: '',
+      unavailable: 'Unavailable',
+      ended: 'Session ended'
+    };
 
-    function setStatus(text = '') { statusEl.textContent = text || ''; }
+    function currentStageHeight() {
+      const value = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ticket-stage-height'));
+      return Number.isFinite(value) && value > 0 ? value : Math.max(1, window.innerHeight || document.documentElement.clientHeight || 1);
+    }
+    function setStreamState(state, message = '') {
+      document.body.dataset.streamState = state;
+      const text = message || streamMessages[state] || 'Connecting';
+      if (document.body.dataset.streamReady !== 'true') {
+        streamPlaceholder.textContent = text;
+      }
+    }
+    function collapseDetailsToStream() {
+      document.body.classList.remove('details-visible');
+      controlsPanel.setAttribute('aria-hidden', 'true');
+      window.scrollTo(0, 0);
+    }
+    function setStreamReady(ready) {
+      document.body.dataset.streamReady = ready ? 'true' : 'false';
+      if (!ready) {
+        firstFrameReceived = false;
+        visibleSampleLogged = false;
+        collapseDetailsToStream();
+      }
+    }
+    function keepFirstScreenPinned(force = false) {
+      if (force) {
+        collapseDetailsToStream();
+        return;
+      }
+      if (document.body.classList.contains('details-visible')) return;
+      if (window.scrollY <= Math.max(80, currentStageHeight() * 0.2)) {
+        window.scrollTo(0, 0);
+      }
+    }
+    function setStatus(text = '') {
+      const value = text || '';
+      statusEl.textContent = value;
+      if (document.body.dataset.streamReady !== 'true') {
+        streamPlaceholder.textContent = value || 'Connecting';
+      }
+    }
     function showStart(message = '') {
-      document.body.classList.remove('streaming');
+      setStreamReady(false);
+      setStreamState(message ? 'ended' : 'connecting', message);
       startButton.disabled = false;
       startButton.textContent = 'Start';
       setStatus(message);
+      keepFirstScreenPinned(true);
     }
     function formatRemaining(ms) {
       const totalSeconds = Math.max(0, Math.ceil((ms || 0) / 1000));
@@ -1469,16 +2032,41 @@ private fun browserPage(): String {
       lastActivitySentAt = now;
       send({type: 'activity'});
     }
+    function updateLayoutMetrics() {
+      const viewportWidth = Math.max(
+        1,
+        Math.round(window.innerWidth || 0),
+        Math.round(document.documentElement.clientWidth || 0),
+        Math.round(window.visualViewport ? window.visualViewport.width : 0)
+      );
+      const viewportHeightCandidates = [
+        window.innerHeight || 0,
+        document.documentElement.clientHeight || 0,
+        window.visualViewport ? window.visualViewport.height : 0
+      ];
+      if (viewportWidth <= 820 && window.screen) {
+        viewportHeightCandidates.push(window.screen.height || 0, window.screen.availHeight || 0);
+      }
+      const stageHeight = Math.max(1, Math.ceil(Math.max(...viewportHeightCandidates)));
+      document.documentElement.style.setProperty('--ticket-stage-height', `${'$'}{stageHeight}px`);
+      return {stageHeight, viewportWidth};
+    }
+    function updateDetailsReveal() {
+      const threshold = currentStageHeight();
+      const visible = window.scrollY >= threshold;
+      document.body.classList.toggle('details-visible', visible);
+      controlsPanel.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    }
     function resizeCanvasBox() {
-      const main = document.querySelector('main');
-      const style = getComputedStyle(main);
-      const maxWidth = Math.max(1, main.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight));
-      const maxHeight = Math.max(1, main.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom));
-      const scale = Math.min(maxWidth / streamDimensions.width, maxHeight / streamDimensions.height);
-      const cssWidth = Math.max(1, Math.floor(streamDimensions.width * scale));
-      const cssHeight = Math.max(1, Math.floor(streamDimensions.height * scale));
+      updateLayoutMetrics();
+      const maxWidth = Math.max(1, streamStage.clientWidth || window.innerWidth || 1);
+      const maxHeight = Math.max(1, streamStage.clientHeight || currentStageHeight());
+      const scale = Math.max(maxWidth / streamDimensions.width, maxHeight / streamDimensions.height);
+      const cssWidth = Math.max(maxWidth, Math.ceil(streamDimensions.width * scale));
+      const cssHeight = Math.max(maxHeight, Math.ceil(streamDimensions.height * scale));
       canvas.style.setProperty('--stream-css-width', `${'$'}{cssWidth}px`);
       canvas.style.setProperty('--stream-css-height', `${'$'}{cssHeight}px`);
+      updateDetailsReveal();
     }
     function clientLog(event, details = {}) {
       try {
@@ -1487,23 +2075,50 @@ private fun browserPage(): String {
           cache: 'no-store',
           keepalive: true,
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({event, details})
+          body: JSON.stringify({event, pageVersion: PAGE_VERSION, details})
         }).catch(() => {});
       } catch (_) {}
     }
     function socketUrl() {
       return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/v1/session';
     }
-    function closeDecoder() {
+    function streamSocketUrl() {
+      return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/v1/stream';
+    }
+    function serverVersionFrom(value) {
+      if (!value || typeof value !== 'object') return '';
+      return value.serverVersion || (value.data && value.data.serverVersion) || '';
+    }
+    function checkServerVersion(value) {
+      const serverVersion = serverVersionFrom(value);
+      if (!serverVersion || serverVersion === PAGE_VERSION) return true;
+      if (versionReloading) return false;
+      versionReloading = true;
+      clientLog('page_version_mismatch', {serverVersion, pageVersion: PAGE_VERSION});
+      const nextUrl = location.origin + location.pathname + '?v=' + encodeURIComponent(serverVersion) + '&t=' + Date.now();
+      location.replace(nextUrl);
+      return false;
+    }
+    function sendVideo(value) {
+      if (videoWs && videoWs.readyState === WebSocket.OPEN) {
+        videoWs.send(JSON.stringify(value));
+        return true;
+      }
+      return false;
+    }
+    function closeDecoder(message = 'Connecting') {
       configured = false;
+      firstFrameReceived = false;
       needsKeyFrame = true;
-      document.body.classList.remove('streaming');
+      setStreamReady(false);
+      setStreamState('connecting', message);
       updateIdleTimer(null);
       if (decoder) {
         try { decoder.close(); } catch (_) {}
         decoder = null;
       }
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      keepFirstScreenPinned();
     }
     function stopKeepalive() {
       if (keepaliveTimer) clearInterval(keepaliveTimer);
@@ -1513,22 +2128,104 @@ private fun browserPage(): String {
       if (reconnectTimer) clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+    function closeVideoSocket() {
+      const socket = videoWs;
+      videoWs = null;
+      videoConnecting = null;
+      if (socket) {
+        try { socket.close(); } catch (_) {}
+      }
+    }
     function pageIsVisible() {
       return document.visibilityState !== 'hidden';
     }
+    function autoStartBlockedMessage(health, fallback = '') {
+      if (health && health.autoStartBlockedReason === 'viewer_inactivity_timeout') return 'Session ended';
+      return fallback || '';
+    }
+    function healthWaitingForCapture(health) {
+      return Boolean(health && health.capturePermissionPending && !health.projectionReady);
+    }
+    function enterCapturePending(health, message) {
+      capturePermissionPending = true;
+      startCommandSent = true;
+      setStreamState('permission', message || (health && health.message) || streamMessages.permission);
+      setStatus(message || (health && health.message) || streamMessages.permission);
+    }
+    function suspendAutoStart(message = '') {
+      autoStartSuspended = true;
+      desiredActive = false;
+      startCommandSent = false;
+      startupReconnectAttempts = 0;
+      clearReconnectTimer();
+      stopKeepalive();
+      if (ws) {
+        try { ws.close(); } catch (_) {}
+        ws = null;
+      }
+      closeVideoSocket();
+      closeDecoder(message || 'Session ended');
+      showStart(message);
+    }
+    async function postStartFallback(reason) {
+      try {
+        const response = await fetch('/api/v1/session/start', {method: 'POST', cache: 'no-store'});
+        const result = await response.json();
+        if (result && result.state === 'capture_permission_required') {
+          capturePermissionPending = true;
+          setStreamState('permission', result.message || streamMessages.permission);
+          setStatus(result.message || streamMessages.permission);
+        } else if (result && result.message && !configured) {
+          setStreamState(result.ok ? 'waiting' : 'unavailable', result.message);
+          setStatus(result.message);
+        }
+        clientLog('http_start_fallback', {reason, state: result && result.state, ok: result && result.ok});
+        return result;
+      } catch (error) {
+        clientLog('http_start_fallback_failed', {reason, message: String(error && error.message || error)});
+        return null;
+      }
+    }
+    async function sendStartCommand(reason = 'start') {
+      startCommandSent = true;
+      if (send({type: 'start'})) {
+        connectVideo(false).catch(() => scheduleStartupReconnect());
+        setTimeout(async () => {
+          if (!desiredActive || configured || autoStartSuspended) return;
+          const health = await refreshHealth().catch(() => null);
+          if (health && !health.streamActive && !health.inactivityActive) {
+            await postStartFallback(`${'$'}{reason}_confirm`);
+          }
+        }, 1200);
+        return;
+      }
+      await postStartFallback(reason);
+      connectVideo(false).catch(() => scheduleStartupReconnect());
+    }
     function scheduleStartupReconnect() {
-      if (!desiredActive || configured) return false;
+      if (autoStartSuspended || !desiredActive || configured) return false;
+      if (capturePermissionPending) {
+        setStreamState('permission', streamMessages.permission);
+        setStatus(streamMessages.permission);
+        return false;
+      }
       startupReconnectAttempts += 1;
       const delayMs = Math.min(5000, 250 * startupReconnectAttempts);
-      setStatus('Connecting');
+      setStreamState(startCommandSent ? 'reconnecting' : 'connecting');
+      setStatus(startCommandSent ? 'Reconnecting stream...' : 'Connecting');
       clearReconnectTimer();
       reconnectTimer = setTimeout(async () => {
         reconnectTimer = null;
         if (!desiredActive || configured) return;
         try {
+          const health = await refreshHealth().catch(() => null);
+          if (healthWaitingForCapture(health)) {
+            enterCapturePending(health);
+            return;
+          }
           await connect(true);
-          startCommandSent = true;
-          send({type: 'start'});
+          await sendStartCommand('startup_reconnect');
+          await connectVideo(true);
         } catch (_) {
           scheduleStartupReconnect();
         }
@@ -1574,6 +2271,7 @@ private fun browserPage(): String {
         try { ws.close(); } catch (_) {}
         ws = null;
       }
+      closeVideoSocket();
       closeDecoder();
       showStart(pageLeaving ? '' : message);
     }
@@ -1583,15 +2281,16 @@ private fun browserPage(): String {
       if (force && ws) {
         try { ws.close(); } catch (_) {}
       }
+      setStreamState('connecting');
       setStatus('Connecting');
       connecting = new Promise((resolve, reject) => {
         const socket = new WebSocket(socketUrl());
         let settled = false;
         ws = socket;
-        socket.binaryType = 'arraybuffer';
         const timeout = setTimeout(() => {
           if (settled) return;
           settled = true;
+          setStreamState('reconnecting', 'Connection timed out');
           setStatus('Connection timed out');
           try { socket.close(); } catch (_) {}
           reject(new Error('websocket timeout'));
@@ -1605,12 +2304,13 @@ private fun browserPage(): String {
           resolve();
         };
         socket.onerror = () => {
-          clientLog('websocket_error');
+          clientLog('control_websocket_error');
+          setStreamState('reconnecting', 'Connection failed');
           setStatus('Connection failed');
         };
-        socket.onmessage = handleSocketMessage;
+        socket.onmessage = handleControlSocketMessage;
         socket.onclose = (event) => {
-          clientLog('websocket_close', {code: event.code, reason: event.reason, clean: event.wasClean, desiredActive});
+          clientLog('control_websocket_close', {code: event.code, reason: event.reason, clean: event.wasClean, desiredActive});
           clearTimeout(timeout);
           if (!settled) {
             settled = true;
@@ -1618,11 +2318,9 @@ private fun browserPage(): String {
           }
           if (ws === socket) ws = null;
           stopKeepalive();
-          closeDecoder();
-          if (desiredActive) {
-            if (!configured && scheduleStartupReconnect()) return;
-            endSession('connection_closed', false, 'Connection failed');
-          } else {
+          if (desiredActive && !autoStartSuspended) {
+            setTimeout(() => connect(true).catch(() => {}), 500);
+          } else if (!autoStartSuspended) {
             showStart();
           }
         };
@@ -1631,12 +2329,21 @@ private fun browserPage(): String {
       });
       return connecting;
     }
-    async function handleSocketMessage(event) {
+    async function handleControlSocketMessage(event) {
       if (typeof event.data === 'string') {
         const msg = JSON.parse(event.data);
-        if (msg.type === 'config') await configureDecoder(msg);
+        if (!checkServerVersion(msg)) return;
         if (msg.type === 'health') {
           if (msg.data) updateIdleTimer(msg.data);
+          if (msg.data && msg.data.autoStartAllowed === false) {
+            suspendAutoStart(autoStartBlockedMessage(msg.data, msg.message || ''));
+            return;
+          }
+          if (msg.data && desiredActive && !configured && healthWaitingForCapture(msg.data)) {
+            enterCapturePending(msg.data, msg.message);
+            return;
+          }
+          if (msg.data && msg.data.projectionReady) capturePermissionPending = false;
           if (
             desiredActive &&
             startCommandSent &&
@@ -1646,13 +2353,75 @@ private fun browserPage(): String {
             !msg.data.inactivityActive
           ) {
             startCommandSent = false;
-            closeDecoder();
+            closeDecoder('Reconnecting stream...');
             scheduleStartupReconnect();
             return;
           }
-          if (!configured && desiredActive) setStatus(msg.message || '');
+          if (!configured && desiredActive) {
+            setStreamState('waiting', msg.message || streamMessages.waiting);
+            setStatus(msg.message || '');
+          }
         }
         if (msg.type === 'idle') updateIdleTimer(msg);
+      }
+    }
+    async function connectVideo(force = false) {
+      if (videoWs && videoWs.readyState === WebSocket.OPEN) return;
+      if (videoWs && videoWs.readyState === WebSocket.CONNECTING && videoConnecting) return videoConnecting;
+      if (force) {
+        closeVideoSocket();
+      }
+      if (!desiredActive || autoStartSuspended) return;
+      setStreamState(firstFrameReceived ? 'streaming' : 'waiting');
+      videoConnecting = new Promise((resolve, reject) => {
+        const socket = new WebSocket(streamSocketUrl());
+        let settled = false;
+        videoWs = socket;
+        socket.binaryType = 'arraybuffer';
+        const timeout = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          clientLog('video_websocket_timeout');
+          try { socket.close(); } catch (_) {}
+          reject(new Error('video websocket timeout'));
+        }, 10000);
+        socket.onopen = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          sendVideo({type: 'keyframe'});
+          resolve();
+        };
+        socket.onerror = () => {
+          clientLog('video_websocket_error');
+          setStreamState('reconnecting', 'Video connection failed');
+        };
+        socket.onmessage = handleVideoSocketMessage;
+        socket.onclose = (event) => {
+          clientLog('video_websocket_close', {code: event.code, reason: event.reason, clean: event.wasClean, desiredActive});
+          clearTimeout(timeout);
+          if (!settled) {
+            settled = true;
+            reject(new Error('video websocket closed'));
+          }
+          if (videoWs === socket) videoWs = null;
+          if (desiredActive && !autoStartSuspended) {
+            closeDecoder('Reconnecting stream...');
+            scheduleStartupReconnect();
+          }
+        };
+      }).finally(() => {
+        videoConnecting = null;
+      });
+      return videoConnecting;
+    }
+    async function handleVideoSocketMessage(event) {
+      if (typeof event.data === 'string') {
+        const msg = JSON.parse(event.data);
+        if (!checkServerVersion(msg)) return;
+        if (msg.type === 'config') {
+          await configureDecoder(msg);
+        }
         return;
       }
       if (!configured || !decoder) return;
@@ -1664,21 +2433,26 @@ private fun browserPage(): String {
       const high = view.getUint32(1);
       const low = view.getUint32(5);
       const timestamp = high * 4294967296 + low;
+      lastFrameAt = performance.now();
       decoder.decode(new EncodedVideoChunk({type: kind, timestamp, data: data.slice(9)}));
     }
     async function configureDecoder(config) {
+      if (!checkServerVersion(config)) return;
       if (!('VideoDecoder' in window)) {
         clientLog('webcodecs_missing');
         await endSession('webcodecs_missing', false, 'This browser does not support WebCodecs');
         return;
       }
+      const h264 = String(config.codec || '').startsWith('avc1') || config.transport === 'h264-annexb';
       const decoderConfig = {codec: config.codec, codedWidth: config.width, codedHeight: config.height};
+      if (h264) decoderConfig.avc = {format: 'annexb'};
       const supported = await VideoDecoder.isConfigSupported(decoderConfig);
       if (!supported.supported) {
-        clientLog('av1_decode_unsupported', {config: decoderConfig});
-        await endSession('av1_decode_unsupported', false, 'This browser cannot decode AV1 here');
+        clientLog('video_decode_unsupported', {config: decoderConfig});
+        await endSession('video_decode_unsupported', false, h264 ? 'This browser cannot decode H.264 here' : 'This browser cannot decode AV1 here');
         return;
       }
+      closeDecoder(streamMessages.waiting);
       canvas.width = config.width;
       canvas.height = config.height;
       streamDimensions = {width: config.width, height: config.height};
@@ -1686,14 +2460,26 @@ private fun browserPage(): String {
       canvas.dataset.streamWidth = String(config.width);
       canvas.dataset.streamHeight = String(config.height);
       resizeCanvasBox();
-      closeDecoder();
+      lastConfigAt = performance.now();
+      lastFrameAt = lastConfigAt;
+      setStreamState('waiting');
       decoder = new VideoDecoder({
         output(frame) {
           ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+          lastFrameAt = performance.now();
+          if (!firstFrameReceived) {
+            firstFrameReceived = true;
+            setStreamReady(true);
+            setStreamState('streaming');
+            setStatus('');
+            keepFirstScreenPinned(true);
+            sampleVisibleFrame();
+          }
           frame.close();
         },
         error(error) {
           clientLog('decoder_error', {message: error.message});
+          setStreamState('reconnecting', `Decoder error: ${'$'}{error.message}`);
           setStatus(`Decoder error: ${'$'}{error.message}`);
         }
       });
@@ -1702,33 +2488,84 @@ private fun browserPage(): String {
       startupReconnectAttempts = 0;
       clearReconnectTimer();
       needsKeyFrame = true;
-      document.body.classList.add('streaming');
       startButton.disabled = false;
       startButton.textContent = 'Start';
-      setStatus('');
+      sendVideo({type: 'keyframe'}) || send({type: 'keyframe'});
       requestAnimationFrame(resizeCanvasBox);
+    }
+    function sampleVisibleFrame() {
+      if (visibleSampleLogged) return;
+      visibleSampleLogged = true;
+      setTimeout(() => {
+        try {
+          const sampleWidth = Math.min(48, canvas.width);
+          const sampleHeight = Math.min(48, canvas.height);
+          const x = Math.max(0, Math.floor((canvas.width - sampleWidth) / 2));
+          const y = Math.max(0, Math.floor((canvas.height - sampleHeight) / 2));
+          const pixels = ctx.getImageData(x, y, sampleWidth, sampleHeight).data;
+          let nonBlackPixels = 0;
+          for (let i = 0; i < pixels.length; i += 4) {
+            if (pixels[i] > 8 || pixels[i + 1] > 8 || pixels[i + 2] > 8) nonBlackPixels += 1;
+          }
+          clientLog(nonBlackPixels > 0 ? 'first_frame_visible_sample' : 'first_frame_black_sample', {
+            nonBlackPixels,
+            samplePixels: sampleWidth * sampleHeight,
+            width: canvas.width,
+            height: canvas.height
+          });
+        } catch (error) {
+          clientLog('first_frame_sample_failed', {message: String(error && error.message || error)});
+        }
+      }, 250);
     }
     window.addEventListener('error', (event) => clientLog('window_error', {message: event.message}));
     window.addEventListener('unhandledrejection', (event) => clientLog('unhandled_rejection', {message: String(event.reason && event.reason.message || event.reason)}));
     window.addEventListener('resize', resizeCanvasBox);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', resizeCanvasBox);
+      window.visualViewport.addEventListener('scroll', resizeCanvasBox);
+    }
+    window.addEventListener('scroll', updateDetailsReveal, {passive: true});
     async function ensureStreaming(reason = 'self_heal') {
+      if (autoStartSuspended) return;
       if (!pageIsVisible() || selfHealInFlight) return;
-      if (desiredActive && configured) return;
+      if (desiredActive && configured && firstFrameReceived) {
+        if (!ws || ws.readyState === WebSocket.CLOSED) connect(true).catch(() => {});
+        if (!videoWs || videoWs.readyState === WebSocket.CLOSED) connectVideo(true).catch(() => scheduleStartupReconnect());
+        return;
+      }
       selfHealInFlight = true;
       try {
         const health = await refreshHealth();
+        if (health.autoStartAllowed === false) {
+          suspendAutoStart(autoStartBlockedMessage(health, health.message || ''));
+          return;
+        }
         if (!health.viviInstalled || !health.av1HardwareEncoderAvailable) return;
+        if (healthWaitingForCapture(health)) {
+          desiredActive = true;
+          enterCapturePending(health);
+          await connect(true).catch(() => {});
+          await connectVideo(false).catch(() => {});
+          return;
+        }
         if (!desiredActive) {
           clientLog('self_heal_start', {reason});
           await start();
         } else if (!configured && !reconnectTimer) {
+          await connect(true).catch(() => {});
+          await connectVideo(false).catch(() => {});
           scheduleStartupReconnect();
+        } else if (configured && !firstFrameReceived) {
+          sendVideo({type: 'keyframe'}) || send({type: 'keyframe'});
         }
       } catch (_) {
         if (!desiredActive) {
           clientLog('self_heal_start_without_health', {reason});
           await start();
         } else if (!configured && !reconnectTimer) {
+          await connect(true).catch(() => {});
+          await connectVideo(false).catch(() => {});
           scheduleStartupReconnect();
         }
       } finally {
@@ -1739,31 +2576,75 @@ private fun browserPage(): String {
       if (selfHealTimer) clearInterval(selfHealTimer);
       selfHealTimer = setInterval(() => ensureStreaming('watchdog'), 3000);
     }
+    function startStreamWatchdog() {
+      if (streamWatchdogTimer) clearInterval(streamWatchdogTimer);
+      streamWatchdogTimer = setInterval(() => {
+        if (!desiredActive || autoStartSuspended || !pageIsVisible()) return;
+        const now = performance.now();
+        if (!configured) {
+          if (!reconnectTimer) scheduleStartupReconnect();
+          return;
+        }
+        if (!firstFrameReceived && now - lastConfigAt > 7000) {
+          clientLog('stream_watchdog_no_first_frame', {sinceConfigMs: Math.round(now - lastConfigAt)});
+          setStreamState('waiting');
+          sendVideo({type: 'keyframe'}) || send({type: 'keyframe'});
+          send({type: 'restart_stream'});
+          closeVideoSocket();
+          closeDecoder('Reconnecting stream...');
+          connectVideo(true).catch(() => scheduleStartupReconnect());
+          return;
+        }
+        if (firstFrameReceived && now - lastFrameAt > 8000) {
+          clientLog('stream_watchdog_stale_frame', {sinceFrameMs: Math.round(now - lastFrameAt)});
+          send({type: 'restart_stream'});
+          closeDecoder('Reconnecting stream...');
+          closeVideoSocket();
+          connectVideo(true).catch(() => scheduleStartupReconnect());
+        }
+      }, 2000);
+    }
     async function refreshHealth() {
       const response = await fetch('/api/v1/health', {cache: 'no-store'});
       const health = await response.json();
+      if (!checkServerVersion(health)) return health;
       updateIdleTimer(health);
-      if (!health.viviInstalled || !health.av1HardwareEncoderAvailable) {
+      if (health.autoStartAllowed === false) {
+        const message = autoStartBlockedMessage(health, health.message || '');
+        setStreamState('ended', message);
+        setStatus(message);
+      } else if (!health.viviInstalled || (!health.av1HardwareEncoderAvailable && !(health.rootCapture && health.rootCapture.supported))) {
+        setStreamState('unavailable', health.message || 'Unavailable');
         setStatus(health.message || 'Unavailable');
+      } else if (desiredActive && healthWaitingForCapture(health)) {
+        enterCapturePending(health);
+      } else if (health.projectionReady) {
+        capturePermissionPending = false;
+      } else if (desiredActive && health.streamActive && !firstFrameReceived) {
+        setStreamState('waiting');
       } else if (!desiredActive) {
         setStatus('');
       }
       return health;
     }
     async function start() {
-      if (desiredActive) return;
+      if (desiredActive) {
+        await sendStartCommand('manual_retry');
+        return;
+      }
+      autoStartSuspended = false;
       desiredActive = true;
       startCommandSent = false;
       startupReconnectAttempts = 0;
       clearReconnectTimer();
-      closeDecoder();
+      closeDecoder('Connecting');
       startButton.disabled = true;
       startButton.textContent = 'Starting';
       setStatus('');
       try {
         await connect(true);
-        startCommandSent = true;
-        send({type: 'start'});
+        await sendStartCommand('start');
+        await connectVideo(false);
       } catch (_) {
         scheduleStartupReconnect();
       }
@@ -1780,9 +2661,12 @@ private fun browserPage(): String {
     }
     canvas.addEventListener('pointerdown', (event) => {
       if (!desiredActive || !configured) return;
+      if (event.button != null && event.button !== 0) return;
       noteActivity(true);
       pointerStart = {...point(event), at: performance.now()};
-      canvas.setPointerCapture(event.pointerId);
+      if (event.pointerType === 'mouse') {
+        try { canvas.setPointerCapture(event.pointerId); } catch (_) {}
+      }
     });
     canvas.addEventListener('pointerup', (event) => {
       if (!desiredActive || !configured) return;
@@ -1794,30 +2678,32 @@ private fun browserPage(): String {
       const heldMs = performance.now() - pointerStart.at;
       if (distance < maxTapTravelPx && heldMs <= maxTapDurationMs) {
         send({type: 'tap', x: end.x, y: end.y});
-      } else if (distance < maxTapTravelPx) {
-        send({type: 'long_press'});
-      } else {
-        send({type: 'swipe'});
       }
       pointerStart = null;
     });
+    canvas.addEventListener('pointercancel', () => { pointerStart = null; });
     window.addEventListener('keydown', () => noteActivity(true), {capture: true});
     window.addEventListener('wheel', () => noteActivity(), {capture: true, passive: true});
     window.addEventListener('pointermove', () => noteActivity(), {capture: true, passive: true});
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden' && desiredActive && configured) {
+      if (document.visibilityState === 'hidden' && desiredActive && (configured || startCommandSent)) {
         endSession('page_hidden', true);
       } else if (document.visibilityState === 'visible') {
         ensureStreaming('visibility_visible');
       }
     });
     window.addEventListener('pagehide', () => { if (desiredActive) endSession('page_hidden', true); });
-    window.addEventListener('pageshow', () => ensureStreaming('pageshow'));
+    window.addEventListener('pageshow', () => {
+      keepFirstScreenPinned(true);
+      ensureStreaming('pageshow');
+    });
     window.addEventListener('focus', () => ensureStreaming('focus'));
     window.addEventListener('beforeunload', () => { if (desiredActive) endSession('page_unload', true); });
     document.getElementById('start').addEventListener('click', () => start());
     resizeCanvasBox();
+    keepFirstScreenPinned(true);
     startSelfHealTimer();
+    startStreamWatchdog();
     ensureStreaming('initial_load').catch(() => setStatus('Unavailable'));
   </script>
 </body>

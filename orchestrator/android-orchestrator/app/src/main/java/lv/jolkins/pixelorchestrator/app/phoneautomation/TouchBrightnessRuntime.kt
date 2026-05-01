@@ -11,6 +11,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -38,7 +39,9 @@ internal sealed interface TouchBrightnessEvent {
   ) : TouchBrightnessEvent
 
   data class BlackoutWakeRequested(
-    val observedAtUptimeMillis: Long
+    val observedAtUptimeMillis: Long,
+    val activePointerCount: Int = 1,
+    val gestureEnded: Boolean = false
   ) : TouchBrightnessEvent
 
   data class OverlayAvailabilityChanged(
@@ -141,7 +144,9 @@ internal class AndroidTouchBrightnessEventSource(
           is PhoneAutomationBlackoutOverlayEvent.WakeRequested -> {
             trySend(
               TouchBrightnessEvent.BlackoutWakeRequested(
-                observedAtUptimeMillis = event.observedAtUptimeMillis
+                observedAtUptimeMillis = event.observedAtUptimeMillis,
+                activePointerCount = event.activePointerCount,
+                gestureEnded = event.gestureEnded
               )
             )
           }
@@ -180,22 +185,33 @@ internal class AndroidTouchBrightnessDeviceController(
   private val bridge: PhoneAutomationServiceBridge = PhoneAutomationServiceBridge
 ) : TouchBrightnessDeviceController {
   override suspend fun prepare(): PhoneAutomationPreparationResult {
-    val reliability = PhoneAutomationBackgroundReliabilitySupport.read(context)
-    val missingRequirements = mutableListOf<String>()
-    if (!rootExecutor.isRootAvailable()) {
-      missingRequirements += "Root access is unavailable"
-    }
-    missingRequirements += PhoneAutomationBackgroundReliabilitySupport.missingTouchBrightnessRequirements(reliability)
-    if (missingRequirements.isNotEmpty()) {
-      return PhoneAutomationPreparationResult(
-        ready = false,
-        detail = missingRequirements.joinToString(separator = "; ")
+    val rootAvailable = rootExecutor.isRootAvailable()
+    val rootBatteryWhitelist = if (rootAvailable) {
+      RootBatteryOptimizationControl.ensureWhitelisted(context.packageName, rootExecutor)
+    } else {
+      RootBatteryWhitelistResult(
+        attempted = false,
+        confirmed = false,
+        detail = "Root access is unavailable"
       )
     }
-
-    return PhoneAutomationPreparationResult(
-      ready = true,
-      detail = "Ready for rooted panel touch brightness"
+    val reliability = PhoneAutomationBackgroundReliabilitySupport.read(context)
+    val touchDevices = if (rootAvailable) {
+      readTouchDevices()
+    } else {
+      emptyList()
+    }
+    val panelAvailable = rootAvailable && readPanelAvailable()
+    return TouchBrightnessReadiness.evaluate(
+      TouchBrightnessReadinessSnapshot(
+        rootAvailable = rootAvailable,
+        batteryUnrestricted = RootBatteryOptimizationControl.batteryUnrestricted(
+          androidBatteryUnrestricted = reliability.batteryUnrestricted,
+          rootWhitelistConfirmed = rootBatteryWhitelist.confirmed
+        ),
+        touchDevices = touchDevices,
+        panelAvailable = panelAvailable
+      )
     )
   }
 
@@ -223,6 +239,10 @@ internal class AndroidTouchBrightnessDeviceController(
   override suspend fun setBrightnessPercent(percent: Int): PhoneAutomationActionResult {
     val targetPercent = percent.coerceIn(0, 100)
     val panelOnly = true
+    val before = readBrightnessStateForVerification(panelOnly)
+    if (before != null && before.matchesTargetLenient(targetPercent, panelOnly = panelOnly)) {
+      return PhoneAutomationActionResult(true, "Brightness already at $targetPercent%")
+    }
     val script = ScreenBrightnessControl.buildSetPanelPercentScript(
       percent = targetPercent,
       holdMillis = if (targetPercent == DIM_TARGET_PERCENT) DIM_HOLD_MILLIS else 0L,
@@ -255,6 +275,10 @@ internal class AndroidTouchBrightnessDeviceController(
   override suspend fun restoreBrightnessState(state: ScreenBrightnessState): PhoneAutomationActionResult {
     val panelOnly = true
     val restoreState = state.withRemotePanelFallback()
+    val before = readBrightnessStateForVerification(panelOnly)
+    if (before != null && before.matchesRestoredStateLenient(restoreState, panelOnly = panelOnly)) {
+      return PhoneAutomationActionResult(true, "Brightness already restored")
+    }
     val capturedPanelScript = ScreenBrightnessControl.buildRestorePanelScript(restoreState)
     val script = capturedPanelScript.ifBlank {
       """
@@ -293,6 +317,36 @@ internal class AndroidTouchBrightnessDeviceController(
       state = readBrightnessState()
     }
     return state
+  }
+
+  private suspend fun readTouchDevices(): List<RootTouchDevice> {
+    return runCatching {
+      val result = rootExecutor.run("getevent -lp", timeout = 5.seconds)
+      if (result.ok) {
+        RootTouchDeviceDiscovery.parseTouchDevices(result.stdout)
+      } else {
+        emptyList()
+      }
+    }.getOrDefault(emptyList())
+  }
+
+  private suspend fun readPanelAvailable(): Boolean {
+    return runCatching {
+      val result = rootExecutor.runScript(
+        """
+        for candidate in /sys/class/backlight/*; do
+          if [ -w "${'$'}candidate/brightness" ] && [ -r "${'$'}candidate/max_brightness" ]; then
+            printf 'ready\n'
+            exit 0
+          fi
+        done
+        printf 'missing\n'
+        exit 1
+        """.trimIndent(),
+        timeout = 5.seconds
+      )
+      result.ok && result.stdout.contains("ready")
+    }.getOrDefault(false)
   }
 
   private fun ScreenBrightnessState.withRemotePanelFallback(): ScreenBrightnessState {
@@ -430,6 +484,10 @@ internal class TouchBrightnessRuntime(
     rootExecutor = rootExecutor
   ),
   private val overlayController: BlackoutOverlayController = BridgeBlackoutOverlayController(),
+  private val powerController: TouchScreenPowerController = AndroidTouchScreenPowerController(
+    context = context.applicationContext,
+    rootExecutor = rootExecutor
+  ),
   private val eventSourceFactory: () -> TouchBrightnessEventSource = {
     AndroidTouchBrightnessEventSource(context.applicationContext)
   },
@@ -471,6 +529,7 @@ internal class TouchBrightnessRuntime(
     val shouldRestoreBrightness = !snapshot.touchBrightnessEnabled || reason == SERVICE_DESTROYED_REASON
     val restoreState = snapshot.touchBrightnessRestoreState()
     val newStopJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+      powerController.releaseHold("runtime_stop:$reason")
       overlayController.hide()
 
       if (shouldRestoreBrightness && restoreState != null) {
@@ -555,6 +614,7 @@ internal class TouchBrightnessRuntime(
     var lastWakeRequestedAtUptimeMillis: Long? = null
     var wakeConfirmDeadlineMillis: Long? = null
     var idleDeadlineMillis: Long? = null
+    var overlayPointerCount = 0
 
     var idleJob: Job? = null
     var wakeConfirmJob: Job? = null
@@ -570,6 +630,9 @@ internal class TouchBrightnessRuntime(
       val state = visibleBrightnessState ?: return "saved brightness"
       if (state.mode == AUTOMATIC_BRIGHTNESS_MODE_VALUE) {
         return "saved automatic brightness"
+      }
+      state.displayPercentage?.let { display ->
+        return "${display.roundToInt().coerceIn(0, 100)}%"
       }
       val value = state.value ?: return "saved brightness"
       return "${ScreenBrightnessControl.percentFromSystemValue(value)}%"
@@ -604,11 +667,17 @@ internal class TouchBrightnessRuntime(
         append(lastTouchAgeSummary())
         append(" timer=")
         append(blackoutTimerSummary())
+        append(" overlay=")
+        append(overlayPointerCount)
         append(" raw(btn=")
         append(currentTouchSnapshot.btnTouchActive)
         append(",slots=")
         append(currentTouchSnapshot.activeSlotCount)
+        append(",tool=")
+        append(currentTouchSnapshot.toolFingerActive)
         append(")")
+        append(" hold=")
+        append(powerController.wakeHoldActive)
       }
     }
 
@@ -683,7 +752,8 @@ internal class TouchBrightnessRuntime(
           if (
             internalMode != InternalTouchBrightnessMode.BLACKOUT_IDLE ||
             !interactive ||
-            activeTouchCount > 0
+            activeTouchCount > 0 ||
+            overlayPointerCount > 0
           ) {
             panelDimGuardJob = null
             return@launch
@@ -726,6 +796,11 @@ internal class TouchBrightnessRuntime(
     }
 
     fun scheduleBlackoutFrom(observedAtUptimeMillis: Long) {
+      if (activeTouchCount > 0 || overlayPointerCount > 0) {
+        publishDebugState()
+        logTouchState("blackout_timer_blocked_by_touch")
+        return
+      }
       cancelIdleJob()
       val deadline = observedAtUptimeMillis + IDLE_BLACKOUT_DELAY_MILLIS
       idleDeadlineMillis = deadline
@@ -735,19 +810,20 @@ internal class TouchBrightnessRuntime(
         delay(maxOf(0L, deadline - uptimeClock()))
         idleJob = null
         idleDeadlineMillis = null
-        if (!interactive || activeTouchCount > 0) {
+        if (!interactive || activeTouchCount > 0 || overlayPointerCount > 0) {
           publishDebugState()
           return@launch
         }
-        val overlayHidden = overlayController.hide()
-        if (!overlayHidden.success) {
-          throw IllegalStateException(overlayHidden.detail)
+        val overlayShown = overlayController.show()
+        if (!overlayShown.success) {
+          throw IllegalStateException(overlayShown.detail)
         }
         val brightness = deviceController.setBrightnessPercent(DIM_PERCENT)
         if (!brightness.success) {
           throw IllegalStateException("Could not dim the screen: ${brightness.detail}")
         }
         internalMode = InternalTouchBrightnessMode.BLACKOUT_IDLE
+        powerController.releaseHold("blackout_timer_fired")
         publishCurrentState()
         ensurePanelDimGuardJob()
         logTouchState("blackout_timer_fired")
@@ -758,9 +834,10 @@ internal class TouchBrightnessRuntime(
       cancelIdleJob()
       cancelPanelDimGuardJob()
       lastWakeRequestedAtUptimeMillis = wakeRequestedAtUptimeMillis
-      val overlayHidden = overlayController.hide()
-      if (!overlayHidden.success) {
-        throw IllegalStateException(overlayHidden.detail)
+      powerController.wakeScreen("blackout_wake")
+      val overlayShown = overlayController.show()
+      if (!overlayShown.success) {
+        throw IllegalStateException(overlayShown.detail)
       }
       val brightness = applyVisibleBrightnessState(visibleBrightnessState)
       if (!brightness.success) {
@@ -779,11 +856,14 @@ internal class TouchBrightnessRuntime(
       cancelWakeConfirmJob()
       wakeConfirmDeadlineMillis = null
       lastWakeRequestedAtUptimeMillis = null
+      powerController.holdScreen("touch_active")
       if (internalMode != InternalTouchBrightnessMode.BRIGHT_TOUCH_ACTIVE) {
         panelDimGuardFailureCount = 0
-        val overlayHidden = overlayController.hide()
-        if (!overlayHidden.success) {
-          throw IllegalStateException(overlayHidden.detail)
+        if (overlayPointerCount <= 0) {
+          val overlayHidden = overlayController.hide()
+          if (!overlayHidden.success) {
+            throw IllegalStateException(overlayHidden.detail)
+          }
         }
         val brightness = applyVisibleBrightnessState(visibleBrightnessState)
         if (!brightness.success) {
@@ -800,11 +880,12 @@ internal class TouchBrightnessRuntime(
       wakeConfirmDeadlineMillis = null
       lastWakeRequestedAtUptimeMillis = null
       cancelIdleJob()
+      powerController.releaseHold("blackout_idle")
       if (internalMode != InternalTouchBrightnessMode.BLACKOUT_IDLE) {
         panelDimGuardFailureCount = 0
-        val overlayHidden = overlayController.hide()
-        if (!overlayHidden.success) {
-          throw IllegalStateException(overlayHidden.detail)
+        val overlayShown = overlayController.show()
+        if (!overlayShown.success) {
+          throw IllegalStateException(overlayShown.detail)
         }
         if (forceHardwareDim) {
           val brightness = deviceController.setBrightnessPercent(DIM_PERCENT)
@@ -825,6 +906,8 @@ internal class TouchBrightnessRuntime(
       cancelWakeConfirmJob()
       wakeConfirmDeadlineMillis = null
       lastWakeRequestedAtUptimeMillis = null
+      powerController.releaseHold("screen_off")
+      overlayPointerCount = 0
       overlayController.hide()
       panelDimGuardFailureCount = 0
       internalMode = InternalTouchBrightnessMode.SUSPENDED_SCREEN_OFF
@@ -893,12 +976,25 @@ internal class TouchBrightnessRuntime(
             activeTouchCount = event.activeTouchCount
             logTouchState("touch_count_changed")
             when {
+              !interactive && activeTouchCount > 0 -> {
+                val wake = powerController.wakeScreen("raw_touch_while_screen_off")
+                if (!wake.success) {
+                  Log.w(TAG, "touch_screen_wake_failed detail=${wake.detail}")
+                }
+                interactive = true
+                enterBrightTouchActive()
+              }
+
               !interactive -> Unit
               activeTouchCount > 0 -> {
                 if (previousTouchCount == 0) {
                   logTouchState("wake_promoted_to_active_touch")
                 }
-                enterBrightTouchActive()
+                if (overlayPointerCount > 0) {
+                  enterBrightAwaitingTouchConfirmation(event.observedAtUptimeMillis)
+                } else {
+                  enterBrightTouchActive()
+                }
               }
 
               previousTouchCount > 0 && activeTouchCount == 0 -> {
@@ -917,14 +1013,42 @@ internal class TouchBrightnessRuntime(
               activeTouchCount = 0
               currentTouchSnapshot = currentTouchSnapshot.copy(activeTouchCount = 0)
               enterSuspendedScreenOff()
-            } else if (activeTouchCount > 0) {
-              enterBrightTouchActive()
             } else {
-              enterBlackoutIdle()
+              val liveTouchSnapshot = eventSource.currentTouchSnapshot() ?: currentTouchSnapshot
+              val liveTouchCount = maxOf(
+                activeTouchCount,
+                eventSource.activeTouchCount(),
+                if (liveTouchSnapshot.isRawTouchActive()) {
+                  maxOf(1, liveTouchSnapshot.activeTouchCount)
+                } else {
+                  liveTouchSnapshot.activeTouchCount
+                }
+              )
+              activeTouchCount = liveTouchCount
+              currentTouchSnapshot = liveTouchSnapshot.copy(
+                activeTouchCount = liveTouchCount,
+                selectedDevice = liveTouchSnapshot.selectedDevice ?: currentSource
+              )
+              currentTouchSnapshot.selectedDevice?.let {
+                currentSource = it
+              }
+              if (activeTouchCount > 0) {
+                enterBrightTouchActive()
+              } else {
+                enterBlackoutIdle()
+              }
             }
           }
 
           is TouchBrightnessEvent.BlackoutWakeRequested -> {
+            overlayPointerCount = event.activePointerCount
+            if (!interactive) {
+              val wake = powerController.wakeScreen("blackout_overlay")
+              if (!wake.success) {
+                Log.w(TAG, "touch_screen_wake_failed detail=${wake.detail}")
+              }
+              interactive = true
+            }
             if (interactive) {
               val liveTouchSnapshot = eventSource.currentTouchSnapshot() ?: currentTouchSnapshot
               currentTouchSnapshot = liveTouchSnapshot.copy(
@@ -944,10 +1068,20 @@ internal class TouchBrightnessRuntime(
               )
               activeTouchCount = liveTouchCount
               currentTouchSnapshot = currentTouchSnapshot.copy(activeTouchCount = liveTouchCount)
-              if (liveTouchCount > 0) {
+              if (overlayPointerCount > 0) {
+                enterBrightAwaitingTouchConfirmation(event.observedAtUptimeMillis)
+              } else if (liveTouchCount > 0) {
                 enterBrightTouchActive()
               } else {
-                enterBrightAwaitingTouchConfirmation(event.observedAtUptimeMillis)
+                val overlayHidden = overlayController.hide()
+                if (!overlayHidden.success) {
+                  throw IllegalStateException(overlayHidden.detail)
+                }
+                internalMode = InternalTouchBrightnessMode.BRIGHT_AWAITING_TOUCH_CONFIRMATION
+                scheduleWakeConfirmationExpiry(event.observedAtUptimeMillis)
+                scheduleBlackoutFrom(event.observedAtUptimeMillis)
+                publishCurrentState()
+                logTouchState("wake_gesture_released")
               }
             }
           }
@@ -976,6 +1110,7 @@ internal class TouchBrightnessRuntime(
       cancelIdleJob()
       cancelPanelDimGuardJob()
       cancelWakeConfirmJob()
+      powerController.releaseHold("session_finished")
       eventJob.cancelAndJoin()
     }
   }
@@ -1001,10 +1136,15 @@ internal class TouchBrightnessRuntime(
 
   private suspend fun applyVisibleBrightnessState(state: ScreenBrightnessState?): PhoneAutomationActionResult {
     val targetState = state ?: settingsStore.load().touchBrightnessRestoreState()
-    return if (targetState != null) {
-      deviceController.restoreBrightnessState(targetState)
+    if (targetState != null) {
+      val restore = deviceController.restoreBrightnessState(targetState)
+      if (restore.success) {
+        return restore
+      }
+      Log.w(TAG, "saved brightness restore failed during wake; forcing visible brightness: ${restore.detail}")
+      return deviceController.setBrightnessPercent(BRIGHT_PERCENT)
     } else {
-      deviceController.setBrightnessPercent(BRIGHT_PERCENT)
+      return deviceController.setBrightnessPercent(BRIGHT_PERCENT)
     }
   }
 
@@ -1020,7 +1160,7 @@ internal class TouchBrightnessRuntime(
 
   companion object {
     internal const val BRIGHT_PERCENT = 100
-    internal const val DIM_PERCENT = 0
+    internal const val DIM_PERCENT = 1
     internal const val IDLE_BLACKOUT_DELAY_MILLIS = 3_000L
     internal const val WAKE_CONFIRM_WINDOW_MILLIS = 500L
     internal const val PANEL_DIM_GUARD_INTERVAL_MILLIS = 2_500L

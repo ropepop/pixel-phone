@@ -51,4 +51,25 @@ class TicketInactivityPolicyTest {
       )
     )
   }
+
+  @Test
+  fun inactivityTimeoutResetsViviTicketAndBlocksBrowserAutoStart() {
+    assertTrue(
+      TicketSessionStopPolicy.shouldResetViviToTicket(
+        TicketSessionStopPolicy.VIEWER_INACTIVITY_TIMEOUT
+      )
+    )
+    assertFalse(
+      TicketSessionStopPolicy.browserAutoStartAllowedAfterStop(
+        TicketSessionStopPolicy.VIEWER_INACTIVITY_TIMEOUT
+      )
+    )
+  }
+
+  @Test
+  fun ordinaryBrowserStopDoesNotResetViviOrBlockAutoStart() {
+    assertFalse(TicketSessionStopPolicy.shouldResetViviToTicket("browser_requested"))
+    assertTrue(TicketSessionStopPolicy.browserAutoStartAllowedAfterStop("browser_requested"))
+    assertTrue(TicketSessionStopPolicy.browserAutoStartAllowedAfterStop(null))
+  }
 }

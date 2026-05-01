@@ -21,6 +21,7 @@ class RuntimeHealthChecker(
     val satiksmeBotEnabled = isModuleEnabled(config, "satiksme_bot")
     val siteNotifierEnabled = isModuleEnabled(config, "site_notifier")
     val subscriptionBotEnabled = isModuleEnabled(config, "subscription_bot")
+    val ticketScreenEnabled = isModuleEnabled(config, "ticket_screen")
     val ddnsRequired = isModuleEnabled(config, "ddns") && config.ddns.enabled
     val remoteEnabled = isModuleEnabled(config, "remote") && (config.remote.dohEnabled || config.remote.dotEnabled)
     val trainBotPid = parsed?.trainBotPid?.trim().orEmpty()
@@ -113,6 +114,7 @@ class RuntimeHealthChecker(
 
     val rootGranted = rootValue == "0"
     val dnsHealthy = dnsEnabled && listenersOutput.hasPort(config.dns.dnsPort)
+    val ticketScreenHealthy = listenersOutput.hasPort(TICKET_SCREEN_PORT)
     val sshHealthy = when {
       !sshEnabled -> false
       managementSshListenerRaw.isNotBlank() -> managementSshListener == "1"
@@ -483,6 +485,19 @@ class RuntimeHealthChecker(
           "subscription_bot_pid" to subscriptionBotPid.ifBlank { "none" },
           "heartbeat_age_sec" to (subscriptionBotHeartbeatAge?.toString() ?: "unknown"),
           "failure_reason" to subscriptionBotFailureReason
+        )
+      ),
+      "ticket_screen" to ModuleHealthState(
+        healthy = ticketScreenHealthy,
+        status = when {
+          ticketScreenHealthy -> "running"
+          ticketScreenEnabled -> "degraded"
+          else -> "disabled"
+        },
+        details = mapOf(
+          "ticket_screen_enabled" to ticketScreenEnabled.toString(),
+          "ticket_screen_port" to TICKET_SCREEN_PORT.toString(),
+          "listener" to if (ticketScreenHealthy) "1" else "0"
         )
       ),
       "ddns" to ModuleHealthState(
@@ -2301,6 +2316,7 @@ class RuntimeHealthChecker(
   }
 
   companion object {
+    private const val TICKET_SCREEN_PORT = 9388
     private const val APP_HEARTBEAT_FRESH_SEC = 120L
     private const val MARKER_ID_U = "__PIXEL_HEALTH_ID_U__"
     private const val MARKER_LISTENERS = "__PIXEL_HEALTH_LISTENERS__"

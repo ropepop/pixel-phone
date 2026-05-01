@@ -191,25 +191,17 @@ class SupervisorService : Service() {
         ACTION_SYNC_DDNS -> facade.syncDdnsNow()
         ACTION_EXPORT_BUNDLE -> facade.exportSupportBundle(includeSecrets = false)
         ACTION_TICKET_START_SERVER -> {
-          val result = startTicketStreamService(TicketScreenConfig.ACTION_START_SERVER)
-          FacadeOperationResult(
-            result.ok,
-            if (result.ok) {
-              "Ticket remote server start requested"
-            } else {
-              "Ticket remote server start failed: ${result.stderr.ifBlank { result.stdout }.trim()}"
-            }
+          requestTicketStreamService(
+            action = TicketScreenConfig.ACTION_START_SERVER,
+            successMessage = "Ticket remote server start requested",
+            failurePrefix = "Ticket remote server start failed"
           )
         }
         ACTION_TICKET_STOP_SERVER -> {
-          val result = startTicketStreamService(TicketScreenConfig.ACTION_STOP_SERVER)
-          FacadeOperationResult(
-            result.ok,
-            if (result.ok) {
-              "Ticket remote server stop requested"
-            } else {
-              "Ticket remote server stop failed: ${result.stderr.ifBlank { result.stdout }.trim()}"
-            }
+          requestTicketStreamService(
+            action = TicketScreenConfig.ACTION_STOP_SERVER,
+            successMessage = "Ticket remote server stop requested",
+            failurePrefix = "Ticket remote server stop failed"
           )
         }
         ACTION_REFRESH_PHONE_AUTOMATION -> FacadeOperationResult(true, "Phone automation refreshed")
@@ -310,10 +302,18 @@ class SupervisorService : Service() {
 
   override fun onBind(intent: Intent?): IBinder? = null
 
-  private suspend fun startTicketStreamService(action: String) =
-    SuRootExecutor().run(
-      "am startservice -n ${ComponentName(this, TicketStreamService::class.java).flattenToString()} -a $action"
-    )
+  private fun requestTicketStreamService(
+    action: String,
+    successMessage: String,
+    failurePrefix: String
+  ): FacadeOperationResult =
+    try {
+      startService(Intent(this, TicketStreamService::class.java).setAction(action))
+      FacadeOperationResult(true, successMessage)
+    } catch (error: Throwable) {
+      Log.w(TAG, "ticket_stream_service_request_failed action=$action", error)
+      FacadeOperationResult(false, "$failurePrefix: ${error.message ?: error::class.java.simpleName}")
+    }
 
   companion object {
     private const val TAG = "SupervisorService"

@@ -29,11 +29,12 @@ internal data class RootTouchDevice(
 internal data class RootTouchSnapshot(
   val activeTouchCount: Int = 0,
   val btnTouchActive: Boolean = false,
+  val toolFingerActive: Boolean = false,
   val activeSlotCount: Int = 0,
   val selectedDevice: RootTouchDevice? = null,
   val lastEventUptimeMillis: Long = 0L
 ) {
-  fun isRawTouchActive(): Boolean = btnTouchActive || activeSlotCount > 0
+  fun isRawTouchActive(): Boolean = btnTouchActive || toolFingerActive || activeSlotCount > 0
 }
 
 internal sealed interface RootTouchEvent {
@@ -94,6 +95,7 @@ internal class AndroidRootTouchMonitor(
       currentSnapshotState.value = RootTouchSnapshot(
         activeTouchCount = confirmedCount,
         btnTouchActive = tracker.isTouchButtonActive(),
+        toolFingerActive = tracker.isToolFingerActive(),
         activeSlotCount = tracker.activeSlotCount(),
         selectedDevice = selectedDeviceState.value,
         lastEventUptimeMillis = observedAtUptimeMillis
@@ -109,7 +111,7 @@ internal class AndroidRootTouchMonitor(
       runCatching {
         Log.d(
           TAG,
-          "root_touch_count_changed count=$newCount btn=${currentSnapshotState.value.btnTouchActive} slots=${currentSnapshotState.value.activeSlotCount} source=${currentSnapshotState.value.selectedDevice?.displayLabel() ?: "unknown"}"
+          "root_touch_count_changed count=$newCount btn=${currentSnapshotState.value.btnTouchActive} tool=${currentSnapshotState.value.toolFingerActive} slots=${currentSnapshotState.value.activeSlotCount} source=${currentSnapshotState.value.selectedDevice?.displayLabel() ?: "unknown"}"
         )
       }
       trySend(
@@ -248,6 +250,7 @@ internal class AndroidRootTouchMonitor(
     currentSnapshotState.value = currentSnapshotState.value.copy(
       activeTouchCount = 0,
       btnTouchActive = false,
+      toolFingerActive = false,
       activeSlotCount = 0,
       lastEventUptimeMillis = uptimeClock()
     )
@@ -328,7 +331,7 @@ internal class AndroidRootTouchMonitor(
 
   companion object {
     private const val ROOT_COMMAND_TIMEOUT_MILLIS = 5_000L
-    private const val TOUCH_RELEASE_CONFIRMATION_MILLIS = 100L
+    private const val TOUCH_RELEASE_CONFIRMATION_MILLIS = 180L
     private const val TAG = "RootTouchMonitor"
   }
 }
@@ -367,6 +370,10 @@ internal object RootTouchDeviceDiscovery {
         line.contains("BTN_TOUCH") -> {
           current?.hasTouchButton = true
         }
+
+        line.contains("BTN_TOOL_FINGER") -> {
+          current?.hasToolFinger = true
+        }
       }
     }
     current?.takeIf { it.isTouchCapable() }?.let(candidates::add)
@@ -386,6 +393,7 @@ internal object RootTouchDeviceDiscovery {
     val path: String,
     var name: String = "",
     var hasTouchButton: Boolean = false,
+    var hasToolFinger: Boolean = false,
     var hasMultiTouchPosition: Boolean = false,
     var hasMultiTouchSlot: Boolean = false,
     var hasDirectInput: Boolean = false
@@ -404,6 +412,9 @@ internal object RootTouchDeviceDiscovery {
       }
       if (hasTouchButton) {
         score += 2
+      }
+      if (hasToolFinger) {
+        score += 1
       }
       if (hasMultiTouchSlot) {
         score += 1
@@ -427,6 +438,7 @@ internal class RootTouchStateTracker {
   private val activeSlots = mutableSetOf<Int>()
   private var currentSlot = 0
   private var touchButtonActive = false
+  private var toolFingerActive = false
   private var usesMultiTouchSlots = false
   private var lastEmittedCount = 0
 
@@ -461,6 +473,20 @@ internal class RootTouchStateTracker {
         }
       }
 
+      parsed.type == "EV_KEY" && parsed.code == "BTN_TOOL_FINGER" -> {
+        val nextValue = when (parsed.value.uppercase()) {
+          "DOWN" -> true
+          "UP" -> false
+          else -> parseNumber(parsed.value)?.let { it != 0 } ?: toolFingerActive
+        }
+        if (nextValue == toolFingerActive) {
+          false
+        } else {
+          toolFingerActive = nextValue
+          true
+        }
+      }
+
       else -> false
     }
     if (!changed) {
@@ -478,7 +504,7 @@ internal class RootTouchStateTracker {
   fun rawActiveTouchCount(): Int {
     return when {
       usesMultiTouchSlots || activeSlots.isNotEmpty() -> activeSlots.size
-      touchButtonActive -> 1
+      touchButtonActive || toolFingerActive -> 1
       else -> 0
     }
   }
@@ -487,10 +513,13 @@ internal class RootTouchStateTracker {
 
   fun isTouchButtonActive(): Boolean = touchButtonActive
 
+  fun isToolFingerActive(): Boolean = toolFingerActive
+
   fun reset() {
     activeSlots.clear()
     currentSlot = 0
     touchButtonActive = false
+    toolFingerActive = false
     usesMultiTouchSlots = false
     lastEmittedCount = 0
   }

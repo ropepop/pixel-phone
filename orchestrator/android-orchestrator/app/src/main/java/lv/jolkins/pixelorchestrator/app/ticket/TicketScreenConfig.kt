@@ -20,8 +20,12 @@ object TicketScreenConfig {
   const val ACCRESCENT_PACKAGE = "app.accrescent.client"
   const val MAX_FPS = 10
   const val MAX_EQUIVALENT_PIXELS = 1920 * 1080
+  const val ROOT_CAPTURE_WIDTH = 540
+  const val ROOT_CAPTURE_BITRATE = 1_200_000
   const val AV1_MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_AV1
   const val AV1_CODEC_STRING = "av01.0.08M.08"
+  const val H264_MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_AVC
+  const val H264_CODEC_STRING = "avc1.42E01E"
 
   val localStorePackages = listOf(
     ACCRESCENT_PACKAGE,
@@ -35,9 +39,12 @@ object TicketScreenConfig {
 @Serializable
 data class TicketStreamHealth(
   val ok: Boolean,
+  val serverVersion: String,
   val serverRunning: Boolean,
   val av1HardwareEncoderAvailable: Boolean,
+  val h264HardwareEncoderAvailable: Boolean = false,
   val projectionReady: Boolean,
+  val capturePermissionPending: Boolean,
   val viviInstalled: Boolean,
   val accrescentInstalled: Boolean,
   val installedStorePackages: List<String>,
@@ -48,6 +55,80 @@ data class TicketStreamHealth(
   val inactivityRemainingMillis: Long,
   val autoStartAllowed: Boolean = true,
   val autoStartBlockedReason: String? = null,
+  val rootCapture: TicketRootCaptureHealth = TicketRootCaptureHealth(),
+  val webrtc: TicketWebRtcHealth = TicketWebRtcHealth(),
+  val inputGate: TicketInputGateHealth = TicketInputGateHealth(),
+  val visibleFrame: TicketVisibleFrameHealth = TicketVisibleFrameHealth(),
+  val streamPipeline: TicketStreamPipeline,
+  val recentClientTelemetry: List<TicketClientTelemetry> = emptyList(),
+  val message: String
+)
+
+@Serializable
+data class TicketStreamPipeline(
+  val controlClients: Int,
+  val videoClients: Int,
+  val encoderRunning: Boolean,
+  val streamConfigured: Boolean,
+  val encodedFrames: Long,
+  val sentFrames: Long,
+  val keyFrames: Long,
+  val lastEncoderStartAgoMillis: Long?,
+  val lastConfigSentAgoMillis: Long?,
+  val lastFrameEncodedAgoMillis: Long?,
+  val lastKeyFrameEncodedAgoMillis: Long?,
+  val lastFrameSentAgoMillis: Long?,
+  val lastKeyFrameRequestedAgoMillis: Long?,
+  val lastVideoClientConnectedAgoMillis: Long?,
+  val secureWindowCaptureBypassActive: Boolean = false,
+  val secureWindowCaptureBypassMessage: String = "Secure-window capture bypass is inactive"
+)
+
+@Serializable
+data class TicketRootCaptureHealth(
+  val supported: Boolean = false,
+  val active: Boolean = false,
+  val state: String = "unavailable",
+  val message: String = "",
+  val width: Int? = null,
+  val height: Int? = null,
+  val bitrate: Int? = null,
+  val frames: Long = 0L,
+  val keyFrames: Long = 0L,
+  val lastFrameAgoMillis: Long? = null,
+  val lastKeyFrameAgoMillis: Long? = null,
+  val lastStartAgoMillis: Long? = null,
+  val restarts: Long = 0L
+)
+
+@Serializable
+data class TicketWebRtcHealth(
+  val enabled: Boolean = false,
+  val activePeers: Int = 0,
+  val lastOfferAgoMillis: Long? = null,
+  val lastFrameForwardedAgoMillis: Long? = null,
+  val message: String = "WebRTC is not connected"
+)
+
+@Serializable
+data class TicketInputGateHealth(
+  val tapOnly: Boolean = true,
+  val active: Boolean = false,
+  val allowed: Boolean = false,
+  val reason: String = "no_active_control"
+)
+
+@Serializable
+data class TicketVisibleFrameHealth(
+  val codec: String = "",
+  val lastFrameAgoMillis: Long? = null,
+  val lastKeyFrameAgoMillis: Long? = null,
+  val message: String = "No visible frame has been sent yet"
+)
+
+@Serializable
+data class TicketClientTelemetry(
+  val atAgoMillis: Long,
   val message: String
 )
 
@@ -84,6 +165,17 @@ data class TicketStreamSize(
 }
 
 object TicketStreamSizing {
+  fun rootH264(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
+    val width = TicketScreenConfig.ROOT_CAPTURE_WIDTH.evenAtLeastTwo()
+    val height = ((sourceHeight / sourceWidth.toFloat()) * width).roundToInt().evenAtLeastTwo()
+    return TicketStreamSize(
+      width = width,
+      height = height,
+      sourceWidth = sourceWidth,
+      sourceHeight = sourceHeight
+    )
+  }
+
   fun fitTo1080Equivalent(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
     val sourcePixels = sourceWidth.toLong() * sourceHeight.toLong()
     if (sourcePixels <= TicketScreenConfig.MAX_EQUIVALENT_PIXELS) {
@@ -135,6 +227,26 @@ internal object TicketInactivityPolicy {
   }
 }
 
+internal object TicketSessionStopPolicy {
+  const val VIEWER_INACTIVITY_TIMEOUT = "viewer_inactivity_timeout"
+
+  private val browserAutoStartBlockedReasons = setOf(
+    VIEWER_INACTIVITY_TIMEOUT,
+    "remote_power_controls_blocked",
+    "remote_network_controls_blocked",
+    "remote_system_ui_blocked",
+    "left_vivi_app"
+  )
+
+  fun shouldResetViviToTicket(reason: String): Boolean {
+    return reason == VIEWER_INACTIVITY_TIMEOUT
+  }
+
+  fun browserAutoStartAllowedAfterStop(reason: String?): Boolean {
+    return reason == null || reason !in browserAutoStartBlockedReasons
+  }
+}
+
 object TicketAv1Support {
   fun hardwareEncoderName(): String? {
     val codecs = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos
@@ -142,6 +254,31 @@ object TicketAv1Support {
       codecInfo.isEncoder &&
         !codecInfo.isSoftwareOnlyCompat() &&
         codecInfo.supportedTypes.any { type -> type.equals(TicketScreenConfig.AV1_MIME_TYPE, ignoreCase = true) }
+    }?.name
+  }
+
+  fun isHardwareEncoderAvailable(): Boolean = hardwareEncoderName() != null
+
+  private fun MediaCodecInfo.isSoftwareOnlyCompat(): Boolean {
+    return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+      isSoftwareOnly
+    } else {
+      val lower = name.lowercase()
+      lower.startsWith("omx.google.") ||
+        lower.startsWith("c2.android.") ||
+        lower.contains("sw") ||
+        lower.contains("software")
+    }
+  }
+}
+
+object TicketH264Support {
+  fun hardwareEncoderName(): String? {
+    val codecs = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos
+    return codecs.firstOrNull { codecInfo ->
+      codecInfo.isEncoder &&
+        !codecInfo.isSoftwareOnlyCompat() &&
+        codecInfo.supportedTypes.any { type -> type.equals(TicketScreenConfig.H264_MIME_TYPE, ignoreCase = true) }
     }?.name
   }
 

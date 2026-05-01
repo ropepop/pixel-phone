@@ -62,13 +62,23 @@ if ! rg -Fq 'const val ACTION_RESULTS = "$RUN/orchestrator-action-results"' "${S
   exit 1
 fi
 
-if ! rg -Fq 'am broadcast -n ${RECEIVER}' "${SOURCE_SCRIPT}"; then
-  echo "FAIL: deploy_orchestrator_apk.sh no longer dispatches via OrchestratorActionReceiver" >&2
+if ! rg -Fq 'am start-foreground-service -n ${SUPERVISOR}' "${SOURCE_SCRIPT}"; then
+  echo "FAIL: deploy_orchestrator_apk.sh no longer dispatches through SupervisorService" >&2
   exit 1
 fi
 
 if rg -Fq 'am start -n ${ACTIVITY}' "${SOURCE_SCRIPT}"; then
   echo "FAIL: deploy_orchestrator_apk.sh still dispatches via MainActivity" >&2
+  exit 1
+fi
+
+if ! rg -Fq 'cmd deviceidle whitelist +${PKG}' "${SOURCE_SCRIPT}"; then
+  echo "FAIL: deploy_orchestrator_apk.sh no longer repairs the battery whitelist with cmd deviceidle" >&2
+  exit 1
+fi
+
+if rg -Fq 'dumpsys deviceidle whitelist +${PKG}' "${SOURCE_SCRIPT}"; then
+  echo "FAIL: deploy_orchestrator_apk.sh still uses the ineffective dumpsys battery whitelist command" >&2
   exit 1
 fi
 
@@ -112,11 +122,14 @@ case "${cmd}" in
     ;;
   shell)
     shell_cmd="$*"
+    if [[ "${shell_cmd}" == *"/system/bin/sh -s"* ]]; then
+      shell_cmd="$(cat)"
+    fi
     case "${shell_cmd}" in
       *"pm path lv.jolkins.pixelorchestrator"*)
         printf 'package:/data/app/base.apk\n'
         ;;
-      *"dumpsys deviceidle whitelist"*)
+      *"cmd deviceidle whitelist"*)
         ;;
       *"test -s /data/local/pixel-stack/conf/runtime/components/train_bot/release-manifest.json"*)
         ;;
@@ -124,8 +137,8 @@ case "${cmd}" in
         ;;
       *"am force-stop "*|*"logcat -c"*)
         ;;
-      *"am broadcast -n "*)
-        printf '%s\n' "Broadcast completed: result=0"
+      *"am start-foreground-service -n "*)
+        printf '%s\n' "Starting service: Intent { cmp=lv.jolkins.pixelorchestrator/.app.SupervisorService }"
         ;;
       *"readlink /data/local/pixel-stack/apps/train-bot/current"*)
         printf '%s\n' "${FAKE_LIVE_RELEASE_PATH:-}"
@@ -184,8 +197,8 @@ if ! FAKE_ACTION_RESULT_MODE=success run_script "${TEST_ROOT}/scripts/android/de
   exit 1
 fi
 
-if ! rg -Fq 'Broadcast completed: result=0' "${success_log}"; then
-  echo "FAIL: deploy_orchestrator_apk.sh no longer surfaces receiver dispatch output" >&2
+if ! rg -Fq 'Starting service:' "${success_log}"; then
+  echo "FAIL: deploy_orchestrator_apk.sh no longer surfaces foreground service dispatch output" >&2
   exit 1
 fi
 
@@ -236,4 +249,4 @@ if ! rg -Fq 'resume_command=' "${timeout_log}"; then
   exit 1
 fi
 
-echo "PASS: deploy_orchestrator_apk.sh dispatches through the receiver and prefers artifact-backed results"
+echo "PASS: deploy_orchestrator_apk.sh dispatches through the foreground service and prefers artifact-backed results"

@@ -341,7 +341,7 @@ else
 fi
 
 # Keep app alive under battery optimizations whitelist when possible.
-"${adb_cmd[@]}" shell "dumpsys deviceidle whitelist +${PKG}" >/dev/null 2>&1 || true
+"${adb_cmd[@]}" shell "cmd deviceidle whitelist +${PKG}" >/dev/null 2>&1 || true
 
 repair_phone_automation_permissions() {
   if [[ "$(pixel_transport_selected)" != "adb" ]]; then

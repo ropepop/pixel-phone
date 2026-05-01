@@ -6,7 +6,8 @@ Contents:
 - the old rooted Pixel and orchestrator runtime tree
 - the old Swarm deployment layout
 - the old Pixel deployment helpers
-- old runbooks that only apply to that retired runtime
+
+Historical runbooks for this retired runtime were removed from the active workspace. Use the active operator docs below for current procedures.
 
 Active production operations now live outside this directory:
 - Docker Compose layout: `infra/arbuzas/docker/`

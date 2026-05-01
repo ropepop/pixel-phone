@@ -61,7 +61,9 @@ sealed interface PhoneAutomationBlackoutOverlayEvent {
   val observedAtUptimeMillis: Long
 
   data class WakeRequested(
-    override val observedAtUptimeMillis: Long
+    override val observedAtUptimeMillis: Long,
+    val activePointerCount: Int = 1,
+    val gestureEnded: Boolean = false
   ) : PhoneAutomationBlackoutOverlayEvent
 }
 
@@ -99,6 +101,7 @@ object PhoneAutomationServiceBridge {
   private val foregroundPackage = MutableStateFlow<String?>(null)
   private val touchInteractionActive = MutableStateFlow(false)
   private val lastBlackoutWakeAtMillis = MutableStateFlow(0L)
+  private val blackoutOverlayActivePointerCount = MutableStateFlow(0)
   private val lastExpectedOrchestratorForegroundAtMillis = MutableStateFlow(0L)
   private val blackoutOverlayRequested = MutableStateFlow(false)
   private val blackoutOverlaySuppressed = MutableStateFlow(false)
@@ -194,14 +197,25 @@ object PhoneAutomationServiceBridge {
 
   fun isTouchInteractionActive(): Boolean = touchInteractionActive.value
 
-  fun recordBlackoutOverlayWakeRequested(observedAtUptimeMillis: Long) {
+  fun recordBlackoutOverlayWakeRequested(
+    observedAtUptimeMillis: Long,
+    activePointerCount: Int = 1,
+    gestureEnded: Boolean = false
+  ) {
     lastBlackoutWakeAtMillis.value = System.currentTimeMillis()
+    blackoutOverlayActivePointerCount.value = activePointerCount.coerceAtLeast(0)
     rawBlackoutOverlayEvents.tryEmit(
-      PhoneAutomationBlackoutOverlayEvent.WakeRequested(observedAtUptimeMillis)
+      PhoneAutomationBlackoutOverlayEvent.WakeRequested(
+        observedAtUptimeMillis = observedAtUptimeMillis,
+        activePointerCount = activePointerCount.coerceAtLeast(0),
+        gestureEnded = gestureEnded
+      )
     )
   }
 
   fun lastBlackoutWakeAtMillis(): Long = lastBlackoutWakeAtMillis.value
+
+  fun blackoutOverlayActivePointerCount(): Int = blackoutOverlayActivePointerCount.value
 
   fun recordExpectedOrchestratorForeground(observedAtMillis: Long = System.currentTimeMillis()) {
     lastExpectedOrchestratorForegroundAtMillis.value = observedAtMillis
@@ -235,11 +249,15 @@ object PhoneAutomationServiceBridge {
   suspend fun setBlackoutOverlayVisible(visible: Boolean): Boolean {
     if (visible && blackoutOverlaySuppressed.value) {
       blackoutOverlayRequested.value = false
+      blackoutOverlayActivePointerCount.value = 0
       accessibilityService.value?.setBlackoutOverlayVisible(false)
       return true
     }
     blackoutOverlayRequested.value = visible
-    val service = accessibilityService.value ?: return true
+    if (!visible) {
+      blackoutOverlayActivePointerCount.value = 0
+    }
+    val service = accessibilityService.value ?: return !visible
     return service.setBlackoutOverlayVisible(visible)
   }
 

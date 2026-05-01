@@ -26,7 +26,7 @@
   <string name="phone_automation_setup_line">Setup: %1$s</string>
   <string name="phone_automation_runtime_line">Status: %1$s</string>
   <string name="touch_brightness_title">Touch Brightness</string>
-  <string name="touch_brightness_description">Keep the screen visible at 100%% while touch is active, switch to blackout 3 seconds after the last touch, and pause enforcement when the power button puts the phone to sleep.</string>
+  <string name="touch_brightness_description">Keep the screen visible at the saved brightness while physical touch is active, switch to blackout 3 seconds after the last touch, and pause enforcement when the power button puts the phone to sleep.</string>
   <string name="touch_brightness_toggle_label">Enable touch brightness mode</string>
   <string name="touch_brightness_runtime_line">Status: %1$s</string>
   <string name="touch_brightness_debug_line">Debug: %1$s</string>

@@ -62,6 +62,21 @@ class RootTouchMonitorTest {
   }
 
   @Test
+  fun btnToolFingerDownAndUpChangesActiveTouchCount() {
+    val tracker = RootTouchStateTracker()
+
+    assertEquals(
+      1,
+      tracker.consumeLine("[   1.000000] /dev/input/event2: EV_KEY BTN_TOOL_FINGER DOWN")
+    )
+    assertTrue(tracker.isToolFingerActive())
+    assertEquals(
+      0,
+      tracker.consumeLine("[   1.000010] /dev/input/event2: EV_KEY BTN_TOOL_FINGER UP")
+    )
+  }
+
+  @Test
   fun multitouchTrackingIdsCountOverlappingTouchesCorrectly() {
     val tracker = RootTouchStateTracker()
 

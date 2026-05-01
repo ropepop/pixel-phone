@@ -23,8 +23,21 @@ dist/
 # Local runtime scratch
 .browser-use/
 .playwright-cli/
+.playwright-mcp/
 .tmp-rootfs/
 .artifacts/
+/*.png
+/*.log
+
+# Local generated app state and data
+workloads/*/*.db
+workloads/train-bot/bin/
+workloads/satiksme-bot/bin/
+workloads/satiksme-bot/bot
+workloads/train-bot/data/schedules/*.json
+workloads/satiksme-bot/data/catalog/generated/
+workloads/satiksme-bot/data/catalog/source/*.zip
+workloads/satiksme-bot/data/catalog/source/*.txt
 
 # Keep evidence tracked by default under ops/evidence
 # Keep secrets tracked by explicit user decision.
