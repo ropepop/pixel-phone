@@ -30,7 +30,7 @@ object TicketScreenConfig {
   const val ROOT_FFMPEG_H264_CODEC_STRING = "avc1.42E028"
   const val ROOT_FFMPEG_H264_FPS = 8
   const val ROOT_FFMPEG_H264_BITRATE = 8_000_000
-  const val ROOT_FFMPEG_H264_TARGET_WIDTH = 900
+  const val ROOT_FFMPEG_H264_TARGET_WIDTH = 720
   const val ROOT_FFMPEG_H264_KEYFRAME_INTERVAL_MILLIS = 125
   const val ROOT_FFMPEG_H264_CHROOT = "/data/local/pixel-stack/chroots/pihole"
   const val ROOT_FFMPEG_H264_BINARY = "/usr/bin/ffmpeg"

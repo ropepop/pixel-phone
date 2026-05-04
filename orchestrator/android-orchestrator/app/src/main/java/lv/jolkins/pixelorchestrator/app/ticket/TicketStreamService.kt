@@ -4153,7 +4153,7 @@ class TicketStreamService : Service() {
     private const val RECENT_CLIENT_TELEMETRY_LIMIT = 80
     private const val RECENT_TICKET_EVENT_LIMIT = 80
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
-    const val SERVER_VERSION = "ticket-stream-2026-05-04-native-capture-v66"
+    const val SERVER_VERSION = "ticket-stream-2026-05-04-native-capture-v67"
     private const val FRAME_ENVELOPE_VERSION = "tsf2"
     private const val FRAME_ENVELOPE_MAGIC = 0x54534632
     private const val FRAME_ENVELOPE_HEADER_BYTES = 29
