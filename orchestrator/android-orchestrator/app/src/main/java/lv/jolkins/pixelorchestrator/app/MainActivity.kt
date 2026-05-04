@@ -37,14 +37,18 @@ import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationPreferenc
 import lv.jolkins.pixelorchestrator.app.phoneautomation.isProtectedSpeedtestHandoffInProgress
 import lv.jolkins.pixelorchestrator.app.phoneautomation.phoneAutomationForegroundInterruptDecision
 import lv.jolkins.pixelorchestrator.app.phoneautomation.phoneAutomationUiPolicy
+import lv.jolkins.pixelorchestrator.app.ticket.TicketServicePreferencesStore
+import lv.jolkins.pixelorchestrator.app.ticket.TicketServiceSettingsSnapshot
 import lv.jolkins.pixelorchestrator.rootexec.SuRootExecutor
 
 class MainActivity : ComponentActivity() {
   private lateinit var binding: ActivityMainBinding
   private lateinit var phoneAutomationStore: PhoneAutomationPreferencesStore
   private lateinit var cpuFrequencyStore: CpuFrequencyPreferencesStore
+  private lateinit var ticketServiceStore: TicketServicePreferencesStore
   private var phoneAutomationRenderJob: Job? = null
   private var cpuFrequencyRenderJob: Job? = null
+  private var ticketServiceRenderJob: Job? = null
   private var protectedHandoffUiSessionActive: Boolean = false
   private var lastPhoneAutomationResumeRefreshAtMillis: Long = 0L
   private var backgroundReliabilityExpanded: Boolean = false
@@ -56,6 +60,7 @@ class MainActivity : ComponentActivity() {
     setContentView(binding.root)
     phoneAutomationStore = PhoneAutomationPreferencesStore(this)
     cpuFrequencyStore = CpuFrequencyPreferencesStore(this)
+    ticketServiceStore = TicketServicePreferencesStore(this)
     binding.phoneAutomationIntervalSlider.valueFrom = 0f
     binding.phoneAutomationIntervalSlider.valueTo = PhoneAutomationDispatchInterval.entries.lastIndex.toFloat()
     binding.phoneAutomationIntervalSlider.stepSize = 1f
@@ -131,6 +136,7 @@ class MainActivity : ComponentActivity() {
     }
 
     renderPhoneAutomationState()
+    renderTicketServiceState()
     renderCpuFrequencySection(cpuFrequencyStore.load(), cpuFrequencyStore.load().liveSnapshot)
     setBackgroundReliabilityExpanded(expanded = false)
     handleIntentActionIfPresent(facade, intent)
@@ -140,16 +146,20 @@ class MainActivity : ComponentActivity() {
     super.onResume()
     val snapshot = phoneAutomationStore.load()
     renderPhoneAutomationState(snapshot)
+    renderTicketServiceState()
     renderCpuFrequencySection(cpuFrequencyStore.load(), cpuFrequencyStore.load().liveSnapshot)
     maybeRefreshPhoneAutomationAfterResume(snapshot)
     maybeInterruptProtectedPhoneAutomationHandoff(snapshot)
     startPhoneAutomationRenderLoop()
+    startTicketServiceRenderLoop()
     startCpuFrequencyRenderLoop()
   }
 
   override fun onPause() {
     phoneAutomationRenderJob?.cancel()
     phoneAutomationRenderJob = null
+    ticketServiceRenderJob?.cancel()
+    ticketServiceRenderJob = null
     cpuFrequencyRenderJob?.cancel()
     cpuFrequencyRenderJob = null
     protectedHandoffUiSessionActive = false
@@ -193,6 +203,7 @@ class MainActivity : ComponentActivity() {
 
     binding.statusText.text = text
     renderPhoneAutomationState()
+    renderTicketServiceState()
     lifecycleScope.launch { renderCpuFrequencyState() }
     Log.i(TAG, text.trim())
   }
@@ -332,6 +343,27 @@ class MainActivity : ComponentActivity() {
     updateBackgroundReliabilityToggleButton()
   }
 
+  private fun renderTicketServiceState() {
+    renderTicketServiceState(ticketServiceStore.load())
+  }
+
+  private fun renderTicketServiceState(snapshot: TicketServiceSettingsSnapshot) {
+    binding.ticketServiceToggle.setOnCheckedChangeListener(null)
+    binding.ticketServiceToggle.isChecked = snapshot.enabled
+    binding.ticketServiceToggle.setOnCheckedChangeListener { _, enabled ->
+      ticketServiceStore.setEnabled(enabled)
+      renderTicketServiceState()
+      SupervisorService.start(
+        context = this,
+        action = SupervisorService.ACTION_REFRESH_TICKET_SERVICE
+      )
+    }
+    binding.ticketServiceRuntimeText.text = getString(
+      R.string.ticket_service_runtime_line,
+      snapshot.statusSummary()
+    )
+  }
+
   private fun setBackgroundReliabilityExpanded(expanded: Boolean) {
     backgroundReliabilityExpanded = expanded
     binding.backgroundReliabilitySection.visibility = if (expanded) {
@@ -427,6 +459,16 @@ class MainActivity : ComponentActivity() {
       while (isActive) {
         renderPhoneAutomationState()
         delay(PHONE_AUTOMATION_RENDER_INTERVAL_MILLIS)
+      }
+    }
+  }
+
+  private fun startTicketServiceRenderLoop() {
+    ticketServiceRenderJob?.cancel()
+    ticketServiceRenderJob = lifecycleScope.launch {
+      while (isActive) {
+        renderTicketServiceState()
+        delay(TICKET_SERVICE_RENDER_INTERVAL_MILLIS)
       }
     }
   }
@@ -706,6 +748,7 @@ class MainActivity : ComponentActivity() {
   companion object {
     private const val TAG = "OrchestratorMain"
     private const val PHONE_AUTOMATION_RENDER_INTERVAL_MILLIS = 5_000L
+    private const val TICKET_SERVICE_RENDER_INTERVAL_MILLIS = 5_000L
     private const val CPU_FREQUENCY_RENDER_INTERVAL_MILLIS = 15_000L
     private const val ACTIVITY_RESUME_REFRESH_DEBOUNCE_MILLIS = 2_000L
     const val EXTRA_ORCHESTRATOR_ACTION = OrchestratorShellCommand.EXTRA_ACTION

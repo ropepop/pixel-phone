@@ -82,10 +82,28 @@ class AndroidTouchBrightnessDeviceControllerTest {
     assertTrue(result.recovered)
     assertEquals(PhoneAutomationAccessibilityRecoveryStage.PERMISSION_REPAIRED, result.stage)
     assertTrue(environment.accessibilityGloballyEnabled)
+    assertEquals(2, environment.restrictedSettingsAllowCalls)
     assertEquals(
       "com.example/.ReaderService:lv.jolkins.pixelorchestrator/lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationAccessibilityService",
       environment.enabledServices
     )
+  }
+
+  @Test
+  fun accessibilityPermissionRepairFailsWhenRestrictedSettingsCannotBeAllowed() = runTest {
+    val environment = FakeAccessibilityRecoveryEnvironment(
+      permissionGranted = false,
+      connected = false,
+      accessibilityGloballyEnabled = false,
+      enabledServices = "",
+      restrictedSettingsAllowed = false
+    )
+
+    val result = PhoneAutomationAccessibilityRecovery(environment).repairPermissionIfNeeded()
+
+    assertEquals(PhoneAutomationAccessibilityRecoveryStage.FAILED, result.stage)
+    assertEquals(false, result.recovered)
+    assertEquals("", environment.enabledServices)
   }
 
   @Test
@@ -171,6 +189,23 @@ class AndroidTouchBrightnessDeviceControllerTest {
     var connected = connected
     var enabledServices = enabledServices
     val writtenEnabledServices = mutableListOf<String>()
+    var restrictedSettingsAllowed = true
+    var restrictedSettingsAllowCalls = 0
+
+    constructor(
+      permissionGranted: Boolean,
+      connected: Boolean,
+      accessibilityGloballyEnabled: Boolean,
+      enabledServices: String,
+      restrictedSettingsAllowed: Boolean
+    ) : this(
+      permissionGranted = permissionGranted,
+      connected = connected,
+      accessibilityGloballyEnabled = accessibilityGloballyEnabled,
+      enabledServices = enabledServices
+    ) {
+      this.restrictedSettingsAllowed = restrictedSettingsAllowed
+    }
 
     override fun isPermissionGranted(): Boolean = permissionGranted
 
@@ -183,6 +218,11 @@ class AndroidTouchBrightnessDeviceControllerTest {
     }
 
     override suspend fun ensureWriteSecureSettingsPermission(): Boolean = true
+
+    override suspend fun allowRestrictedSettings(): Boolean {
+      restrictedSettingsAllowCalls += 1
+      return restrictedSettingsAllowed
+    }
 
     override fun isAccessibilityGloballyEnabled(): Boolean = accessibilityGloballyEnabled
 

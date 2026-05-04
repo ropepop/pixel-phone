@@ -4,12 +4,15 @@ import android.content.Context
 import kotlinx.serialization.json.Json
 import lv.jolkins.pixelorchestrator.app.cpufrequency.CpuFrequencyComponentController
 import lv.jolkins.pixelorchestrator.app.cpufrequency.CpuFrequencyPreferencesStore
+import lv.jolkins.pixelorchestrator.app.ticket.TicketServiceComponentController
+import lv.jolkins.pixelorchestrator.app.ticket.TicketServicePreferencesStore
 import lv.jolkins.pixelorchestrator.coreconfig.StackConfigV1
 import lv.jolkins.pixelorchestrator.coreconfig.StackStore
 import lv.jolkins.pixelorchestrator.health.RuntimeHealthChecker
 import lv.jolkins.pixelorchestrator.rootexec.SuRootExecutor
 import lv.jolkins.pixelorchestrator.runtimeinstaller.ArtifactSyncer
 import lv.jolkins.pixelorchestrator.runtimeinstaller.RuntimeInstaller
+import lv.jolkins.pixelorchestrator.supervisor.ComponentController
 import lv.jolkins.pixelorchestrator.supervisor.RootScriptController
 import lv.jolkins.pixelorchestrator.supervisor.SupervisorEngine
 
@@ -43,14 +46,20 @@ object AppGraph {
         rootExecutor = rootExecutor
       )
 
-      val components = ComponentRegistry.load(appContext).associate { entry ->
-        entry.id to RootScriptController(
+      val ticketServiceStore = TicketServicePreferencesStore(appContext)
+      val components: Map<String, ComponentController> = ComponentRegistry.load(appContext).associate { entry ->
+        val controller = RootScriptController(
           name = entry.id,
           rootExecutor = rootExecutor,
           startCommand = entry.startCommand,
           stopCommand = entry.stopCommand,
           healthCommand = entry.healthCommand
         )
+        entry.id to if (entry.id == "ticket_screen") {
+          TicketServiceComponentController(controller, ticketServiceStore)
+        } else {
+          controller
+        }
       } + mapOf(cpuFrequencyController.name to cpuFrequencyController)
 
       val supervisor = SupervisorEngine(

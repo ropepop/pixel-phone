@@ -353,6 +353,7 @@ repair_phone_automation_permissions() {
   local current=""
   local next=""
   local enabled_flag=""
+  local attempt=""
 
   merge_enabled_service_component() {
     local service_list="$1"
@@ -374,21 +375,28 @@ print(":".join(parts))
 PY
   }
 
-  current="$(pixel_transport_shell "settings get secure enabled_accessibility_services" 2>/dev/null | tr -d '\r' | sed -n '1p')"
-  next="$(merge_enabled_service_component "${current}" "${accessibility_component}")"
-  pixel_transport_shell "settings put secure enabled_accessibility_services $(pixel_transport_single_quote "${next}")" >/dev/null
-  pixel_transport_shell "settings put secure accessibility_enabled 1" >/dev/null
+  for attempt in 1 2 3; do
+    pixel_transport_root_shell "cmd appops set ${PKG} ACCESS_RESTRICTED_SETTINGS allow" >/dev/null || true
 
-  current="$(pixel_transport_shell "settings get secure enabled_notification_listeners" 2>/dev/null | tr -d '\r' | sed -n '1p')"
-  next="$(merge_enabled_service_component "${current}" "${notification_component}")"
-  pixel_transport_shell "settings put secure enabled_notification_listeners $(pixel_transport_single_quote "${next}")" >/dev/null
+    current="$(pixel_transport_root_shell "settings get secure enabled_accessibility_services" 2>/dev/null | tr -d '\r' | sed -n '1p')"
+    next="$(merge_enabled_service_component "${current}" "${accessibility_component}")"
+    pixel_transport_root_shell "settings put secure enabled_accessibility_services $(pixel_transport_single_quote "${next}")" >/dev/null
+    pixel_transport_root_shell "settings put secure accessibility_enabled 1" >/dev/null
 
-  current="$(pixel_transport_shell "settings get secure enabled_accessibility_services" 2>/dev/null | tr -d '\r' | sed -n '1p')"
-  enabled_flag="$(pixel_transport_shell "settings get secure accessibility_enabled" 2>/dev/null | tr -d '\r' | sed -n '1p')"
-  if [[ ":${current}:" != *":${accessibility_component}:"* || "${enabled_flag}" != "1" ]]; then
-    echo "Warning: accessibility permission repair did not stick" >&2
-    return 1
-  fi
+    current="$(pixel_transport_root_shell "settings get secure enabled_notification_listeners" 2>/dev/null | tr -d '\r' | sed -n '1p')"
+    next="$(merge_enabled_service_component "${current}" "${notification_component}")"
+    pixel_transport_root_shell "settings put secure enabled_notification_listeners $(pixel_transport_single_quote "${next}")" >/dev/null
+
+    sleep 1
+    current="$(pixel_transport_root_shell "settings get secure enabled_accessibility_services" 2>/dev/null | tr -d '\r' | sed -n '1p')"
+    enabled_flag="$(pixel_transport_root_shell "settings get secure accessibility_enabled" 2>/dev/null | tr -d '\r' | sed -n '1p')"
+    if [[ ":${current}:" == *":${accessibility_component}:"* && "${enabled_flag}" == "1" ]]; then
+      return 0
+    fi
+  done
+
+  echo "Warning: accessibility permission repair did not stick" >&2
+  return 1
 }
 
 should_repair_phone_automation_permissions() {

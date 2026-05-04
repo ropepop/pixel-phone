@@ -17,11 +17,35 @@ object TicketScreenConfig {
 
   const val SERVICE_PORT = 9388
   const val VIVI_PACKAGE = "com.pv.vivi"
+  const val VIVI_LAUNCH_ACTIVITY = "com.pv.vivi/.MainActivity"
   const val ACCRESCENT_PACKAGE = "app.accrescent.client"
   const val MAX_FPS = 10
   const val MAX_EQUIVALENT_PIXELS = 1920 * 1080
-  const val ROOT_CAPTURE_WIDTH = 540
-  const val ROOT_CAPTURE_BITRATE = 1_200_000
+  const val ROOT_PNG_QUALITY_PROFILE = "root_lossless_png"
+  const val ROOT_PNG_CODEC_STRING = "png"
+  const val ROOT_PNG_TRANSPORT = "root-screencap-png"
+  const val ROOT_FFMPEG_H264_CAPTURE_MODE = "root_ffmpeg_h264"
+  const val ROOT_FFMPEG_H264_TRANSPORT = "ffmpeg-h264-annexb"
+  const val ROOT_FFMPEG_H264_QUALITY_PROFILE = "ffmpeg_h264_clarity"
+  const val ROOT_FFMPEG_H264_CODEC_STRING = "avc1.42E01E"
+  const val ROOT_FFMPEG_H264_FPS = 8
+  const val ROOT_FFMPEG_H264_BITRATE = 8_000_000
+  const val ROOT_FFMPEG_H264_TARGET_WIDTH = 900
+  const val ROOT_FFMPEG_H264_KEYFRAME_INTERVAL_MILLIS = 125
+  const val ROOT_FFMPEG_H264_CHROOT = "/data/local/pixel-stack/chroots/pihole"
+  const val ROOT_FFMPEG_H264_BINARY = "/usr/bin/ffmpeg"
+  const val ROOT_FFMPEG_H264_CAPTURE_SOURCE = "root_surface_capture"
+  const val ROOT_FFMPEG_H264_CAPTURE_METHOD = "app_process_screen_capture"
+  const val ROOT_CAPTURE_QUALITY_PROFILE = "balanced"
+  const val ROOT_CAPTURE_WIDTH = 720
+  const val ROOT_CAPTURE_BITRATE = 3_000_000
+  const val ROOT_AV1_CAPTURE_MODE = "root_av1"
+  const val ROOT_AV1_TRANSPORT = "av1-webcodecs"
+  const val AV1_CAPTURE_QUALITY_PROFILE = "root_av1_balanced"
+  const val AV1_CAPTURE_BITRATE = 4_000_000
+  const val AV1_KEYFRAME_INTERVAL_SECONDS = 1
+  const val AV1_KEYFRAME_INTERVAL_MILLIS = AV1_KEYFRAME_INTERVAL_SECONDS * 1_000
+  const val AV1_REPEAT_PREVIOUS_FRAME_AFTER_US = 1_000_000L
   const val AV1_MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_AV1
   const val AV1_CODEC_STRING = "av01.0.08M.08"
   const val H264_MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_AVC
@@ -40,6 +64,7 @@ object TicketScreenConfig {
 data class TicketStreamHealth(
   val ok: Boolean,
   val serverVersion: String,
+  val sessionState: String = "idle",
   val serverRunning: Boolean,
   val av1HardwareEncoderAvailable: Boolean,
   val h264HardwareEncoderAvailable: Boolean = false,
@@ -55,24 +80,70 @@ data class TicketStreamHealth(
   val inactivityRemainingMillis: Long,
   val autoStartAllowed: Boolean = true,
   val autoStartBlockedReason: String? = null,
+  val serviceReadiness: TicketServiceReadinessHealth = TicketServiceReadinessHealth(),
   val rootCapture: TicketRootCaptureHealth = TicketRootCaptureHealth(),
   val webrtc: TicketWebRtcHealth = TicketWebRtcHealth(),
   val inputGate: TicketInputGateHealth = TicketInputGateHealth(),
+  val controlCodeMode: TicketControlCodeModeHealth = TicketControlCodeModeHealth(),
+  val controlExitCleanup: TicketControlExitCleanupHealth = TicketControlExitCleanupHealth(),
+  val loading: TicketLoadingHealth = TicketLoadingHealth(),
+  val page: TicketPageHealth = TicketPageHealth(),
+  val notificationLockdown: TicketNotificationLockdownHealth = TicketNotificationLockdownHealth(),
+  val brightnessGuard: TicketBrightnessGuardHealth = TicketBrightnessGuardHealth(),
   val visibleFrame: TicketVisibleFrameHealth = TicketVisibleFrameHealth(),
+  val ffmpeg: TicketFfmpegHealth = TicketFfmpegHealth(),
+  val recovery: TicketRecoveryHealth = TicketRecoveryHealth(),
+  val ticketState: TicketControlStateHealth = TicketControlStateHealth(),
+  val viviState: TicketViviStateHealth = TicketViviStateHealth(),
   val streamPipeline: TicketStreamPipeline,
   val recentClientTelemetry: List<TicketClientTelemetry> = emptyList(),
+  val recentEvents: List<TicketSessionEvent> = emptyList(),
   val message: String
+)
+
+@Serializable
+data class TicketServiceReadinessHealth(
+  val enabled: Boolean = false,
+  val state: String = TicketServiceRuntimeState.DISABLED.wireName,
+  val detail: String = TicketServiceRuntimeState.DISABLED.defaultDetail,
+  val lastEnsureReason: String = "",
+  val lastEnsureAgeMillis: Long? = null,
+  val lastEnsureSucceeded: Boolean = false,
+  val lastEnsureResult: String = "",
+  val localServerReachable: Boolean = false,
+  val tunnelReady: Boolean = false,
+  val componentStatus: String = ""
 )
 
 @Serializable
 data class TicketStreamPipeline(
   val controlClients: Int,
   val videoClients: Int,
+  val captureMode: String = "idle",
+  val codec: String = "",
+  val transport: String = "",
+  val frameEnvelope: String = "tsf2",
+  val streamEpoch: Long = 0L,
+  val frameSequence: Long = 0L,
+  val lastKeyFrameSequence: Long = 0L,
+  val qualityProfile: String = TicketScreenConfig.ROOT_CAPTURE_QUALITY_PROFILE,
+  val configuredWidth: Int? = null,
+  val configuredHeight: Int? = null,
+  val configuredBitrate: Int? = null,
+  val lastFrameBytes: Int = 0,
+  val lastKeyFrameBytes: Int = 0,
+  val estimatedSendBitrate: Long = 0L,
+  val freshKeyFrameCacheMaxAgeMillis: Long = 0L,
   val encoderRunning: Boolean,
   val streamConfigured: Boolean,
   val encodedFrames: Long,
   val sentFrames: Long,
   val keyFrames: Long,
+  val droppedVideoFrames: Long = 0L,
+  val slowVideoWrites: Long = 0L,
+  val closedSlowVideoClients: Long = 0L,
+  val replacedClientSockets: Long = 0L,
+  val lastClientGeneration: Long = 0L,
   val lastEncoderStartAgoMillis: Long?,
   val lastConfigSentAgoMillis: Long?,
   val lastFrameEncodedAgoMillis: Long?,
@@ -80,8 +151,18 @@ data class TicketStreamPipeline(
   val lastFrameSentAgoMillis: Long?,
   val lastKeyFrameRequestedAgoMillis: Long?,
   val lastVideoClientConnectedAgoMillis: Long?,
+  val clients: List<TicketClientConnectionHealth> = emptyList(),
   val secureWindowCaptureBypassActive: Boolean = false,
   val secureWindowCaptureBypassMessage: String = "Secure-window capture bypass is inactive"
+)
+
+@Serializable
+data class TicketClientConnectionHealth(
+  val kind: String,
+  val viewerId: String? = null,
+  val pageId: String? = null,
+  val pageVersion: String? = null,
+  val generation: Long = 0L
 )
 
 @Serializable
@@ -90,15 +171,63 @@ data class TicketRootCaptureHealth(
   val active: Boolean = false,
   val state: String = "unavailable",
   val message: String = "",
+  val encoderName: String? = null,
+  val colorFormat: String? = null,
   val width: Int? = null,
   val height: Int? = null,
   val bitrate: Int? = null,
   val frames: Long = 0L,
   val keyFrames: Long = 0L,
+  val lastCaptureDurationMillis: Long? = null,
+  val lastDecodeDurationMillis: Long? = null,
+  val lastConvertDurationMillis: Long? = null,
+  val lastEncodeDrainDurationMillis: Long? = null,
+  val lastFrameTotalDurationMillis: Long? = null,
   val lastFrameAgoMillis: Long? = null,
   val lastKeyFrameAgoMillis: Long? = null,
   val lastStartAgoMillis: Long? = null,
-  val restarts: Long = 0L
+  val restarts: Long = 0L,
+  val restartReasonCounts: Map<String, Long> = emptyMap(),
+  val lastRestartReason: String? = null,
+  val lastRestartAgoMillis: Long? = null,
+  val suppressedRestartRequests: Long = 0L
+)
+
+@Serializable
+data class TicketFfmpegHealth(
+  val available: Boolean = false,
+  val active: Boolean = false,
+  val version: String? = null,
+  val binarySha: String? = null,
+  val encoderName: String? = null,
+  val chrootPath: String = TicketScreenConfig.ROOT_FFMPEG_H264_CHROOT,
+  val binaryPath: String = TicketScreenConfig.ROOT_FFMPEG_H264_BINARY,
+  val frameFeederActive: Boolean = false,
+  val captureSource: String = TicketScreenConfig.ROOT_FFMPEG_H264_CAPTURE_SOURCE,
+  val captureMethod: String = TicketScreenConfig.ROOT_FFMPEG_H264_CAPTURE_METHOD,
+  val captureHelperAvailable: Boolean = false,
+  val captureHelperState: String = "unavailable",
+  val captureHelperMessage: String = "",
+  val state: String = "unavailable",
+  val message: String = "",
+  val width: Int? = null,
+  val height: Int? = null,
+  val bitrate: Int? = null,
+  val fps: Int? = null,
+  val frames: Long = 0L,
+  val keyFrames: Long = 0L,
+  val lastFrameBytes: Int = 0,
+  val estimatedBitrate: Long = 0L,
+  val lastFrameAgoMillis: Long? = null,
+  val lastStartAgoMillis: Long? = null,
+  val lastRootFrameReadDurationMillis: Long? = null,
+  val lastFfmpegWriteDurationMillis: Long? = null,
+  val lastFrameTotalDurationMillis: Long? = null,
+  val droppedFrames: Long = 0L,
+  val restartCount: Long = 0L,
+  val lastExitReason: String? = null,
+  val lastExitAgoMillis: Long? = null,
+  val stderrTail: String = ""
 )
 
 @Serializable
@@ -115,7 +244,82 @@ data class TicketInputGateHealth(
   val tapOnly: Boolean = true,
   val active: Boolean = false,
   val allowed: Boolean = false,
-  val reason: String = "no_active_control"
+  val reason: String = "no_active_control",
+  val lastDecisionAgoMillis: Long? = null,
+  val lastCommandReason: String? = null,
+  val lastCommandDurationMillis: Long? = null,
+  val lastCommandCompletedAgoMillis: Long? = null,
+  val lastInputId: String? = null,
+  val lastInputKind: String? = null,
+  val lastInputAccepted: Boolean? = null,
+  val lastInputReason: String? = null,
+  val lastInputTotalDurationMillis: Long? = null,
+  val lastInputCompletedAgoMillis: Long? = null,
+  val duplicateInputResults: Long = 0L,
+  val lastDuplicateInputId: String? = null,
+  val lastDuplicateInputAgoMillis: Long? = null
+)
+
+@Serializable
+data class TicketControlCodeModeHealth(
+  val active: Boolean = false,
+  val entryId: Long = 0L,
+  val enteredAgoMillis: Long? = null,
+  val transitionGraceActive: Boolean = false,
+  val transitionGraceRemainingMillis: Long = 0L
+)
+
+@Serializable
+data class TicketControlExitCleanupHealth(
+  val lastReason: String? = null,
+  val lastDetectedState: String? = null,
+  val lastCloseAction: String? = null,
+  val lastDurationMillis: Long? = null,
+  val lastCompletedAgoMillis: Long? = null,
+  val lastVerificationResult: String? = null,
+  val lastSucceeded: Boolean? = null,
+  val lastFreshFrameRequested: Boolean = false
+)
+
+@Serializable
+data class TicketLoadingHealth(
+  val lastPhase: String? = null,
+  val lastDurationMillis: Long? = null,
+  val lastCompletedAgoMillis: Long? = null,
+  val lastOverBudgetPhase: String? = null,
+  val lastOverBudgetDurationMillis: Long? = null,
+  val lastOverBudgetAgoMillis: Long? = null
+)
+
+@Serializable
+data class TicketPageHealth(
+  val htmlVersion: String = "",
+  val cachePolicy: String = "no-store",
+  val lastRootHtmlRequestAgoMillis: Long? = null,
+  val lastBootstrapRequestAgoMillis: Long? = null,
+  val lastCacheCleanupRequestAgoMillis: Long? = null,
+  val lastClientPageVersion: String? = null,
+  val lastClientPageVersionAgoMillis: Long? = null
+)
+
+@Serializable
+data class TicketNotificationLockdownHealth(
+  val active: Boolean = false,
+  val reason: String = "inactive",
+  val lastChangedAgoMillis: Long? = null
+)
+
+@Serializable
+data class TicketBrightnessGuardHealth(
+  val active: Boolean = false,
+  val targetPercent: Int = 1,
+  val currentDisplayPercent: Float? = null,
+  val currentPanelBrightness: Int? = null,
+  val currentPanelMaxBrightness: Int? = null,
+  val lastEnforcedAgoMillis: Long? = null,
+  val failures: Long = 0L,
+  val lastReason: String? = null,
+  val message: String = "Ticket brightness guard is inactive"
 )
 
 @Serializable
@@ -127,9 +331,51 @@ data class TicketVisibleFrameHealth(
 )
 
 @Serializable
+data class TicketRecoveryHealth(
+  val state: String = "idle",
+  val currentReason: String? = null,
+  val currentMode: String? = null,
+  val pendingReason: String? = null,
+  val pendingMode: String? = null,
+  val lastResult: String = "none",
+  val lastStep: String = "idle",
+  val startedAgoMillis: Long? = null,
+  val completedAgoMillis: Long? = null
+)
+
+@Serializable
+data class TicketControlStateHealth(
+  val state: String = "stopped",
+  val stateAgeMillis: Long? = null,
+  val lastReason: String = "init",
+  val lastOverBudgetState: String? = null,
+  val lastOverBudgetDurationMillis: Long? = null,
+  val lastOverBudgetReason: String? = null,
+  val hardResetCount: Long = 0L,
+  val lastHardResetReason: String? = null,
+  val lastHardResetAgoMillis: Long? = null
+)
+
+@Serializable
+data class TicketViviStateHealth(
+  val state: String = "UNKNOWN_VIVI",
+  val ticketId: String? = null,
+  val observedAgoMillis: Long? = null,
+  val source: String = "none",
+  val reason: String = "none"
+)
+
+@Serializable
 data class TicketClientTelemetry(
   val atAgoMillis: Long,
   val message: String
+)
+
+@Serializable
+data class TicketSessionEvent(
+  val atAgoMillis: Long,
+  val event: String,
+  val detail: String = ""
 )
 
 @Serializable
@@ -165,8 +411,28 @@ data class TicketStreamSize(
 }
 
 object TicketStreamSizing {
+  fun rootPng(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
+    return TicketStreamSize(
+      width = sourceWidth,
+      height = sourceHeight,
+      sourceWidth = sourceWidth,
+      sourceHeight = sourceHeight
+    )
+  }
+
   fun rootH264(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
     val width = TicketScreenConfig.ROOT_CAPTURE_WIDTH.evenAtLeastTwo()
+    val height = ((sourceHeight / sourceWidth.toFloat()) * width).roundToInt().evenAtLeastTwo()
+    return TicketStreamSize(
+      width = width,
+      height = height,
+      sourceWidth = sourceWidth,
+      sourceHeight = sourceHeight
+    )
+  }
+
+  fun rootFfmpegH264(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
+    val width = minOf(sourceWidth, TicketScreenConfig.ROOT_FFMPEG_H264_TARGET_WIDTH).evenAtLeastTwo()
     val height = ((sourceHeight / sourceWidth.toFloat()) * width).roundToInt().evenAtLeastTwo()
     return TicketStreamSize(
       width = width,
@@ -190,6 +456,20 @@ object TicketStreamSizing {
     return TicketStreamSize(
       width = (sourceWidth * scale).roundToInt().evenAtLeastTwo(),
       height = (sourceHeight * scale).roundToInt().evenAtLeastTwo(),
+      sourceWidth = sourceWidth,
+      sourceHeight = sourceHeight
+    )
+  }
+
+  fun av1Clarity(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
+    return rootAv1Balanced(sourceWidth, sourceHeight)
+  }
+
+  fun rootAv1Balanced(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
+    val fitted = fitTo1080Equivalent(sourceWidth, sourceHeight)
+    return TicketStreamSize(
+      width = fitted.width,
+      height = fitted.height,
       sourceWidth = sourceWidth,
       sourceHeight = sourceHeight
     )
@@ -229,9 +509,11 @@ internal object TicketInactivityPolicy {
 
 internal object TicketSessionStopPolicy {
   const val VIEWER_INACTIVITY_TIMEOUT = "viewer_inactivity_timeout"
+  const val BROWSER_EXPLICIT_STOP = "browser_stop"
 
   private val browserAutoStartBlockedReasons = setOf(
     VIEWER_INACTIVITY_TIMEOUT,
+    BROWSER_EXPLICIT_STOP,
     "remote_power_controls_blocked",
     "remote_network_controls_blocked",
     "remote_system_ui_blocked",
@@ -239,7 +521,7 @@ internal object TicketSessionStopPolicy {
   )
 
   fun shouldResetViviToTicket(reason: String): Boolean {
-    return reason == VIEWER_INACTIVITY_TIMEOUT
+    return false
   }
 
   fun browserAutoStartAllowedAfterStop(reason: String?): Boolean {

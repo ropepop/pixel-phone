@@ -22,7 +22,9 @@ enum class PhoneAutomationSelectorKind {
 data class PhoneAutomationSelector(
   val resourceId: String? = null,
   val text: String? = null,
-  val contentDescription: String? = null
+  val contentDescription: String? = null,
+  val textContains: String? = null,
+  val contentDescriptionContains: String? = null
 ) {
   fun matches(
     nodeText: String,
@@ -32,7 +34,14 @@ data class PhoneAutomationSelector(
     val resourceMatches = resourceId == null || nodeResourceId == resourceId
     val textMatches = text == null || nodeText == text
     val descriptionMatches = contentDescription == null || nodeContentDescription == contentDescription
-    return resourceMatches && textMatches && descriptionMatches
+    val textContainsMatches = textContains == null || nodeText.contains(textContains, ignoreCase = true)
+    val descriptionContainsMatches = contentDescriptionContains == null ||
+      nodeContentDescription.contains(contentDescriptionContains, ignoreCase = true)
+    return resourceMatches &&
+      textMatches &&
+      descriptionMatches &&
+      textContainsMatches &&
+      descriptionContainsMatches
   }
 }
 

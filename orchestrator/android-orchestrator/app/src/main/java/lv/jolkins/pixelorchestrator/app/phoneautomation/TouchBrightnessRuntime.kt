@@ -186,6 +186,16 @@ internal class AndroidTouchBrightnessDeviceController(
 ) : TouchBrightnessDeviceController {
   override suspend fun prepare(): PhoneAutomationPreparationResult {
     val rootAvailable = rootExecutor.isRootAvailable()
+    if (rootAvailable && !bridge.isBlackoutOverlayAvailable()) {
+      PhoneAutomationAccessibilityRecovery(
+        environment = AndroidPhoneAutomationAccessibilityRecoveryEnvironment(
+          context = context,
+          rootExecutor = rootExecutor,
+          bridge = bridge
+        )
+      ).repairPermissionIfNeeded()
+      bridge.awaitAccessibilityConnection(ACCESSIBILITY_REPAIR_TIMEOUT_MILLIS)
+    }
     val rootBatteryWhitelist = if (rootAvailable) {
       RootBatteryOptimizationControl.ensureWhitelisted(context.packageName, rootExecutor)
     } else {
@@ -451,11 +461,12 @@ internal class AndroidTouchBrightnessDeviceController(
 
   companion object {
     private const val BRIGHTNESS_SETTLE_DELAY_MILLIS = 250L
-    private const val DIM_TARGET_PERCENT = 0
+    private const val DIM_TARGET_PERCENT = 1
     private const val DIM_HOLD_MILLIS = 1_500L
     private const val DIM_HOLD_INTERVAL_MILLIS = 50L
     private const val VISIBLE_HOLD_MILLIS = 500L
     private const val VISIBLE_PANEL_FALLBACK_PERCENT = 20
+    private const val ACCESSIBILITY_REPAIR_TIMEOUT_MILLIS = 5_000L
     private const val DISPLAY_PERCENT_TOLERANCE = 0.5f
     private const val PANEL_PERCENT_TOLERANCE = 1.0f
     private const val PANEL_VALUE_TOLERANCE = 2
@@ -796,7 +807,7 @@ internal class TouchBrightnessRuntime(
     }
 
     fun scheduleBlackoutFrom(observedAtUptimeMillis: Long) {
-      if (activeTouchCount > 0 || overlayPointerCount > 0) {
+      if (activeTouchCount > 0) {
         publishDebugState()
         logTouchState("blackout_timer_blocked_by_touch")
         return
@@ -810,7 +821,7 @@ internal class TouchBrightnessRuntime(
         delay(maxOf(0L, deadline - uptimeClock()))
         idleJob = null
         idleDeadlineMillis = null
-        if (!interactive || activeTouchCount > 0 || overlayPointerCount > 0) {
+        if (!interactive || activeTouchCount > 0) {
           publishDebugState()
           return@launch
         }
@@ -835,10 +846,11 @@ internal class TouchBrightnessRuntime(
       cancelPanelDimGuardJob()
       lastWakeRequestedAtUptimeMillis = wakeRequestedAtUptimeMillis
       powerController.wakeScreen("blackout_wake")
-      val overlayShown = overlayController.show()
-      if (!overlayShown.success) {
-        throw IllegalStateException(overlayShown.detail)
+      val overlayHidden = overlayController.hide()
+      if (!overlayHidden.success) {
+        throw IllegalStateException(overlayHidden.detail)
       }
+      overlayPointerCount = 0
       val brightness = applyVisibleBrightnessState(visibleBrightnessState)
       if (!brightness.success) {
         throw IllegalStateException("Could not set bright mode: ${brightness.detail}")
@@ -859,12 +871,11 @@ internal class TouchBrightnessRuntime(
       powerController.holdScreen("touch_active")
       if (internalMode != InternalTouchBrightnessMode.BRIGHT_TOUCH_ACTIVE) {
         panelDimGuardFailureCount = 0
-        if (overlayPointerCount <= 0) {
-          val overlayHidden = overlayController.hide()
-          if (!overlayHidden.success) {
-            throw IllegalStateException(overlayHidden.detail)
-          }
+        val overlayHidden = overlayController.hide()
+        if (!overlayHidden.success) {
+          throw IllegalStateException(overlayHidden.detail)
         }
+        overlayPointerCount = 0
         val brightness = applyVisibleBrightnessState(visibleBrightnessState)
         if (!brightness.success) {
           throw IllegalStateException("Could not set bright mode: ${brightness.detail}")
@@ -965,6 +976,24 @@ internal class TouchBrightnessRuntime(
             currentTouchSnapshot.selectedDevice?.let {
               currentSource = it
             }
+            if (PhoneAutomationServiceBridge.isNonTouchInputSuppressed(event.observedAtUptimeMillis)) {
+              activeTouchCount = 0
+              overlayPointerCount = 0
+              currentTouchSnapshot = currentTouchSnapshot.copy(
+                activeTouchCount = 0,
+                btnTouchActive = false,
+                toolFingerActive = false,
+                activeSlotCount = 0
+              )
+              if (interactive && internalMode == InternalTouchBrightnessMode.BLACKOUT_IDLE) {
+                ensurePanelDimGuardJob()
+              } else if (interactive && internalMode == InternalTouchBrightnessMode.BRIGHT_AWAITING_TOUCH_CONFIRMATION) {
+                scheduleBlackoutFrom(event.observedAtUptimeMillis)
+              }
+              publishDebugState()
+              logTouchState("non_touch_input_ignored")
+              return@collect
+            }
             if (
               wakeRequestedAt != null &&
               internalMode == InternalTouchBrightnessMode.BRIGHT_AWAITING_TOUCH_CONFIRMATION &&
@@ -990,11 +1019,7 @@ internal class TouchBrightnessRuntime(
                 if (previousTouchCount == 0) {
                   logTouchState("wake_promoted_to_active_touch")
                 }
-                if (overlayPointerCount > 0) {
-                  enterBrightAwaitingTouchConfirmation(event.observedAtUptimeMillis)
-                } else {
-                  enterBrightTouchActive()
-                }
+                enterBrightTouchActive()
               }
 
               previousTouchCount > 0 && activeTouchCount == 0 -> {
@@ -1015,18 +1040,25 @@ internal class TouchBrightnessRuntime(
               enterSuspendedScreenOff()
             } else {
               val liveTouchSnapshot = eventSource.currentTouchSnapshot() ?: currentTouchSnapshot
-              val liveTouchCount = maxOf(
-                activeTouchCount,
-                eventSource.activeTouchCount(),
-                if (liveTouchSnapshot.isRawTouchActive()) {
-                  maxOf(1, liveTouchSnapshot.activeTouchCount)
-                } else {
-                  liveTouchSnapshot.activeTouchCount
-                }
-              )
+              val liveTouchCount = if (PhoneAutomationServiceBridge.isNonTouchInputSuppressed(uptimeClock())) {
+                0
+              } else {
+                maxOf(
+                  activeTouchCount,
+                  eventSource.activeTouchCount(),
+                  if (liveTouchSnapshot.isRawTouchActive()) {
+                    maxOf(1, liveTouchSnapshot.activeTouchCount)
+                  } else {
+                    liveTouchSnapshot.activeTouchCount
+                  }
+                )
+              }
               activeTouchCount = liveTouchCount
               currentTouchSnapshot = liveTouchSnapshot.copy(
                 activeTouchCount = liveTouchCount,
+                btnTouchActive = liveTouchCount > 0 && liveTouchSnapshot.btnTouchActive,
+                toolFingerActive = liveTouchCount > 0 && liveTouchSnapshot.toolFingerActive,
+                activeSlotCount = if (liveTouchCount > 0) liveTouchSnapshot.activeSlotCount else 0,
                 selectedDevice = liveTouchSnapshot.selectedDevice ?: currentSource
               )
               currentTouchSnapshot.selectedDevice?.let {

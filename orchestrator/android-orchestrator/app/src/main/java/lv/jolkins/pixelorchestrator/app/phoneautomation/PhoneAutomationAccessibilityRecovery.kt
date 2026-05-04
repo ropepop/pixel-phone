@@ -25,6 +25,7 @@ internal interface PhoneAutomationAccessibilityRecoveryEnvironment {
   fun isConnected(): Boolean
   suspend fun awaitConnection(timeoutMillis: Long): Boolean
   suspend fun ensureWriteSecureSettingsPermission(): Boolean
+  suspend fun allowRestrictedSettings(): Boolean
   fun isAccessibilityGloballyEnabled(): Boolean
   fun readEnabledAccessibilityServices(): String?
   fun writeEnabledAccessibilityServices(value: String): Boolean
@@ -52,6 +53,11 @@ internal class AndroidPhoneAutomationAccessibilityRecoveryEnvironment(
 
   override suspend fun ensureWriteSecureSettingsPermission(): Boolean {
     val result = rootExecutor.run("pm grant ${context.packageName} android.permission.WRITE_SECURE_SETTINGS")
+    return result.ok
+  }
+
+  override suspend fun allowRestrictedSettings(): Boolean {
+    val result = rootExecutor.run("cmd appops set ${context.packageName} ACCESS_RESTRICTED_SETTINGS allow")
     return result.ok
   }
 
@@ -186,6 +192,9 @@ internal class PhoneAutomationAccessibilityRecovery(
     if (!environment.ensureWriteSecureSettingsPermission()) {
       return false
     }
+    if (!environment.allowRestrictedSettings()) {
+      return false
+    }
     val mergedValue = PhoneAutomationServicePermissions.mergeEnabledServices(
       currentValue = environment.readEnabledAccessibilityServices(),
       componentName = environment.componentName
@@ -201,6 +210,9 @@ internal class PhoneAutomationAccessibilityRecovery(
 
   private suspend fun writeEnabledServices(value: String): Boolean {
     if (!environment.ensureWriteSecureSettingsPermission()) {
+      return false
+    }
+    if (!environment.allowRestrictedSettings()) {
       return false
     }
     return environment.writeEnabledAccessibilityServices(value)

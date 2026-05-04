@@ -3,8 +3,8 @@
   <string name="notif_channel_name">Stack Supervision</string>
   <string name="notif_channel_description">Foreground service supervision for rooted DNS + SSH stack</string>
   <string name="notif_title">Root Stack Supervision Active</string>
-  <string name="notif_content">Monitoring DNS, SSH, VPN, DDNS, and remote runtime health. Speedtest automation: %1$s. Touch brightness: %2$s. CPU + GPU caps: %3$s</string>
-  <string name="notif_big_text">Monitoring DNS, SSH, VPN, DDNS, and remote runtime health.\nSpeedtest automation: %1$s\nTouch brightness: %2$s\nCPU + GPU caps: %3$s</string>
+  <string name="notif_content">Monitoring DNS, SSH, VPN, DDNS, and remote runtime health. Speedtest automation: %1$s. Touch brightness: %2$s. CPU + GPU caps: %3$s. Ticket service: %4$s</string>
+  <string name="notif_big_text">Monitoring DNS, SSH, VPN, DDNS, and remote runtime health.\nSpeedtest automation: %1$s\nTouch brightness: %2$s\nCPU + GPU caps: %3$s\nTicket service: %4$s</string>
   <string name="background_reliability_title">Background Reliability</string>
   <string name="background_reliability_description">Keep battery restrictions and exact alarms open so unattended phone automation can survive newer Android background limits.</string>
   <string name="background_reliability_battery_line">Battery: %1$s</string>
@@ -25,6 +25,10 @@
   <string name="phone_automation_interval_line">Dispatch timing: %1$s</string>
   <string name="phone_automation_setup_line">Setup: %1$s</string>
   <string name="phone_automation_runtime_line">Status: %1$s</string>
+  <string name="ticket_service_title">Ticket Service</string>
+  <string name="ticket_service_description">Keep the ticket web service and public tunnel ready after phone restarts. ViVi and screen capture still wait until an authenticated viewer opens the stream.</string>
+  <string name="ticket_service_toggle_label">Keep ticket service ready</string>
+  <string name="ticket_service_runtime_line">Status: %1$s</string>
   <string name="touch_brightness_title">Touch Brightness</string>
   <string name="touch_brightness_description">Keep the screen visible at the saved brightness while physical touch is active, switch to blackout 3 seconds after the last touch, and pause enforcement when the power button puts the phone to sleep.</string>
   <string name="touch_brightness_toggle_label">Enable touch brightness mode</string>

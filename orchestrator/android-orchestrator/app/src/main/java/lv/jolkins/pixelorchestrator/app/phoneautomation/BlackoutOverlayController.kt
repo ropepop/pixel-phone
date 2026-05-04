@@ -10,6 +10,15 @@ internal class BridgeBlackoutOverlayController(
   private val bridge: PhoneAutomationServiceBridge = PhoneAutomationServiceBridge
 ) : BlackoutOverlayController {
   override suspend fun show(): PhoneAutomationActionResult {
+    if (!bridge.isBlackoutOverlayAvailable()) {
+      bridge.awaitAccessibilityConnection(OVERLAY_CONNECTION_TIMEOUT_MILLIS)
+    }
+    if (!bridge.isBlackoutOverlayAvailable()) {
+      return PhoneAutomationActionResult(
+        success = false,
+        detail = "Accessibility blackout overlay is unavailable"
+      )
+    }
     return if (bridge.setBlackoutOverlayVisible(true)) {
       PhoneAutomationActionResult(
         success = true,
@@ -38,4 +47,8 @@ internal class BridgeBlackoutOverlayController(
   }
 
   override fun isAvailable(): Boolean = bridge.isBlackoutOverlayAvailable()
+
+  private companion object {
+    private const val OVERLAY_CONNECTION_TIMEOUT_MILLIS = 5_000L
+  }
 }

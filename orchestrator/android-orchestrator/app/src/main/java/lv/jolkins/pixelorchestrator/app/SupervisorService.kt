@@ -30,7 +30,10 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import lv.jolkins.pixelorchestrator.app.cpufrequency.CpuFrequencyPreferencesStore
 import lv.jolkins.pixelorchestrator.app.cpufrequency.CpuFrequencyRuntime
 import lv.jolkins.pixelorchestrator.app.cpufrequency.CpuFrequencyRuntimeState
@@ -65,8 +68,13 @@ import lv.jolkins.pixelorchestrator.app.phoneautomation.issueFor
 import lv.jolkins.pixelorchestrator.app.phoneautomation.isProtectedSpeedtestHandoffInProgress
 import lv.jolkins.pixelorchestrator.app.phoneautomation.shouldDeferPhoneAutomationPrerequisiteRecovery
 import lv.jolkins.pixelorchestrator.app.ticket.TicketScreenConfig
+import lv.jolkins.pixelorchestrator.app.ticket.TicketServicePreferencesStore
+import lv.jolkins.pixelorchestrator.app.ticket.TicketServiceRuntimeState
+import lv.jolkins.pixelorchestrator.app.ticket.TicketServiceSettingsSnapshot
+import lv.jolkins.pixelorchestrator.app.ticket.TicketServiceSettingsStore
 import lv.jolkins.pixelorchestrator.app.ticket.TicketStreamService
 import lv.jolkins.pixelorchestrator.rootexec.SuRootExecutor
+import kotlin.time.Duration
 
 class SupervisorService : Service() {
   private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -75,10 +83,14 @@ class SupervisorService : Service() {
   private lateinit var touchBrightnessRuntime: TouchBrightnessRuntime
   private lateinit var cpuFrequencyStore: CpuFrequencyPreferencesStore
   private lateinit var cpuFrequencyRuntime: CpuFrequencyRuntime
+  private lateinit var ticketServiceStore: TicketServiceSettingsStore
   private lateinit var phoneAutomationSupervisorController: PhoneAutomationSupervisorController
   private lateinit var phoneAutomationWakeScheduler: PhoneAutomationWakeScheduler
   private lateinit var prerequisiteMonitor: PhoneAutomationPrerequisiteMonitor
   private var prerequisiteMonitorJob: Job? = null
+  private var ticketServiceMonitorJob: Job? = null
+  private val ticketServiceEnsureMutex = Mutex()
+  private val ticketReadinessRootExecutor = SuRootExecutor()
   private var deferredTouchBrightnessResumeRequested: Boolean = false
 
   override fun onCreate() {
@@ -106,6 +118,7 @@ class SupervisorService : Service() {
         onSnapshotChanged = ::updateForegroundNotification
       )
       cpuFrequencyStore = CpuFrequencyPreferencesStore(this)
+      ticketServiceStore = TicketServicePreferencesStore(this)
       cpuFrequencyRuntime = CpuFrequencyRuntime(
         settingsStore = cpuFrequencyStore,
         rootExecutor = SuRootExecutor(),
@@ -130,6 +143,7 @@ class SupervisorService : Service() {
       reschedulePhoneAutomationWake(reason = "service_create", force = true)
       syncPhoneAutomation(trigger = "service_create")
       syncCpuFrequency(trigger = "service_create")
+      syncTicketService(trigger = "service_create", facade = AppGraph.facade(this))
       startPhoneAutomationPrerequisiteMonitor()
     } catch (cancelled: CancellationException) {
       throw cancelled
@@ -160,6 +174,13 @@ class SupervisorService : Service() {
     if (action != ACTION_INTERRUPT_PHONE_AUTOMATION_HANDOFF && !ignorePhoneAutomationWake) {
       syncPhoneAutomation(trigger = action ?: "resume_supervision")
       syncCpuFrequency(trigger = action ?: "resume_supervision")
+      if (
+        action != ACTION_REFRESH_TICKET_SERVICE &&
+        action != ACTION_TICKET_START_SERVER &&
+        action != ACTION_TICKET_STOP_SERVER
+      ) {
+        syncTicketService(trigger = action ?: "resume_supervision", facade = facade)
+      }
     }
 
     serviceScope.launch {
@@ -206,6 +227,10 @@ class SupervisorService : Service() {
         }
         ACTION_REFRESH_PHONE_AUTOMATION -> FacadeOperationResult(true, "Phone automation refreshed")
         ACTION_REFRESH_CPU_FREQUENCY -> FacadeOperationResult(true, "CPU and GPU cap control refreshed")
+        ACTION_REFRESH_TICKET_SERVICE -> {
+          syncTicketService(trigger = action, facade = facade)
+          FacadeOperationResult(true, "Ticket service reliability refreshed")
+        }
         ACTION_PHONE_AUTOMATION_WAKE -> FacadeOperationResult(
           true,
           if (ignorePhoneAutomationWake) {
@@ -273,6 +298,8 @@ class SupervisorService : Service() {
 
   override fun onDestroy() {
     prerequisiteMonitorJob?.cancel()
+    ticketServiceMonitorJob?.cancel()
+    ticketServiceMonitorJob = null
     if (this::cpuFrequencyRuntime.isInitialized) {
       cpuFrequencyRuntime.stop(
         reason = "service_destroyed",
@@ -337,6 +364,7 @@ class SupervisorService : Service() {
     const val ACTION_TICKET_STOP_SERVER = "lv.jolkins.pixelorchestrator.action.TICKET_STOP_SERVER"
     const val ACTION_REFRESH_PHONE_AUTOMATION = "lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION"
     const val ACTION_REFRESH_CPU_FREQUENCY = "lv.jolkins.pixelorchestrator.action.REFRESH_CPU_FREQUENCY"
+    const val ACTION_REFRESH_TICKET_SERVICE = "lv.jolkins.pixelorchestrator.action.REFRESH_TICKET_SERVICE"
     const val ACTION_PHONE_AUTOMATION_WAKE = "lv.jolkins.pixelorchestrator.action.PHONE_AUTOMATION_WAKE"
     const val ACTION_INTERRUPT_PHONE_AUTOMATION_HANDOFF =
       "lv.jolkins.pixelorchestrator.action.INTERRUPT_PHONE_AUTOMATION_HANDOFF"
@@ -352,6 +380,8 @@ class SupervisorService : Service() {
     private const val FOREGROUND_NOTIFICATION_ID = 4001
     private const val CONNECTION_DROP_DEBOUNCE_MILLIS = 2_000L
     private const val DEFERRED_TOUCH_BRIGHTNESS_RESUME_TRIGGER = "deferred_touch_brightness_resume"
+    private const val TICKET_SERVICE_COMPONENT = "ticket_screen"
+    private const val TICKET_SERVICE_MONITOR_INTERVAL_MILLIS = 30_000L
 
     internal fun resolveBootRecoveryMode(shouldHandleFullStart: Boolean): BootRecoveryMode {
       return if (shouldHandleFullStart) {
@@ -521,6 +551,191 @@ class SupervisorService : Service() {
     updateForegroundNotification(phoneAutomationStore.load(), latest)
   }
 
+  private fun syncTicketService(trigger: String, facade: OrchestratorFacade) {
+    if (!this::ticketServiceStore.isInitialized) {
+      return
+    }
+    val snapshot = ticketServiceStore.load()
+    if (!snapshot.enabled) {
+      ticketServiceMonitorJob?.cancel()
+      ticketServiceMonitorJob = null
+      serviceScope.launch {
+        stopTicketServiceReadiness(trigger = trigger, facade = facade)
+      }
+      updateForegroundNotification(ticketServiceSnapshot = ticketServiceStore.load())
+      return
+    }
+
+    if (ticketServiceMonitorJob?.isActive == true) {
+      serviceScope.launch {
+        ensureTicketServiceReady(reason = trigger, facade = facade)
+      }
+      return
+    }
+    ticketServiceMonitorJob = serviceScope.launch {
+      ensureTicketServiceReady(reason = trigger, facade = facade)
+      while (isActive) {
+        delay(TICKET_SERVICE_MONITOR_INTERVAL_MILLIS)
+        ensureTicketServiceReady(reason = "periodic", facade = facade)
+      }
+    }
+  }
+
+  private suspend fun ensureTicketServiceReady(reason: String, facade: OrchestratorFacade) {
+    ticketServiceEnsureMutex.withLock {
+      if (!ticketServiceStore.load().enabled) {
+        return
+      }
+      ticketServiceStore.recordEnsureStarted(reason)
+      updateForegroundNotification(ticketServiceSnapshot = ticketServiceStore.load())
+
+      val result = facade.startComponent(TICKET_SERVICE_COMPONENT)
+      val moduleHealth = result.healthSnapshot?.moduleHealth?.get(TICKET_SERVICE_COMPONENT)
+      val localServerReachable = moduleHealth?.details?.get("listener") == "1" || moduleHealth?.healthy == true
+      val componentStatus = moduleHealth?.status.orEmpty().ifBlank {
+        if (result.success) "running" else "degraded"
+      }
+      val tunnelProbe = probeTicketTunnelReadiness()
+      val ready = result.success && localServerReachable && tunnelProbe.ready
+      val detail = when {
+        ready -> "Local ticket server and tunnel are ready"
+        !localServerReachable -> "Local ticket server is not reachable: ${result.message}"
+        !tunnelProbe.ready -> "Ticket tunnel is not ready: ${tunnelProbe.detail}"
+        else -> result.message
+      }
+
+      val latest = ticketServiceStore.recordEnsureResult(
+        reason = reason,
+        success = ready,
+        result = detail,
+        localServerReachable = localServerReachable,
+        tunnelReady = tunnelProbe.ready,
+        componentStatus = componentStatus
+      )
+      Log.i(
+        TAG,
+        "ticket_service_ensure reason=$reason enabled=${latest.enabled} state=${latest.runtimeState.wireName} local=$localServerReachable tunnel=${tunnelProbe.ready} component=$componentStatus detail=$detail"
+      )
+      updateForegroundNotification(ticketServiceSnapshot = latest)
+    }
+  }
+
+  private suspend fun stopTicketServiceReadiness(trigger: String, facade: OrchestratorFacade) {
+    ticketServiceEnsureMutex.withLock {
+      ticketServiceStore.updateRuntimeState(
+        TicketServiceRuntimeState.STOPPING,
+        "Stopping local ticket server and tunnel readiness"
+      )
+      updateForegroundNotification(ticketServiceSnapshot = ticketServiceStore.load())
+      val result = facade.stopComponent(TICKET_SERVICE_COMPONENT)
+      val latest = ticketServiceStore.recordEnsureResult(
+        reason = "disabled:$trigger",
+        success = false,
+        result = result.message,
+        localServerReachable = false,
+        tunnelReady = false,
+        componentStatus = "stopped"
+      )
+      ticketServiceStore.updateRuntimeState(
+        TicketServiceRuntimeState.DISABLED,
+        TicketServiceRuntimeState.DISABLED.defaultDetail
+      )
+      Log.i(
+        TAG,
+        "ticket_service_stop trigger=$trigger success=${result.success} message=${result.message} state=${latest.runtimeState.wireName}"
+      )
+      updateForegroundNotification(ticketServiceSnapshot = ticketServiceStore.load())
+    }
+  }
+
+  private suspend fun probeTicketTunnelReadiness(): TicketTunnelProbe {
+    val result = ticketReadinessRootExecutor.runScript(
+      script = """
+        BASE="/data/local/pixel-stack/apps/ticket-screen"
+        CONF_ENV="/data/local/pixel-stack/conf/apps/ticket-screen.env"
+        RUNTIME_ENV="${'$'}BASE/env/ticket-screen.env"
+        RUN_DIR="${'$'}BASE/run"
+        LOOP_PID_FILE="${'$'}RUN_DIR/ticket-web-tunnel-service-loop.pid"
+        CLOUDFLARED_PID_FILE="${'$'}RUN_DIR/ticket-screen-cloudflared.pid"
+        TUNNEL_LOOP_BIN="${'$'}BASE/bin/ticket-web-tunnel-service-loop"
+
+        [ -r "${'$'}CONF_ENV" ] && . "${'$'}CONF_ENV"
+        [ -r "${'$'}RUNTIME_ENV" ] && . "${'$'}RUNTIME_ENV"
+
+        is_true() {
+          case "${'$'}{1:-}" in
+            1|true|TRUE|yes|YES|on|ON) return 0 ;;
+            *) return 1 ;;
+          esac
+        }
+
+        pid_cmdline() {
+          pid="${'$'}1"
+          if [ -r "/proc/${'$'}pid/cmdline" ]; then
+            tr '\000' ' ' < "/proc/${'$'}pid/cmdline" 2>/dev/null || true
+            return 0
+          fi
+          ps -p "${'$'}pid" -o ARGS= 2>/dev/null || true
+        }
+
+        pid_matches() {
+          pid="${'$'}1"
+          needle="${'$'}2"
+          [ -n "${'$'}pid" ] || return 1
+          kill -0 "${'$'}pid" >/dev/null 2>&1 || return 1
+          case "$(pid_cmdline "${'$'}pid")" in
+            *"${'$'}needle"*) return 0 ;;
+            *) return 1 ;;
+          esac
+        }
+
+        read_pid() {
+          [ -r "${'$'}1" ] && sed -n '1p' "${'$'}1" 2>/dev/null | tr -d '\r'
+        }
+
+        if ! is_true "${'$'}{TICKET_SCREEN_TUNNEL_ENABLED:-1}"; then
+          echo "ready=1"
+          echo "detail=tunnel_disabled"
+          exit 0
+        fi
+
+        loop_pid="$(read_pid "${'$'}LOOP_PID_FILE" || true)"
+        cloudflared_pid="$(read_pid "${'$'}CLOUDFLARED_PID_FILE" || true)"
+        loop_ready=0
+        cloudflared_ready=0
+        pid_matches "${'$'}loop_pid" "${'$'}TUNNEL_LOOP_BIN" && loop_ready=1
+        pid_matches "${'$'}cloudflared_pid" "/state/ticket-screen-cloudflared.yml" && cloudflared_ready=1
+
+        echo "loop=${'$'}loop_ready"
+        echo "cloudflared=${'$'}cloudflared_ready"
+        echo "loop_pid=${'$'}loop_pid"
+        echo "cloudflared_pid=${'$'}cloudflared_pid"
+
+        if [ "${'$'}loop_ready" = "1" ] && [ "${'$'}cloudflared_ready" = "1" ]; then
+          echo "ready=1"
+          echo "detail=tunnel_loop_and_cloudflared_ready"
+          exit 0
+        fi
+        echo "ready=0"
+        echo "detail=tunnel_loop_or_cloudflared_missing"
+        exit 1
+      """.trimIndent(),
+      timeout = Duration.parse("8s")
+    )
+    val fields = result.stdout.lineSequence()
+      .mapNotNull { line ->
+        val separator = line.indexOf('=')
+        if (separator <= 0) null else line.substring(0, separator).trim() to line.substring(separator + 1).trim()
+      }
+      .toMap()
+    return TicketTunnelProbe(
+      ready = result.ok && fields["ready"] == "1",
+      detail = fields["detail"].orEmpty().ifBlank {
+        result.stderr.ifBlank { result.stdout }.trim().ifBlank { "unknown" }
+      }
+    )
+  }
+
   private fun startPhoneAutomationPrerequisiteMonitor() {
     prerequisiteMonitorJob?.cancel()
     prerequisiteMonitorJob = serviceScope.launch {
@@ -589,20 +804,30 @@ class SupervisorService : Service() {
 
   private fun updateForegroundNotification(
     snapshot: PhoneAutomationSettingsSnapshot = phoneAutomationStore.load(),
-    cpuFrequencySnapshot: CpuFrequencySettingsSnapshot = cpuFrequencyStore.load()
+    cpuFrequencySnapshot: CpuFrequencySettingsSnapshot = cpuFrequencyStore.load(),
+    ticketServiceSnapshot: TicketServiceSettingsSnapshot = loadTicketServiceNotificationSnapshot()
   ) {
     val manager = getSystemService(NotificationManager::class.java)
     manager.notify(
       FOREGROUND_NOTIFICATION_ID,
-      NotificationHelper.buildForegroundNotification(this, snapshot, cpuFrequencySnapshot)
+      NotificationHelper.buildForegroundNotification(this, snapshot, cpuFrequencySnapshot, ticketServiceSnapshot)
     )
+  }
+
+  private fun loadTicketServiceNotificationSnapshot(): TicketServiceSettingsSnapshot {
+    return if (this::ticketServiceStore.isInitialized) {
+      ticketServiceStore.load()
+    } else {
+      TicketServiceSettingsSnapshot()
+    }
   }
 
   private fun promoteToForeground() {
     val notification = NotificationHelper.buildForegroundNotification(
       this,
       phoneAutomationStore.load(),
-      cpuFrequencyStore.load()
+      cpuFrequencyStore.load(),
+      ticketServiceStore.load()
     )
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
       ServiceCompat.startForeground(
@@ -763,6 +988,11 @@ internal enum class BootRecoveryMode {
   START_ALL,
   RESUME_SUPERVISION
 }
+
+private data class TicketTunnelProbe(
+  val ready: Boolean,
+  val detail: String
+)
 
 internal class PhoneAutomationPrerequisiteMonitor(
   context: Context,

@@ -27,6 +27,11 @@ class TouchBrightnessRuntimeTest {
   )
 
   @Test
+  fun blackoutIdleUsesMinimumBrightnessInsteadOfTrueZero() {
+    assertEquals(1, TouchBrightnessRuntime.DIM_PERCENT)
+  }
+
+  @Test
   fun startCapturesRestoreStateAndEntersBlackout() = runTest {
     val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
     val deviceController = FakeTouchBrightnessDeviceController()
@@ -74,11 +79,12 @@ class TouchBrightnessRuntimeTest {
     runCurrent()
     assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
     assertTrue(store.load().touchBrightnessDetail.contains("waiting for touch confirmation"))
-    assertTrue(store.load().touchBrightnessDebugDetail.contains("overlay=1"))
-
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_BLACKOUT_DELAY_MILLIS + 100L)
-    runCurrent()
-    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+    assertTrue(store.load().touchBrightnessDebugDetail.contains("overlay=0"))
+    assertEquals(1, overlayController.hideCalls)
+    assertEquals(
+      listOf(ScreenBrightnessState(mode = 1, value = 127)),
+      deviceController.restoreBrightnessStateCalls
+    )
 
     eventSource.emit(
       TouchBrightnessEvent.BlackoutWakeRequested(
@@ -173,7 +179,7 @@ class TouchBrightnessRuntimeTest {
     runCurrent()
 
     assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
-    assertTrue(store.load().touchBrightnessDetail.contains("waiting for touch confirmation"))
+    assertTrue(store.load().touchBrightnessDetail.contains("touch is active"))
 
     eventSource.emit(
       TouchBrightnessEvent.BlackoutWakeRequested(
@@ -367,6 +373,77 @@ class TouchBrightnessRuntimeTest {
 
     assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
     assertTrue(store.load().touchBrightnessDetail.contains("touch is active"))
+  }
+
+  @Test
+  fun nonTouchInputWhileIdleDoesNotPromoteBlackoutToBright() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val deviceController = FakeTouchBrightnessDeviceController()
+    val overlayController = FakeBlackoutOverlayController()
+    val eventSource = FakeTouchBrightnessEventSource(
+      interactive = true,
+      activeTouchCount = 0,
+      overlayAvailable = true,
+      source = preferredSource
+    )
+    val runtime = buildRuntime(backgroundScope, store, deviceController, overlayController, eventSource) {
+      testScheduler.currentTime
+    }
+
+    runtime.start()
+    runCurrent()
+
+    PhoneAutomationServiceBridge.markNonTouchInput(
+      reason = "test_non_touch_tap",
+      observedAtUptimeMillis = testScheduler.currentTime
+    )
+    eventSource.emit(
+      TouchBrightnessEvent.TouchCountChanged(
+        activeTouchCount = 1,
+        observedAtUptimeMillis = testScheduler.currentTime,
+        snapshot = RootTouchSnapshot(
+          activeTouchCount = 1,
+          btnTouchActive = true,
+          selectedDevice = preferredSource,
+          lastEventUptimeMillis = testScheduler.currentTime
+        )
+      )
+    )
+    runCurrent()
+
+    assertEquals(TouchBrightnessRuntimeState.BLACKOUT_IDLE, store.load().touchBrightnessState)
+    assertEquals(listOf(TouchBrightnessRuntime.DIM_PERCENT), deviceController.setBrightnessPercentCalls)
+    assertTrue(store.load().touchBrightnessDebugDetail.contains("touches=0"))
+  }
+
+  @Test
+  fun nonTouchInputScreenOnDoesNotTreatStaleRawTouchAsPhysicalTouch() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val deviceController = FakeTouchBrightnessDeviceController()
+    val overlayController = FakeBlackoutOverlayController()
+    val eventSource = FakeTouchBrightnessEventSource(
+      interactive = false,
+      activeTouchCount = 0,
+      overlayAvailable = true,
+      source = preferredSource
+    )
+    val runtime = buildRuntime(backgroundScope, store, deviceController, overlayController, eventSource) {
+      testScheduler.currentTime
+    }
+
+    runtime.start()
+    runCurrent()
+    PhoneAutomationServiceBridge.markNonTouchInput(
+      reason = "test_non_touch_wake",
+      observedAtUptimeMillis = testScheduler.currentTime
+    )
+    eventSource.setActiveTouchCountWithoutEmitting(1)
+    eventSource.emit(TouchBrightnessEvent.ScreenInteractiveChanged(interactive = true))
+    runCurrent()
+
+    assertEquals(TouchBrightnessRuntimeState.BLACKOUT_IDLE, store.load().touchBrightnessState)
+    assertEquals(listOf(TouchBrightnessRuntime.DIM_PERCENT), deviceController.setBrightnessPercentCalls)
+    assertTrue(store.load().touchBrightnessDebugDetail.contains("touches=0"))
   }
 
   @Test
@@ -825,6 +902,7 @@ class TouchBrightnessRuntimeTest {
     dimGuardEnabled: Boolean = false,
     uptimeClock: () -> Long
   ): TouchBrightnessRuntime {
+    PhoneAutomationServiceBridge.resetForTests()
     return TouchBrightnessRuntime(
       context = ContextWrapper(null),
       scope = scope,

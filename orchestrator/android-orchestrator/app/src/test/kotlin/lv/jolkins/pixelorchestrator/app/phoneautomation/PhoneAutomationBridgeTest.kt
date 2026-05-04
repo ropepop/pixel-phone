@@ -148,6 +148,29 @@ class PhoneAutomationBridgeTest {
   }
 
   @Test
+  fun nonTouchInputSuppressionIsTimeBoundAndResettable() {
+    PhoneAutomationServiceBridge.resetForTests()
+
+    PhoneAutomationServiceBridge.markNonTouchInput(
+      reason = "test",
+      durationMillis = 100L,
+      observedAtUptimeMillis = 1_000L
+    )
+
+    assertTrue(PhoneAutomationServiceBridge.isNonTouchInputSuppressed(1_050L))
+    assertFalse(PhoneAutomationServiceBridge.isNonTouchInputSuppressed(1_101L))
+
+    PhoneAutomationServiceBridge.markNonTouchInput(
+      reason = "test_later",
+      durationMillis = 500L,
+      observedAtUptimeMillis = 2_000L
+    )
+    PhoneAutomationServiceBridge.resetForTests()
+
+    assertFalse(PhoneAutomationServiceBridge.isNonTouchInputSuppressed(2_100L))
+  }
+
+  @Test
   fun notificationBootstrapWaitsForListenerAndSnapshot() = runTest {
     PhoneAutomationServiceBridge.resetForTests()
 
@@ -279,6 +302,18 @@ class PhoneAutomationBridgeTest {
     assertTrue(present)
     assertEquals(listOf("org.zwanoo.android.speedtest"), host.selectorPresencePackages)
   }
+
+  @Test
+  fun performBackDelegatesToAccessibilityHost() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    val host = FakeAccessibilityHost().apply {
+      backResult = true
+    }
+    PhoneAutomationServiceBridge.bindAccessibilityService(host)
+
+    assertTrue(PhoneAutomationServiceBridge.performBack())
+    assertEquals(1, host.backCalls)
+  }
 }
 
 private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
@@ -287,6 +322,8 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
   val selectorPresencePackages = mutableListOf<String>()
   var selectorPresence = false
   var visibleNodes: List<PhoneAutomationVisibleNode> = emptyList()
+  var backResult = false
+  var backCalls = 0
 
   override fun syncBlackoutOverlayVisibility(visible: Boolean): Boolean {
     syncedVisibility += visible
@@ -314,5 +351,10 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
 
   override suspend fun snapshotVisibleNodes(expectedPackageName: String): List<PhoneAutomationVisibleNode> {
     return visibleNodes
+  }
+
+  override suspend fun performBack(): Boolean {
+    backCalls += 1
+    return backResult
   }
 }

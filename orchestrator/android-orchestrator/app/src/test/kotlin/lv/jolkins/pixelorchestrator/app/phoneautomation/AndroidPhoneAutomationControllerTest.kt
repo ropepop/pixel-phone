@@ -626,6 +626,8 @@ private class ScriptedAccessibilityHost : PhoneAutomationAccessibilityHost {
   override suspend fun snapshotVisibleNodes(expectedPackageName: String): List<PhoneAutomationVisibleNode> {
     return visibleNodes
   }
+
+  override suspend fun performBack(): Boolean = false
 }
 
 private class ScriptedRootExecutor : RootExecutor {

@@ -11,6 +11,7 @@ import androidx.core.app.NotificationCompat
 import lv.jolkins.pixelorchestrator.R
 import lv.jolkins.pixelorchestrator.app.cpufrequency.CpuFrequencySettingsSnapshot
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationSettingsSnapshot
+import lv.jolkins.pixelorchestrator.app.ticket.TicketServiceSettingsSnapshot
 
 object NotificationHelper {
   private const val CHANNEL_ID = "stack_supervision"
@@ -40,7 +41,8 @@ object NotificationHelper {
   fun buildForegroundNotification(
     context: Context,
     automationSnapshot: PhoneAutomationSettingsSnapshot,
-    cpuFrequencySnapshot: CpuFrequencySettingsSnapshot
+    cpuFrequencySnapshot: CpuFrequencySettingsSnapshot,
+    ticketServiceSnapshot: TicketServiceSettingsSnapshot
   ): Notification {
     val intent = Intent(context, MainActivity::class.java)
     val pending = PendingIntent.getActivity(
@@ -52,8 +54,21 @@ object NotificationHelper {
     val automationSummary = automationSnapshot.notificationSummary()
     val touchBrightnessSummary = automationSnapshot.touchBrightnessNotificationSummary()
     val cpuFrequencySummary = cpuFrequencySnapshot.notificationSummary()
-    val contentText = context.getString(R.string.notif_content, automationSummary, touchBrightnessSummary, cpuFrequencySummary)
-    val bigText = context.getString(R.string.notif_big_text, automationSummary, touchBrightnessSummary, cpuFrequencySummary)
+    val ticketServiceSummary = ticketServiceSnapshot.notificationSummary()
+    val contentText = context.getString(
+      R.string.notif_content,
+      automationSummary,
+      touchBrightnessSummary,
+      cpuFrequencySummary,
+      ticketServiceSummary
+    )
+    val bigText = context.getString(
+      R.string.notif_big_text,
+      automationSummary,
+      touchBrightnessSummary,
+      cpuFrequencySummary,
+      ticketServiceSummary
+    )
 
     return NotificationCompat.Builder(context, CHANNEL_ID)
       .setSmallIcon(android.R.drawable.stat_notify_sync)

@@ -367,6 +367,12 @@ class SupervisorEngine(
       .filter { name -> isComponentEnabled(name, config) }
       .forEach { name ->
         val controller = components[name] ?: return@forEach
+        if (controller is AutoStartAwareComponentController && !controller.shouldAutoStart()) {
+          backoffs[name]?.reset()
+          unhealthyCounts[name] = 0
+          state = state.markComponent(name, ServiceStatus.STOPPED, "auto-start disabled", countAsRestart = false)
+          return@forEach
+        }
         val healthy = controller.health()
         val outcome = restartIfUnhealthy(name, healthy, state)
         state = outcome.state

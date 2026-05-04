@@ -13,6 +13,7 @@ import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.seconds
@@ -40,12 +41,18 @@ class TicketRootCaptureEngine(
   @Volatile private var width: Int? = null
   @Volatile private var height: Int? = null
   @Volatile private var bitrate: Int? = null
+  @Volatile private var commandNeedle: String = ""
   @Volatile private var frames = 0L
   @Volatile private var keyFrames = 0L
   @Volatile private var restarts = 0L
+  @Volatile private var suppressedRestartRequests = 0L
   @Volatile private var lastFrameAtMillis = 0L
   @Volatile private var lastKeyFrameAtMillis = 0L
   @Volatile private var lastStartAtMillis = 0L
+  @Volatile private var lastRestartAtMillis = 0L
+  @Volatile private var lastRestartReason: String? = null
+  @Volatile private var expectedRestartStop = false
+  private val restartReasonCounts = Collections.synchronizedMap(mutableMapOf<String, Long>())
 
   suspend fun probe(): Boolean {
     val root = rootExecutor.isRootAvailable()
@@ -73,6 +80,7 @@ class TicketRootCaptureEngine(
     width = target.first
     height = target.second
     bitrate = TicketScreenConfig.ROOT_CAPTURE_BITRATE
+    commandNeedle = captureCommand(target.first, target.second, TicketScreenConfig.ROOT_CAPTURE_BITRATE)
     wanted.set(true)
     if (job?.isActive == true) {
       publish()
@@ -85,6 +93,7 @@ class TicketRootCaptureEngine(
 
   fun stop(reason: String = "stopped") {
     wanted.set(false)
+    expectedRestartStop = false
     job?.cancel()
     job = null
     stopProcess()
@@ -97,10 +106,21 @@ class TicketRootCaptureEngine(
     if (!wanted.get()) {
       return
     }
-    restarts += 1
+    recordRestart(reason)
+    expectedRestartStop = true
     message = "Root capture restarting: $reason"
-    stopProcess()
+    stopProcess(killChildren = true)
     publish()
+  }
+
+  fun noteSuppressedRestartRequest(reason: String) {
+    suppressedRestartRequests += 1
+    Log.i(TAG, "ticket_root_capture_restart_suppressed reason=$reason")
+    publish()
+  }
+
+  suspend fun cleanupStaleProcesses() {
+    cleanupMatchingScreenrecord()
   }
 
   fun snapshot(nowMillis: Long = SystemClock.elapsedRealtime()): TicketRootCaptureHealth {
@@ -117,7 +137,11 @@ class TicketRootCaptureEngine(
       lastFrameAgoMillis = ageMillis(lastFrameAtMillis, nowMillis),
       lastKeyFrameAgoMillis = ageMillis(lastKeyFrameAtMillis, nowMillis),
       lastStartAgoMillis = ageMillis(lastStartAtMillis, nowMillis),
-      restarts = restarts
+      restarts = restarts,
+      restartReasonCounts = synchronized(restartReasonCounts) { restartReasonCounts.toMap() },
+      lastRestartReason = lastRestartReason,
+      lastRestartAgoMillis = ageMillis(lastRestartAtMillis, nowMillis),
+      suppressedRestartRequests = suppressedRestartRequests
     )
   }
 
@@ -141,14 +165,8 @@ class TicketRootCaptureEngine(
           )
         )
       }
-      val command = listOf(
-        "screenrecord",
-        "--output-format=h264",
-        "--size ${width}x${height}",
-        "--bit-rate $bitrate",
-        "--time-limit 180",
-        "-"
-      ).joinToString(" ")
+      val command = captureCommand(width, height, bitrate)
+      commandNeedle = command
       try {
         state = "starting"
         message = "Root capture is starting"
@@ -176,7 +194,11 @@ class TicketRootCaptureEngine(
         parser.finish()
         val exitCode = runCatching { localProcess.waitFor() }.getOrDefault(-1)
         if (wanted.get()) {
-          restarts += 1
+          if (expectedRestartStop) {
+            expectedRestartStop = false
+          } else {
+            recordRestart("process_exit_$exitCode")
+          }
           state = "restarting"
           message = "Root capture exited with code $exitCode; restarting"
           publish()
@@ -187,6 +209,9 @@ class TicketRootCaptureEngine(
       } catch (error: Throwable) {
         if (isExpectedRootCaptureClose(error)) {
           if (wanted.get()) {
+            if (expectedRestartStop) {
+              expectedRestartStop = false
+            }
             state = "restarting"
             message = "Root capture stream closed during restart; restarting"
             Log.i(TAG, "ticket_root_capture_expected_close_during_restart")
@@ -194,7 +219,7 @@ class TicketRootCaptureEngine(
             delay(ROOT_CAPTURE_RESTART_DELAY_MILLIS)
           }
         } else if (wanted.get()) {
-          restarts += 1
+          recordRestart("failure")
           state = "restarting"
           message = "Root capture failed: ${error.message ?: error::class.java.simpleName}"
           Log.w(TAG, "ticket_root_capture_failed", error)
@@ -202,7 +227,7 @@ class TicketRootCaptureEngine(
           delay(ROOT_CAPTURE_RESTART_DELAY_MILLIS)
         }
       } finally {
-        stopProcess()
+        stopProcess(killChildren = false)
       }
     }
     state = "idle"
@@ -210,13 +235,58 @@ class TicketRootCaptureEngine(
     publish()
   }
 
-  private fun stopProcess() {
+  private fun stopProcess(killChildren: Boolean = true) {
     val local = process
     process = null
     if (local != null) {
       runCatching { local.destroy() }
       runCatching { local.destroyForcibly() }
     }
+    if (!killChildren) {
+      return
+    }
+    scope.launch(Dispatchers.IO) {
+      cleanupMatchingScreenrecord()
+    }
+  }
+
+  private fun recordRestart(reason: String) {
+    restarts += 1
+    lastRestartAtMillis = SystemClock.elapsedRealtime()
+    lastRestartReason = reason
+    synchronized(restartReasonCounts) {
+      restartReasonCounts[reason] = (restartReasonCounts[reason] ?: 0L) + 1L
+    }
+    Log.i(TAG, "ticket_root_capture_restart reason=$reason restarts=$restarts")
+  }
+
+  private suspend fun cleanupMatchingScreenrecord() {
+    val needle = commandNeedle
+    if (needle.isBlank()) {
+      return
+    }
+    val escapedNeedle = needle.replace("'", "'\"'\"'")
+    rootExecutor.run(
+      """
+        needle='${escapedNeedle}'
+        for signal in TERM KILL; do
+          ps -A -o PID,ARGS 2>/dev/null | while IFS= read -r line; do
+            case "${'$'}line" in
+              *"${'$'}needle"*)
+                set -- ${'$'}line
+                pid="${'$'}{1:-}"
+                case "${'$'}pid" in
+                  ''|*[!0-9]*) ;;
+                  *) kill -"${'$'}signal" "${'$'}pid" >/dev/null 2>&1 || true ;;
+                esac
+                ;;
+            esac
+          done
+          sleep 0.15
+        done
+      """.trimIndent(),
+      timeout = 3.seconds
+    )
   }
 
   private fun logProcessStderr(localProcess: Process) {
@@ -240,6 +310,17 @@ class TicketRootCaptureEngine(
       .roundToInt()
       .evenAtLeastTwo()
     return targetWidth to targetHeight
+  }
+
+  private fun captureCommand(width: Int, height: Int, bitrate: Int): String {
+    return listOf(
+      "screenrecord",
+      "--output-format=h264",
+      "--size ${width}x${height}",
+      "--bit-rate $bitrate",
+      "--time-limit 180",
+      "-"
+    ).joinToString(" ")
   }
 
   private fun publish() {

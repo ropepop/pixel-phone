@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Looper
+import android.graphics.Rect
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -130,13 +131,27 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
       flattenNodes(root)
         .filter { node -> node.isVisibleToUser }
         .map { node ->
+          val bounds = Rect()
+          node.getBoundsInScreen(bounds)
           PhoneAutomationVisibleNode(
             text = node.textValue(),
             resourceId = node.resourceIdValue(),
-            contentDescription = node.contentDescriptionValue()
+            contentDescription = node.contentDescriptionValue(),
+            className = node.className?.toString().orEmpty(),
+            bounds = "[${bounds.left},${bounds.top}][${bounds.right},${bounds.bottom}]",
+            clickable = node.isClickable,
+            enabled = node.isEnabled,
+            focused = node.isFocused
           )
         }
         .toList()
+    }
+  }
+
+  override suspend fun performBack(): Boolean {
+    return withContext(Dispatchers.Main.immediate) {
+      PhoneAutomationServiceBridge.markNonTouchInput("accessibility_back")
+      performGlobalAction(GLOBAL_ACTION_BACK)
     }
   }
 
@@ -173,6 +188,7 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     var current: AccessibilityNodeInfo? = node
     while (current != null) {
       if (current.isClickable && current.isEnabled) {
+        PhoneAutomationServiceBridge.markNonTouchInput("accessibility_click")
         return current.performAction(AccessibilityNodeInfo.ACTION_CLICK)
       }
       current = current.parent

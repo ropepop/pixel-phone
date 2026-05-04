@@ -3,6 +3,7 @@ package lv.jolkins.pixelorchestrator.app.phoneautomation
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ComponentName
 import android.content.Context
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import androidx.core.app.NotificationManagerCompat
@@ -70,7 +71,12 @@ sealed interface PhoneAutomationBlackoutOverlayEvent {
 data class PhoneAutomationVisibleNode(
   val text: String,
   val resourceId: String,
-  val contentDescription: String
+  val contentDescription: String,
+  val className: String = "",
+  val bounds: String = "",
+  val clickable: Boolean = false,
+  val enabled: Boolean = false,
+  val focused: Boolean = false
 )
 
 internal interface PhoneAutomationAccessibilityHost {
@@ -92,6 +98,8 @@ internal interface PhoneAutomationAccessibilityHost {
   suspend fun snapshotVisibleNodes(
     expectedPackageName: String
   ): List<PhoneAutomationVisibleNode>
+
+  suspend fun performBack(): Boolean
 }
 
 object PhoneAutomationServiceBridge {
@@ -106,6 +114,7 @@ object PhoneAutomationServiceBridge {
   private val blackoutOverlayRequested = MutableStateFlow(false)
   private val blackoutOverlaySuppressed = MutableStateFlow(false)
   private val remoteScreenBrightnessState = MutableStateFlow<ScreenBrightnessState?>(null)
+  private val nonTouchInputSuppressedUntilUptimeMillis = MutableStateFlow(0L)
   private val activeNotifications = MutableStateFlow<Map<String, PhoneAutomationObservedNotification>>(emptyMap())
   private val rawNotificationEvents =
     MutableSharedFlow<PhoneAutomationNotificationEvent>(extraBufferCapacity = 64)
@@ -235,6 +244,24 @@ object PhoneAutomationServiceBridge {
     remoteScreenBrightnessState.value = state
   }
 
+  fun markNonTouchInput(
+    reason: String,
+    durationMillis: Long = NON_TOUCH_INPUT_SUPPRESSION_MILLIS,
+    observedAtUptimeMillis: Long = SystemClock.uptimeMillis()
+  ) {
+    val untilMillis = observedAtUptimeMillis + durationMillis.coerceAtLeast(0L)
+    nonTouchInputSuppressedUntilUptimeMillis.update { current ->
+      maxOf(current, untilMillis)
+    }
+  }
+
+  fun isNonTouchInputSuppressed(
+    observedAtUptimeMillis: Long = SystemClock.uptimeMillis()
+  ): Boolean {
+    val suppressedUntil = nonTouchInputSuppressedUntilUptimeMillis.value
+    return suppressedUntil > 0L && observedAtUptimeMillis <= suppressedUntil
+  }
+
   fun setBlackoutOverlaySuppressed(suppressed: Boolean) {
     blackoutOverlaySuppressed.value = suppressed
     val service = accessibilityService.value ?: return
@@ -257,7 +284,7 @@ object PhoneAutomationServiceBridge {
     if (!visible) {
       blackoutOverlayActivePointerCount.value = 0
     }
-    val service = accessibilityService.value ?: return !visible
+    val service = accessibilityService.value ?: return true
     return service.setBlackoutOverlayVisible(visible)
   }
 
@@ -347,6 +374,11 @@ object PhoneAutomationServiceBridge {
   suspend fun snapshotVisibleNodes(expectedPackageName: String): List<PhoneAutomationVisibleNode> {
     val service = accessibilityService.value ?: return emptyList()
     return service.snapshotVisibleNodes(expectedPackageName)
+  }
+
+  suspend fun performBack(): Boolean {
+    val service = accessibilityService.value ?: return false
+    return service.performBack()
   }
 
   suspend fun awaitNotificationPostedAfter(
@@ -453,6 +485,9 @@ object PhoneAutomationServiceBridge {
     blackoutOverlayRequested.value = false
     blackoutOverlaySuppressed.value = false
     remoteScreenBrightnessState.value = null
+    nonTouchInputSuppressedUntilUptimeMillis.value = 0L
     activeNotifications.value = emptyMap()
   }
+
+  private const val NON_TOUCH_INPUT_SUPPRESSION_MILLIS = 4_000L
 }

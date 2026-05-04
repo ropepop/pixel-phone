@@ -50,14 +50,16 @@ am start-foreground-service \
   -a "${ACTION_TICKET_START}" \
   --es orchestrator_action ticket_start_server >/dev/null
 
-am start -n "${APP_PACKAGE}/.app.MainActivity" >/dev/null 2>&1 || true
-
 is_true() {
   case "${1:-}" in
     1|true|TRUE|yes|YES|on|ON) return 0 ;;
     *) return 1 ;;
   esac
 }
+
+if is_true "${TICKET_SCREEN_OPEN_ORCHESTRATOR_ON_START:-0}"; then
+  am start -n "${APP_PACKAGE}/.app.MainActivity" >/dev/null 2>&1 || true
+fi
 
 pid_cmdline() {
   pid="$1"
@@ -87,9 +89,13 @@ read_pid_file() {
 }
 
 cleanup_extra_tunnel_loops() {
-  kill_matching_with_signal "-9" "${TUNNEL_LOOP_BIN}"
-  kill_matching_with_signal "-9" "/state/ticket-screen-cloudflared.yml"
-  rm -f "${TUNNEL_LOOP_PID_FILE}" "${CLOUDFLARED_PID_FILE}" >/dev/null 2>&1 || true
+  keep_loop_pid="${1:-}"
+  keep_cloudflared_pid="${2:-}"
+  kill_matching_with_signal "-9" "${TUNNEL_LOOP_BIN}" "${keep_loop_pid}"
+  kill_matching_with_signal "-9" "/state/ticket-screen-cloudflared.yml" "${keep_cloudflared_pid}"
+  if [ -z "${keep_loop_pid}" ]; then
+    rm -f "${TUNNEL_LOOP_PID_FILE}" "${CLOUDFLARED_PID_FILE}" >/dev/null 2>&1 || true
+  fi
 }
 
 kill_one() {
@@ -106,6 +112,7 @@ kill_one() {
 kill_matching_with_signal() {
   signal="$1"
   needle="$2"
+  keep_pid="${3:-}"
   ps -A -o PID,ARGS 2>/dev/null | while IFS= read -r line; do
     case "${line}" in
       *"${needle}"*)
@@ -114,6 +121,7 @@ kill_matching_with_signal() {
         case "${pid}" in
           ''|*[!0-9]*) ;;
           "$$") ;;
+          "$keep_pid") ;;
           *) kill_one "${signal}" "${pid}" ;;
         esac
         ;;
@@ -129,14 +137,16 @@ start_tunnel_loop_if_needed() {
     echo "missing ticket tunnel loop template: ${TPL_TUNNEL_LOOP}" >&2
     return 1
   fi
-  cleanup_extra_tunnel_loops
+  pid="$(read_pid_file "${TUNNEL_LOOP_PID_FILE}" || true)"
+  cloudflared_pid="$(read_pid_file "${CLOUDFLARED_PID_FILE}" || true)"
+  if pid_matches_target "${pid}" "${TUNNEL_LOOP_BIN}"; then
+    cleanup_extra_tunnel_loops "${pid}" "${cloudflared_pid}"
+    return 0
+  fi
+  cleanup_extra_tunnel_loops "" ""
   cp "${TPL_TUNNEL_LOOP}" "${TUNNEL_LOOP_BIN}"
   chmod 0755 "${TUNNEL_LOOP_BIN}"
   chcon u:object_r:shell_data_file:s0 "${TUNNEL_LOOP_BIN}" 2>/dev/null || true
-  pid="$(read_pid_file "${TUNNEL_LOOP_PID_FILE}" || true)"
-  if pid_matches_target "${pid}" "${TUNNEL_LOOP_BIN}"; then
-    return 0
-  fi
   nohup "${TUNNEL_LOOP_BIN}" >> "${TUNNEL_LOOP_LOG_FILE}" 2>&1 &
   echo "$!" > "${TUNNEL_LOOP_PID_FILE}"
 }
