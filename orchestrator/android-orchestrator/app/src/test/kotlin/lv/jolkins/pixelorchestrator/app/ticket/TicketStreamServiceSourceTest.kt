@@ -283,7 +283,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(config.contains("const val ROOT_FFMPEG_H264_CAPTURE_MODE = \"root_ffmpeg_h264\""))
     assertTrue(config.contains("const val ROOT_FFMPEG_H264_TRANSPORT = \"ffmpeg-h264-annexb\""))
     assertTrue(config.contains("const val ROOT_FFMPEG_H264_QUALITY_PROFILE = \"ffmpeg_h264_clarity\""))
-    assertTrue(config.contains("const val ROOT_FFMPEG_H264_CODEC_STRING = \"avc1.42E01E\""))
+    assertTrue(config.contains("const val ROOT_FFMPEG_H264_CODEC_STRING = \"avc1.42E028\""))
     assertTrue(config.contains("const val ROOT_FFMPEG_H264_FPS = 8"))
     assertTrue(config.contains("const val ROOT_FFMPEG_H264_BITRATE = 8_000_000"))
     assertTrue(config.contains("const val ROOT_FFMPEG_H264_KEYFRAME_INTERVAL_MILLIS = 125"))

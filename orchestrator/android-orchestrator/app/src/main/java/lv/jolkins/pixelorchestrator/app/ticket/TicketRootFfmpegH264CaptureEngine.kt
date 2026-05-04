@@ -387,7 +387,7 @@ class TicketRootFfmpegH264CaptureEngine(
       "-an -vf format=yuv420p",
       "-c:v libx264 -preset ultrafast -tune zerolatency",
       "-x264-params keyint=1:min-keyint=1:scenecut=0:repeat-headers=1:bframes=0",
-      "-g 1 -bf 0 -refs 1 -profile:v baseline -level 5.2",
+      "-g 1 -bf 0 -refs 1 -profile:v baseline -level 4.0",
       "-b:v $targetBitrate -maxrate $targetBitrate -bufsize $halfBitrate",
       "-pix_fmt yuv420p -f h264 pipe:1"
     ).joinToString(" ")
