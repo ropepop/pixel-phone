@@ -772,6 +772,7 @@ class TicketStreamService : Service() {
       disableSecureWindowCaptureBypass()
       disableNotificationLockdown(reason)
       scheduleTicketBrightnessGuard("client_detached:$reason")
+      releaseTicketScreenAwake()
       releaseBlackoutOverlaySuppression()
       hideBlackoutOverlay()
       broadcastStatus()
@@ -3017,10 +3018,13 @@ class TicketStreamService : Service() {
             requestTicketScreenWake("brightness_guard_$reason")
           }
           hideBlackoutOverlay()
-        } else if (ticketBrightnessGuardPausedForPhysicalUse()) {
-          ticketBrightnessGuardActive = false
-          ticketBrightnessGuardLastMessage = "Ticket brightness guard paused for physical phone use"
-          return@launch
+        } else {
+          releaseTicketScreenAwake()
+          if (ticketBrightnessGuardPausedForPhysicalUse()) {
+            ticketBrightnessGuardActive = false
+            ticketBrightnessGuardLastMessage = "Ticket brightness guard paused for physical phone use"
+            return@launch
+          }
         }
         enforceTicketSafeBrightness(reason)
       }
@@ -3033,10 +3037,13 @@ class TicketStreamService : Service() {
             requestTicketScreenWake("brightness_guard_$reason")
           }
           hideBlackoutOverlay()
-        } else if (ticketBrightnessGuardPausedForPhysicalUse()) {
-          ticketBrightnessGuardActive = false
-          ticketBrightnessGuardLastMessage = "Ticket brightness guard paused for physical phone use"
-          return@launch
+        } else {
+          releaseTicketScreenAwake()
+          if (ticketBrightnessGuardPausedForPhysicalUse()) {
+            ticketBrightnessGuardActive = false
+            ticketBrightnessGuardLastMessage = "Ticket brightness guard paused for physical phone use"
+            return@launch
+          }
         }
         enforceTicketSafeBrightness(reason)
       }
@@ -4217,7 +4224,7 @@ class TicketStreamService : Service() {
     private const val VIVI_FOREGROUND_CHECK_MILLIS = 750L
     private const val VIVI_FOREGROUND_GRACE_MILLIS = 8_000L
     private const val VIVI_PAGE_ENFORCE_INTERVAL_MILLIS = 2_000L
-    private const val TICKET_SCREEN_WAKE_HOLD_MILLIS = 11 * 60 * 1_000L
+    private const val TICKET_SCREEN_WAKE_HOLD_MILLIS = 30_000L
     private const val TICKET_SCREEN_WAKE_REQUEST_COOLDOWN_MILLIS = 2_000L
     private const val ACTIVE_AUTOPILOT_MAX_STEPS = 2
     private const val ACTIVE_AUTOPILOT_TIMEOUT_MILLIS = 1_000L

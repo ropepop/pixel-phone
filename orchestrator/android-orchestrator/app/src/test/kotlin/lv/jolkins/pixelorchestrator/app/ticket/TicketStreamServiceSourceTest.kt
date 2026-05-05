@@ -544,6 +544,10 @@ class TicketStreamServiceSourceTest {
     assertTrue(!disconnectBlock.contains("TicketRecoveryMode.ACTIVE_SOFT"))
     assertTrue(!disconnectBlock.contains("stopTicketSession(\"browser_left_ticket_screen\")"))
     assertTrue(source.contains("recordTicketEvent(\"root_capture_ready_waiting\", \"client_detached_${'$'}reason\")"))
+    val detachStart = source.indexOf("private suspend fun noteClientDetached")
+    val detachEnd = source.indexOf("private suspend fun stopTicketSession", detachStart)
+    val detachBlock = source.substring(detachStart, detachEnd)
+    assertTrue(detachBlock.contains("releaseTicketScreenAwake()"))
   }
 
   @Test
@@ -607,10 +611,11 @@ class TicketStreamServiceSourceTest {
     val violationBlock = source.substring(violationStart, violationEnd)
 
     assertTrue(source.contains("PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP"))
-    assertTrue(source.contains("private const val TICKET_SCREEN_WAKE_HOLD_MILLIS = 11 * 60 * 1_000L"))
+    assertTrue(source.contains("private const val TICKET_SCREEN_WAKE_HOLD_MILLIS = 30_000L"))
     assertTrue(startBlock.contains("requestTicketScreenWake(\"session_start\")"))
     assertTrue(source.contains("releaseTicketScreenAwake()"))
     assertTrue(source.contains("holdTicketScreenAwake(\"viewer_input_${'$'}reason\")"))
+    assertTrue(source.contains("releaseTicketScreenAwake()"))
     assertTrue(foregroundBlock.contains("return \"screen_not_interactive\""))
     assertTrue(violationBlock.contains("violation == \"screen_not_interactive\""))
     assertTrue(violationBlock.contains("foreground_screen_wake"))

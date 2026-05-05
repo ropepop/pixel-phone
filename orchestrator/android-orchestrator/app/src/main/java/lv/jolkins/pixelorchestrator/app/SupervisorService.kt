@@ -382,6 +382,7 @@ class SupervisorService : Service() {
     private const val DEFERRED_TOUCH_BRIGHTNESS_RESUME_TRIGGER = "deferred_touch_brightness_resume"
     private const val TICKET_SERVICE_COMPONENT = "ticket_screen"
     private const val TICKET_SERVICE_MONITOR_INTERVAL_MILLIS = 30_000L
+    private const val TICKET_SERVICE_STABLE_RECHECK_MILLIS = 2 * 60 * 1_000L
 
     internal fun resolveBootRecoveryMode(shouldHandleFullStart: Boolean): BootRecoveryMode {
       return if (shouldHandleFullStart) {
@@ -583,7 +584,15 @@ class SupervisorService : Service() {
 
   private suspend fun ensureTicketServiceReady(reason: String, facade: OrchestratorFacade) {
     ticketServiceEnsureMutex.withLock {
-      if (!ticketServiceStore.load().enabled) {
+      val current = ticketServiceStore.load()
+      if (!current.enabled) {
+        return
+      }
+      if (shouldSkipStableTicketEnsure(reason, current)) {
+        Log.d(
+          TAG,
+          "ticket_service_ensure_skipped reason=$reason state=${current.runtimeState.wireName} age_ms=${System.currentTimeMillis() - current.lastEnsureAtMillis}"
+        )
         return
       }
       ticketServiceStore.recordEnsureStarted(reason)
@@ -618,6 +627,18 @@ class SupervisorService : Service() {
       )
       updateForegroundNotification(ticketServiceSnapshot = latest)
     }
+  }
+
+  private fun shouldSkipStableTicketEnsure(
+    reason: String,
+    current: TicketServiceSettingsSnapshot,
+    nowMillis: Long = System.currentTimeMillis()
+  ): Boolean {
+    if (reason != "periodic") return false
+    if (current.runtimeState != TicketServiceRuntimeState.READY) return false
+    if (!current.localServerReachable || !current.tunnelReady || !current.lastEnsureSucceeded) return false
+    val ageMillis = nowMillis - current.lastEnsureAtMillis
+    return ageMillis in 0 until TICKET_SERVICE_STABLE_RECHECK_MILLIS
   }
 
   private suspend fun stopTicketServiceReadiness(trigger: String, facade: OrchestratorFacade) {
@@ -672,7 +693,7 @@ class SupervisorService : Service() {
         pid_cmdline() {
           pid="${'$'}1"
           if [ -r "/proc/${'$'}pid/cmdline" ]; then
-            tr '\000' ' ' < "/proc/${'$'}pid/cmdline" 2>/dev/null || true
+            timeout 1 tr '\000' ' ' < "/proc/${'$'}pid/cmdline" 2>/dev/null || true
             return 0
           fi
           ps -p "${'$'}pid" -o ARGS= 2>/dev/null || true

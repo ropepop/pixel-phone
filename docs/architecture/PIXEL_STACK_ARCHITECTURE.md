@@ -134,6 +134,7 @@ Do not promote a measurement report into architecture by reference alone. If a r
 These boundaries are architectural constraints:
 
 - Keep root access behind orchestrator-owned commands and component entrypoints.
+- Root command execution must drain stdout and stderr concurrently, enforce timeouts, and clean up timed-out shell process trees. Long-lived orphaned root helpers are treated as reliability bugs because they can heat the phone while no visible project work is happening.
 - Keep component redeploy ownership explicit in manifests and registry entries.
 - Do not use `restart_component` as an update shortcut.
 - Do not share mutable runtime roots between sibling app-style workloads.
@@ -146,3 +147,4 @@ These boundaries are architectural constraints:
 Future agents should append short notes here only when a change affects the whole-stack architecture but does not yet fit a stable section above. Promote recurring notes into the main sections during cleanup.
 
 - 2026-05-03: `ticket_screen` auto-start is now governed by a persisted Android toggle instead of generic supervisor auto-start. This keeps OFF truly stopped and ON ready after reboot without forcing ViVi or stream capture.
+- 2026-05-05: Root executor timeouts now clean up shell child process trees, and stable ticket readiness checks are throttled once the local server and tunnel are already ready. This prevents idle health probes from leaving CPU-burning orphan processes.
