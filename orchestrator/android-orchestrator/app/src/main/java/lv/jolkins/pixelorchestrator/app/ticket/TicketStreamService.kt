@@ -671,7 +671,11 @@ class TicketStreamService : Service() {
       updateTicketSessionState(TICKET_SESSION_LIVE, "session_start_already_active")
       lastSessionStopReason = null
       markViewerInput("session_start_already_active")
-      lastMessage = "Ticket session is active through FFmpeg H.264 capture"
+      lastMessage = when (activeCaptureMode) {
+        CAPTURE_MODE_ROOT_PNG -> "Ticket session is active through root lossless capture"
+        CAPTURE_MODE_ROOT_FFMPEG_H264 -> "Ticket session is active through FFmpeg H.264 capture"
+        else -> "Ticket session is active"
+      }
       scheduleTicketBrightnessGuard("session_start_already_active")
       startForegroundGuard()
       ensureEncoderIfPossible()
@@ -696,8 +700,8 @@ class TicketStreamService : Service() {
     enableNotificationLockdown("session_start")
     enableSecureWindowCaptureBypass()
     scheduleTicketBrightnessGuard("session_start")
-    if (!ffmpegCaptureAvailable) {
-      fallbackReason = "FFmpeg H.264 capture is unavailable"
+    if (!rootPngCaptureAvailable) {
+      fallbackReason = "Root lossless capture is unavailable"
       pendingStartAfterProjection = false
       stopProjection()
       cancelInactivityTimer()
@@ -705,11 +709,11 @@ class TicketStreamService : Service() {
       disableNotificationLockdown("capture_unavailable")
       scheduleTicketBrightnessGuard("capture_unavailable")
       releaseBlackoutOverlaySuppression()
-      lastMessage = "FFmpeg H.264 capture is unavailable; codec fallback was not started"
+      lastMessage = "Root lossless capture is unavailable; stream was not started"
       activeCaptureMode = CAPTURE_MODE_IDLE
-      updateTicketSessionState(TICKET_SESSION_UNAVAILABLE, "capture_unavailable_root_ffmpeg_h264_required")
+      updateTicketSessionState(TICKET_SESSION_UNAVAILABLE, "capture_unavailable_root_png_required")
       recordTicketEvent("session_unavailable", fallbackReason.orEmpty())
-      persistRuntimeState("capture_unavailable_root_ffmpeg_h264_required")
+      persistRuntimeState("capture_unavailable_root_png_required")
       return@withLock TicketSessionResponse(
         ok = false,
         state = "capture_unavailable",
@@ -721,15 +725,15 @@ class TicketStreamService : Service() {
     fallbackReason = null
     stopProjection()
     streamActive = true
-    activeCaptureMode = CAPTURE_MODE_ROOT_FFMPEG_H264
-    updateTicketSessionState(TICKET_SESSION_STARTING, "session_start_root_ffmpeg_h264_prepare")
-    markViewerInput("session_start_root_ffmpeg_h264_prepare")
-    lastMessage = "Preparing ViVi for FFmpeg H.264 capture"
+    activeCaptureMode = CAPTURE_MODE_ROOT_PNG
+    updateTicketSessionState(TICKET_SESSION_STARTING, "session_start_root_png_prepare")
+    markViewerInput("session_start_root_png_prepare")
+    lastMessage = "Preparing ViVi for root lossless capture"
     recordTicketEvent("session_started", "mode=$activeCaptureMode")
     startForegroundGuard()
-    scheduleRootPngCaptureStart("session_start_root_ffmpeg_h264_capture", suppressBlackout = false)
+    scheduleRootPngCaptureStart("session_start_root_png_capture", suppressBlackout = false)
     broadcastStatus()
-    persistRuntimeState("session_start_root_ffmpeg_h264_prepare")
+    persistRuntimeState("session_start_root_png_prepare")
     return@withLock TicketSessionResponse(ok = true, state = "starting", message = lastMessage)
   }
 
@@ -1158,6 +1162,21 @@ class TicketStreamService : Service() {
     if (result.success && result.state == TicketViviRecoveryState.CONTROL_CODE_POPUP) {
       controlCodePopupReadyUntilMillis = SystemClock.elapsedRealtime() + CONTROL_CODE_POPUP_READY_CACHE_MILLIS
       markControlCodeModeEntered("foreground_guard_control_code_popup")
+    }
+    if (result.success && result.state == TicketViviRecoveryState.TICKET_DETAIL) {
+      resetForegroundViolationConfirmation()
+      if (streamActive && ticketSessionState in setOf(TICKET_SESSION_SOFT_RECOVERY, TICKET_SESSION_NEEDS_ATTENTION)) {
+        recordTicketEvent("active_guard_live", reason)
+        updateTicketSessionState(TICKET_SESSION_LIVE, "active_guard_ticket_detail_$reason")
+        lastMessage = when (activeCaptureMode) {
+          CAPTURE_MODE_ROOT_FFMPEG_H264 -> "Ticket session is active through FFmpeg H.264 capture"
+          CAPTURE_MODE_ROOT_AV1 -> "Ticket session is active through root-fed AV1 capture"
+          CAPTURE_MODE_ROOT_PNG -> "Ticket session is active through root lossless capture"
+          else -> lastMessage
+        }
+        broadcastStatus()
+      }
+      return
     }
     if (!result.success) {
       Log.w(TAG, "ticket_autopilot_active_failed reason=$reason state=${result.state} step=${result.step}")
@@ -4153,7 +4172,7 @@ class TicketStreamService : Service() {
     private const val RECENT_CLIENT_TELEMETRY_LIMIT = 80
     private const val RECENT_TICKET_EVENT_LIMIT = 80
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
-    const val SERVER_VERSION = "ticket-stream-2026-05-04-native-capture-v67"
+    const val SERVER_VERSION = "ticket-stream-2026-05-04-root-png-recovery-v70"
     private const val FRAME_ENVELOPE_VERSION = "tsf2"
     private const val FRAME_ENVELOPE_MAGIC = 0x54534632
     private const val FRAME_ENVELOPE_HEADER_BYTES = 29

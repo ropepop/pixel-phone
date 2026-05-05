@@ -27,7 +27,7 @@ object TicketScreenConfig {
   const val ROOT_FFMPEG_H264_CAPTURE_MODE = "root_ffmpeg_h264"
   const val ROOT_FFMPEG_H264_TRANSPORT = "ffmpeg-h264-annexb"
   const val ROOT_FFMPEG_H264_QUALITY_PROFILE = "ffmpeg_h264_clarity"
-  const val ROOT_FFMPEG_H264_CODEC_STRING = "avc1.42E028"
+  const val ROOT_FFMPEG_H264_CODEC_STRING = "avc1.42C028"
   const val ROOT_FFMPEG_H264_FPS = 8
   const val ROOT_FFMPEG_H264_BITRATE = 8_000_000
   const val ROOT_FFMPEG_H264_TARGET_WIDTH = 720

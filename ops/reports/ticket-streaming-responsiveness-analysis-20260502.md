@@ -827,3 +827,80 @@ The final cleanup state intentionally left the durable ticket service ready and 
 - `ops/evidence/ticket-streaming-20260504/native-capture-v65/final-pixel-health-v65-cleanup.json`
 - `ops/evidence/ticket-streaming-20260504/native-capture-v65/final-pixel-health-v65-live.json`
 - `ops/evidence/ticket-streaming-20260504/native-capture-v65/final-process-check-v65.txt`
+
+## Public Deployment Recovery v70
+
+Implemented and verified on 2026-05-04 after the authenticated Brave page was stuck in a waiting state.
+
+### What happened
+
+- Pixel v65/v66/v67/v68 could start the FFmpeg H.264 path, but authenticated Brave continued to reject the public stream with H.264 WebCodecs decode errors.
+- The public relay and browser recovery code were improved so decoder failures reconnect the affected browser path instead of restarting the phone stream.
+- Because the promoted FFmpeg H.264 path still did not produce a visible user-facing stream in Brave, the live product was restored to the known-good root lossless PNG path in Pixel v70.
+- The public relay page version was bumped to `ticket-remote-2026-05-04-root-png-recovery-v28` so Brave can prove it is running the latest page code.
+- The Pixel active guard was tightened so a later successful ticket-detail check clears stale `needs_attention` state from an earlier failed recovery.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| Pixel deployment | Pixel health reported `ticket-stream-2026-05-04-root-png-recovery-v70`, service ready, tunnel ready, stream active, root PNG capture active, full `1080x2424`, `codec=png`, and `transport=root-screencap-png`. |
+| Phone state | A Pixel-side screenshot showed ViVi on the normal ticket detail screen with the live/self-updating Aztec ticket visible. |
+| Public relay | Relay health showed the phone connected, one authenticated viewer, `root-screencap-png`, fresh frame sequence `195`, browser decode error empty, and recent `png_frame_received` plus `png_frame_drawn` client events. |
+| User-side Brave proof | A macOS screenshot of the existing authenticated Brave window showed `ticket.jolkins.id.lv` rendering the live ticket image instead of `Gaida tālruni...` or `Gaida biļetes straumi...`. |
+| Loading | Relay client telemetry showed PNG frames drawn and loading finished at `first_live_frame_drawn`; one observed loading completion during the recovery pass was `1683ms`. |
+
+### Remaining notes
+
+The live product is working again on the root PNG path. This is intentionally the reliability rollback: it costs more bandwidth and smoothness than the FFmpeg path, but it preserves ticket clarity and avoids the H.264 decode failure seen in authenticated Brave. FFmpeg H.264 should not be promoted again until direct authenticated Brave evidence shows the page opens, decodes, and stays live after deployment.
+
+### Evidence
+
+- `ops/evidence/ticket-streaming-20260504/public-recovery-v70/brave-final-live-ticket.png`
+- `ops/evidence/ticket-streaming-20260504/public-recovery-v70/pixel-health-v70.json`
+- `ops/evidence/ticket-streaming-20260504/public-recovery-v70/relay-health-v28.json`
+
+## Scroll Status Stability And Compute Quieting Pass
+
+Implemented and deployed on 2026-05-05 as public relay `ticket-remote-2026-05-05-status-compute-v31`.
+
+### What changed
+
+- The scroll-menu status line is now a stable presentation state. Repeated equivalent states are debounced, lower-priority phone/health messages do not overwrite a current live/control state, and the control countdown updates locally instead of forcing status rewrites.
+- The status line has a fixed two-line-height area so wording changes do not make the menu jump.
+- Noisy browser events such as `png_frame_received`, `png_frame_drawn`, repeated loading phases, and stale-frame retry waits are summarized instead of posted for every occurrence.
+- Healthy live pages slow health polling to `45s`; startup/recovery still uses faster polling.
+- Cached state broadcasts are throttled to a `5s` interval for quiet live viewing; control/admin mutations still broadcast immediately.
+- `/api/v1/health.telemetry` now exposes client-log, suppression, aggregate, and state-broadcast counters.
+- Ticket docs now record the authenticated Brave verification rule: preserve the Brave Work profile, and if Cloudflare Access asks again, use the newest code from macOS notification or Apple Mail for `ticket@jolkins.id.lv`.
+
+### Top compute cuts
+
+| Source | Before | After v31 | Result |
+| --- | --- | --- | --- |
+| Per-frame browser telemetry | Recent relay telemetry was filled with raw `png_frame_received`/`png_frame_drawn` events for each frame. | Recent telemetry shows `*_summary` events about every 10s; one sample summarized 9-10 frame logs with 8-9 suppressed. | Fewer browser POSTs and server log lines while preserving frame evidence. |
+| Repeated status rendering | Main status was rewritten from state/health paths, including the one-second control timer path. | Live watch reported `updates=1`, `debounced=1079`, stable key `watching`. | The scroll menu stayed visually stable over the watch. |
+| Cached state broadcasts | Cached state was sent every second while clients existed. | Health showed `stateBroadcasts=72` and `stateBroadcastSuppressed=217` after the watch. | Countdown noise is kept local to the browser; server still sends periodic state and immediate mutation updates. |
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| Tests | `go test ./...` passed in `ticket-remote`; `node --check internal/web/static/app.js` passed. |
+| Deploy | Arbuzas deploy and built-in validation passed. Containers ran `ticket-remote-2026-05-05-status-compute-v31`. |
+| Public Brave live page | Existing authenticated Brave Work page force-reloaded to v31 and showed the live ticket. Relay telemetry recorded first live frame after the v31 page boot in `378ms`. |
+| Scroll-menu stability | After scrolling to the menu, the status stayed on `Vispārīga skatīšanās` over the watch; the second screenshot after about two minutes showed the same stable status and layout. |
+| Stream state | Relay health after the watch showed `activeVideoClients=1`, phone connected, root PNG stream active, and latest frame age `83ms`. |
+| Compute counters | `/api/v1/health.telemetry` after the watch showed `clientLogsReceived=100`, `clientLogsWritten=82`, `clientLogsSuppressed=18`, `clientLogAggregates=63`, `stateBroadcasts=72`, and `stateBroadcastSuppressed=217`. |
+| Spacetime cache | Health after the watch showed member-cache hits, presence throttling, and no stale fallback: `memberCacheHits=104`, `memberCacheMisses=0`, `presenceWrites=9`, `presenceThrottled=13`, `staleFallbacks=0`. |
+
+### Evidence
+
+- `ops/evidence/ticket-streaming-20260505/status-compute-v31/pre-deploy-relay-health.json`
+- `ops/evidence/ticket-streaming-20260505/status-compute-v31/post-deploy-relay-health.json`
+- `ops/evidence/ticket-streaming-20260505/status-compute-v31/post-watch-relay-health.json`
+- `ops/evidence/ticket-streaming-20260505/status-compute-v31/final-relay-health.json`
+- `ops/evidence/ticket-streaming-20260505/status-compute-v31/brave-v31-live-screen.png`
+- `ops/evidence/ticket-streaming-20260505/status-compute-v31/brave-v31-status-menu.png`
+- `ops/evidence/ticket-streaming-20260505/status-compute-v31/brave-v31-status-menu-after-2m.png`
+- `ops/evidence/ticket-streaming-20260505/status-compute-v31/brave-v31-final-live-screen.png`

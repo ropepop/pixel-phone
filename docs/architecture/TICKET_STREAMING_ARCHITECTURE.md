@@ -58,19 +58,18 @@ Legacy clients without viewer/page identity should still connect, but they do no
 
 ## 3. Pixel Capture, Root Frames, And Browser Draw
 
-The accepted production public capture path is now root-only FFmpeg H.264:
+The accepted production public capture path is currently root-only lossless PNG:
 
-- Output format: H.264 Annex B frames, reported as `codec=avc1.42E01E`, `transport=ffmpeg-h264-annexb`, and `captureMode=root_ffmpeg_h264`.
-- Default quality profile: `ffmpeg_h264_clarity`.
-- Default dimensions: near-full measured clarity profile, currently 900 pixels wide on the Pixel (`900x2020` on the current display). Full `1080x2424` was measured but is not the active profile because it pushed the helper into a memory/performance cliff.
-- Default cadence: 8 FPS target with all-intra/IDR frames as the first clarity profile.
-- Runtime: FFmpeg runs from the Pixel Stack arm64 Debian chroot at `/data/local/pixel-stack/chroots/pihole/usr/bin/ffmpeg`. The Android ticket service owns process lifecycle, stderr tail, health, cleanup, and frame timing.
-- Frame source: a persistent root `app_process` helper calls Android's native screen-capture API, scales to the active stream size, and feeds raw RGBA frames to FFmpeg. FFmpeg owns color conversion, frame pacing, and H.264 encoding. The helper is reported as `captureSource=root_surface_capture` and `captureMethod=app_process_screen_capture`.
-- Browser draw: the public page requires H.264 WebCodecs support for this normal path, configures Annex B decode, disables canvas/image smoothing, and draws decoded frames to the real decoded canvas size.
+- Output format: PNG frames, reported as `codec=png`, `transport=root-screencap-png`, and `captureMode=root_screencap_png`.
+- Default quality profile: `root_lossless_png`.
+- Default dimensions: full Pixel display resolution, currently `1080x2424`.
+- Default cadence: adaptive root PNG frames; every PNG frame is treated as a current-epoch keyframe.
+- Runtime: the Android ticket service owns root screencap lifecycle, frame timing, epoch/freshness, relay fanout, and cleanup.
+- Browser draw: the public page draws PNG frames directly to canvas with smoothing disabled. No WebCodecs decoder is used for the current production path.
 
-The normal public path must not depend on Android MediaProjection, Android screen-recording permission, AV1, H.265, root `screenrecord`, or automatic PNG fallback. Those code paths may remain only as explicit diagnostic/manual rollback paths, and the public site must show a clear unavailable state rather than silently changing codecs when root FFmpeg setup fails.
+The normal public path must not depend on Android MediaProjection, Android screen-recording permission, AV1, H.265, root `screenrecord`, or FFmpeg H.264 until that path has direct authenticated Brave proof. The FFmpeg H.264/native-helper implementation remains in the codebase as an explicit measured candidate, but it is not the current production public path because authenticated Brave rejected the promoted H.264 stream with decode errors during the 2026-05-04 deployment pass. The product was restored to root lossless PNG in v70 to keep the live site working.
 
-Earlier measured paths are documented for context only. Root lossless PNG fixed old-frame residue but traded bandwidth and smoothness for clarity. The 2026-05-04 root-fed AV1 prototype added `captureMode=root_av1`, `transport=av1-webcodecs`, `codec=av01.0.08M.08`, hardware encoder support diagnostics, and root raw-screencap-to-AV1 conversion, but live measurement showed root frame capture plus CPU color conversion was too slow for the public MVP. Neither PNG nor AV1 is the accepted public path after the FFmpeg cutover unless a future measured pass promotes it again.
+Earlier measured paths are documented for context only. Root-fed AV1 was too slow for production. Root FFmpeg H.264 improved capture cost with the native helper but must not be promoted again until the public browser page, not only backend probes, proves stable first-frame and decoded-ticket behavior.
 
 Frame freshness:
 
@@ -82,19 +81,20 @@ Frame freshness:
 Fresh-frame behavior:
 
 - Browser/reload/control-code transitions request a fresh current-epoch keyframe through the video socket first.
-- FFmpeg public mode runs the first clarity profile as all-intra, so every accepted video frame is a clean decode point for Aztec/ticket detail.
+- In the current root PNG public mode, every accepted frame is lossless and self-contained, so joins/reloads do not depend on an old video decoder state.
+- FFmpeg public candidates should run all-intra or otherwise provide current-epoch clean decode points before promotion.
 - Manual fallback H.264 paths that use root `screenrecord` cannot request an IDR frame directly. In those fallback modes, the service may restart root capture to force a new keyframe, but this is debounced with a wait window and cooldown.
 - Recent keyframes can be cached and resent to reconnecting clients only when they are from the current stream epoch and younger than the freshness window, currently about 1.5 seconds. Old cached keyframes must never be drawn.
 - If no fresh same-epoch keyframe exists, the relay/browser requests a new keyframe instead of replaying old video.
 - While a private-control claim is active, `ticket_remote` sends an extra fresh cached keyframe once per second only to the active controller's video socket. Other authenticated viewers continue receiving the normal shared video stream and are not hidden or paused by private control.
 - Restart reasons and suppressed restart requests are exposed in health.
-- Stop/cleanup stops FFmpeg and its root screen-capture helper, clears the current stream epoch/cache, and leaves the ticket service ready for the next authenticated viewer. It does not pre-arm Android capture permission. Cleanup also kills stale app-owned FFmpeg/native-helper processes and any explicit fallback `screenrecord` processes.
+- Stop/cleanup stops the active root capture path, clears the current stream epoch/cache, and leaves the ticket service ready for the next authenticated viewer. It does not pre-arm Android capture permission. Cleanup also kills stale app-owned FFmpeg/native-helper processes from explicit test paths and any explicit fallback `screenrecord` processes.
 
 Browser decode behavior:
 
-- The browser configures the stream from the server config. For `ffmpeg-h264-annexb`, it configures WebCodecs H.264 with Annex B format and draws decoded frames with smoothing disabled.
-- WebCodecs H.264 support is required for the normal public path. If unsupported, the browser must show a clear unsupported state rather than silently changing codecs.
-- Delta frames are ignored until a keyframe is available; in current all-intra FFmpeg mode every accepted frame is a keyframe.
+- The browser configures the stream from the server config. For `root-screencap-png`, it decodes each PNG frame through the browser image pipeline and draws it with smoothing disabled.
+- WebCodecs H.264 is not required for the current production path. If a future FFmpeg H.264 path is promoted, unsupported or failing decode must show a clear unavailable state rather than silently changing codecs.
+- Delta frames are ignored until a keyframe is available in encoded-video candidates; root PNG frames are already self-contained.
 - Watchdogs can request a keyframe when the visible frame is quiet or static without leaving the streaming state. Longer no-frame outages can still trigger a soft video reconnect.
 - Decoder failures reconnect the affected browser video path. They should not restart the shared phone stream unless Pixel health shows the stream itself is unhealthy.
 - Control and video socket open timeouts are intentionally short so the page leaves long connecting states quickly. A two-second loading budget triggers video recovery, then escalates if the stream still does not produce a live frame.
@@ -186,10 +186,19 @@ Important health surfaces:
 - `recentEvents`: server-side lifecycle, recovery, client, and input events.
 - `recentClientTelemetry`: browser-side startup, decode, visible-frame, watchdog, and socket events.
 - Public relay `/api/v1/health.controlKeyframes`: controller-only one-second keyframe pulse counters, sent cached keyframes, phone keyframe requests, and last pulse age.
+- Public relay `/api/v1/health.spacetime`: ticket-only SpacetimeDB call counts, errors, slow calls, snapshot/member cache hits and misses, presence throttling, compact phone-health writes, skipped stable phone-health writes, and the latest phone-health compaction result.
+- Public relay `/api/v1/health.telemetry`: client-log counts, server-side suppression counts, aggregate log counts, state-broadcast counts, and state-broadcast suppressions. These counters prove whether public UI diagnostics are calm without removing important error/input/loading events.
+
+SpacetimeDB is the source of truth for ticket membership, control ownership, active control expiry, and current compact phone state. `ticket_remote` keeps a short in-process read cache for non-mutating paths such as client telemetry, ordinary socket setup, health, and browser heartbeat responses. Control/admin mutations still use fresh SpacetimeDB state before making decisions. Only the control socket owns viewer presence; video sockets do not write presence rows. Pixel health is stored in SpacetimeDB as a compact material summary and is written only when that summary changes or a keepalive interval passes; the full current phone diagnostics stay in `ticket_remote` process health for operations.
+
+Public status UI should be calm. The scroll-menu status line is a derived presentation state, not a raw health log: repeated equivalent states are debounced, lower-priority phone/health messages do not overwrite a current live/control state, and the browser counts down active control locally from the server expiry time instead of requiring per-second server state broadcasts. Noisy browser telemetry such as frame received/drawn and repeated loading phases should be sampled or summarized; page boot, over-budget loading, decode errors, input results, control changes, and hard failures remain immediate.
+
+When Cloudflare Access asks for authentication during ticket verification, future agents should keep the existing Brave Work profile and preserve cookies, local storage, session storage, and IndexedDB. Request the Access code for `ticket@jolkins.id.lv` only if needed, read only the newest Cloudflare code from the macOS notification or Apple Mail, submit it in Brave, and then verify the live ticket from the real authenticated Brave page.
 
 Known caveats:
 
-- The FFmpeg H.264 clarity profile currently favors clean Aztec detail and stable recovery over minimum bitrate. The active native-helper profile is faster than the old full-screen `screencap` feeder but still below a true 8 FPS full-motion target, so future bitrate/GOP or resolution changes should be made only after browser-canvas and Pixel-side evidence prove there is no gray residue or module detail loss.
+- The current root PNG production path favors correctness, clear Aztec detail, and reliable public recovery over bandwidth and smoothness. It is intentionally less efficient than the FFmpeg H.264 candidate.
+- The FFmpeg H.264 clarity profile is not the current production public path. It should not be promoted again until the authenticated Brave page proves stable decode and visible live ticket behavior after deploy.
 - Public Cloudflare timing requires authenticated access; unauthenticated redirects are only tunnel reachability evidence.
 - Reports can preserve dated measurements, but architecture updates should describe the stable behavior after changes land.
 
@@ -212,3 +221,6 @@ Future agents should add short notes here when changing ticket stream flow, capt
 - 2026-05-04: Root-fed AV1 prototype added a strict root-only AV1 capture mode and public relay/browser AV1 diagnostics, but live local measurement found it too slow for production: first frame about `5.9-6.3s`, then about `0.5-0.7 FPS`, with the bottleneck in root screencap plus CPU RGB-to-YUV conversion.
 - 2026-05-04: FFmpeg quality hard-cutover changed the accepted production path to root-only FFmpeg H.264 (`captureMode=root_ffmpeg_h264`, `transport=ffmpeg-h264-annexb`, `qualityProfile=ffmpeg_h264_clarity`) from the Pixel Stack arm64 chroot, with all-intra 8 FPS full-resolution frames, no MediaProjection/screenrecord/automatic PNG fallback, sharper browser canvas drawing, FFmpeg health fields, and cleanup for FFmpeg plus the root frame feeder.
 - 2026-05-04: Native capture speed pass replaced the slow root `screencap` feeder with a persistent root `app_process` screen-capture helper (`captureSource=root_surface_capture`, `captureMethod=app_process_screen_capture`) feeding FFmpeg. Live v65 measurement promoted a 900px-wide clarity profile after full resolution proved too heavy, fixed the helper argument handoff, fixed expected pipe-close cleanup, kept the public H.264/WebCodecs contract unchanged, and verified the service/tunnel ready state with capture idle after cleanup.
+- 2026-05-04: Public deployment recovery v70 restored the production public stream to root-only lossless PNG after authenticated Brave rejected the promoted FFmpeg H.264 stream with WebCodecs decode errors. The relay/browser kept the decoder-recovery fixes, the phone serves `captureMode=root_screencap_png`, `codec=png`, `transport=root-screencap-png`, and the authenticated Brave page was verified from the user side with live ticket frames. Active guard success now clears stale `needs_attention` state once ViVi is confirmed on ticket detail.
+- 2026-05-05: Ticket-only SpacetimeDB efficiency pass added per-procedure Spacetime diagnostics, moved client telemetry/socket/heartbeat reads onto short relay-side caches, made only control sockets write presence, compacted phone-health storage to material fields with a 30-second stable keepalive, removed duplicate Go-side audit writes for mutations already audited inside the Spacetime module, and added module-side audit counters plus bounded cleanup of old audit/control-session runtime history.
+- 2026-05-05: Scroll status stability and compute quieting pass made the public scroll-menu status line debounced and priority-based, kept the control countdown browser-local, sampled noisy browser telemetry, slowed healthy-live health polling, throttled cached state broadcasts, added `/api/v1/health.telemetry`, and documented the Brave Work plus Apple Mail Cloudflare Access code workflow for authenticated ticket verification.
