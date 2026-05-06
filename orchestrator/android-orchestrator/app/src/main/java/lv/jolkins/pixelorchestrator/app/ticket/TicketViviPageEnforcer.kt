@@ -5,7 +5,8 @@ import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationVisibleNo
 internal data class TicketViviPageAction(
   val x: Int,
   val y: Int,
-  val reason: String
+  val reason: String,
+  val bounds: String? = null
 )
 
 internal enum class TicketViviRecoveryState {
@@ -80,7 +81,7 @@ internal object TicketViviPageEnforcer {
     if (!isControlCodeResult(xml)) {
       return null
     }
-    return closeBounds(xml)?.action("close_control_code_result")
+    return controlCodeResultCloseBounds(xml)?.action("close_control_code_result")
   }
 
   fun isControlCodeCloseTap(xml: String, x: Int, y: Int): Boolean {
@@ -92,10 +93,12 @@ internal object TicketViviPageEnforcer {
   }
 
   fun isControlCodeExitCloseTap(xml: String, x: Int, y: Int): Boolean {
-    if (!isControlCodePopup(xml) && !isControlCodeResult(xml)) {
-      return false
+    val bounds = when {
+      isControlCodePopup(xml) -> controlCodeCloseBounds(xml)
+      isControlCodeResult(xml) -> controlCodeResultCloseBounds(xml)
+      else -> null
     }
-    val bounds = closeBounds(xml) ?: return false
+    bounds ?: return false
     return bounds.contains(x, y, CLOSE_TAP_PADDING)
   }
 
@@ -103,6 +106,10 @@ internal object TicketViviPageEnforcer {
     return controlCodeButtonBounds(xml).any { bounds ->
       bounds.contains(x, y, CONTROL_CODE_BUTTON_TAP_PADDING)
     }
+  }
+
+  fun controlCodeButtonActionForHierarchy(xml: String): TicketViviPageAction? {
+    return controlCodeButtonBounds(xml).firstOrNull()?.action("control_code_button_snap_detected")
   }
 
   fun dismissibleBlockerActionForHierarchy(xml: String): TicketViviPageAction? {
@@ -162,14 +169,17 @@ internal object TicketViviPageEnforcer {
     if (!hasViviPackage(xml)) {
       return TicketViviRecoveryState.OUTSIDE_VIVI
     }
-    if (isTicketDetail(xml)) {
-      return TicketViviRecoveryState.TICKET_DETAIL
+    if (isControlCodeResult(xml) && !isControlCodePopup(xml)) {
+      return TicketViviRecoveryState.CONTROL_CODE_RESULT
     }
     if (isControlCodePopup(xml)) {
       return TicketViviRecoveryState.CONTROL_CODE_POPUP
     }
     if (isControlCodeResult(xml)) {
       return TicketViviRecoveryState.CONTROL_CODE_RESULT
+    }
+    if (isTicketDetail(xml)) {
+      return TicketViviRecoveryState.TICKET_DETAIL
     }
     if (dismissibleBlockerActionForHierarchy(xml) != null) {
       return TicketViviRecoveryState.DISMISSIBLE_BLOCKER
@@ -247,16 +257,26 @@ internal object TicketViviPageEnforcer {
   }
 
   private fun isControlCodeResult(xml: String): Boolean {
-    if (!hasViviPackage(xml) || isControlCodePopup(xml) || hasTicketDetailMarkers(xml) || looksLikeSettingsOrProfilePage(xml)) {
+    if (!hasViviPackage(xml) || isControlCodePopup(xml) || looksLikeSettingsOrProfilePage(xml)) {
       return false
     }
-    return hasCloseLabel(xml) && hasStandaloneControlCodeValue(xml)
+    return controlCodeResultValueBounds(xml) != null && controlCodeResultCloseBounds(xml) != null
   }
 
-  private fun hasStandaloneControlCodeValue(xml: String): Boolean {
+  private fun controlCodeResultValueBounds(xml: String): Bounds? {
     return nodeRegex.findAll(xml)
-      .map { nodeVisibleText(it.value).trim() }
-      .any { label -> Regex("""^\d{4,8}$""").matches(label) }
+      .map { it.value }
+      .firstNotNullOfOrNull { node ->
+        if (packageName(node) != TicketScreenConfig.VIVI_PACKAGE) {
+          return@firstNotNullOfOrNull null
+        }
+        val label = nodeVisibleText(node).trim()
+        if (Regex("""^\d{4,8}$""").matches(label)) {
+          bounds(node)
+        } else {
+          null
+        }
+      }
   }
 
   private fun hasDismissibleBlockerMarkers(xml: String): Boolean {
@@ -295,6 +315,54 @@ internal object TicketViviPageEnforcer {
 
   private fun controlCodeCloseBounds(xml: String): Bounds? {
     return closeBounds(xml)
+  }
+
+  private fun controlCodeResultCloseBounds(xml: String): Bounds? {
+    val value = controlCodeResultValueBounds(xml) ?: return null
+    val nodes = nodeRegex.findAll(xml).map { it.value }.toList()
+    val rowClose = nodes.firstNotNullOfOrNull { node ->
+      if (packageName(node) != TicketScreenConfig.VIVI_PACKAGE || !node.contains("""clickable="true"""")) {
+        return@firstNotNullOfOrNull null
+      }
+      val label = nodeVisibleText(node).lowercase()
+      val candidate = bounds(node) ?: return@firstNotNullOfOrNull null
+      val yDistance = kotlin.math.abs(candidate.centerY() - value.centerY())
+      if (
+        isCloseLabel(label) &&
+        candidate.left >= value.right - CONTROL_CODE_RESULT_CLOSE_ROW_OVERLAP &&
+        yDistance <= CONTROL_CODE_RESULT_CLOSE_MAX_Y_DISTANCE
+      ) {
+        candidate
+      } else {
+        null
+      }
+    }
+    if (rowClose != null) {
+      return rowClose
+    }
+    return controlCodeResultGeometryCloseBounds(xml, value)
+  }
+
+  private fun controlCodeResultGeometryCloseBounds(xml: String, value: Bounds): Bounds? {
+    val nodes = nodeRegex.findAll(xml).map { it.value }.toList()
+    val maxRight = nodes
+      .filter { packageName(it) == TicketScreenConfig.VIVI_PACKAGE }
+      .mapNotNull(::bounds)
+      .maxOfOrNull { it.right } ?: return null
+    val valueHeight = value.bottom - value.top
+    val size = valueHeight
+      .coerceAtLeast(CONTROL_CODE_RESULT_CLOSE_MIN_SIZE)
+      .coerceAtMost(CONTROL_CODE_RESULT_CLOSE_MAX_SIZE)
+    val centerX = ((maxRight * CONTROL_CODE_RESULT_CLOSE_FALLBACK_X_PERCENT) / 100)
+      .coerceAtLeast(value.right + size / 2)
+      .coerceAtMost(maxRight - size / 2)
+    val centerY = value.centerY()
+    return Bounds(
+      left = centerX - size / 2,
+      top = centerY - size / 2,
+      right = centerX + size / 2,
+      bottom = centerY + size / 2
+    )
   }
 
   private fun closeBounds(xml: String): Bounds? {
@@ -552,7 +620,8 @@ internal object TicketViviPageEnforcer {
     return TicketViviPageAction(
       x = (left + right) / 2,
       y = (top + bottom) / 2,
-      reason = reason
+      reason = reason,
+      bounds = toHealthString()
     )
   }
 
@@ -581,6 +650,14 @@ internal object TicketViviPageEnforcer {
         top < other.bottom &&
         bottom > other.top
     }
+
+    fun centerY(): Int {
+      return (top + bottom) / 2
+    }
+
+    fun toHealthString(): String {
+      return "[$left,$top][$right,$bottom]"
+    }
   }
 
   private val nodeRegex = Regex("""<node\b[^>]*>""")
@@ -589,6 +666,11 @@ internal object TicketViviPageEnforcer {
   private const val BOTTOM_NAVIGATION_TOP = 2100
   private const val CLOSE_TAP_PADDING = 24
   private const val CONTROL_CODE_BUTTON_TAP_PADDING = 8
+  private const val CONTROL_CODE_RESULT_CLOSE_ROW_OVERLAP = 36
+  private const val CONTROL_CODE_RESULT_CLOSE_MAX_Y_DISTANCE = 120
+  private const val CONTROL_CODE_RESULT_CLOSE_MIN_SIZE = 72
+  private const val CONTROL_CODE_RESULT_CLOSE_MAX_SIZE = 140
+  private const val CONTROL_CODE_RESULT_CLOSE_FALLBACK_X_PERCENT = 88
   private const val DANGEROUS_TAP_PADDING = 8
   private const val TOP_RIGHT_CLOSE_MIN_X_FRACTION = 0.72f
   private const val TOP_RIGHT_CLOSE_MAX_Y_FRACTION = 0.35f

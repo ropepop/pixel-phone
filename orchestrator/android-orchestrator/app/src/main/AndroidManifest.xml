@@ -19,7 +19,6 @@
   <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
   <uses-permission android:name="android.permission.WAKE_LOCK" />
   <uses-permission android:name="android.permission.INTERNET" />
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -44,12 +43,6 @@
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
     </activity>
-
-    <activity
-      android:name=".app.ticket.TicketCapturePermissionActivity"
-      android:excludeFromRecents="true"
-      android:exported="false"
-      android:theme="@style/Theme.PixelRootOrchestrator" />
 
     <receiver
       android:name=".app.BootReceiver"
@@ -81,8 +74,7 @@
     <service
       android:name=".app.ticket.TicketStreamService"
       android:enabled="true"
-      android:exported="false"
-      android:foregroundServiceType="mediaProjection" />
+      android:exported="false" />
 
     <service
       android:name=".app.phoneautomation.PhoneAutomationAccessibilityService"

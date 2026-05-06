@@ -1,19 +1,12 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
 import android.content.Context
-import android.media.MediaCodecInfo
-import android.media.MediaCodecList
-import android.media.MediaFormat
 import kotlinx.serialization.Serializable
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 object TicketScreenConfig {
   const val ACTION_START_SERVER = "lv.jolkins.pixelorchestrator.ticket.START_SERVER"
   const val ACTION_STOP_SERVER = "lv.jolkins.pixelorchestrator.ticket.STOP_SERVER"
-  const val ACTION_MEDIA_PROJECTION_RESULT = "lv.jolkins.pixelorchestrator.ticket.MEDIA_PROJECTION_RESULT"
-  const val EXTRA_RESULT_CODE = "ticket_media_projection_result_code"
-  const val EXTRA_RESULT_DATA = "ticket_media_projection_result_data"
 
   const val SERVICE_PORT = 9388
   const val VIVI_PACKAGE = "com.pv.vivi"
@@ -21,35 +14,19 @@ object TicketScreenConfig {
   const val ACCRESCENT_PACKAGE = "app.accrescent.client"
   const val MAX_FPS = 10
   const val MAX_EQUIVALENT_PIXELS = 1920 * 1080
-  const val ROOT_PNG_QUALITY_PROFILE = "root_lossless_png"
-  const val ROOT_PNG_CODEC_STRING = "png"
-  const val ROOT_PNG_TRANSPORT = "root-screencap-png"
   const val ROOT_FFMPEG_H264_CAPTURE_MODE = "root_ffmpeg_h264"
   const val ROOT_FFMPEG_H264_TRANSPORT = "ffmpeg-h264-annexb"
   const val ROOT_FFMPEG_H264_QUALITY_PROFILE = "ffmpeg_h264_clarity"
   const val ROOT_FFMPEG_H264_CODEC_STRING = "avc1.42C028"
-  const val ROOT_FFMPEG_H264_FPS = 8
-  const val ROOT_FFMPEG_H264_BITRATE = 8_000_000
-  const val ROOT_FFMPEG_H264_TARGET_WIDTH = 720
-  const val ROOT_FFMPEG_H264_KEYFRAME_INTERVAL_MILLIS = 125
+  const val ROOT_FFMPEG_H264_FPS = 10
+  const val ROOT_FFMPEG_H264_BITRATE = 5_000_000
+  const val ROOT_FFMPEG_H264_TARGET_WIDTH = 900
+  const val ROOT_FFMPEG_H264_KEYFRAME_INTERVAL_MILLIS = 1_000
   const val ROOT_FFMPEG_H264_CHROOT = "/data/local/pixel-stack/chroots/pihole"
   const val ROOT_FFMPEG_H264_BINARY = "/usr/bin/ffmpeg"
   const val ROOT_FFMPEG_H264_CAPTURE_SOURCE = "root_surface_capture"
   const val ROOT_FFMPEG_H264_CAPTURE_METHOD = "app_process_screen_capture"
-  const val ROOT_CAPTURE_QUALITY_PROFILE = "balanced"
-  const val ROOT_CAPTURE_WIDTH = 720
-  const val ROOT_CAPTURE_BITRATE = 3_000_000
-  const val ROOT_AV1_CAPTURE_MODE = "root_av1"
-  const val ROOT_AV1_TRANSPORT = "av1-webcodecs"
-  const val AV1_CAPTURE_QUALITY_PROFILE = "root_av1_balanced"
-  const val AV1_CAPTURE_BITRATE = 4_000_000
-  const val AV1_KEYFRAME_INTERVAL_SECONDS = 1
-  const val AV1_KEYFRAME_INTERVAL_MILLIS = AV1_KEYFRAME_INTERVAL_SECONDS * 1_000
-  const val AV1_REPEAT_PREVIOUS_FRAME_AFTER_US = 1_000_000L
-  const val AV1_MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_AV1
-  const val AV1_CODEC_STRING = "av01.0.08M.08"
-  const val H264_MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_AVC
-  const val H264_CODEC_STRING = "avc1.42E01E"
+  const val ROOT_CAPTURE_QUALITY_PROFILE = ROOT_FFMPEG_H264_QUALITY_PROFILE
 
   val localStorePackages = listOf(
     ACCRESCENT_PACKAGE,
@@ -66,10 +43,6 @@ data class TicketStreamHealth(
   val serverVersion: String,
   val sessionState: String = "idle",
   val serverRunning: Boolean,
-  val av1HardwareEncoderAvailable: Boolean,
-  val h264HardwareEncoderAvailable: Boolean = false,
-  val projectionReady: Boolean,
-  val capturePermissionPending: Boolean,
   val viviInstalled: Boolean,
   val accrescentInstalled: Boolean,
   val installedStorePackages: List<String>,
@@ -81,9 +54,8 @@ data class TicketStreamHealth(
   val autoStartAllowed: Boolean = true,
   val autoStartBlockedReason: String? = null,
   val serviceReadiness: TicketServiceReadinessHealth = TicketServiceReadinessHealth(),
-  val rootCapture: TicketRootCaptureHealth = TicketRootCaptureHealth(),
-  val webrtc: TicketWebRtcHealth = TicketWebRtcHealth(),
   val inputGate: TicketInputGateHealth = TicketInputGateHealth(),
+  val controlCodeSnap: TicketControlCodeSnapHealth = TicketControlCodeSnapHealth(),
   val controlCodeMode: TicketControlCodeModeHealth = TicketControlCodeModeHealth(),
   val controlExitCleanup: TicketControlExitCleanupHealth = TicketControlExitCleanupHealth(),
   val loading: TicketLoadingHealth = TicketLoadingHealth(),
@@ -153,7 +125,11 @@ data class TicketStreamPipeline(
   val lastVideoClientConnectedAgoMillis: Long?,
   val clients: List<TicketClientConnectionHealth> = emptyList(),
   val secureWindowCaptureBypassActive: Boolean = false,
-  val secureWindowCaptureBypassMessage: String = "Secure-window capture bypass is inactive"
+  val secureWindowCaptureBypassMessage: String = "Secure-window capture bypass is inactive",
+  val rootH264BlankProbeResult: String = "not_run",
+  val rootH264BlankProbeRecoveries: Long = 0L,
+  val rootH264BlankProbeFailures: Long = 0L,
+  val lastRootH264BlankProbeAgoMillis: Long? = null
 )
 
 @Serializable
@@ -176,6 +152,11 @@ data class TicketRootCaptureHealth(
   val width: Int? = null,
   val height: Int? = null,
   val bitrate: Int? = null,
+  val fps: Int? = null,
+  val steadyFpsTarget: Int? = null,
+  val burstFpsTarget: Int? = null,
+  val intervalMode: String = "",
+  val currentIntervalMillis: Long? = null,
   val frames: Long = 0L,
   val keyFrames: Long = 0L,
   val lastCaptureDurationMillis: Long? = null,
@@ -231,15 +212,6 @@ data class TicketFfmpegHealth(
 )
 
 @Serializable
-data class TicketWebRtcHealth(
-  val enabled: Boolean = false,
-  val activePeers: Int = 0,
-  val lastOfferAgoMillis: Long? = null,
-  val lastFrameForwardedAgoMillis: Long? = null,
-  val message: String = "WebRTC is not connected"
-)
-
-@Serializable
 data class TicketInputGateHealth(
   val tapOnly: Boolean = true,
   val active: Boolean = false,
@@ -258,6 +230,20 @@ data class TicketInputGateHealth(
   val duplicateInputResults: Long = 0L,
   val lastDuplicateInputId: String? = null,
   val lastDuplicateInputAgoMillis: Long? = null
+)
+
+@Serializable
+data class TicketControlCodeSnapHealth(
+  val lastRawX: Int? = null,
+  val lastRawY: Int? = null,
+  val lastCandidateZone: String? = null,
+  val lastDetectedButtonBounds: String? = null,
+  val lastSnapTarget: String? = null,
+  val lastAccepted: Boolean? = null,
+  val lastReason: String? = null,
+  val lastFinalX: Int? = null,
+  val lastFinalY: Int? = null,
+  val lastCompletedAgoMillis: Long? = null
 )
 
 @Serializable
@@ -411,65 +397,12 @@ data class TicketStreamSize(
 }
 
 object TicketStreamSizing {
-  fun rootPng(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
-    return TicketStreamSize(
-      width = sourceWidth,
-      height = sourceHeight,
-      sourceWidth = sourceWidth,
-      sourceHeight = sourceHeight
-    )
-  }
-
-  fun rootH264(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
-    val width = TicketScreenConfig.ROOT_CAPTURE_WIDTH.evenAtLeastTwo()
-    val height = ((sourceHeight / sourceWidth.toFloat()) * width).roundToInt().evenAtLeastTwo()
-    return TicketStreamSize(
-      width = width,
-      height = height,
-      sourceWidth = sourceWidth,
-      sourceHeight = sourceHeight
-    )
-  }
-
   fun rootFfmpegH264(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
     val width = minOf(sourceWidth, TicketScreenConfig.ROOT_FFMPEG_H264_TARGET_WIDTH).evenAtLeastTwo()
     val height = ((sourceHeight / sourceWidth.toFloat()) * width).roundToInt().evenAtLeastTwo()
     return TicketStreamSize(
       width = width,
       height = height,
-      sourceWidth = sourceWidth,
-      sourceHeight = sourceHeight
-    )
-  }
-
-  fun fitTo1080Equivalent(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
-    val sourcePixels = sourceWidth.toLong() * sourceHeight.toLong()
-    if (sourcePixels <= TicketScreenConfig.MAX_EQUIVALENT_PIXELS) {
-      return TicketStreamSize(
-        width = sourceWidth.evenAtLeastTwo(),
-        height = sourceHeight.evenAtLeastTwo(),
-        sourceWidth = sourceWidth,
-        sourceHeight = sourceHeight
-      )
-    }
-    val scale = sqrt(TicketScreenConfig.MAX_EQUIVALENT_PIXELS.toDouble() / sourcePixels.toDouble())
-    return TicketStreamSize(
-      width = (sourceWidth * scale).roundToInt().evenAtLeastTwo(),
-      height = (sourceHeight * scale).roundToInt().evenAtLeastTwo(),
-      sourceWidth = sourceWidth,
-      sourceHeight = sourceHeight
-    )
-  }
-
-  fun av1Clarity(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
-    return rootAv1Balanced(sourceWidth, sourceHeight)
-  }
-
-  fun rootAv1Balanced(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
-    val fitted = fitTo1080Equivalent(sourceWidth, sourceHeight)
-    return TicketStreamSize(
-      width = fitted.width,
-      height = fitted.height,
       sourceWidth = sourceWidth,
       sourceHeight = sourceHeight
     )
@@ -526,56 +459,6 @@ internal object TicketSessionStopPolicy {
 
   fun browserAutoStartAllowedAfterStop(reason: String?): Boolean {
     return reason == null || reason !in browserAutoStartBlockedReasons
-  }
-}
-
-object TicketAv1Support {
-  fun hardwareEncoderName(): String? {
-    val codecs = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos
-    return codecs.firstOrNull { codecInfo ->
-      codecInfo.isEncoder &&
-        !codecInfo.isSoftwareOnlyCompat() &&
-        codecInfo.supportedTypes.any { type -> type.equals(TicketScreenConfig.AV1_MIME_TYPE, ignoreCase = true) }
-    }?.name
-  }
-
-  fun isHardwareEncoderAvailable(): Boolean = hardwareEncoderName() != null
-
-  private fun MediaCodecInfo.isSoftwareOnlyCompat(): Boolean {
-    return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-      isSoftwareOnly
-    } else {
-      val lower = name.lowercase()
-      lower.startsWith("omx.google.") ||
-        lower.startsWith("c2.android.") ||
-        lower.contains("sw") ||
-        lower.contains("software")
-    }
-  }
-}
-
-object TicketH264Support {
-  fun hardwareEncoderName(): String? {
-    val codecs = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos
-    return codecs.firstOrNull { codecInfo ->
-      codecInfo.isEncoder &&
-        !codecInfo.isSoftwareOnlyCompat() &&
-        codecInfo.supportedTypes.any { type -> type.equals(TicketScreenConfig.H264_MIME_TYPE, ignoreCase = true) }
-    }?.name
-  }
-
-  fun isHardwareEncoderAvailable(): Boolean = hardwareEncoderName() != null
-
-  private fun MediaCodecInfo.isSoftwareOnlyCompat(): Boolean {
-    return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-      isSoftwareOnly
-    } else {
-      val lower = name.lowercase()
-      lower.startsWith("omx.google.") ||
-        lower.startsWith("c2.android.") ||
-        lower.contains("sw") ||
-        lower.contains("software")
-    }
   }
 }
 

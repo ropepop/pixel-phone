@@ -217,4 +217,31 @@ class TicketBrowserPageTest {
     assertTrue(page.contains("showModeNotice('small')"))
     assertTrue(page.contains("}, large ? 4200 : 1500);"))
   }
+
+  @Test
+  fun browserPreventsSafariZoomAndDoesNotCarryPublicControlDialog() {
+    val page = browserPage()
+
+    assertTrue(page.contains("maximum-scale=1, user-scalable=no"))
+    assertTrue(page.contains("viewport-fit=cover"))
+    assertTrue(page.contains("body { margin: 0; width: 100%; min-height: 100%;"))
+    assertTrue(page.contains("touch-action: pan-y;"))
+    assertTrue(page.contains("scroll-snap-type: y proximity;"))
+    assertTrue(page.contains("overscroll-behavior: none;"))
+    assertTrue(page.contains("-webkit-touch-callout: none;"))
+    assertTrue(page.contains("-webkit-tap-highlight-color: transparent;"))
+    assertTrue(page.contains("streamVerticalPanThresholdPx"))
+    assertTrue(page.contains("clientLog('stream_vertical_scroll', {allowed: true})"))
+    assertTrue(page.contains("canvas.addEventListener('dblclick'"))
+    assertTrue(page.contains("canvas.addEventListener('touchend', blockDoubleTapZoom, {passive: false})"))
+    assertTrue(page.contains("document.addEventListener(eventName, blockStreamGesture, {passive: false})"))
+    assertTrue(page.contains("gesturechange"))
+    assertTrue(page.contains("doubleTapSuppressMs"))
+    assertFalse(page.contains("['touchstart', 'touchmove']"))
+    assertFalse(page.contains("claimDialog"))
+    assertFalse(page.contains("showModal"))
+    assertFalse(page.contains("claim-dialog"))
+    assertFalse(page.contains("confirmClaim"))
+    assertFalse(page.contains("Priv\u0101ta kontroles koda sesija"))
+  }
 }

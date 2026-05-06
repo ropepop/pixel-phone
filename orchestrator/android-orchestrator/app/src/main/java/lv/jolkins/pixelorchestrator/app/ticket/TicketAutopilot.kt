@@ -14,7 +14,8 @@ import kotlin.time.Duration.Companion.milliseconds
 internal data class TicketAutopilotResult(
   val success: Boolean,
   val state: TicketViviRecoveryState,
-  val step: String
+  val step: String,
+  val firstActionState: TicketViviRecoveryState? = null
 )
 
 internal enum class TicketAutopilotRestartPolicy {
@@ -54,6 +55,11 @@ internal class TicketAutopilot(
     Log.i(TAG, "ticket_autopilot_start reason=$reason force_fresh=$forceFreshLaunch restart_policy=$restartPolicy")
     onStep("start")
     if (!forceFreshLaunch) {
+      recentSafeTicketDetail()?.let { recent ->
+        Log.i(TAG, "ticket_autopilot_memory_fast_succeeded reason=$reason source=${recent.source}")
+        onStep("memory_fast_ticket_detail")
+        return TicketAutopilotResult(true, recent.state, "memory_fast_ticket_detail")
+      }
       observeFastState("fast_start_$reason")?.let { fast ->
         if (fast.state == TicketViviRecoveryState.TICKET_DETAIL) {
           Log.i(TAG, "ticket_autopilot_fast_succeeded reason=$reason state=${fast.state}")
@@ -80,6 +86,7 @@ internal class TicketAutopilot(
     var stuckActions = 0
     var lastState = TicketViviRecoveryState.BLANK
     var lastStep = "start"
+    var firstActionState: TicketViviRecoveryState? = null
 
     for (step in 1..maxSteps) {
       if (SystemClock.elapsedRealtime() >= deadline) {
@@ -97,30 +104,35 @@ internal class TicketAutopilot(
       when (state) {
         TicketViviRecoveryState.TICKET_DETAIL -> {
           Log.i(TAG, "ticket_autopilot_succeeded reason=$reason steps=$step")
-          return TicketAutopilotResult(true, state, lastStep)
+          return TicketAutopilotResult(true, state, lastStep, firstActionState)
         }
 
         TicketViviRecoveryState.CONTROL_CODE_POPUP -> {
           if (allowControlCodePopup) {
             Log.i(TAG, "ticket_autopilot_holding_control_code reason=$reason steps=$step")
-            return TicketAutopilotResult(true, state, lastStep)
+            return TicketAutopilotResult(true, state, lastStep, firstActionState)
           }
+          firstActionState = firstActionState ?: state
           stuckActions += if (closePopup(observation.xml, "control_code_popup")) 0 else 1
         }
 
         TicketViviRecoveryState.CONTROL_CODE_RESULT -> {
+          firstActionState = firstActionState ?: state
           stuckActions += if (closePopup(observation.xml, "control_code_result")) 0 else 1
         }
 
         TicketViviRecoveryState.DISMISSIBLE_BLOCKER -> {
+          firstActionState = firstActionState ?: state
           stuckActions += if (closePopup(observation.xml, "dismissible_blocker")) 0 else 1
         }
 
         TicketViviRecoveryState.CART_OR_CHECKOUT -> {
+          firstActionState = firstActionState ?: state
           stuckActions += if (leaveCartOrCheckout(observation.xml)) 0 else 1
         }
 
         TicketViviRecoveryState.TICKET_LIST_WITH_CARD -> {
+          firstActionState = firstActionState ?: state
           stuckActions += if (openTicketCard(observation.xml)) {
             usedCardFallback = true
             0
@@ -130,15 +142,18 @@ internal class TicketAutopilot(
         }
 
         TicketViviRecoveryState.TICKET_LIST_EMPTY -> {
+          firstActionState = firstActionState ?: state
           stuckActions += if (openTimeTicketTab(observation.xml)) 0 else 1
         }
 
         TicketViviRecoveryState.OTHER_VIVI_TAB -> {
+          firstActionState = firstActionState ?: state
           stuckActions += if (openTicketsTab(observation.xml)) 0 else 1
         }
 
         TicketViviRecoveryState.SETTINGS_OR_PROFILE,
         TicketViviRecoveryState.UNKNOWN_VIVI -> {
+          firstActionState = firstActionState ?: state
           stuckActions += if (openTicketsTab(observation.xml)) {
             0
           } else if (!usedBackFallback) {
@@ -150,6 +165,7 @@ internal class TicketAutopilot(
         }
 
         TicketViviRecoveryState.OUTSIDE_VIVI -> {
+          firstActionState = firstActionState ?: state
           collapseSystemUi("ticket_autopilot_outside_vivi")
           stuckActions += if (restartPolicy == TicketAutopilotRestartPolicy.NEVER) {
             1
@@ -169,6 +185,7 @@ internal class TicketAutopilot(
         }
 
         TicketViviRecoveryState.BLANK -> {
+          firstActionState = firstActionState ?: state
           stuckActions += if (
             restartPolicy != TicketAutopilotRestartPolicy.NEVER &&
             repeatedState &&
@@ -220,10 +237,31 @@ internal class TicketAutopilot(
     val finalObservation = observeState(reason)
     if (finalObservation.state == TicketViviRecoveryState.TICKET_DETAIL) {
       Log.i(TAG, "ticket_autopilot_succeeded reason=$reason final=true")
-      return TicketAutopilotResult(true, TicketViviRecoveryState.TICKET_DETAIL, "final_ticket_detail")
+      return TicketAutopilotResult(true, TicketViviRecoveryState.TICKET_DETAIL, "final_ticket_detail", firstActionState)
     }
     Log.w(TAG, "ticket_autopilot_failed reason=$reason state=$lastState step=$lastStep")
     return TicketAutopilotResult(false, lastState, lastStep)
+  }
+
+  private fun recentSafeTicketDetail(): TicketViviStateMemorySnapshot? {
+    val current = stateMemory.current()
+    val nowMillis = SystemClock.elapsedRealtime()
+    val currentAgeMillis = nowMillis - current.observedAtMillis
+    if (
+      current.state == TicketViviRecoveryState.TICKET_DETAIL &&
+      current.observedAtMillis > 0L &&
+      currentAgeMillis in 0..FAST_TICKET_DETAIL_MEMORY_MAX_AGE_MILLIS
+    ) {
+      return current
+    }
+    if (
+      current.observedAtMillis > 0L &&
+      currentAgeMillis in 0..FAST_TICKET_DETAIL_MEMORY_MAX_AGE_MILLIS &&
+      current.state != TicketViviRecoveryState.UNKNOWN_VIVI
+    ) {
+      return null
+    }
+    return stateMemory.recentTicketDetailWithin(FAST_TICKET_DETAIL_MEMORY_MAX_AGE_MILLIS)
   }
 
   private suspend fun forceStopVivi(reason: String, onStep: (String) -> Unit) {
@@ -468,6 +506,7 @@ internal class TicketAutopilot(
     private const val STUCK_ACTION_LIMIT = 3
     private const val ACCESSIBILITY_CLICK_TIMEOUT_MILLIS = 250L
     private const val AUTOPILOT_ROOT_DUMP_TIMEOUT_MILLIS = 4_500L
+    private const val FAST_TICKET_DETAIL_MEMORY_MAX_AGE_MILLIS = 10_000L
     private const val TICKETS_TAB_X_FRACTION = 0.375f
     private const val BOTTOM_NAV_Y_FRACTION = 0.962f
     private const val TIME_TICKET_TAB_X_FRACTION = 0.727f

@@ -58,18 +58,19 @@ Legacy clients without viewer/page identity should still connect, but they do no
 
 ## 3. Pixel Capture, Root Frames, And Browser Draw
 
-The accepted production public capture path is currently root-only lossless PNG:
+The accepted production public capture path is now root `screenrecord` H.264 carried over WebRTC:
 
-- Output format: PNG frames, reported as `codec=png`, `transport=root-screencap-png`, and `captureMode=root_screencap_png`.
-- Default quality profile: `root_lossless_png`.
-- Default dimensions: full Pixel display resolution, currently `1080x2424`.
-- Default cadence: adaptive root PNG frames; every PNG frame is treated as a current-epoch keyframe.
-- Runtime: the Android ticket service owns root screencap lifecycle, frame timing, epoch/freshness, relay fanout, and cleanup.
-- Browser draw: the public page draws PNG frames directly to canvas with smoothing disabled. No WebCodecs decoder is used for the current production path.
+- Pixel output format: H.264 Annex B access units from `screenrecord --output-format=h264 -`, reported as `captureMode=root_screenrecord_h264`, `transport=screenrecord-h264-annexb`, and the exact `avc1.*` codec string when SPS is observed.
+- Arbuzas output format: `ticket_remote` packetizes the single private Pixel H.264 stream into WebRTC RTP and reports `transport=webrtc-rtp-h264`.
+- Default quality profile: `root_screenrecord_h264_800w_4mbps`.
+- Default dimensions: about 800 pixels wide, aspect-matched to the current phone display.
+- Default cadence: Android hardware screenrecord cadence, with the live acceptance target at 10 FPS or better.
+- Runtime: Pixel owns root capture start/stop and sends one upstream stream; Arbuzas fans it out to authenticated viewers without decoding or re-encoding.
+- Browser draw: the public page receives a normal WebRTC video track, draws it onto the existing stream canvas for tap mapping, and does not use WebCodecs/PNG/AV1 fallback paths.
 
-The normal public path must not depend on Android MediaProjection, Android screen-recording permission, AV1, H.265, root `screenrecord`, or FFmpeg H.264 until that path has direct authenticated Brave proof. The FFmpeg H.264/native-helper implementation remains in the codebase as an explicit measured candidate, but it is not the current production public path because authenticated Brave rejected the promoted H.264 stream with decode errors during the 2026-05-04 deployment pass. The product was restored to root lossless PNG in v70 to keep the live site working.
+The normal public path must not depend on Android MediaProjection, Android screen-recording permission UI, AV1, H.265, PNG frame streaming, or FFmpeg H.264 fallback. If WebRTC/H.264 cannot be established, the public page shows a hard unavailable state rather than silently changing capture modes.
 
-Earlier measured paths are documented for context only. Root-fed AV1 was too slow for production. Root FFmpeg H.264 improved capture cost with the native helper but must not be promoted again until the public browser page, not only backend probes, proves stable first-frame and decoded-ticket behavior.
+Earlier measured paths are documented for context only. Root-fed AV1 was too slow for production. Root FFmpeg H.264 improved capture cost with the native helper but had authenticated-browser decode failures. Root PNG was clear but full-resolution capture was too slow and CPU-heavy for the requested 10 FPS target.
 
 Frame freshness:
 
@@ -80,10 +81,8 @@ Frame freshness:
 
 Fresh-frame behavior:
 
-- Browser/reload/control-code transitions request a fresh current-epoch keyframe through the video socket first.
-- In the current root PNG public mode, every accepted frame is lossless and self-contained, so joins/reloads do not depend on an old video decoder state.
-- FFmpeg public candidates should run all-intra or otherwise provide current-epoch clean decode points before promotion.
-- Manual fallback H.264 paths that use root `screenrecord` cannot request an IDR frame directly. In those fallback modes, the service may restart root capture to force a new keyframe, but this is debounced with a wait window and cooldown.
+- Browser/reload/control-code transitions request a fresh current-epoch keyframe through WebRTC signaling first.
+- Root `screenrecord` cannot request an IDR frame directly, so keyframe requests restart root capture when no fresh cached IDR is available; this is debounced with a wait window and cooldown.
 - Recent keyframes can be cached and resent to reconnecting clients only when they are from the current stream epoch and younger than the freshness window, currently about 1.5 seconds. Old cached keyframes must never be drawn.
 - If no fresh same-epoch keyframe exists, the relay/browser requests a new keyframe instead of replaying old video.
 - While a private-control claim is active, `ticket_remote` sends an extra fresh cached keyframe once per second only to the active controller's video socket. Other authenticated viewers continue receiving the normal shared video stream and are not hidden or paused by private control.
@@ -92,11 +91,10 @@ Fresh-frame behavior:
 
 Browser decode behavior:
 
-- The browser configures the stream from the server config. For `root-screencap-png`, it decodes each PNG frame through the browser image pipeline and draws it with smoothing disabled.
-- WebCodecs H.264 is not required for the current production path. If a future FFmpeg H.264 path is promoted, unsupported or failing decode must show a clear unavailable state rather than silently changing codecs.
-- Delta frames are ignored until a keyframe is available in encoded-video candidates; root PNG frames are already self-contained.
-- Watchdogs can request a keyframe when the visible frame is quiet or static without leaving the streaming state. Longer no-frame outages can still trigger a soft video reconnect.
-- Decoder failures reconnect the affected browser video path. They should not restart the shared phone stream unless Pixel health shows the stream itself is unhealthy.
+- The browser negotiates WebRTC through the existing video socket and renders the received video track to the stream canvas.
+- WebCodecs H.264, PNG image decode, AV1, and FFmpeg-specific browser branches are not production fallback paths.
+- Watchdogs can request a keyframe when the visible frame is quiet or static without leaving the streaming state. Longer no-frame outages can still trigger a soft WebRTC reconnect.
+- WebRTC failures reconnect the affected browser video path. They should not restart the shared phone stream unless Pixel health shows the stream itself is unhealthy.
 - Control and video socket open timeouts are intentionally short so the page leaves long connecting states quickly. A two-second loading budget triggers video recovery, then escalates if the stream still does not produce a live frame.
 
 ## 4. Browser-To-Pixel Input And Safety Gates
@@ -184,7 +182,7 @@ Important health surfaces:
 - `loading`: most recent browser loading completion and over-budget phase/duration.
 - `page`: latest HTML version, cache policy, last root/bootstrap/cache-cleanup request age, and last client page version.
 - `recentEvents`: server-side lifecycle, recovery, client, and input events.
-- `recentClientTelemetry`: browser-side startup, decode, visible-frame, watchdog, and socket events.
+- `recentClientTelemetry`: browser-side startup, WebRTC/media, visible-frame, watchdog, and socket events.
 - Public relay `/api/v1/health.controlKeyframes`: controller-only one-second keyframe pulse counters, sent cached keyframes, phone keyframe requests, and last pulse age.
 - Public relay `/api/v1/health.spacetime`: ticket-only SpacetimeDB call counts, errors, slow calls, snapshot/member cache hits and misses, presence throttling, compact phone-health writes, skipped stable phone-health writes, and the latest phone-health compaction result.
 - Public relay `/api/v1/health.telemetry`: client-log counts, server-side suppression counts, aggregate log counts, state-broadcast counts, and state-broadcast suppressions. These counters prove whether public UI diagnostics are calm without removing important error/input/loading events.
@@ -197,9 +195,9 @@ When Cloudflare Access asks for authentication during ticket verification, futur
 
 Known caveats:
 
-- The current root PNG production path favors correctness, clear Aztec detail, and reliable public recovery over bandwidth and smoothness. It is intentionally less efficient than the FFmpeg H.264 candidate.
-- The FFmpeg H.264 clarity profile is not the current production public path. It should not be promoted again until the authenticated Brave page proves stable decode and visible live ticket behavior after deploy.
-- Public Cloudflare timing requires authenticated access; unauthenticated redirects are only tunnel reachability evidence.
+- The current public production path is root `screenrecord` H.264 from the phone, carried to browsers as WebRTC video through `ticket_remote`.
+- PNG, AV1, FFmpeg/WebCodecs, and browser binary-frame paths are historical or local diagnostics only. They must not return to the public production path without a new explicit cutover.
+- Public Cloudflare timing requires authenticated access; unauthenticated redirects are only tunnel reachability evidence. WebRTC media also requires the direct Arbuzas ICE ports to be reachable.
 - Reports can preserve dated measurements, but architecture updates should describe the stable behavior after changes land.
 
 ## Architecture Update Notes
@@ -222,6 +220,8 @@ Future agents should add short notes here when changing ticket stream flow, capt
 - 2026-05-04: FFmpeg quality hard-cutover changed the accepted production path to root-only FFmpeg H.264 (`captureMode=root_ffmpeg_h264`, `transport=ffmpeg-h264-annexb`, `qualityProfile=ffmpeg_h264_clarity`) from the Pixel Stack arm64 chroot, with all-intra 8 FPS full-resolution frames, no MediaProjection/screenrecord/automatic PNG fallback, sharper browser canvas drawing, FFmpeg health fields, and cleanup for FFmpeg plus the root frame feeder.
 - 2026-05-04: Native capture speed pass replaced the slow root `screencap` feeder with a persistent root `app_process` screen-capture helper (`captureSource=root_surface_capture`, `captureMethod=app_process_screen_capture`) feeding FFmpeg. Live v65 measurement promoted a 900px-wide clarity profile after full resolution proved too heavy, fixed the helper argument handoff, fixed expected pipe-close cleanup, kept the public H.264/WebCodecs contract unchanged, and verified the service/tunnel ready state with capture idle after cleanup.
 - 2026-05-04: Public deployment recovery v70 restored the production public stream to root-only lossless PNG after authenticated Brave rejected the promoted FFmpeg H.264 stream with WebCodecs decode errors. The relay/browser kept the decoder-recovery fixes, the phone serves `captureMode=root_screencap_png`, `codec=png`, `transport=root-screencap-png`, and the authenticated Brave page was verified from the user side with live ticket frames. Active guard success now clears stale `needs_attention` state once ViVi is confirmed on ticket detail.
+- 2026-05-06: WebRTC edge cutover changed the public production path to root `screenrecord` H.264 from the phone and WebRTC RTP fanout inside the existing `ticket_remote` service. The browser now receives a WebRTC video track, while taps/control still use the existing authenticated control socket. No extra Arbuzas ticket service, TURN service, public ADB, or Docker control was added.
 - 2026-05-05: Ticket-only SpacetimeDB efficiency pass added per-procedure Spacetime diagnostics, moved client telemetry/socket/heartbeat reads onto short relay-side caches, made only control sockets write presence, compacted phone-health storage to material fields with a 30-second stable keepalive, removed duplicate Go-side audit writes for mutations already audited inside the Spacetime module, and added module-side audit counters plus bounded cleanup of old audit/control-session runtime history.
 - 2026-05-05: Scroll status stability and compute quieting pass made the public scroll-menu status line debounced and priority-based, kept the control countdown browser-local, sampled noisy browser telemetry, slowed healthy-live health polling, throttled cached state broadcasts, added `/api/v1/health.telemetry`, and documented the Brave Work plus Apple Mail Cloudflare Access code workflow for authenticated ticket verification.
 - 2026-05-05: Pixel heat fix pass hardened root command timeouts so timed-out root probes kill their shell children, bounded ticket tunnel pid/cmdline probes with `timeout`, throttled stable ticket-service readiness rechecks to a two-minute window, and made idle ticket detach paths release the bright screen wake lock immediately while keeping safe dim brightness enforcement.
+- 2026-05-06: Root PNG cadence pass changed the steady production PNG stream target from about 2 FPS to 6 FPS while keeping the existing 10 FPS startup/fresh-frame burst, full-resolution PNG readability, and the current public relay/browser transport contract.

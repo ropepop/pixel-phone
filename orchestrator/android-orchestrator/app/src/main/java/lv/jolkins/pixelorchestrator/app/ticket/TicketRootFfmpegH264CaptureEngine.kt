@@ -378,6 +378,7 @@ class TicketRootFfmpegH264CaptureEngine(
 
   private fun ffmpegCommand(width: Int, height: Int, targetBitrate: Int, targetFps: Int): String {
     val halfBitrate = (targetBitrate / 2).coerceAtLeast(1_000_000)
+    val keyInterval = targetFps.coerceAtLeast(1)
     return listOf(
       "chroot '${TicketScreenConfig.ROOT_FFMPEG_H264_CHROOT}'",
       "/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -386,8 +387,9 @@ class TicketRootFfmpegH264CaptureEngine(
       "-f rawvideo -pix_fmt rgba -s ${width}x${height} -r $targetFps -i pipe:0",
       "-an -vf format=yuv420p",
       "-c:v libx264 -preset ultrafast -tune zerolatency",
-      "-x264-params keyint=1:min-keyint=1:scenecut=0:repeat-headers=1:bframes=0",
-      "-g 1 -bf 0 -refs 1 -profile:v baseline -level 4.0",
+      "-threads 1",
+      "-x264-params keyint=$keyInterval:min-keyint=$keyInterval:scenecut=0:repeat-headers=1:bframes=0:sliced-threads=0",
+      "-g $keyInterval -bf 0 -refs 1 -profile:v baseline -level 4.0",
       "-b:v $targetBitrate -maxrate $targetBitrate -bufsize $halfBitrate",
       "-pix_fmt yuv420p -f h264 pipe:1"
     ).joinToString(" ")

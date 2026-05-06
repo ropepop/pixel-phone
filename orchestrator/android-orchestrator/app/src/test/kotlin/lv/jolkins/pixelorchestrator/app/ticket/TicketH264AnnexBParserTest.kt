@@ -16,8 +16,8 @@ class TicketH264AnnexBParserTest {
 
     val sps = nal(0x67, 0x11, 0x22)
     val pps = nal(0x68, 0x33)
-    val idr = nal(0x65, 0x44, 0x55)
-    val delta = nal(0x41, 0x66)
+    val idr = nal(0x65, 0x80, 0x55)
+    val delta = nal(0x41, 0x80, 0x66)
     val stream = sps + pps + idr + delta
 
     parser.push(stream.copyOfRange(0, 9))
@@ -29,6 +29,30 @@ class TicketH264AnnexBParserTest {
     assertArrayEquals(sps + pps + idr, frames[0].second)
     assertFalse(frames[1].first)
     assertArrayEquals(delta, frames[1].second)
+  }
+
+  @Test
+  fun groupsMultipleSlicesForOnePictureIntoOneAccessUnit() {
+    val frames = mutableListOf<Pair<Boolean, ByteArray>>()
+    val parser = TicketH264AnnexBParser { payload, keyFrame ->
+      frames += keyFrame to payload
+    }
+
+    val sps = nal(0x67, 0x11)
+    val pps = nal(0x68, 0x22)
+    val idrFirstSlice = nal(0x65, 0x80, 0x33)
+    val idrSecondSlice = nal(0x65, 0x40, 0x44)
+    val deltaFirstSlice = nal(0x41, 0x80, 0x55)
+    val deltaSecondSlice = nal(0x41, 0x40, 0x66)
+
+    parser.push(sps + pps + idrFirstSlice + idrSecondSlice + deltaFirstSlice + deltaSecondSlice)
+    parser.finish()
+
+    assertEquals(2, frames.size)
+    assertTrue(frames[0].first)
+    assertArrayEquals(sps + pps + idrFirstSlice + idrSecondSlice, frames[0].second)
+    assertFalse(frames[1].first)
+    assertArrayEquals(deltaFirstSlice + deltaSecondSlice, frames[1].second)
   }
 
   private fun nal(header: Int, vararg payload: Int): ByteArray {

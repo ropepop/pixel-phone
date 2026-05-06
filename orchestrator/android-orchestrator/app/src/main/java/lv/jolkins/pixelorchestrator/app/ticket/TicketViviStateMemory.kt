@@ -12,6 +12,7 @@ internal data class TicketViviStateMemorySnapshot(
 
 internal class TicketViviStateMemory {
   @Volatile private var snapshot = TicketViviStateMemorySnapshot()
+  @Volatile private var lastTicketDetailSnapshot = TicketViviStateMemorySnapshot()
 
   fun record(
     state: TicketViviRecoveryState,
@@ -27,10 +28,22 @@ internal class TicketViviStateMemory {
       reason = reason
     )
     snapshot = next
+    if (state == TicketViviRecoveryState.TICKET_DETAIL) {
+      lastTicketDetailSnapshot = next
+    }
     return next
   }
 
   fun current(): TicketViviStateMemorySnapshot = snapshot
+
+  fun recentTicketDetailWithin(maxAgeMillis: Long): TicketViviStateMemorySnapshot? {
+    val current = lastTicketDetailSnapshot
+    if (current.state != TicketViviRecoveryState.TICKET_DETAIL || current.observedAtMillis <= 0L) {
+      return null
+    }
+    val ageMillis = SystemClock.elapsedRealtime() - current.observedAtMillis
+    return current.takeIf { ageMillis in 0..maxAgeMillis }
+  }
 
   fun health(nowMillis: Long): TicketViviStateHealth {
     val current = snapshot

@@ -110,6 +110,30 @@ class TicketViviPageEnforcerTest {
   }
 
   @Test
+  fun detectsLiveControlCodePopupWithCancelButton() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.view.View" bounds="[0,0][1080,2424]">
+          <node package="com.pv.vivi" class="android.view.View" bounds="[173,1033][908,1480]">
+            <node package="com.pv.vivi" class="android.view.View" content-desc="Ievadi kontroles kodu" focusable="true" focused="false" bounds="[236,1096][845,1149]" />
+            <node package="com.pv.vivi" class="android.widget.EditText" clickable="true" focusable="true" focused="false" hint="kontroles kods" bounds="[251,1175][829,1301]" />
+            <node package="com.pv.vivi" class="android.widget.Button" content-desc="Atcelt" clickable="true" focusable="true" focused="false" bounds="[464,1327][687,1453]" />
+            <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" focusable="true" focused="false" bounds="[713,1327][881,1453]" />
+          </node>
+        </node>
+      </hierarchy>
+    """.trimIndent()
+
+    val close = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml)
+
+    assertTrue(TicketViviPageEnforcer.isControlCodePopup(xml))
+    assertEquals(TicketViviRecoveryState.CONTROL_CODE_POPUP, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("close_control_code_popup", close?.reason)
+    assertEquals(575, close?.x)
+    assertEquals(1390, close?.y)
+  }
+
+  @Test
   fun detectsControlCodeResultCloseWithoutTreatingItAsTicketDetail() {
     val xml = """
       <hierarchy>
@@ -124,8 +148,9 @@ class TicketViviPageEnforcerTest {
     assertFalse(TicketViviPageEnforcer.isTicketDetail(xml))
     assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
     assertEquals("close_control_code_result", close?.reason)
-    assertEquals(984, close?.x)
-    assertEquals(468, close?.y)
+    assertEquals(908, close?.x)
+    assertEquals(1220, close?.y)
+    assertEquals("[868,1180][948,1260]", close?.bounds)
   }
 
   @Test
@@ -144,6 +169,54 @@ class TicketViviPageEnforcerTest {
     assertEquals("close_control_code_result", close?.reason)
     assertEquals(973, close?.x)
     assertEquals(1149, close?.y)
+  }
+
+  @Test
+  fun detectsEmbeddedGeneratedControlCodeResultOverTicketDetail() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="KONTROLES KODS" clickable="true" bounds="[53,264][450,390]" />
+        <node package="com.pv.vivi" content-desc="ZONAS" bounds="[68,434][190,486]" />
+        <node package="com.pv.vivi" content-desc="PV-ELB-20260423-0RJB2M" bounds="[119,1329][961,1423]" />
+        <node package="com.pv.vivi" text="23.04.2026 - 22.05.2026" bounds="[120,1580][700,1650]" />
+        <node package="com.pv.vivi" text="46,00€" bounds="[730,1580][960,1650]" />
+        <node package="com.pv.vivi" content-desc="Aizvērt" clickable="true" bounds="[936,420][1032,516]" />
+        <node package="com.pv.vivi" text="25698415" bounds="[354,1340][760,1418]" />
+        <node package="com.pv.vivi" text="x" clickable="true" bounds="[894,1324][982,1432]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val close = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml)
+
+    assertFalse(TicketViviPageEnforcer.isTicketDetail(xml))
+    assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("close_control_code_result", close?.reason)
+    assertEquals(938, close?.x)
+    assertEquals(1378, close?.y)
+    assertEquals("[894,1324][982,1432]", close?.bounds)
+  }
+
+  @Test
+  fun fallsBackToGeneratedCodeRowGeometryWhenInlineCloseIsMissing() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="KONTROLES KODS" clickable="true" bounds="[53,264][450,390]" />
+        <node package="com.pv.vivi" content-desc="ZONAS" bounds="[68,434][190,486]" />
+        <node package="com.pv.vivi" content-desc="PV-ELB-20260423-0RJB2M" bounds="[119,1329][961,1423]" />
+        <node package="com.pv.vivi" text="23.04.2026 - 22.05.2026" bounds="[120,1580][700,1650]" />
+        <node package="com.pv.vivi" text="46,00€" bounds="[730,1580][960,1650]" />
+        <node package="com.pv.vivi" content-desc="Aizvērt" clickable="true" bounds="[936,420][1032,516]" />
+        <node package="com.pv.vivi" text="25698415" bounds="[354,1340][760,1418]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val close = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml)
+
+    assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("close_control_code_result", close?.reason)
+    assertEquals(908, close?.x)
+    assertEquals(1379, close?.y)
+    assertEquals("[869,1340][947,1418]", close?.bounds)
   }
 
   @Test
@@ -366,6 +439,11 @@ class TicketViviPageEnforcerTest {
     assertTrue(TicketViviPageEnforcer.isControlCodeButtonTap(xml, 250, 327))
     assertTrue(TicketViviPageEnforcer.isControlCodeButtonTap(xml, 448, 388))
     assertFalse(TicketViviPageEnforcer.isForbiddenViviTap(xml, 250, 327))
+    val action = TicketViviPageEnforcer.controlCodeButtonActionForHierarchy(xml)
+    assertEquals("control_code_button_snap_detected", action?.reason)
+    assertEquals(251, action?.x)
+    assertEquals(327, action?.y)
+    assertEquals("[53,264][450,390]", action?.bounds)
   }
 
   @Test
