@@ -73,12 +73,19 @@ class TicketStreamService : Service() {
     val y: Int,
     val reason: String,
     val candidateZone: String? = null,
-    val detectedButtonBounds: String? = null
+    val detectedButtonBounds: String? = null,
+    val noOp: Boolean = false
   )
 
   private data class ControlCodeSnapFallbackDecision(
     val accepted: Boolean,
     val reason: String
+  )
+
+  private data class RawFrameRegionStats(
+    val sampled: Int,
+    val meanLuminance: Double,
+    val darkRatio: Double
   )
 
   private class TicketVideoSendState {
@@ -110,11 +117,7 @@ class TicketStreamService : Service() {
     rootExecutor = rootExecutor,
     onFrame = ::handleRootFfmpegH264CaptureFrame,
     onStateChanged = { health ->
-      ffmpegCaptureSnapshot = health
-      if (streamActive) {
-        broadcastStatus()
-        persistRuntimeState("root_ffmpeg_h264_capture_state")
-      }
+      handleRootFfmpegH264CaptureStateChanged(health)
     }
   )
 
@@ -183,6 +186,8 @@ class TicketStreamService : Service() {
   @Volatile private var controlExitPopupLikelyUntilMillis: Long = 0L
   @Volatile private var lastControlCodeSurfaceState: String? = null
   @Volatile private var lastControlCodeSurfaceSeenAtMillis: Long = 0L
+  @Volatile private var lastControlExitDirtySurfaceState: String? = null
+  @Volatile private var lastControlExitDirectCloseAtMillis: Long = 0L
   @Volatile private var lastControlExitGeometryCloseAtMillis: Long = 0L
   @Volatile private var notificationLockdownActive: Boolean = false
   @Volatile private var notificationLockdownReason: String = "inactive"
@@ -241,11 +246,16 @@ class TicketStreamService : Service() {
   @Volatile private var lastControlExitCleanupReason: String? = null
   @Volatile private var lastControlExitCleanupDetectedState: String? = null
   @Volatile private var lastControlExitCleanupCloseAction: String? = null
+  @Volatile private var lastControlExitCleanupDetectorSource: String? = null
+  @Volatile private var lastControlExitCleanupSurfaceProbeResult: String? = null
   @Volatile private var lastControlExitCleanupDurationMillis: Long? = null
   @Volatile private var lastControlExitCleanupCompletedAtMillis: Long = 0L
   @Volatile private var lastControlExitCleanupVerificationResult: String? = null
   @Volatile private var lastControlExitCleanupSucceeded: Boolean? = null
   @Volatile private var lastControlExitCleanupFreshFrameRequested: Boolean = false
+  @Volatile private var lastControlExitSurfaceProbeAtMillis: Long = 0L
+  @Volatile private var lastControlExitSurfaceProbeState: TicketViviRecoveryState? = null
+  @Volatile private var lastControlExitSurfaceProbeReason: String? = null
   @Volatile private var viviHardResetCount: Long = 0L
   @Volatile private var lastViviHardResetReason: String? = null
   @Volatile private var lastViviHardResetAtMillis: Long = 0L
@@ -1429,6 +1439,48 @@ class TicketStreamService : Service() {
     }
   }
 
+  private fun handleRootFfmpegH264CaptureStateChanged(health: TicketFfmpegHealth) {
+    ffmpegCaptureSnapshot = health
+    if (
+      streamActive &&
+      activeCaptureMode == CAPTURE_MODE_ROOT_FFMPEG_H264 &&
+      health.frames == 0L &&
+      health.suppressedRawFrames >= ROOT_FFMPEG_RAW_FRAME_SUPPRESSION_FAILURE_THRESHOLD
+    ) {
+      serviceScope.launch {
+        failRootFfmpegH264Capture("secure_capture_blocked_raw_frames")
+      }
+    }
+    if (streamActive) {
+      broadcastStatus()
+      persistRuntimeState("root_ffmpeg_h264_capture_state")
+    }
+  }
+
+  private suspend fun failRootFfmpegH264Capture(reason: String) = sessionMutex.withLock {
+    val health = ffmpegCaptureSnapshot
+    if (
+      !streamActive ||
+      activeCaptureMode != CAPTURE_MODE_ROOT_FFMPEG_H264 ||
+      health.frames > 0L ||
+      health.suppressedRawFrames < ROOT_FFMPEG_RAW_FRAME_SUPPRESSION_FAILURE_THRESHOLD
+    ) {
+      return@withLock
+    }
+    rootFfmpegH264CaptureEngine.stop(reason)
+    rootFfmpegH264CaptureEngine.cleanupStaleProcesses()
+    streamActive = false
+    ffmpegCaptureVerified = false
+    activeCaptureMode = CAPTURE_MODE_IDLE
+    resetFrameEpoch(reason, active = false)
+    updateTicketSessionState(TICKET_SESSION_NEEDS_ATTENTION, "secure_capture_blocked")
+    lastMessage = "ViVi is protected from capture; stream was not started"
+    lastRootH264BlankProbeResult = "secure_capture_blocked"
+    recordTicketEvent("secure_capture_blocked", reason)
+    broadcastStatus()
+    persistRuntimeState(reason)
+  }
+
   private fun restartActiveStream(reason: String) {
     if (!streamActive) {
       return
@@ -1593,6 +1645,7 @@ class TicketStreamService : Service() {
     if (!streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_FFMPEG_H264) {
       return
     }
+    val firstEncodedFrame = encodedFrames == 0L
     encodedFrames += 1
     lastFrameEncodedAtMillis = SystemClock.elapsedRealtime()
     if (frame.keyFrame) {
@@ -1605,6 +1658,12 @@ class TicketStreamService : Service() {
       payload = frame.payload
     )
     ffmpegCaptureSnapshot = rootFfmpegH264CaptureEngine.snapshot()
+    if (firstEncodedFrame || ticketSessionState == TICKET_SESSION_STARTING) {
+      updateTicketSessionState(TICKET_SESSION_LIVE, "root_ffmpeg_h264_first_visible_frame")
+      lastMessage = "Ticket session is active through FFmpeg H.264 capture"
+      broadcastStatus()
+      persistRuntimeState("root_ffmpeg_h264_first_visible_frame")
+    }
     if (frame.keyFrame || encodedFrames <= SECURE_CAPTURE_PROBE_START_FRAME_COUNT) {
       scheduleRootFfmpegSecureCaptureProbe("root_ffmpeg_h264_frame")
     }
@@ -1947,6 +2006,30 @@ class TicketStreamService : Service() {
     )
   }
 
+  private fun streamVerdict(ffmpegCapture: TicketFfmpegHealth, nowMillis: Long): String {
+    if (!streamActive) {
+      return when (ticketSessionState) {
+        TICKET_SESSION_NEEDS_ATTENTION -> "needs_attention"
+        TICKET_SESSION_UNAVAILABLE -> "capture_blocked"
+        else -> "idle"
+      }
+    }
+    if (ticketSessionState == TICKET_SESSION_NEEDS_ATTENTION || lastRootH264BlankProbeResult == "secure_capture_blocked") {
+      return "capture_blocked"
+    }
+    if (activeCaptureMode == CAPTURE_MODE_ROOT_FFMPEG_H264 && ffmpegCapture.frames == 0L && ffmpegCapture.suppressedRawFrames > 0L) {
+      return "capture_blocked"
+    }
+    if (lastFrameSentAtMillis > 0L && ageMillis(lastFrameSentAtMillis, nowMillis)?.let { it <= 2_500L } == true) {
+      return "live"
+    }
+    return when (ticketSessionState) {
+      TICKET_SESSION_STARTING -> "preparing_phone"
+      TICKET_SESSION_SOFT_RECOVERY -> "stale_recovering"
+      else -> "waiting_keyframe"
+    }
+  }
+
   private fun clientConnectionSnapshot(): List<TicketClientConnectionHealth> {
     return synchronized(clientInfo) {
       clientInfo.values
@@ -1995,6 +2078,7 @@ class TicketStreamService : Service() {
       accrescentInstalled = TicketScreenConfig.ACCRESCENT_PACKAGE in installedStores,
       installedStorePackages = installedStores,
       streamActive = streamActive,
+      streamVerdict = streamVerdict(ffmpegCapture, nowMillis),
       clients = totalClientCount(),
       inactivityActive = ticketSessionOpen(),
       inactivityTimeoutMillis = TicketInactivityPolicy.TIMEOUT_MILLIS,
@@ -2046,6 +2130,8 @@ class TicketStreamService : Service() {
         lastReason = lastControlExitCleanupReason,
         lastDetectedState = lastControlExitCleanupDetectedState,
         lastCloseAction = lastControlExitCleanupCloseAction,
+        lastDetectorSource = lastControlExitCleanupDetectorSource,
+        lastSurfaceProbeResult = lastControlExitCleanupSurfaceProbeResult,
         lastDurationMillis = lastControlExitCleanupDurationMillis,
         lastCompletedAgoMillis = ageMillis(lastControlExitCleanupCompletedAtMillis, nowMillis),
         lastVerificationResult = lastControlExitCleanupVerificationResult,
@@ -2196,10 +2282,10 @@ class TicketStreamService : Service() {
         ffmpegCaptureVerified = true
         ensureEncoderIfPossible()
         requestKeyFrame("vivi_ready:$reason")
-        updateTicketSessionState(TICKET_SESSION_LIVE, "${modeName}_capture_ready")
-        lastMessage = "Ticket session is active through FFmpeg H.264 capture"
+        updateTicketSessionState(TICKET_SESSION_STARTING, "${modeName}_waiting_first_visible_frame")
+        lastMessage = "Waiting for the first visible FFmpeg H.264 frame"
       } else {
-        lastMessage = "Ticket stream is live, but ViVi needs attention"
+        lastMessage = "Ticket stream needs attention before capture can start"
       }
       broadcastStatus()
     }
@@ -2360,6 +2446,188 @@ class TicketStreamService : Service() {
     val mean = luminanceSum.toDouble() / sampled.toDouble()
     val brightRatio = bright.toDouble() / sampled.toDouble()
     return brightRatio >= 0.08 || mean >= 35.0
+  }
+
+  private suspend fun alignControlExitTicketDetailWithSurface(
+    state: TicketViviRecoveryState,
+    reason: String,
+    detectorSource: String
+  ): TicketViviRecoveryState {
+    if (
+      state == TicketViviRecoveryState.CONTROL_CODE_POPUP ||
+      state == TicketViviRecoveryState.CONTROL_CODE_RESULT
+    ) {
+      val directCloseAge = ageMillis(lastControlExitDirectCloseAtMillis, SystemClock.elapsedRealtime())
+      if (directCloseAge != null && directCloseAge <= CONTROL_EXIT_RECENT_DIRECT_CLOSE_MILLIS) {
+        val probed = controlExitGeneratedResultSurfaceProbe(reason, "${detectorSource}_post_direct_close")
+        if (probed == TicketViviRecoveryState.TICKET_DETAIL) {
+          recordTicketEvent("control_exit_surface_clean_after_direct_close", "${detectorSource}:${state.name}")
+          return TicketViviRecoveryState.TICKET_DETAIL
+        }
+        if (probed == TicketViviRecoveryState.CONTROL_CODE_RESULT) {
+          rememberControlCodeSurface(TicketViviRecoveryState.CONTROL_CODE_RESULT)
+          recordTicketEvent("control_exit_surface_dirty", "$detectorSource generated_result_visible_after_direct_close")
+          return TicketViviRecoveryState.CONTROL_CODE_RESULT
+        }
+      }
+    }
+    if (state != TicketViviRecoveryState.TICKET_DETAIL) {
+      lastControlExitCleanupDetectorSource = detectorSource
+      lastControlExitCleanupSurfaceProbeResult = "not_required:${state.name}"
+      return state
+    }
+    if (!controlExitCleanNeedsSurfaceProof()) {
+      lastControlExitCleanupDetectorSource = detectorSource
+      lastControlExitCleanupSurfaceProbeResult = "not_required"
+      return state
+    }
+    val probed = controlExitGeneratedResultSurfaceProbe(reason, detectorSource)
+    if (probed == TicketViviRecoveryState.CONTROL_CODE_RESULT) {
+      rememberControlCodeSurface(TicketViviRecoveryState.CONTROL_CODE_RESULT)
+      recordTicketEvent("control_exit_surface_dirty", "$detectorSource generated_result_visible")
+      return TicketViviRecoveryState.CONTROL_CODE_RESULT
+    }
+    if (probed == null && controlCodeSurfaceMemoryState() == TicketViviRecoveryState.CONTROL_CODE_RESULT.name) {
+      recordTicketEvent("control_exit_surface_dirty", "$detectorSource probe_unavailable_recent_result")
+      return TicketViviRecoveryState.CONTROL_CODE_RESULT
+    }
+    return state
+  }
+
+  private fun controlExitCleanNeedsSurfaceProof(): Boolean {
+    return controlCodeSurfaceMemoryState() != null ||
+      ticketSessionState == TICKET_SESSION_CONTROL_EXIT ||
+      SystemClock.elapsedRealtime() < controlExitPopupLikelyUntilMillis
+  }
+
+  private suspend fun controlExitGeneratedResultSurfaceProbe(
+    reason: String,
+    detectorSource: String
+  ): TicketViviRecoveryState? {
+    val now = SystemClock.elapsedRealtime()
+    val cachedAge = ageMillis(lastControlExitSurfaceProbeAtMillis, now)
+    if (
+      lastControlExitSurfaceProbeReason == reason &&
+      cachedAge != null &&
+      cachedAge <= CONTROL_EXIT_SURFACE_PROBE_CACHE_MILLIS
+    ) {
+      val cachedState = lastControlExitSurfaceProbeState
+      lastControlExitCleanupDetectorSource = detectorSource
+      lastControlExitCleanupSurfaceProbeResult = cachedState?.name ?: "unavailable_cached"
+      return cachedState
+    }
+    val sourceSize = currentDisplaySize()
+    val probeWidth = CONTROL_EXIT_SURFACE_PROBE_WIDTH
+    val probeHeight = ((sourceSize.second.toDouble() / sourceSize.first.toDouble()) * probeWidth)
+      .roundToInt()
+      .coerceAtLeast(2)
+      .let { if (it % 2 == 0) it else it + 1 }
+    val frame = captureRootSurfaceProbeRaw(probeWidth, probeHeight)
+    val state = when {
+      frame == null -> null
+      rootSurfaceRawFrameLooksLikeGeneratedCodeResult(frame) -> TicketViviRecoveryState.CONTROL_CODE_RESULT
+      else -> TicketViviRecoveryState.TICKET_DETAIL
+    }
+    lastControlExitSurfaceProbeAtMillis = SystemClock.elapsedRealtime()
+    lastControlExitSurfaceProbeReason = reason
+    lastControlExitSurfaceProbeState = state
+    lastControlExitCleanupDetectorSource = detectorSource
+    lastControlExitCleanupSurfaceProbeResult = state?.name ?: "unavailable"
+    recordTicketEvent(
+      "control_exit_surface_probe",
+      "source=$detectorSource result=${state?.name ?: "unavailable"} reason=$reason"
+    )
+    return state
+  }
+
+  private fun rootSurfaceRawFrameLooksLikeGeneratedCodeResult(frame: ByteArray): Boolean {
+    if (frame.size <= 12) {
+      return false
+    }
+    val header = ByteBuffer.wrap(frame, 0, 12).order(ByteOrder.LITTLE_ENDIAN)
+    val width = header.int.coerceAtLeast(1)
+    val height = header.int.coerceAtLeast(1)
+    val top = (height * CONTROL_EXIT_RESULT_BAR_TOP_FRACTION).roundToInt().coerceIn(0, height - 1)
+    val bottom = (height * CONTROL_EXIT_RESULT_BAR_BOTTOM_FRACTION).roundToInt().coerceIn(top + 1, height)
+    val whole = rawFrameRegionStats(
+      frame,
+      width,
+      height,
+      (width * 0.12f).roundToInt(),
+      top,
+      (width * 0.92f).roundToInt(),
+      bottom
+    ) ?: return false
+    val bandRanges = listOf(
+      0.16f to 0.34f,
+      0.40f to 0.62f,
+      0.72f to 0.90f
+    )
+    val darkBands = bandRanges.count { (leftFraction, rightFraction) ->
+      val band = rawFrameRegionStats(
+        frame,
+        width,
+        height,
+        (width * leftFraction).roundToInt(),
+        top,
+        (width * rightFraction).roundToInt(),
+        bottom
+      ) ?: return@count false
+      band.darkRatio >= CONTROL_EXIT_RESULT_BAR_BAND_DARK_RATIO &&
+        band.meanLuminance <= CONTROL_EXIT_RESULT_BAR_BAND_MAX_MEAN
+    }
+    return whole.darkRatio >= CONTROL_EXIT_RESULT_BAR_DARK_RATIO &&
+      whole.meanLuminance <= CONTROL_EXIT_RESULT_BAR_MAX_MEAN &&
+      darkBands >= 2
+  }
+
+  private fun rawFrameRegionStats(
+    frame: ByteArray,
+    width: Int,
+    height: Int,
+    left: Int,
+    top: Int,
+    right: Int,
+    bottom: Int
+  ): RawFrameRegionStats? {
+    val safeLeft = left.coerceIn(0, width - 1)
+    val safeTop = top.coerceIn(0, height - 1)
+    val safeRight = right.coerceIn(safeLeft + 1, width)
+    val safeBottom = bottom.coerceIn(safeTop + 1, height)
+    val pixelOffset = 12
+    val xStride = ((safeRight - safeLeft) / 32).coerceAtLeast(1)
+    val yStride = ((safeBottom - safeTop) / 16).coerceAtLeast(1)
+    var sampled = 0
+    var dark = 0
+    var luminanceSum = 0L
+    var y = safeTop
+    while (y < safeBottom) {
+      var x = safeLeft
+      while (x < safeRight) {
+        val offset = pixelOffset + (y * width + x) * 4
+        if (offset + 2 < frame.size) {
+          val red = frame[offset].toInt() and 0xff
+          val green = frame[offset + 1].toInt() and 0xff
+          val blue = frame[offset + 2].toInt() and 0xff
+          val luminance = (red * 299 + green * 587 + blue * 114) / 1000
+          luminanceSum += luminance.toLong()
+          if (luminance <= CONTROL_EXIT_RESULT_BAR_DARK_LUMINANCE) {
+            dark += 1
+          }
+          sampled += 1
+        }
+        x += xStride
+      }
+      y += yStride
+    }
+    if (sampled == 0) {
+      return null
+    }
+    return RawFrameRegionStats(
+      sampled = sampled,
+      meanLuminance = luminanceSum.toDouble() / sampled.toDouble(),
+      darkRatio = dark.toDouble() / sampled.toDouble()
+    )
   }
 
   private fun scheduleTicketRecovery(
@@ -2604,6 +2872,11 @@ class TicketStreamService : Service() {
       recordInputGateDecision(allowed = false, reason = "no_active_control")
       return false
     }
+    if (ticketSessionState == TICKET_SESSION_CONTROL_EXIT) {
+      recordInputGateDecision(allowed = false, reason = "remote_input_canceled_after_control_exit")
+      recordTicketEvent("remote_input_canceled_after_control_exit", inputGateReason)
+      return false
+    }
     val violation = cachedForegroundViolation() ?: return true
     recordInputGateDecision(allowed = false, reason = violation)
     Log.i(TAG, "ticket_remote_input_blocked reason=$violation")
@@ -2749,6 +3022,17 @@ class TicketStreamService : Service() {
       source = "root",
       reason = "control_code_snap"
     )
+    if (state == TicketViviRecoveryState.CONTROL_CODE_POPUP) {
+      rememberControlCodeSurface(TicketViviRecoveryState.CONTROL_CODE_POPUP)
+      markControlCodeModeEntered("control_code_popup_already_open")
+      return TicketTapTarget(
+        x = 0,
+        y = 0,
+        reason = "control_code_popup_already_open",
+        candidateZone = candidateZone,
+        noOp = true
+      )
+    }
     if (state == TicketViviRecoveryState.TICKET_DETAIL) {
       return controlCodeGeometryTarget(size, candidateZone).copy(reason = "control_code_button_snap_ticket_detail_geometry")
     }
@@ -2840,16 +3124,15 @@ class TicketStreamService : Service() {
   }
 
   private fun markControlCodeModeEntered(reason: String) {
+    val surfaceState = if (reason.contains("result", ignoreCase = true)) {
+      TicketViviRecoveryState.CONTROL_CODE_RESULT
+    } else {
+      TicketViviRecoveryState.CONTROL_CODE_POPUP
+    }
+    rememberControlCodeSurface(surfaceState)
     if (controlCodeModeActive) {
       return
     }
-    rememberControlCodeSurface(
-      if (reason.contains("result", ignoreCase = true)) {
-        TicketViviRecoveryState.CONTROL_CODE_RESULT
-      } else {
-        TicketViviRecoveryState.CONTROL_CODE_POPUP
-      }
-    )
     if (ticketSessionState == TICKET_SESSION_CONTROL_EXIT || ticketSessionState == TICKET_SESSION_NEEDS_ATTENTION) {
       recordTicketEvent("control_code_enter_ignored", "$reason state=$ticketSessionState")
       return
@@ -2894,12 +3177,25 @@ class TicketStreamService : Service() {
     }
     lastControlCodeSurfaceState = state.name
     lastControlCodeSurfaceSeenAtMillis = SystemClock.elapsedRealtime()
+    lastControlExitDirtySurfaceState = state.name
   }
 
   private fun recentControlCodeSurfaceState(): String? {
     val state = lastControlCodeSurfaceState ?: return null
     val age = ageMillis(lastControlCodeSurfaceSeenAtMillis, SystemClock.elapsedRealtime()) ?: return null
     return state.takeIf { age <= CONTROL_EXIT_RECENT_SURFACE_MEMORY_MILLIS }
+  }
+
+  private fun controlCodeSurfaceMemoryState(): String? {
+    val state = lastControlCodeSurfaceState ?: return null
+    val age = ageMillis(lastControlCodeSurfaceSeenAtMillis, SystemClock.elapsedRealtime()) ?: return null
+    return when {
+      controlCodeModeActive -> state
+      ticketSessionState == TICKET_SESSION_CONTROL_EXIT -> state
+      ticketSessionState == TICKET_SESSION_NEEDS_ATTENTION -> state
+      age <= CONTROL_EXIT_RECENT_SURFACE_MEMORY_MILLIS -> state
+      else -> null
+    }
   }
 
   private fun isSoftControlExitReason(reason: String): Boolean {
@@ -2937,6 +3233,9 @@ class TicketStreamService : Service() {
 
   private fun scheduleControlExitCleanup(reason: String) {
     controlExitCleanupJob?.cancel()
+    lastControlExitSurfaceProbeAtMillis = 0L
+    lastControlExitSurfaceProbeState = null
+    lastControlExitSurfaceProbeReason = null
     controlExitCleanupJob = serviceScope.launch {
       runControlExitCleanup(reason)
     }
@@ -2974,12 +3273,21 @@ class TicketStreamService : Service() {
         }
         TicketViviRecoveryState.TICKET_DETAIL -> {
           if (isSoftControlExitReason(reason)) {
+            val controlExitState = alignControlExitTicketDetailWithSurface(
+              result.state,
+              reason,
+              "accessibility_soft_check"
+            )
+            if (controlExitState != TicketViviRecoveryState.TICKET_DETAIL) {
+              completeOrRecoverControlExitSoftCheck(reason, controlExitState.name)
+              return@launch
+            }
             completeVerifiedTicketDetailControlExitCleanup(
               reason = reason,
-              detectedState = result.state.name,
+              detectedState = controlExitState.name,
               closeAction = "none",
               startedAtMillis = SystemClock.elapsedRealtime(),
-              firstVerificationResult = result.state.name
+              firstVerificationResult = controlExitState.name
             )
           } else {
             updateTicketSessionState(TICKET_SESSION_LIVE, "control_code_soft_check_ok")
@@ -3007,20 +3315,23 @@ class TicketStreamService : Service() {
       return true
     }
     val result = ticketAutopilot.observeFastState("control_code_soft_check:$reason")
-    return when (result?.state) {
+    val state = result?.state?.let { observed ->
+      alignControlExitTicketDetailWithSurface(observed, reason, "accessibility_after_close")
+    }
+    return when (state) {
       TicketViviRecoveryState.CONTROL_CODE_POPUP,
       TicketViviRecoveryState.CONTROL_CODE_RESULT -> {
-        rememberControlCodeSurface(result.state)
-        completeOrRecoverControlExitSoftCheck(reason, result.state.name)
+        rememberControlCodeSurface(state)
+        completeOrRecoverControlExitSoftCheck(reason, state.name)
       }
       TicketViviRecoveryState.TICKET_DETAIL -> completeVerifiedTicketDetailControlExitCleanup(
         reason = reason,
-        detectedState = result.state.name,
+        detectedState = state.name,
         closeAction = "none",
         startedAtMillis = SystemClock.elapsedRealtime(),
-        firstVerificationResult = result.state.name
+        firstVerificationResult = state.name
       )
-      else -> completeOrRecoverControlExitSoftCheck(reason, result?.state?.name ?: "UNKNOWN")
+      else -> completeOrRecoverControlExitSoftCheck(reason, state?.name ?: "UNKNOWN")
     }
   }
 
@@ -3032,7 +3343,11 @@ class TicketStreamService : Service() {
     val finalState = if (hierarchy.isNullOrBlank()) {
       TicketViviRecoveryState.BLANK
     } else {
-      TicketViviPageEnforcer.classifyForRecovery(hierarchy)
+      alignControlExitTicketDetailWithSurface(
+        TicketViviPageEnforcer.classifyForRecovery(hierarchy),
+        reason,
+        "hierarchy_final_confirm"
+      )
     }
     if (finalState == TicketViviRecoveryState.TICKET_DETAIL) {
       return completeVerifiedTicketDetailControlExitCleanup(
@@ -3071,9 +3386,26 @@ class TicketStreamService : Service() {
         )
       }
     }
+    if (controlExitCleanNeedsSurfaceProof()) {
+      val surfaceState = controlExitGeneratedResultSurfaceProbe(reason, "control_exit_initial_surface")
+      if (surfaceState == TicketViviRecoveryState.CONTROL_CODE_RESULT) {
+        rememberControlCodeSurface(TicketViviRecoveryState.CONTROL_CODE_RESULT)
+        return tryControlExitGeneratedResultGeometryFallback(
+          reason = reason,
+          startedAtMillis = startedAtMillis,
+          detectedState = surfaceState.name,
+          verificationFailure = "initial_surface_probe_dirty"
+        )
+      }
+    }
+    tryControlExitDirectCloseFromHierarchy(reason, startedAtMillis, "hierarchy_direct_initial")?.let { return it }
     if (SystemClock.elapsedRealtime() < controlExitPopupLikelyUntilMillis) {
       controlExitHierarchy()?.let { hierarchy ->
-        val hierarchyState = TicketViviPageEnforcer.classifyForRecovery(hierarchy)
+        val hierarchyState = alignControlExitTicketDetailWithSurface(
+          TicketViviPageEnforcer.classifyForRecovery(hierarchy),
+          reason,
+          "hierarchy_initial"
+        )
         if (hierarchyState == TicketViviRecoveryState.TICKET_DETAIL) {
           return completeVerifiedTicketDetailControlExitCleanup(
             reason = reason,
@@ -3103,22 +3435,25 @@ class TicketStreamService : Service() {
       }
     }
     val fastState = ticketAutopilot.observeFastState("control_exit_fast:$reason")
-    if (fastState?.state == TicketViviRecoveryState.TICKET_DETAIL) {
+    val fastControlExitState = fastState?.state?.let { state ->
+      alignControlExitTicketDetailWithSurface(state, reason, "accessibility_fast")
+    }
+    if (fastControlExitState == TicketViviRecoveryState.TICKET_DETAIL) {
       return completeVerifiedTicketDetailControlExitCleanup(
         reason = reason,
-        detectedState = fastState.state.name,
+        detectedState = fastControlExitState.name,
         closeAction = "none",
         startedAtMillis = startedAtMillis,
-        firstVerificationResult = fastState.state.name
+        firstVerificationResult = fastControlExitState.name
       )
     }
     if (
-      fastState?.state == TicketViviRecoveryState.CONTROL_CODE_POPUP ||
-      fastState?.state == TicketViviRecoveryState.CONTROL_CODE_RESULT ||
+      fastControlExitState == TicketViviRecoveryState.CONTROL_CODE_POPUP ||
+      fastControlExitState == TicketViviRecoveryState.CONTROL_CODE_RESULT ||
       SystemClock.elapsedRealtime() < controlExitPopupLikelyUntilMillis
     ) {
-      if (fastState?.state == TicketViviRecoveryState.CONTROL_CODE_POPUP || fastState?.state == TicketViviRecoveryState.CONTROL_CODE_RESULT) {
-        rememberControlCodeSurface(fastState.state)
+      if (fastControlExitState == TicketViviRecoveryState.CONTROL_CODE_POPUP || fastControlExitState == TicketViviRecoveryState.CONTROL_CODE_RESULT) {
+        rememberControlCodeSurface(fastControlExitState)
       }
       controlExitHierarchy()?.let { hierarchy ->
         if (hideControlCodeKeyboardForControlExit(hierarchy, reason)) {
@@ -3131,24 +3466,24 @@ class TicketStreamService : Service() {
         CONTROL_EXIT_ACCESSIBILITY_CLOSE_TIMEOUT_MILLIS
       )
       if (accessibilityClosed) {
-        return verifyAndCompleteControlExitCleanup(
-          reason = reason,
-          detectedState = fastState?.state?.name ?: "CONTROL_SURFACE_LIKELY",
-          closeAction = "accessibility_close",
-          startedAtMillis = startedAtMillis
-        )
+          return verifyAndCompleteControlExitCleanup(
+            reason = reason,
+            detectedState = fastControlExitState?.name ?: "CONTROL_SURFACE_LIKELY",
+            closeAction = "accessibility_close",
+            startedAtMillis = startedAtMillis
+          )
       }
       val backClose = runFastNonTouchInput(
         "input keyevent KEYCODE_BACK; sleep 0.12; input keyevent KEYCODE_BACK",
         "control_exit_back_close"
       )
       if (backClose.ok) {
-        val backVerified = verifyAndCompleteControlExitCleanup(
-          reason = reason,
-          detectedState = fastState?.state?.name ?: "CONTROL_SURFACE_LIKELY",
-          closeAction = "back_close",
-          startedAtMillis = startedAtMillis
-        )
+          val backVerified = verifyAndCompleteControlExitCleanup(
+            reason = reason,
+            detectedState = fastControlExitState?.name ?: "CONTROL_SURFACE_LIKELY",
+            closeAction = "back_close",
+            startedAtMillis = startedAtMillis
+          )
         if (backVerified) {
           return true
         }
@@ -3157,7 +3492,7 @@ class TicketStreamService : Service() {
       }
       softCleanupControlExitSurface(
         reason = reason,
-        detectedState = fastState?.state?.name ?: "CONTROL_SURFACE_LIKELY",
+        detectedState = fastControlExitState?.name ?: "CONTROL_SURFACE_LIKELY",
         startedAtMillis = startedAtMillis
       )?.let { return it }
     }
@@ -3167,7 +3502,11 @@ class TicketStreamService : Service() {
     while (true) {
       val hierarchy = controlExitHierarchy()
       if (!hierarchy.isNullOrBlank()) {
-        val detectedState = TicketViviPageEnforcer.classifyForRecovery(hierarchy)
+        val detectedState = alignControlExitTicketDetailWithSurface(
+          TicketViviPageEnforcer.classifyForRecovery(hierarchy),
+          reason,
+          "hierarchy_observe"
+        )
         lastDetectedState = detectedState.name
         rememberControlCodeSurface(detectedState)
         if (detectedState == TicketViviRecoveryState.TICKET_DETAIL) {
@@ -3222,6 +3561,49 @@ class TicketStreamService : Service() {
       }
       delay(CONTROL_EXIT_SURFACE_OBSERVE_RETRY_MILLIS)
     }
+  }
+
+  private suspend fun tryControlExitDirectCloseFromHierarchy(
+    reason: String,
+    startedAtMillis: Long,
+    detectorSource: String
+  ): Boolean? {
+    val hierarchy = controlExitHierarchy()
+    if (hierarchy.isNullOrBlank()) {
+      return null
+    }
+    val detectedState = alignControlExitTicketDetailWithSurface(
+      TicketViviPageEnforcer.classifyForRecovery(hierarchy),
+      reason,
+      detectorSource
+    )
+    if (
+      detectedState != TicketViviRecoveryState.CONTROL_CODE_POPUP &&
+      detectedState != TicketViviRecoveryState.CONTROL_CODE_RESULT
+    ) {
+      return null
+    }
+    rememberControlCodeSurface(detectedState)
+    if (hideControlCodeKeyboardForControlExit(hierarchy, reason)) {
+      delay(CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS)
+    }
+    val action = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(hierarchy)
+    if (action == null) {
+      recordTicketEvent("control_exit_direct_close_missing", detectedState.name)
+      return null
+    }
+    val tap = runFastNonTouchInput("input tap ${action.x} ${action.y}", "control_exit_direct_close")
+    if (!tap.ok) {
+      recordTicketEvent("control_exit_direct_close_failed", "state=${detectedState.name} duration_ms=${tap.durationMs}")
+      return null
+    }
+    lastControlExitDirectCloseAtMillis = SystemClock.elapsedRealtime()
+    return verifyAndCompleteControlExitCleanup(
+      reason = reason,
+      detectedState = detectedState.name,
+      closeAction = action.reason,
+      startedAtMillis = startedAtMillis
+    )
   }
 
   private suspend fun tryControlExitGeneratedResultGeometryFallback(
@@ -3291,6 +3673,19 @@ class TicketStreamService : Service() {
       timeoutMillis = CONTROL_EXIT_CLEANUP_TIMEOUT_MILLIS
     )
     if (recovered.success && recovered.state == TicketViviRecoveryState.TICKET_DETAIL) {
+      val alignedState = alignControlExitTicketDetailWithSurface(
+        recovered.state,
+        reason,
+        "autopilot_recovered"
+      )
+      if (alignedState == TicketViviRecoveryState.CONTROL_CODE_RESULT) {
+        return tryControlExitGeneratedResultGeometryFallback(
+          reason = reason,
+          startedAtMillis = startedAtMillis,
+          detectedState = alignedState.name,
+          verificationFailure = "surface_probe_dirty_after_recovery"
+        )
+      }
       val reportedState = controlExitCleanupReportedState(detectedState, recovered.firstActionState)
       val reportedAction = controlExitCleanupReportedAction(reportedState)
       return completeVerifiedTicketDetailControlExitCleanup(
@@ -3311,7 +3706,8 @@ class TicketStreamService : Service() {
     if (detectedState != "UNKNOWN" && detectedState != "CONTROL_SURFACE_LIKELY") {
       return detectedState
     }
-    recentControlCodeSurfaceState()?.let { return it }
+    controlCodeSurfaceMemoryState()?.let { return it }
+    lastControlExitDirtySurfaceState?.let { return it }
     return when (firstActionState) {
       TicketViviRecoveryState.CONTROL_CODE_RESULT,
       TicketViviRecoveryState.CONTROL_CODE_POPUP -> firstActionState.name
@@ -3383,11 +3779,15 @@ class TicketStreamService : Service() {
   private suspend fun observeControlExitVerificationState(reason: String): TicketViviRecoveryState? {
     val hierarchy = controlExitHierarchy()
     if (!hierarchy.isNullOrBlank()) {
-      return TicketViviPageEnforcer.classifyForRecovery(hierarchy)
+      return alignControlExitTicketDetailWithSurface(
+        TicketViviPageEnforcer.classifyForRecovery(hierarchy),
+        reason,
+        "hierarchy_verify"
+      )
     }
     ticketAutopilot.observeFastState("control_exit_verify:$reason")?.let { verified ->
       if (verified.state != TicketViviRecoveryState.UNKNOWN_VIVI) {
-        return verified.state
+        return alignControlExitTicketDetailWithSurface(verified.state, reason, "accessibility_verify")
       }
     }
     return null
@@ -3431,7 +3831,7 @@ class TicketStreamService : Service() {
     if (detectedState != TicketViviRecoveryState.TICKET_DETAIL.name || closeAction != "none") {
       return detectedState
     }
-    return recentControlCodeSurfaceState() ?: detectedState
+    return controlCodeSurfaceMemoryState() ?: lastControlExitDirtySurfaceState ?: detectedState
   }
 
   private fun controlExitCleanupReportedActionAfterVerification(reportedState: String, closeAction: String): String {
@@ -3453,12 +3853,24 @@ class TicketStreamService : Service() {
     verificationResult: String,
     freshFrameRequested: Boolean
   ): Boolean {
+    val finalDetectedState = if (detectedState == "UNKNOWN" || detectedState == "CONTROL_SURFACE_LIKELY") {
+      controlCodeSurfaceMemoryState() ?: lastControlExitDirtySurfaceState ?: detectedState
+    } else {
+      detectedState
+    }
+    val finalCloseAction = if (closeAction == "soft_cleanup" || closeAction == "none") {
+      controlExitCleanupReportedAction(finalDetectedState).takeIf { it != "soft_cleanup" } ?: closeAction
+    } else {
+      closeAction
+    }
     controlCodeModeActive = false
     controlCodeModeEnteredAtMillis = 0L
     controlCodePopupReadyUntilMillis = 0L
     controlExitPopupLikelyUntilMillis = 0L
     lastControlCodeSurfaceState = null
     lastControlCodeSurfaceSeenAtMillis = 0L
+    lastControlExitDirtySurfaceState = null
+    lastControlExitDirectCloseAtMillis = 0L
     lastControlExitGeometryCloseAtMillis = 0L
     recordInputGateDecision(allowed = true, reason = "control_exit_popup_closed")
     recordTicketEvent("control_exit_popup_closed", reason)
@@ -3470,7 +3882,7 @@ class TicketStreamService : Service() {
     if (freshFrameRequested) {
       requestKeyFrame("control_exit_cleanup")
     }
-    recordControlExitCleanup(reason, detectedState, closeAction, startedAtMillis, verificationResult, true, freshFrameRequested)
+    recordControlExitCleanup(reason, finalDetectedState, finalCloseAction, startedAtMillis, verificationResult, true, freshFrameRequested)
     broadcastStatus()
     return true
   }
@@ -3719,6 +4131,20 @@ class TicketStreamService : Service() {
         controlCodeButtonSnapTarget(size, encodedX, encodedY)
       } ?: run {
         sendInputResult(inputId, "tap", false, inputGateReason, startedAtMillis, phases)
+        return
+      }
+      if (target.noOp) {
+        recordInputGateDecision(allowed = true, reason = target.reason)
+        recordControlCodeSnapAttempt(
+          rawX = x,
+          rawY = y,
+          candidateZone = target.candidateZone,
+          snapTarget = snapTarget,
+          accepted = true,
+          reason = target.reason,
+          detectedButtonBounds = target.detectedButtonBounds
+        )
+        sendInputResult(inputId, "tap", true, target.reason, startedAtMillis, phases)
         return
       }
       recordInputGateDecision(allowed = true, reason = target.reason)
@@ -4177,6 +4603,7 @@ class TicketStreamService : Service() {
     private const val ACTIVE_AUTOPILOT_TIMEOUT_MILLIS = 1_000L
     private const val ROOT_FFMPEG_H264_START_AUTOPILOT_MAX_STEPS = 8
     private const val ROOT_FFMPEG_H264_START_AUTOPILOT_TIMEOUT_MILLIS = 18_000L
+    private const val ROOT_FFMPEG_RAW_FRAME_SUPPRESSION_FAILURE_THRESHOLD = 30L
     private const val CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS = 120L
     private const val CONTROL_CODE_POPUP_READY_CACHE_MILLIS = 2_000L
     private const val CONTROL_CODE_SNAP_MEMORY_MAX_AGE_MILLIS = 5_000L
@@ -4189,6 +4616,7 @@ class TicketStreamService : Service() {
     private const val CONTROL_CODE_EXIT_VERIFY_SETTLE_MILLIS = 220L
     private const val CONTROL_CODE_EXIT_VERIFY_TIMEOUT_MILLIS = 1_200L
     private const val CONTROL_EXIT_SECOND_VERIFY_DELAY_MILLIS = 260L
+    private const val CONTROL_EXIT_RECENT_DIRECT_CLOSE_MILLIS = 1_500L
     private const val TICKET_HIERARCHY_DEFAULT_TIMEOUT_MILLIS = 1_100L
     private const val CONTROL_EXIT_ROOT_DUMP_TIMEOUT_MILLIS = 4_500L
     private const val CONTROL_EXIT_ACCESSIBILITY_CLOSE_TIMEOUT_MILLIS = 450L
@@ -4201,6 +4629,15 @@ class TicketStreamService : Service() {
     private const val CONTROL_EXIT_DUPLICATE_SUCCESS_KEEP_MILLIS = 15_000L
     private const val CONTROL_EXIT_CLEANUP_MAX_STEPS = 2
     private const val CONTROL_EXIT_CLEANUP_TIMEOUT_MILLIS = 1_800L
+    private const val CONTROL_EXIT_SURFACE_PROBE_WIDTH = 180
+    private const val CONTROL_EXIT_SURFACE_PROBE_CACHE_MILLIS = 150L
+    private const val CONTROL_EXIT_RESULT_BAR_TOP_FRACTION = 0.535f
+    private const val CONTROL_EXIT_RESULT_BAR_BOTTOM_FRACTION = 0.595f
+    private const val CONTROL_EXIT_RESULT_BAR_DARK_LUMINANCE = 80
+    private const val CONTROL_EXIT_RESULT_BAR_DARK_RATIO = 0.35
+    private const val CONTROL_EXIT_RESULT_BAR_MAX_MEAN = 135.0
+    private const val CONTROL_EXIT_RESULT_BAR_BAND_DARK_RATIO = 0.45
+    private const val CONTROL_EXIT_RESULT_BAR_BAND_MAX_MEAN = 115.0
     private val CONTROL_EXIT_CLOSE_SELECTORS = listOf(
       PhoneAutomationSelector(contentDescription = "Aizvērt"),
       PhoneAutomationSelector(text = "Aizvērt"),

@@ -172,6 +172,46 @@ class TicketViviPageEnforcerTest {
   }
 
   @Test
+  fun detectsGeneratedCodeResultFromSpacedNumericRowWithoutCloseNode() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" text="2 5 6 9 8 4 1 5" bounds="[354,1340][760,1418]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val close = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml)
+
+    assertFalse(TicketViviPageEnforcer.isTicketDetail(xml))
+    assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("close_control_code_result", close?.reason)
+    assertTrue("synthetic close should be to the right of the generated code", close?.x ?: 0 > 760)
+  }
+
+  @Test
+  fun detectsShortLiveGeneratedCodeResult() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="KONTROLES KODS" clickable="true" bounds="[53,239][450,365]" />
+        <node package="com.pv.vivi" content-desc="ZONAS" bounds="[68,409][190,461]" />
+        <node package="com.pv.vivi" content-desc="255" bounds="[485,1325][595,1414]" />
+        <node package="com.pv.vivi" content-desc="Aizvērt" clickable="true" bounds="[823,1317][949,1422]" />
+        <node package="com.pv.vivi" content-desc="30 dienu biļete" bounds="[396,1593][684,1653]" />
+        <node package="com.pv.vivi" content-desc="23.04.2026 - 22.05.2026" bounds="[66,1871][592,1939]" />
+        <node package="com.pv.vivi" content-desc="46.00€" bounds="[865,1871][1014,1939]" />
+        <node package="com.pv.vivi" content-desc="AS “Pasažieru Vilciens” PVN Reģ. Nr. LV40003567907" bounds="[180,2005][900,2047]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val close = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml)
+
+    assertFalse(TicketViviPageEnforcer.isTicketDetail(xml))
+    assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("close_control_code_result", close?.reason)
+    assertEquals(886, close?.x)
+    assertEquals(1369, close?.y)
+  }
+
+  @Test
   fun detectsEmbeddedGeneratedControlCodeResultOverTicketDetail() {
     val xml = """
       <hierarchy>

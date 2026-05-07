@@ -45,6 +45,10 @@ class TicketRootFfmpegH264CaptureEngine(
   @Volatile private var lastRootFrameReadDurationMillis: Long? = null
   @Volatile private var lastFfmpegWriteDurationMillis: Long? = null
   @Volatile private var lastFrameTotalDurationMillis: Long? = null
+  @Volatile private var suppressedRawFrames = 0L
+  @Volatile private var lastSuppressedRawFrameAtMillis = 0L
+  @Volatile private var firstVisibleRawFrameAtMillis = 0L
+  @Volatile private var lastRawFrameVisible = false
   @Volatile private var droppedFrames = 0L
   @Volatile private var restartCount = 0L
   @Volatile private var lastExitReason: String? = null
@@ -151,6 +155,9 @@ class TicketRootFfmpegH264CaptureEngine(
       publish()
       return
     }
+    firstVisibleRawFrameAtMillis = 0L
+    lastSuppressedRawFrameAtMillis = 0L
+    lastRawFrameVisible = false
     job = scope.launch(Dispatchers.IO) {
       runCaptureLoop(targetWidth, targetHeight, targetBitrate, targetFps)
     }
@@ -206,6 +213,10 @@ class TicketRootFfmpegH264CaptureEngine(
       lastRootFrameReadDurationMillis = lastRootFrameReadDurationMillis,
       lastFfmpegWriteDurationMillis = lastFfmpegWriteDurationMillis,
       lastFrameTotalDurationMillis = lastFrameTotalDurationMillis,
+      suppressedRawFrames = suppressedRawFrames,
+      lastSuppressedRawFrameAgoMillis = ageMillis(lastSuppressedRawFrameAtMillis, nowMillis),
+      firstVisibleRawFrameAgoMillis = ageMillis(firstVisibleRawFrameAtMillis, nowMillis),
+      lastRawFrameVisible = lastRawFrameVisible,
       droppedFrames = droppedFrames,
       restartCount = restartCount,
       lastExitReason = lastExitReason,
@@ -317,12 +328,76 @@ class TicketRootFfmpegH264CaptureEngine(
       }
       val readEnd = SystemClock.elapsedRealtime()
       lastRootFrameReadDurationMillis = readEnd - start
+      if (!rawRgbaFrameLooksVisible(pixels, sourceWidth, sourceHeight)) {
+        droppedFrames += 1
+        suppressedRawFrames += 1
+        lastSuppressedRawFrameAtMillis = readEnd
+        lastRawFrameVisible = false
+        lastFrameTotalDurationMillis = readEnd - start
+        if (suppressedRawFrames <= 3L || suppressedRawFrames % 10L == 0L) {
+          publish()
+        }
+        continue
+      }
+      if (firstVisibleRawFrameAtMillis == 0L) {
+        firstVisibleRawFrameAtMillis = readEnd
+        publish()
+      }
+      lastRawFrameVisible = true
       ffmpegInput.write(pixels)
       ffmpegInput.flush()
       val writeEnd = SystemClock.elapsedRealtime()
       lastFfmpegWriteDurationMillis = writeEnd - readEnd
       lastFrameTotalDurationMillis = writeEnd - start
     }
+  }
+
+  private fun rawRgbaFrameLooksVisible(pixels: ByteArray, width: Int, height: Int): Boolean {
+    if (width <= 0 || height <= 0 || pixels.size < width * height * 4) {
+      return false
+    }
+    val left = (width * VISIBLE_REGION_LEFT_FRACTION).toInt().coerceIn(0, width - 1)
+    val right = (width * VISIBLE_REGION_RIGHT_FRACTION).toInt().coerceIn(left + 1, width)
+    val top = (height * VISIBLE_REGION_TOP_FRACTION).toInt().coerceIn(0, height - 1)
+    val bottom = (height * VISIBLE_REGION_BOTTOM_FRACTION).toInt().coerceIn(top + 1, height)
+    val xStride = ((right - left) / RAW_VISIBILITY_SAMPLE_COLUMNS).coerceAtLeast(1)
+    val yStride = ((bottom - top) / RAW_VISIBILITY_SAMPLE_ROWS).coerceAtLeast(1)
+    var sampled = 0
+    var bright = 0
+    var midOrBright = 0
+    var luminanceSum = 0L
+    var y = top
+    while (y < bottom) {
+      var x = left
+      while (x < right) {
+        val offset = (y * width + x) * 4
+        if (offset + 2 < pixels.size) {
+          val red = pixels[offset].toInt() and 0xff
+          val green = pixels[offset + 1].toInt() and 0xff
+          val blue = pixels[offset + 2].toInt() and 0xff
+          val luminance = (red * 299 + green * 587 + blue * 114) / 1000
+          luminanceSum += luminance.toLong()
+          if (luminance >= RAW_VISIBILITY_BRIGHT_LUMINANCE) {
+            bright += 1
+          }
+          if (luminance >= RAW_VISIBILITY_MID_LUMINANCE) {
+            midOrBright += 1
+          }
+          sampled += 1
+        }
+        x += xStride
+      }
+      y += yStride
+    }
+    if (sampled == 0) {
+      return false
+    }
+    val mean = luminanceSum.toDouble() / sampled.toDouble()
+    val brightRatio = bright.toDouble() / sampled.toDouble()
+    val midRatio = midOrBright.toDouble() / sampled.toDouble()
+    return brightRatio >= RAW_VISIBILITY_MIN_BRIGHT_RATIO ||
+      midRatio >= RAW_VISIBILITY_MIN_MID_RATIO ||
+      mean >= RAW_VISIBILITY_MIN_MEAN_LUMINANCE
   }
 
   private fun readFfmpegOutput(stream: InputStream, parser: TicketH264AnnexBParser) {
@@ -480,6 +555,17 @@ class TicketRootFfmpegH264CaptureEngine(
     private const val RAW_FORMAT_RGBA_8888 = 1
     private const val RAW_FRAME_HEADER_BYTES = 12
     private const val RAW_FRAME_BYTES_BUFFER = 16 * 1024
+    private const val RAW_VISIBILITY_SAMPLE_COLUMNS = 48
+    private const val RAW_VISIBILITY_SAMPLE_ROWS = 72
+    private const val RAW_VISIBILITY_BRIGHT_LUMINANCE = 90
+    private const val RAW_VISIBILITY_MID_LUMINANCE = 42
+    private const val RAW_VISIBILITY_MIN_BRIGHT_RATIO = 0.10
+    private const val RAW_VISIBILITY_MIN_MID_RATIO = 0.22
+    private const val RAW_VISIBILITY_MIN_MEAN_LUMINANCE = 48.0
+    private const val VISIBLE_REGION_LEFT_FRACTION = 0.04
+    private const val VISIBLE_REGION_RIGHT_FRACTION = 0.96
+    private const val VISIBLE_REGION_TOP_FRACTION = 0.16
+    private const val VISIBLE_REGION_BOTTOM_FRACTION = 0.82
     private const val RESTART_DELAY_MILLIS = 500L
     private const val STDERR_TAIL_CHARS = 1200
     private const val BITRATE_WINDOW_MILLIS = 3_000L

@@ -260,7 +260,7 @@ internal object TicketViviPageEnforcer {
     if (!hasViviPackage(xml) || isControlCodePopup(xml) || looksLikeSettingsOrProfilePage(xml)) {
       return false
     }
-    return controlCodeResultValueBounds(xml) != null && controlCodeResultCloseBounds(xml) != null
+    return controlCodeResultValueBounds(xml) != null
   }
 
   private fun controlCodeResultValueBounds(xml: String): Bounds? {
@@ -270,8 +270,8 @@ internal object TicketViviPageEnforcer {
         if (packageName(node) != TicketScreenConfig.VIVI_PACKAGE) {
           return@firstNotNullOfOrNull null
         }
-        val label = nodeVisibleText(node).trim()
-        if (Regex("""^\d{4,8}$""").matches(label)) {
+        val label = nodeVisibleText(node).trim().replace(Regex("""\s+"""), "")
+        if (CONTROL_CODE_RESULT_VALUE_REGEX.matches(label)) {
           bounds(node)
         } else {
           null
@@ -353,9 +353,10 @@ internal object TicketViviPageEnforcer {
     val size = valueHeight
       .coerceAtLeast(CONTROL_CODE_RESULT_CLOSE_MIN_SIZE)
       .coerceAtMost(CONTROL_CODE_RESULT_CLOSE_MAX_SIZE)
-    val centerX = ((maxRight * CONTROL_CODE_RESULT_CLOSE_FALLBACK_X_PERCENT) / 100)
+    val inferredRight = maxRight.coerceAtLeast(value.right + CONTROL_CODE_RESULT_CLOSE_MIN_GAP + size)
+    val centerX = ((inferredRight * CONTROL_CODE_RESULT_CLOSE_FALLBACK_X_PERCENT) / 100)
       .coerceAtLeast(value.right + size / 2)
-      .coerceAtMost(maxRight - size / 2)
+      .coerceAtMost(inferredRight - size / 2)
     val centerY = value.centerY()
     return Bounds(
       left = centerX - size / 2,
@@ -662,6 +663,7 @@ internal object TicketViviPageEnforcer {
 
   private val nodeRegex = Regex("""<node\b[^>]*>""")
   private val boundsRegex = Regex("""bounds="\[(\d+),(\d+)]\[(\d+),(\d+)]"""")
+  private val CONTROL_CODE_RESULT_VALUE_REGEX = Regex("""^\d{3,8}$""")
   private val TICKET_CARD_TOP_RANGE = 420..1900
   private const val BOTTOM_NAVIGATION_TOP = 2100
   private const val CLOSE_TAP_PADDING = 24
@@ -670,6 +672,7 @@ internal object TicketViviPageEnforcer {
   private const val CONTROL_CODE_RESULT_CLOSE_MAX_Y_DISTANCE = 120
   private const val CONTROL_CODE_RESULT_CLOSE_MIN_SIZE = 72
   private const val CONTROL_CODE_RESULT_CLOSE_MAX_SIZE = 140
+  private const val CONTROL_CODE_RESULT_CLOSE_MIN_GAP = 12
   private const val CONTROL_CODE_RESULT_CLOSE_FALLBACK_X_PERCENT = 88
   private const val DANGEROUS_TAP_PADDING = 8
   private const val TOP_RIGHT_CLOSE_MIN_X_FRACTION = 0.72f
