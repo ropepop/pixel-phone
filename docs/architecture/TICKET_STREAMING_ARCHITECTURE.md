@@ -1,6 +1,6 @@
 # Ticket Streaming Architecture
 
-This is the canonical architecture map for the Pixel-side ticket streaming subsystem. The current measurement history lives in [ticket-streaming-responsiveness-analysis-20260502.md](../../ops/reports/ticket-streaming-responsiveness-analysis-20260502.md); keep stable flow and safety rules here. Use [ROOT_OPERATIONS](../runbooks/ROOT_OPERATIONS.md) for general Pixel operations.
+This is the canonical architecture map for the Pixel-side ticket streaming subsystem. The current measurement history lives in [ticket-streaming-responsiveness-analysis-20260502.md](../../ops/reports/ticket-streaming-responsiveness-analysis-20260502.md); keep stable flow and safety rules here. Use [Touch Brightness Architecture](./TOUCH_BRIGHTNESS_ARCHITECTURE.md) for panel-brightness ownership and [ROOT_OPERATIONS](../runbooks/ROOT_OPERATIONS.md) for general Pixel operations.
 
 ## 1. Startup To First Visible Frame
 
@@ -120,7 +120,7 @@ Safety gates:
 - Post-tap foreground checks run after remote taps to detect unsafe app escape.
 - The control-code button tap is treated as an expected in-app transition. The service keeps all input safety gates, and both confirmed hierarchy hits and the known control-code button coordinate zone get popup-transition grace so normal entry does not interrupt the stream.
 - During control-code transition, an active control-code popup, or a pending queued control-code tap, foreground/page guards may observe and record state but must not tap, navigate, force-stop ViVi, or run fresh reset. Stale post-tap checks must not re-enter control mode after release/expiry has started.
-- Active ticket sessions hold the Pixel screen awake and request a wake if the display becomes non-interactive. Input remains blocked while the display is not interactive; the wake path is used to restore the live stream instead of launching recovery loops against a black/dozing screen. When all viewers detach or the stream stops, the ticket service releases this bright wake lock immediately; the brightness guard may keep the panel dim, but it must not keep the display bright while idle.
+- Active ticket sessions hold the Pixel screen awake and request a wake if the display becomes non-interactive, unless touch brightness is enabled. When touch brightness is enabled, touch brightness owns the screen hold and panel writes. Input remains blocked while the display is not interactive; the wake path is used to restore the live stream instead of launching recovery loops against a black/dozing screen. When all viewers detach or the stream stops, the ticket service releases this bright wake lock immediately; the brightness guard may keep the panel dim only when touch brightness is disabled.
 
 Input health reports the last gate decision, reason, root command reason, command duration, last `input_result`, and tap/key phase timing. Do not remove or weaken protected-edge blocking, foreground checks, notification lockdown, secure-window handling, or control-code-only keyboard restrictions without updating this document and the relevant tests.
 
@@ -130,14 +130,14 @@ Stop paths:
 
 - Explicit browser Stop calls the session stop endpoint with `explicit=true`.
 - Service stop clears stream state, stops active capture/encoding, closes clients, disables notification lockdown, disables secure-window bypass, and resets control-code mode. With the durable ticket service still enabled, browser Stop keeps the local service and tunnel ready but does not start ViVi or capture again until a viewer asks.
-- During streaming and after a session ends while the durable ticket service remains enabled, the ticket brightness guard enforces safe dim panel brightness. The guard does not restore maximum brightness after browser Stop, viewer inactivity, control release, stream error, or ordinary service cleanup. Saved brightness is restored only when ticket service is turned off or the phone is intentionally handed back to physical use.
+- During streaming and after a session ends while the durable ticket service remains enabled, the ticket brightness guard enforces safe dim panel brightness only when touch brightness is disabled. When touch brightness is enabled, the ticket guard parks, reports that touch brightness owns panel brightness, and does not write or restore panel brightness. Saved ticket brightness is restored only when ticket service is turned off, touch brightness is not owning the panel, or the phone is intentionally handed back to physical use.
 - After explicit Stop, health should report inactive stream, zero clients, inactive input gate, inactive control-code mode, and no active app-owned capture process.
 - Viewer inactivity timeout is also a non-destructive stop. It may stop capture, close clients, and block browser auto-start until a fresh viewer request arrives, but it must not schedule fresh ticket recovery, force-stop ViVi, or navigate back to Orchestrator.
 
 Reconnect paths:
 
 - Page reload should replace same-viewer public sockets without interrupting the shared phone stream.
-- If all Pixel-side relay clients disconnect or the public relay goes idle, the service parks capture: it records detach state, stops FFmpeg and the root feeder, disables protections, keeps ViVi available, and enforces dim brightness. It must not run ViVi recovery loops while no viewer is present.
+- If all Pixel-side relay clients disconnect or the public relay goes idle, the service parks capture: it records detach state, stops FFmpeg and the root feeder, disables protections, keeps ViVi available, and enforces dim brightness only when touch brightness is disabled. It must not run ViVi recovery loops while no viewer is present.
 - Reload should replace same-viewer sockets and reach a visible frame from the active stream quickly.
 
 Control-mode exit paths:
@@ -176,7 +176,7 @@ Important health surfaces:
 - `serviceReadiness`: durable ticket-service toggle state, last ensure result and age, local ticket server reachability, tunnel readiness, and component status.
 - `streamPipeline`: clients, configured/running state, frame envelope, stream epoch, frame sequence, quality profile, configured size/bitrate, recent frame/keyframe byte sizes, estimated send bitrate, encoded/sent/keyframe counts, dropped frames, slow writes, closed slow clients, replaced clients, and secure-window bypass state.
 - `rootCapture`: support, active state, size, bitrate, frame counts, restart counts, restart reasons, last restart age, and suppressed restart requests.
-- `brightnessGuard`: active state, safe target percent, current display/panel values, last enforcement age, failure count, last reason, and message.
+- `brightnessGuard`: active state, safe target percent, current display/panel values, last enforcement age, failure count, last reason, and message. A parked message means touch brightness currently owns panel brightness.
 - `inputGate`: active state, last decision, reason, last command reason, command duration, last input id, last input result reason, last phone-side input duration, duplicate input-result count, and last duplicate `inputId`.
 - `ticketState`: current bounded state, state age, last reason, over-one-second transition detail, and ViVi hard-reset count/reason.
 - `loading`: most recent browser loading completion and over-budget phase/duration.
@@ -226,3 +226,4 @@ Future agents should add short notes here when changing ticket stream flow, capt
 - 2026-05-05: Pixel heat fix pass hardened root command timeouts so timed-out root probes kill their shell children, bounded ticket tunnel pid/cmdline probes with `timeout`, throttled stable ticket-service readiness rechecks to a two-minute window, and made idle ticket detach paths release the bright screen wake lock immediately while keeping safe dim brightness enforcement.
 - 2026-05-06: Root PNG cadence pass changed the steady production PNG stream target from about 2 FPS to 6 FPS while keeping the existing 10 FPS startup/fresh-frame burst, full-resolution PNG readability, and the current public relay/browser transport contract.
 - 2026-05-07: Generated-code cleanup alignment made the inline generated control-code bar dirty until both hierarchy and visible SurfaceControl evidence agree it is gone. Pixel health now records the cleanup detector source and surface-probe result with the existing control-exit cleanup fields.
+- 2026-05-07: Touch brightness ownership alignment parks the ticket brightness guard whenever touch brightness is enabled. Ticket streaming must not write, restore, or wake-hold the panel in that mode; touch brightness owns zero panel sleep and power-button wake rebound.

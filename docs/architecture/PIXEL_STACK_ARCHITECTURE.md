@@ -141,6 +141,7 @@ These boundaries are architectural constraints:
 - Do not weaken notification lockdown, secure-window handling, input safety, or tunnel access controls without updating the relevant architecture and runbook.
 - Do not treat public and Pixel-local ticket surfaces as the same deploy target.
 - Do not clear browser profiles, cookies, or stored auth state unless explicitly requested.
+- When touch brightness is enabled, it is the sole owner of physical panel brightness, physical-touch timing, and power-button wake rebound. Ticket brightness guards and other screen guards must park instead of writing the panel.
 
 ## Architecture Update Notes
 
@@ -148,3 +149,4 @@ Future agents should append short notes here only when a change affects the whol
 
 - 2026-05-03: `ticket_screen` auto-start is now governed by a persisted Android toggle instead of generic supervisor auto-start. This keeps OFF truly stopped and ON ready after reboot without forcing ViVi or stream capture.
 - 2026-05-05: Root executor timeouts now clean up shell child process trees, and stable ticket readiness checks are throttled once the local server and tunnel are already ready. This prevents idle health probes from leaving CPU-burning orphan processes.
+- 2026-05-07: Touch brightness panel sleep owns zero-panel-brightness behavior when enabled: Android stays awake, the panel is written to `0` after two minutes without physical touch, and ticket brightness guards must park.

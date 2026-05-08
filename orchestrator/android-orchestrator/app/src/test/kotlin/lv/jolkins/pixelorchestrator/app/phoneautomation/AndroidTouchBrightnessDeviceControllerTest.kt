@@ -69,6 +69,124 @@ class AndroidTouchBrightnessDeviceControllerTest {
   }
 
   @Test
+  fun setBrightnessPercentAllowsRealPanelZero() = runTest {
+    val rootExecutor = QueuedRootExecutor(
+      scriptResults = ArrayDeque(
+        listOf(
+          okResult(stdout = ""),
+          okResult(stdout = ""),
+          okResult(
+            stdout = """
+              mode=0
+              value=127
+              display_percentage=50.0
+              panel_path=/sys/class/backlight/panel0-backlight
+              panel_brightness=0
+              panel_actual_brightness=0
+              panel_max_brightness=3939
+            """.trimIndent()
+          )
+        )
+      )
+    )
+    val controller = AndroidTouchBrightnessDeviceController(
+      context = ContextWrapper(null),
+      rootExecutor = rootExecutor
+    )
+
+    val result = controller.setBrightnessPercent(0)
+
+    assertTrue(result.success)
+    assertTrue(rootExecutor.scripts.any { it.contains("panel_max * 0 + 50") })
+  }
+
+  @Test
+  fun setBrightnessPercentDoesNotTreatPanelOneAsPanelZero() = runTest {
+    val rootExecutor = QueuedRootExecutor(
+      scriptResults = ArrayDeque(
+        listOf(
+          okResult(
+            stdout = """
+              mode=0
+              value=1
+              display_percentage=0.0
+              panel_path=/sys/class/backlight/panel0-backlight
+              panel_brightness=1
+              panel_actual_brightness=1
+              panel_max_brightness=3939
+            """.trimIndent()
+          ),
+          okResult(stdout = ""),
+          okResult(
+            stdout = """
+              mode=0
+              value=0
+              display_percentage=0.0
+              panel_path=/sys/class/backlight/panel0-backlight
+              panel_brightness=0
+              panel_actual_brightness=0
+              panel_max_brightness=3939
+            """.trimIndent()
+          )
+        )
+      )
+    )
+    val controller = AndroidTouchBrightnessDeviceController(
+      context = ContextWrapper(null),
+      rootExecutor = rootExecutor
+    )
+
+    val result = controller.setBrightnessPercent(0)
+
+    assertTrue(result.success)
+    assertEquals(3, rootExecutor.scripts.size)
+    assertTrue(rootExecutor.scripts[1].contains("screen_brightness 0"))
+  }
+
+  @Test
+  fun restoreWithoutCapturedPanelDataDoesNotTreatPanelZeroAsAlreadyRestored() = runTest {
+    val rootExecutor = QueuedRootExecutor(
+      scriptResults = ArrayDeque(
+        listOf(
+          okResult(
+            stdout = """
+              mode=0
+              value=127
+              display_percentage=50.0
+              panel_path=/sys/class/backlight/panel0-backlight
+              panel_brightness=0
+              panel_actual_brightness=0
+              panel_max_brightness=3939
+            """.trimIndent()
+          ),
+          okResult(stdout = ""),
+          okResult(
+            stdout = """
+              mode=0
+              value=127
+              display_percentage=50.0
+              panel_path=/sys/class/backlight/panel0-backlight
+              panel_brightness=1969
+              panel_actual_brightness=1969
+              panel_max_brightness=3939
+            """.trimIndent()
+          )
+        )
+      )
+    )
+    val controller = AndroidTouchBrightnessDeviceController(
+      context = ContextWrapper(null),
+      rootExecutor = rootExecutor
+    )
+
+    val result = controller.restoreBrightnessState(ScreenBrightnessState(mode = 0, value = 127))
+
+    assertTrue(result.success)
+    assertTrue(rootExecutor.scripts.any { it.contains("settings put system screen_brightness") })
+    assertTrue(rootExecutor.scripts.any { it.contains("panel_target") })
+  }
+
+  @Test
   fun accessibilityPermissionRepairAddsTheServiceAndTurnsAccessibilityOn() = runTest {
     val environment = FakeAccessibilityRecoveryEnvironment(
       permissionGranted = false,
@@ -149,6 +267,8 @@ class AndroidTouchBrightnessDeviceControllerTest {
   private class QueuedRootExecutor(
     private val scriptResults: ArrayDeque<RootResult>
   ) : RootExecutor {
+    val scripts = mutableListOf<String>()
+
     override suspend fun isRootAvailable(): Boolean = true
 
     override suspend fun run(command: String, timeout: Duration): RootResult {
@@ -156,6 +276,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
     }
 
     override suspend fun runScript(script: String, timeout: Duration): RootResult {
+      scripts += script
       return scriptResults.removeFirstOrNull()
         ?: error("No scripted root result left for: $script")
     }

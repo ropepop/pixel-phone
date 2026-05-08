@@ -281,7 +281,9 @@ enum class TouchBrightnessRuntimeState(
   DISABLED("disabled", "Feature is off"),
   STARTING("starting", "Starting touch brightness"),
   BRIGHT("bright", "Saved brightness is active"),
-  BLACKOUT_IDLE("blackout_idle", "Panel dim waiting for touch"),
+  PANEL_SLEEP("panel_sleep", "Panel brightness is zero while Android stays awake"),
+  @Deprecated("Use PANEL_SLEEP; kept only so older source references still compile.")
+  BLACKOUT_IDLE("blackout_idle", "Panel brightness is zero while Android stays awake"),
   SUSPENDED_SCREEN_OFF("suspended_screen_off", "Suspended while the screen is off"),
   STOPPED("stopped", "Stopped"),
   ERROR("error", "Touch brightness error");
@@ -290,7 +292,7 @@ enum class TouchBrightnessRuntimeState(
     fun fromWireName(value: String?): TouchBrightnessRuntimeState {
       val normalized = value?.trim()?.lowercase()
       return when (normalized) {
-        "dimmed" -> BLACKOUT_IDLE
+        "dimmed", "blackout_idle" -> PANEL_SLEEP
         else -> entries.firstOrNull { it.wireName == normalized } ?: DISABLED
       }
     }

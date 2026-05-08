@@ -30,7 +30,7 @@
   <string name="ticket_service_toggle_label">Keep ticket service ready</string>
   <string name="ticket_service_runtime_line">Status: %1$s</string>
   <string name="touch_brightness_title">Touch Brightness</string>
-  <string name="touch_brightness_description">Keep the screen visible at the saved brightness while physical touch is active, switch to blackout 3 seconds after the last touch, and pause enforcement when the power button puts the phone to sleep.</string>
+  <string name="touch_brightness_description">Keep Android awake, set the physical panel to zero brightness after two minutes without real display touch, and use physical touch or the power button to bring the panel back.</string>
   <string name="touch_brightness_toggle_label">Enable touch brightness mode</string>
   <string name="touch_brightness_runtime_line">Status: %1$s</string>
   <string name="touch_brightness_debug_line">Debug: %1$s</string>

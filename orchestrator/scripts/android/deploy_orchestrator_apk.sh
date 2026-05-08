@@ -343,6 +343,61 @@ fi
 # Keep app alive under battery optimizations whitelist when possible.
 "${adb_cmd[@]}" shell "cmd deviceidle whitelist +${PKG}" >/dev/null 2>&1 || true
 
+resolve_orchestrator_package_uid() {
+  local uid=""
+
+  uid="$(
+    pixel_transport_shell "cmd package list packages -U ${PKG} 2>/dev/null | sed -n 's/.*uid://p' | sed -n '1p'" \
+      2>/dev/null | tr -d '\r' | tr -d '[:space:]'
+  )" || true
+  if [[ "${uid}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${uid}"
+    return 0
+  fi
+
+  uid="$(
+    pixel_transport_shell "dumpsys package ${PKG} 2>/dev/null | sed -n 's/.*userId=\\([0-9][0-9]*\\).*/\\1/p' | sed -n '1p'" \
+      2>/dev/null | tr -d '\r' | tr -d '[:space:]'
+  )" || true
+  if [[ "${uid}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${uid}"
+    return 0
+  fi
+
+  return 1
+}
+
+suppress_superuser_grant_toasts() {
+  local uid=""
+  local sql=""
+  local output=""
+
+  uid="$(resolve_orchestrator_package_uid || true)"
+  if [[ -z "${uid}" ]]; then
+    echo "Warning: could not resolve ${PKG} uid for superuser toast suppression" >&2
+    return 0
+  fi
+
+  if ! pixel_transport_root_shell "command -v magisk >/dev/null 2>&1" >/dev/null 2>&1; then
+    echo "Magisk sqlite unavailable; skipping superuser toast suppression"
+    return 0
+  fi
+
+  sql="UPDATE policies SET notification=0 WHERE uid=2000; INSERT OR IGNORE INTO policies(uid, policy, until, logging, notification) VALUES(${uid}, 2, 0, 1, 0); UPDATE policies SET notification=0 WHERE uid=${uid};"
+  if output="$(pixel_transport_root_shell "magisk --sqlite $(pixel_transport_single_quote "${sql}")" 2>&1)"; then
+    echo "Superuser toast notifications suppressed for ${PKG} uid=${uid}"
+    return 0
+  fi
+
+  echo "Warning: failed to suppress superuser toast notifications for ${PKG} uid=${uid}" >&2
+  if [[ -n "${output}" ]]; then
+    echo "${output}" >&2
+  fi
+  return 0
+}
+
+suppress_superuser_grant_toasts || true
+
 repair_phone_automation_permissions() {
   if [[ "$(pixel_transport_selected)" != "adb" ]]; then
     return 0

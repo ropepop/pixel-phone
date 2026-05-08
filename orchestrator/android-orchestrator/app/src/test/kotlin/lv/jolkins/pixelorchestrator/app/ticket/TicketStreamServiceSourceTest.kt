@@ -122,6 +122,31 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
+  fun notificationLockdownStartsBeforeRootCaptureIsScheduled() {
+    val source = ticketStreamServiceSource()
+    val start = source.substringBetween("private suspend fun startTicketSession()", "private suspend fun handleBrowserStopRequest")
+
+    assertTrue(start.contains("enableNotificationLockdown(\"session_start\")"))
+    assertTrue(start.indexOf("enableNotificationLockdown(\"session_start\")") < start.indexOf("scheduleRootFfmpegH264CaptureStart"))
+  }
+
+  @Test
+  fun touchBrightnessOwnershipParksTicketBrightnessGuard() {
+    val source = ticketStreamServiceSource()
+    val guard = source.substringBetween("private fun scheduleTicketBrightnessGuard", "private fun ticketBrightnessGuardShouldContinue")
+    val shouldContinue = source.substringBetween("private fun ticketBrightnessGuardShouldContinue", "private fun ticketBrightnessGuardPausedForPhysicalUse")
+    val enforce = source.substringBetween("private suspend fun enforceTicketSafeBrightness", "private fun refreshPhoneAutomation")
+
+    assertTrue(guard.contains("touchBrightnessOwnsTicketBrightness()"))
+    assertTrue(guard.contains("Ticket brightness guard parked because touch brightness owns panel brightness"))
+    assertTrue(guard.contains("releaseTicketScreenAwake()"))
+    assertTrue(guard.contains("hideBlackoutOverlay()"))
+    assertTrue(shouldContinue.contains("touchBrightnessOwnsTicketBrightness()"))
+    assertTrue(enforce.contains("touchBrightnessOwnsTicketBrightness()"))
+    assertTrue(enforce.indexOf("touchBrightnessOwnsTicketBrightness()") < enforce.indexOf("ScreenBrightnessControl.buildSetPercentScript"))
+  }
+
+  @Test
   fun localViewerUsesWebCodecsH264Only() {
     val source = ticketStreamServiceSource()
 

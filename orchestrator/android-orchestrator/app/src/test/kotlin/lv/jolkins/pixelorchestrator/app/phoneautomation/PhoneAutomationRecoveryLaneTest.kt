@@ -22,7 +22,7 @@ class PhoneAutomationRecoveryLaneTest {
       touchBrightnessEnabled = true,
       runtimeState = PhoneAutomationRuntimeState.RESTARTING_SPEEDTEST,
       protectedHandoffStartedAtMillis = 123L,
-      touchBrightnessState = TouchBrightnessRuntimeState.BLACKOUT_IDLE
+      touchBrightnessState = TouchBrightnessRuntimeState.PANEL_SLEEP
     )
     val issue = PhoneAutomationPrerequisiteIssue(
       reasonKey = "accessibility_connection",

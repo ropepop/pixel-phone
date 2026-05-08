@@ -193,8 +193,8 @@ class PhoneAutomationSupervisorControllerTest {
         "Waiting for Speedtest completion"
       )
       updateTouchBrightnessState(
-        TouchBrightnessRuntimeState.BLACKOUT_IDLE,
-        "Blackout waiting for touch"
+        TouchBrightnessRuntimeState.PANEL_SLEEP,
+        "Panel sleep waiting for touch"
       )
     }
     val runtime = FakeRuntimeController()

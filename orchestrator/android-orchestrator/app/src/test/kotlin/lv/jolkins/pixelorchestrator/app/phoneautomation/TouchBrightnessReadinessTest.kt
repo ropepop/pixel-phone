@@ -11,6 +11,11 @@ class TouchBrightnessReadinessTest {
     name = "synaptics_tcm_touch",
     score = 109
   )
+  private val pixelPowerKeyDevice = RootPowerKeyDevice(
+    path = "/dev/input/event0",
+    name = "gpio_keys",
+    score = 116
+  )
 
   @Test
   fun readyWhenRootBatteryPhysicalTouchAndPanelAreAvailable() {
@@ -19,6 +24,7 @@ class TouchBrightnessReadinessTest {
         rootAvailable = true,
         batteryUnrestricted = true,
         touchDevices = listOf(pixelTouchDevice),
+        powerKeyDevices = listOf(pixelPowerKeyDevice),
         panelAvailable = true
       )
     )
@@ -34,6 +40,7 @@ class TouchBrightnessReadinessTest {
         rootAvailable = true,
         batteryUnrestricted = true,
         touchDevices = listOf(pixelTouchDevice),
+        powerKeyDevices = listOf(pixelPowerKeyDevice),
         panelAvailable = true
       )
     )
@@ -49,6 +56,7 @@ class TouchBrightnessReadinessTest {
         rootAvailable = false,
         batteryUnrestricted = false,
         touchDevices = emptyList(),
+        powerKeyDevices = emptyList(),
         panelAvailable = false
       )
     )
@@ -57,6 +65,7 @@ class TouchBrightnessReadinessTest {
     assertTrue(result.detail.contains("Root access is unavailable"))
     assertTrue(result.detail.contains("Unrestricted battery access is not enabled"))
     assertTrue(result.detail.contains("No touchscreen input device could be identified"))
+    assertTrue(result.detail.contains("No physical power-button input device could be identified"))
     assertTrue(result.detail.contains("Panel brightness path is unavailable"))
   }
 }

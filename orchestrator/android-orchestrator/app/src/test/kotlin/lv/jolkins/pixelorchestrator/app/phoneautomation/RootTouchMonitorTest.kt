@@ -247,6 +247,78 @@ class RootTouchMonitorTest {
   }
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
+class RootPowerKeyMonitorTest {
+  @Test
+  fun parsePowerKeyDevicesPrefersGpioKeysOverFingerprintFallback() {
+    val devices = RootPowerKeyDeviceDiscovery.parsePowerKeyDevices(
+      """
+      add device 1: /dev/input/event1
+        name: "goodix_fingerprint"
+        events:
+          KEY (0001): KEY_POWER
+      add device 2: /dev/input/event0
+        name: "gpio_keys"
+        events:
+          KEY (0001): KEY_POWER
+      add device 3: /dev/input/event2
+        name: "synaptics_tcm_touch"
+        events:
+          KEY (0001): KEY_WAKEUP
+      """.trimIndent()
+    )
+
+    assertEquals("gpio_keys", devices.first().name)
+    assertEquals("/dev/input/event1", devices[1].path)
+  }
+
+  @Test
+  fun androidRootPowerKeyMonitorPublishesPowerButtonDown() = runTest {
+    val processFactory = FakeRootTouchProcessFactory(
+      capabilitiesOutput = """
+        add device 1: /dev/input/event0
+          name: "gpio_keys"
+          events:
+            KEY (0001): KEY_POWER
+      """.trimIndent(),
+      monitorOutputs = mapOf(
+        "/dev/input/event0" to FakeMonitorProcessOutput(
+          stdout = """
+            [   1.000000] EV_KEY KEY_POWER DOWN
+            [   1.000010] EV_KEY KEY_POWER UP
+          """.trimIndent(),
+          stderr = "",
+          exitCode = 0
+        )
+      )
+    )
+    val monitor = AndroidRootPowerKeyMonitor(
+      ioDispatcher = UnconfinedTestDispatcher(testScheduler),
+      processFactory = processFactory,
+      uptimeClock = { testScheduler.currentTime }
+    )
+    val observedEvents = mutableListOf<RootPowerKeyEvent>()
+    val job = backgroundScope.launch {
+      monitor.events.toList(observedEvents)
+    }
+
+    advanceUntilIdle()
+    job.join()
+
+    assertEquals(
+      RootPowerKeyEvent.SourceSelected(
+        RootPowerKeyDevice(path = "/dev/input/event0", name = "gpio_keys", score = 116)
+      ),
+      observedEvents[0]
+    )
+    assertEquals(0L, (observedEvents[1] as RootPowerKeyEvent.PowerButtonPressed).observedAtUptimeMillis)
+    assertEquals(
+      RootPowerKeyEvent.FatalError("The root power-button monitor exited with code 0"),
+      observedEvents[2]
+    )
+  }
+}
+
 private class FakeRootTouchProcessFactory(
   private val capabilitiesOutput: String,
   private val monitorOutputs: Map<String, FakeMonitorProcessOutput>

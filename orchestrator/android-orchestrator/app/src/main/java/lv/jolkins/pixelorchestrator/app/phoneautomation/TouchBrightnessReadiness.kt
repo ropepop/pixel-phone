@@ -4,6 +4,7 @@ internal data class TouchBrightnessReadinessSnapshot(
   val rootAvailable: Boolean,
   val batteryUnrestricted: Boolean,
   val touchDevices: List<RootTouchDevice>,
+  val powerKeyDevices: List<RootPowerKeyDevice> = emptyList(),
   val panelAvailable: Boolean
 )
 
@@ -18,6 +19,9 @@ internal object TouchBrightnessReadiness {
     }
     if (snapshot.touchDevices.isEmpty()) {
       missing += "No touchscreen input device could be identified"
+    }
+    if (snapshot.powerKeyDevices.isEmpty()) {
+      missing += "No physical power-button input device could be identified"
     }
     if (!snapshot.panelAvailable) {
       missing += "Panel brightness path is unavailable"

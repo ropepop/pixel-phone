@@ -332,8 +332,10 @@ class TicketStreamService : Service() {
     if (::ticketRecoveryCoordinator.isInitialized) {
       ticketRecoveryCoordinator.cancel()
     }
-    if (serviceEnabled) {
+    if (serviceEnabled && !touchBrightnessOwnsTicketBrightness()) {
       runCatching { runBlocking { enforceTicketSafeBrightness("service_destroyed_service_enabled") } }
+    } else if (serviceEnabled) {
+      ticketBrightnessGuardLastMessage = "Ticket brightness guard parked because touch brightness owns panel brightness"
     } else {
       runCatching { runBlocking { restoreTicketBrightness("service_destroyed_service_off") } }
       PhoneAutomationServiceBridge.setRemoteScreenBrightnessState(null)
@@ -711,13 +713,13 @@ class TicketStreamService : Service() {
     recordTicketEvent("session_started", "mode=$activeCaptureMode")
     startForegroundGuard()
     requestTicketScreenWake("session_start")
+    enableNotificationLockdown("session_start")
     enableSecureWindowCaptureBypass()
     scheduleTicketBrightnessGuard("session_start")
     scheduleRootFfmpegH264CaptureStart("session_start_root_ffmpeg_h264_capture", suppressBlackout = false)
     serviceScope.launch {
       rememberTicketBrightnessState()
       suppressBlackoutOverlayForRemote()
-      enableNotificationLockdown("session_start")
       broadcastStatus()
     }
     broadcastStatus()
@@ -2740,6 +2742,17 @@ class TicketStreamService : Service() {
 
   private fun scheduleTicketBrightnessGuard(reason: String) {
     brightnessGuardJob?.cancel()
+    if (touchBrightnessOwnsTicketBrightness()) {
+      brightnessGuardJob = null
+      ticketBrightnessGuardActive = false
+      ticketBrightnessGuardLastReason = reason
+      ticketBrightnessGuardLastMessage = "Ticket brightness guard parked because touch brightness owns panel brightness"
+      releaseTicketScreenAwake()
+      serviceScope.launch {
+        hideBlackoutOverlay()
+      }
+      return
+    }
     ticketBrightnessGuardActive = true
     ticketBrightnessGuardLastReason = reason
     ticketBrightnessGuardLastMessage = "Ticket brightness guard is enforcing safe dim brightness"
@@ -2795,6 +2808,9 @@ class TicketStreamService : Service() {
   }
 
   private fun ticketBrightnessGuardShouldContinue(): Boolean {
+    if (touchBrightnessOwnsTicketBrightness()) {
+      return false
+    }
     if (streamActive) {
       return true
     }
@@ -2810,7 +2826,19 @@ class TicketStreamService : Service() {
     PhoneAutomationPreferencesStore(this).load()
   }.getOrNull()
 
+  private fun touchBrightnessOwnsTicketBrightness(): Boolean {
+    return touchBrightnessSnapshot()?.touchBrightnessEnabled == true
+  }
+
   private suspend fun enforceTicketSafeBrightness(reason: String) {
+    if (touchBrightnessOwnsTicketBrightness()) {
+      ticketBrightnessGuardActive = false
+      ticketBrightnessGuardLastReason = reason
+      ticketBrightnessGuardLastMessage = "Ticket brightness guard parked because touch brightness owns panel brightness"
+      releaseTicketScreenAwake()
+      hideBlackoutOverlay()
+      return
+    }
     runCatching {
       val result = rootExecutor.runScript(ScreenBrightnessControl.buildSetPercentScript(TICKET_SAFE_DIM_PERCENT))
       if (result.ok) {
@@ -2848,6 +2876,14 @@ class TicketStreamService : Service() {
   }
 
   private suspend fun restoreTicketBrightness(reason: String) {
+    if (touchBrightnessOwnsTicketBrightness()) {
+      ticketBrightnessGuardActive = false
+      ticketBrightnessGuardLastReason = reason
+      ticketBrightnessGuardLastMessage = "Ticket brightness guard restore skipped because touch brightness owns panel brightness"
+      releaseTicketScreenAwake()
+      hideBlackoutOverlay()
+      return
+    }
     val state = ticketBrightnessState ?: readTouchBrightnessRestoreState() ?: return
     val result = rootExecutor.runScript(ScreenBrightnessControl.buildRestoreScript(state))
     if (result.ok) {

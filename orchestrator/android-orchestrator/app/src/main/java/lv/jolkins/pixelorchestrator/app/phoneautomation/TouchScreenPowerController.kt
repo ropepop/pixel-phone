@@ -13,6 +13,7 @@ internal interface TouchScreenPowerController {
   val wakeHoldActive: Boolean
 
   suspend fun wakeScreen(reason: String): PhoneAutomationActionResult
+  suspend fun forceWakeScreen(reason: String): PhoneAutomationActionResult
   fun holdScreen(reason: String)
   fun releaseHold(reason: String)
 }
@@ -35,6 +36,15 @@ internal class AndroidTouchScreenPowerController(
     if (interactive) {
       return PhoneAutomationActionResult(true, "Screen already interactive")
     }
+    return requestWakeKey(reason)
+  }
+
+  override suspend fun forceWakeScreen(reason: String): PhoneAutomationActionResult {
+    holdScreen("force_wake:$reason")
+    return requestWakeKey(reason)
+  }
+
+  private suspend fun requestWakeKey(reason: String): PhoneAutomationActionResult {
     val result = withContext(Dispatchers.IO) {
       rootExecutor.run("input keyevent KEYCODE_WAKEUP", timeout = 3.seconds)
     }

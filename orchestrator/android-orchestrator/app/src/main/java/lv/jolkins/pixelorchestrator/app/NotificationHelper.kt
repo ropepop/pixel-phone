@@ -14,7 +14,8 @@ import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationSettingsS
 import lv.jolkins.pixelorchestrator.app.ticket.TicketServiceSettingsSnapshot
 
 object NotificationHelper {
-  private const val CHANNEL_ID = "stack_supervision"
+  private const val LEGACY_CHANNEL_ID = "stack_supervision"
+  private const val CHANNEL_ID = "stack_supervision_quiet"
 
   fun ensureChannel(context: Context) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
@@ -23,19 +24,26 @@ object NotificationHelper {
 
     val manager = context.getSystemService(NotificationManager::class.java)
     val existing = manager.getNotificationChannel(CHANNEL_ID)
-    if (existing != null) {
-      return
+    if (existing == null) {
+      val channel = NotificationChannel(
+        CHANNEL_ID,
+        context.getString(R.string.notif_channel_name),
+        NotificationManager.IMPORTANCE_MIN
+      ).apply {
+        description = context.getString(R.string.notif_channel_description)
+        lockscreenVisibility = Notification.VISIBILITY_SECRET
+        setShowBadge(false)
+        setSound(null, null)
+        enableLights(false)
+        enableVibration(false)
+      }
+
+      manager.createNotificationChannel(channel)
     }
 
-    val channel = NotificationChannel(
-      CHANNEL_ID,
-      context.getString(R.string.notif_channel_name),
-      NotificationManager.IMPORTANCE_LOW
-    ).apply {
-      description = context.getString(R.string.notif_channel_description)
+    if (manager.getNotificationChannel(LEGACY_CHANNEL_ID) != null) {
+      manager.deleteNotificationChannel(LEGACY_CHANNEL_ID)
     }
-
-    manager.createNotificationChannel(channel)
   }
 
   fun buildForegroundNotification(
@@ -77,6 +85,12 @@ object NotificationHelper {
       .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
       .setContentIntent(pending)
       .setOngoing(true)
+      .setLocalOnly(true)
+      .setSilent(true)
+      .setOnlyAlertOnce(true)
+      .setPriority(NotificationCompat.PRIORITY_MIN)
+      .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+      .setCategory(NotificationCompat.CATEGORY_SERVICE)
       .build()
   }
 }

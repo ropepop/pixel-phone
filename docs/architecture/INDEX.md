@@ -3,10 +3,11 @@
 Read architecture in this order:
 
 1. [Pixel Stack Architecture](./PIXEL_STACK_ARCHITECTURE.md)
-2. [Ticket Streaming Architecture](./TICKET_STREAMING_ARCHITECTURE.md)
-3. [ROOT_OPERATIONS](../runbooks/ROOT_OPERATIONS.md)
-4. Module runbook overlays in `docs/runbooks/`
-5. Dated evidence in `ops/reports/` when a doc links to a measurement
+2. [Touch Brightness Architecture](./TOUCH_BRIGHTNESS_ARCHITECTURE.md)
+3. [Ticket Streaming Architecture](./TICKET_STREAMING_ARCHITECTURE.md)
+4. [ROOT_OPERATIONS](../runbooks/ROOT_OPERATIONS.md)
+5. Module runbook overlays in `docs/runbooks/`
+6. Dated evidence in `ops/reports/` when a doc links to a measurement
 
 Architecture docs are canonical source material. Reports and evidence explain how a conclusion was measured, but they should not be the only place stable architecture is recorded.
 

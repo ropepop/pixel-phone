@@ -15,7 +15,7 @@ class PhoneAutomationPreferencesStoreTest {
     firstStore.setReturnToOrchestratorAfterForegroundWork(false)
     firstStore.setDispatchInterval(PhoneAutomationDispatchInterval.EVERY_10_MINUTES)
     firstStore.setTouchBrightnessEnabled(true)
-    firstStore.updateTouchBrightnessState(TouchBrightnessRuntimeState.BLACKOUT_IDLE, "blackout")
+    firstStore.updateTouchBrightnessState(TouchBrightnessRuntimeState.PANEL_SLEEP, "panel sleep")
     firstStore.updateTouchBrightnessDebugDetail("touches=1 source=synaptics_tcm_touch")
     firstStore.saveTouchBrightnessRestoreState(mode = 1, value = 127)
     firstStore.updateSetupState(PhoneAutomationSetupState.READY, "ready")
@@ -44,8 +44,8 @@ class PhoneAutomationPreferencesStoreTest {
     assertEquals(false, snapshot.returnToOrchestratorAfterForegroundWork)
     assertEquals(PhoneAutomationDispatchInterval.EVERY_10_MINUTES, snapshot.dispatchInterval)
     assertTrue(snapshot.touchBrightnessEnabled)
-    assertEquals(TouchBrightnessRuntimeState.BLACKOUT_IDLE, snapshot.touchBrightnessState)
-    assertEquals("blackout", snapshot.touchBrightnessDetail)
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, snapshot.touchBrightnessState)
+    assertEquals("panel sleep", snapshot.touchBrightnessDetail)
     assertEquals("touches=1 source=synaptics_tcm_touch", snapshot.touchBrightnessDebugDetail)
     assertEquals(1, snapshot.touchBrightnessRestoreMode)
     assertEquals(127, snapshot.touchBrightnessRestoreValue)
@@ -194,7 +194,7 @@ class PhoneAutomationPreferencesStoreTest {
   }
 
   @Test
-  fun legacyDimmedStateLoadsAsBlackoutIdle() {
+  fun legacyDimmedStateLoadsAsPanelSleep() {
     val backend = InMemoryPreferencesBackend()
     backend.applyMutations(
       mapOf(
@@ -204,7 +204,7 @@ class PhoneAutomationPreferencesStoreTest {
 
     val snapshot = PhoneAutomationPreferencesStore(backend).load()
 
-    assertEquals(TouchBrightnessRuntimeState.BLACKOUT_IDLE, snapshot.touchBrightnessState)
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, snapshot.touchBrightnessState)
   }
 }
 
