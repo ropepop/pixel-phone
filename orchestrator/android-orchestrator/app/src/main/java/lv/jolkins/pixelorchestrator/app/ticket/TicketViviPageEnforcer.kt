@@ -9,6 +9,14 @@ internal data class TicketViviPageAction(
   val bounds: String? = null
 )
 
+internal data class TicketViviControlCodePopupSurface(
+  val input: TicketViviPageAction,
+  val submit: TicketViviPageAction,
+  val close: TicketViviPageAction?,
+  val inputFocused: Boolean,
+  val inputValue: String
+)
+
 internal enum class TicketViviRecoveryState {
   BLANK,
   OUTSIDE_VIVI,
@@ -29,6 +37,7 @@ internal object TicketViviPageEnforcer {
     return hasViviPackage(xml) &&
       hasTicketDetailMarkers(xml) &&
       !isControlCodePopup(xml) &&
+      !hasControlCodeInputForHierarchy(xml) &&
       !isControlCodeResult(xml) &&
       !hasDismissibleBlockerMarkers(xml)
   }
@@ -46,32 +55,70 @@ internal object TicketViviPageEnforcer {
       prefix = "<hierarchy>\n",
       postfix = "\n</hierarchy>"
     ) { node ->
-      """<node package="${TicketScreenConfig.VIVI_PACKAGE}" text="${node.text.xmlAttr()}" resource-id="${node.resourceId.xmlAttr()}" class="${node.className.xmlAttr()}" content-desc="${node.contentDescription.xmlAttr()}" clickable="${node.clickable}" enabled="${node.enabled}" focused="${node.focused}" bounds="${node.bounds.xmlAttr()}" />"""
+      """<node package="${TicketScreenConfig.VIVI_PACKAGE}" text="${node.text.xmlAttr()}" resource-id="${node.resourceId.xmlAttr()}" class="${node.className.xmlAttr()}" content-desc="${node.contentDescription.xmlAttr()}" hint="${node.hint.xmlAttr()}" clickable="${node.clickable}" enabled="${node.enabled}" focused="${node.focused}" editable="${node.editable}" focusable="${node.focusable}" bounds="${node.bounds.xmlAttr()}" />"""
     }
   }
 
   fun isControlCodePopup(xml: String): Boolean {
-    return hasViviPackage(xml) &&
-      hasControlCodeText(xml) &&
-      controlCodeInputBounds(xml) != null
+    return controlCodePopupSurfaceForHierarchy(xml) != null
   }
 
   fun isControlCodeInputFocused(xml: String): Boolean {
-    return controlCodeInputNode(xml)?.contains("""focused="true"""") == true
+    return controlCodePopupSurfaceForHierarchy(xml)?.inputFocused == true
   }
 
   fun controlCodeInputActionForHierarchy(xml: String): TicketViviPageAction? {
-    if (!isControlCodePopup(xml)) {
+    return controlCodePopupSurfaceForHierarchy(xml)?.input
+  }
+
+  fun controlCodeInputActionLooseForHierarchy(xml: String): TicketViviPageAction? {
+    return controlCodeInputNodeForHierarchy(xml)
+      ?.let(::bounds)
+      ?.action("focus_control_code_input")
+  }
+
+  fun controlCodeSubmitActionForHierarchy(xml: String): TicketViviPageAction? {
+    return controlCodePopupSurfaceForHierarchy(xml)?.submit
+  }
+
+  fun controlCodeSubmitActionLooseForHierarchy(xml: String): TicketViviPageAction? {
+    if (!hasViviPackage(xml) || looksLikeSettingsOrProfilePage(xml)) {
       return null
     }
-    return controlCodeInputBounds(xml)?.action("focus_control_code_input")
+    val nodes = nodeRegex.findAll(xml).map { it.value }.toList()
+    val prompts = controlCodePromptBounds(nodes)
+    val input = if (prompts.isNotEmpty()) {
+      controlCodeInputNode(nodes, prompts)?.let(::bounds)
+    } else {
+      null
+    }
+    val submit = if (input != null) {
+      controlCodeSubmitBounds(nodes, input)
+    } else {
+      controlCodeAnySubmitBounds(nodes)
+    }
+    return submit?.action("submit_control_code_popup")
   }
 
   fun controlCodeCloseActionForHierarchy(xml: String): TicketViviPageAction? {
-    if (!isControlCodePopup(xml)) {
-      return null
-    }
-    return controlCodeCloseBounds(xml)?.action("close_control_code_popup")
+    return controlCodePopupSurfaceForHierarchy(xml)?.close
+      ?: if (controlCodePopupSurfaceForHierarchy(xml) != null) controlCodeCloseBounds(xml)?.action("close_control_code_popup") else null
+  }
+
+  fun controlCodePopupSurfaceForHierarchy(xml: String): TicketViviControlCodePopupSurface? {
+    return controlCodePopupSurface(xml)
+  }
+
+  fun controlCodeInputValueForHierarchy(xml: String): String? {
+    return controlCodePopupSurfaceForHierarchy(xml)?.inputValue
+  }
+
+  fun controlCodeInputValueLooseForHierarchy(xml: String): String? {
+    return controlCodeInputNodeForHierarchy(xml)?.let(::controlCodeInputValue)
+  }
+
+  fun hasControlCodeInputForHierarchy(xml: String): Boolean {
+    return controlCodeInputNodeForHierarchy(xml) != null
   }
 
   fun controlCodeExitCloseActionForHierarchy(xml: String): TicketViviPageAction? {
@@ -82,6 +129,29 @@ internal object TicketViviPageEnforcer {
       return null
     }
     return controlCodeResultCloseBounds(xml)?.action("close_control_code_result")
+  }
+
+  fun controlCodeResultValueForHierarchy(xml: String): String? {
+    return strictControlCodeResultValueForHierarchy(xml)
+  }
+
+  fun strictControlCodeResultValueForHierarchy(xml: String): String? {
+    if (!hasViviPackage(xml) || isControlCodePopup(xml) || hasControlCodeInputForHierarchy(xml)) {
+      return null
+    }
+    return nodeRegex.findAll(xml)
+      .map { it.value }
+      .firstNotNullOfOrNull { node ->
+        if (packageName(node) != TicketScreenConfig.VIVI_PACKAGE) {
+          return@firstNotNullOfOrNull null
+        }
+        val label = nodeVisibleText(node).trim().replace(Regex("""\s+"""), "")
+        if (CONTROL_CODE_RESULT_VALUE_REGEX.matches(label)) {
+          label
+        } else {
+          null
+        }
+      }
   }
 
   fun isControlCodeCloseTap(xml: String, x: Int, y: Int): Boolean {
@@ -168,6 +238,9 @@ internal object TicketViviPageEnforcer {
     }
     if (!hasViviPackage(xml)) {
       return TicketViviRecoveryState.OUTSIDE_VIVI
+    }
+    if (hasControlCodeInputForHierarchy(xml)) {
+      return TicketViviRecoveryState.CONTROL_CODE_POPUP
     }
     if (isControlCodeResult(xml) && !isControlCodePopup(xml)) {
       return TicketViviRecoveryState.CONTROL_CODE_RESULT
@@ -257,10 +330,17 @@ internal object TicketViviPageEnforcer {
   }
 
   private fun isControlCodeResult(xml: String): Boolean {
-    if (!hasViviPackage(xml) || isControlCodePopup(xml) || looksLikeSettingsOrProfilePage(xml)) {
+    if (!hasViviPackage(xml) || isControlCodePopup(xml) || hasControlCodeInputForHierarchy(xml) || looksLikeSettingsOrProfilePage(xml)) {
       return false
     }
-    return controlCodeResultValueBounds(xml) != null
+    if (controlCodeResultValueBounds(xml) != null) {
+      return true
+    }
+    return !hasTicketDetailMarkers(xml) && controlCodeResultGraphicBounds(xml) != null
+  }
+
+  private fun controlCodeResultAnchorBounds(xml: String): Bounds? {
+    return controlCodeResultValueBounds(xml) ?: controlCodeResultGraphicBounds(xml)
   }
 
   private fun controlCodeResultValueBounds(xml: String): Bounds? {
@@ -279,6 +359,40 @@ internal object TicketViviPageEnforcer {
       }
   }
 
+  private fun controlCodeResultGraphicBounds(xml: String): Bounds? {
+    if (!hasControlCodeText(xml)) {
+      return null
+    }
+    return nodeRegex.findAll(xml)
+      .map { it.value }
+      .firstNotNullOfOrNull { node ->
+        if (packageName(node) != TicketScreenConfig.VIVI_PACKAGE) {
+          return@firstNotNullOfOrNull null
+        }
+        val candidate = bounds(node) ?: return@firstNotNullOfOrNull null
+        val className = attr(node, "class").lowercase()
+        val label = nodeVisibleText(node).lowercase()
+        val resourceId = attr(node, "resource-id").lowercase()
+        val looksGeneratedCodeGraphic =
+          className.contains("image") ||
+            label.contains("aztec") ||
+            label.contains("qr") ||
+            label.contains("svītrk") ||
+            label.contains("svitrk") ||
+            label.contains("barcode") ||
+            resourceId.contains("aztec") ||
+            resourceId.contains("qr") ||
+            resourceId.contains("barcode")
+        val wideEnough = candidate.right - candidate.left >= CONTROL_CODE_RESULT_GRAPHIC_MIN_SIZE
+        val tallEnough = candidate.bottom - candidate.top >= CONTROL_CODE_RESULT_GRAPHIC_MIN_SIZE
+        if (looksGeneratedCodeGraphic && wideEnough && tallEnough) {
+          candidate
+        } else {
+          null
+        }
+      }
+  }
+
   private fun hasDismissibleBlockerMarkers(xml: String): Boolean {
     val normalized = visibleText(xml).lowercase()
     return normalized.contains("pasažieri") ||
@@ -289,28 +403,137 @@ internal object TicketViviPageEnforcer {
       normalized.contains("bez maksas")
   }
 
-  private fun controlCodeInputNode(xml: String): String? {
-    return nodeRegex.findAll(xml)
-      .map { it.value }
-      .firstOrNull { node ->
-        val bounds = bounds(node)
-        packageName(node) == TicketScreenConfig.VIVI_PACKAGE &&
-          bounds != null &&
-          looksLikeControlCodeInput(node)
+  private fun controlCodePopupSurface(xml: String): TicketViviControlCodePopupSurface? {
+    if (!hasViviPackage(xml) || !hasControlCodeText(xml) || looksLikeSettingsOrProfilePage(xml)) {
+      return null
+    }
+    val nodes = nodeRegex.findAll(xml).map { it.value }.toList()
+    val prompts = controlCodePromptBounds(nodes)
+    if (prompts.isEmpty()) {
+      return null
+    }
+    val inputNode = controlCodeInputNode(nodes, prompts) ?: return null
+    val input = bounds(inputNode) ?: return null
+    val submit = controlCodeSubmitBounds(nodes, input) ?: return null
+    val close = controlCodeCloseBounds(xml)?.action("close_control_code_popup")
+    return TicketViviControlCodePopupSurface(
+      input = input.action("focus_control_code_input"),
+      submit = submit.action("submit_control_code_popup"),
+      close = close,
+      inputFocused = inputNode.contains("""focused="true""""),
+      inputValue = controlCodeInputValue(inputNode)
+    )
+  }
+
+  private fun controlCodeInputNodeForHierarchy(xml: String): String? {
+    if (!hasViviPackage(xml) || !hasControlCodeText(xml) || looksLikeSettingsOrProfilePage(xml)) {
+      return null
+    }
+    val nodes = nodeRegex.findAll(xml).map { it.value }.toList()
+    val prompts = controlCodePromptBounds(nodes)
+    if (prompts.isEmpty()) {
+      return null
+    }
+    return controlCodeInputNode(nodes, prompts)
+  }
+
+  private fun controlCodePromptBounds(nodes: List<String>): List<Bounds> {
+    return nodes.mapNotNull { node ->
+      if (packageName(node) != TicketScreenConfig.VIVI_PACKAGE) {
+        return@mapNotNull null
       }
+      val label = nodeVisibleText(node).lowercase()
+      val candidate = bounds(node) ?: return@mapNotNull null
+      if (CONTROL_CODE_PROMPT_TOKENS.any { token -> label.contains(token) }) {
+        candidate
+      } else {
+        null
+      }
+    }
   }
 
-  private fun controlCodeInputBounds(xml: String): Bounds? {
-    return controlCodeInputNode(xml)?.let(::bounds)
+  private fun controlCodeInputNode(nodes: List<String>, prompts: List<Bounds>): String? {
+    return nodes
+      .filter { node -> packageName(node) == TicketScreenConfig.VIVI_PACKAGE }
+      .mapNotNull { node ->
+        val candidate = bounds(node) ?: return@mapNotNull null
+        val priority = controlCodeInputPriority(node) ?: return@mapNotNull null
+        val matchesPrompt = prompts.any { prompt ->
+          val belowPrompt =
+            candidate.top >= prompt.top &&
+              candidate.top <= prompt.bottom + CONTROL_CODE_INPUT_MAX_BELOW_PROMPT
+          val separatedFromPrompt =
+            priority < CONTROL_CODE_PROMPT_LABEL_INPUT_PRIORITY ||
+              candidate.top >= prompt.bottom + CONTROL_CODE_PROMPT_LABEL_INPUT_MIN_GAP
+          belowPrompt && separatedFromPrompt
+        }
+        if (matchesPrompt) {
+          ControlCodeInputCandidate(priority = priority, top = candidate.top, node = node)
+        } else {
+          null
+        }
+      }
+      .minWithOrNull(compareBy<ControlCodeInputCandidate> { it.priority }.thenBy { it.top })
+      ?.node
   }
 
-  private fun looksLikeControlCodeInput(node: String): Boolean {
+  private fun controlCodeInputPriority(node: String): Int? {
     val className = attr(node, "class").lowercase()
     val resourceId = attr(node, "resource-id").lowercase()
-    return node.contains("""editable="true"""") ||
-      className.contains("edittext") ||
-      resourceId.contains("code") ||
-      resourceId.contains("kod")
+    val hint = attr(node, "hint").lowercase()
+    val label = nodeVisibleText(node).lowercase()
+    val hasInputLabel = CONTROL_CODE_INPUT_LABEL_TOKENS.any { token -> label.contains(token) }
+    return when {
+      node.contains("""editable="true"""") -> 0
+      className.contains("edittext") -> 1
+      resourceId.contains("code") || resourceId.contains("kod") -> 2
+      CONTROL_CODE_INPUT_LABEL_TOKENS.any { token -> hint.contains(token) } -> 2
+      node.contains("""focusable="true"""") && hasInputLabel && !isPromptOnlyControlCodeText(label) -> 3
+      node.contains("""focusable="true"""") && hasInputLabel -> CONTROL_CODE_PROMPT_LABEL_INPUT_PRIORITY
+      else -> null
+    }
+  }
+
+  private fun isPromptOnlyControlCodeText(label: String): Boolean {
+    val normalized = label.trim().replace(Regex("""\s+"""), " ")
+    return CONTROL_CODE_PROMPT_TOKENS.any { token -> normalized == token }
+  }
+
+  private fun controlCodeInputValue(node: String): String {
+    return attr(node, "text").trim()
+  }
+
+  private fun controlCodeSubmitBounds(nodes: List<String>, input: Bounds): Bounds? {
+    return nodes.firstNotNullOfOrNull { node ->
+      if (packageName(node) != TicketScreenConfig.VIVI_PACKAGE || !node.contains("""clickable="true"""")) {
+        return@firstNotNullOfOrNull null
+      }
+      val label = nodeVisibleText(node).trim().lowercase()
+      val candidate = bounds(node) ?: return@firstNotNullOfOrNull null
+      if (
+        CONTROL_CODE_SUBMIT_LABEL_TOKENS.any { token -> label.contains(token) } &&
+        candidate.top >= input.bottom - CONTROL_CODE_SUBMIT_MIN_VERTICAL_GAP
+      ) {
+        candidate
+      } else {
+        null
+      }
+    }
+  }
+
+  private fun controlCodeAnySubmitBounds(nodes: List<String>): Bounds? {
+    return nodes.firstNotNullOfOrNull { node ->
+      if (packageName(node) != TicketScreenConfig.VIVI_PACKAGE || !node.contains("""clickable="true"""")) {
+        return@firstNotNullOfOrNull null
+      }
+      val label = nodeVisibleText(node).trim().lowercase()
+      val candidate = bounds(node) ?: return@firstNotNullOfOrNull null
+      if (CONTROL_CODE_SUBMIT_LABEL_TOKENS.any { token -> label.contains(token) }) {
+        candidate
+      } else {
+        null
+      }
+    }
   }
 
   private fun controlCodeCloseBounds(xml: String): Bounds? {
@@ -318,7 +541,7 @@ internal object TicketViviPageEnforcer {
   }
 
   private fun controlCodeResultCloseBounds(xml: String): Bounds? {
-    val value = controlCodeResultValueBounds(xml) ?: return null
+    val value = controlCodeResultAnchorBounds(xml) ?: return null
     val nodes = nodeRegex.findAll(xml).map { it.value }.toList()
     val rowClose = nodes.firstNotNullOfOrNull { node ->
       if (packageName(node) != TicketScreenConfig.VIVI_PACKAGE || !node.contains("""clickable="true"""")) {
@@ -661,19 +884,30 @@ internal object TicketViviPageEnforcer {
     }
   }
 
+  private data class ControlCodeInputCandidate(
+    val priority: Int,
+    val top: Int,
+    val node: String
+  )
+
   private val nodeRegex = Regex("""<node\b[^>]*>""")
   private val boundsRegex = Regex("""bounds="\[(\d+),(\d+)]\[(\d+),(\d+)]"""")
-  private val CONTROL_CODE_RESULT_VALUE_REGEX = Regex("""^\d{3,8}$""")
+  private val CONTROL_CODE_RESULT_VALUE_REGEX = Regex("""^\d{3,9}$""")
   private val TICKET_CARD_TOP_RANGE = 420..1900
   private const val BOTTOM_NAVIGATION_TOP = 2100
   private const val CLOSE_TAP_PADDING = 24
   private const val CONTROL_CODE_BUTTON_TAP_PADDING = 8
-  private const val CONTROL_CODE_RESULT_CLOSE_ROW_OVERLAP = 36
+  private const val CONTROL_CODE_INPUT_MAX_BELOW_PROMPT = 360
+  private const val CONTROL_CODE_PROMPT_LABEL_INPUT_PRIORITY = 4
+  private const val CONTROL_CODE_PROMPT_LABEL_INPUT_MIN_GAP = 12
+  private const val CONTROL_CODE_SUBMIT_MIN_VERTICAL_GAP = 12
+  private const val CONTROL_CODE_RESULT_CLOSE_ROW_OVERLAP = 120
   private const val CONTROL_CODE_RESULT_CLOSE_MAX_Y_DISTANCE = 120
   private const val CONTROL_CODE_RESULT_CLOSE_MIN_SIZE = 72
   private const val CONTROL_CODE_RESULT_CLOSE_MAX_SIZE = 140
   private const val CONTROL_CODE_RESULT_CLOSE_MIN_GAP = 12
   private const val CONTROL_CODE_RESULT_CLOSE_FALLBACK_X_PERCENT = 88
+  private const val CONTROL_CODE_RESULT_GRAPHIC_MIN_SIZE = 180
   private const val DANGEROUS_TAP_PADDING = 8
   private const val TOP_RIGHT_CLOSE_MIN_X_FRACTION = 0.72f
   private const val TOP_RIGHT_CLOSE_MAX_Y_FRACTION = 0.35f
@@ -693,6 +927,24 @@ internal object TicketViviPageEnforcer {
     "atcelt",
     "×",
     "✕"
+  )
+  private val CONTROL_CODE_SUBMIT_LABEL_TOKENS = listOf(
+    "ok",
+    "labi",
+    "apstiprināt",
+    "apstiprinat"
+  )
+  private val CONTROL_CODE_PROMPT_TOKENS = listOf(
+    "ievadi kontroles kodu",
+    "kontroles kods"
+  )
+  private val CONTROL_CODE_INPUT_LABEL_TOKENS = listOf(
+    "kontroles kods",
+    "kontroles kodu",
+    "control code",
+    "code",
+    "kods",
+    "kodu"
   )
   private val FORBIDDEN_VIVI_LABEL_TOKENS = listOf(
     "settings",

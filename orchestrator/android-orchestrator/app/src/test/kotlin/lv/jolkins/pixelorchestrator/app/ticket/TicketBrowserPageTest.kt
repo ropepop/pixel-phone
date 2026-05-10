@@ -74,6 +74,27 @@ class TicketBrowserPageTest {
   }
 
   @Test
+  fun foregroundBrowserCanRecoverAfterViewerInactivityTimeout() {
+    val page = browserPage()
+
+    assertTrue(page.contains("function viewerIsForeground()"))
+    assertTrue(page.contains("document.hasFocus()"))
+    assertTrue(page.contains("function healthAutoStartBlocked(health)"))
+    assertTrue(page.contains("health.autoStartBlockedReason === 'viewer_inactivity_timeout' && viewerIsForeground()"))
+    assertTrue(page.contains("if (!viewerIsForeground() || selfHealInFlight) return;"))
+    assertTrue(page.contains("window.addEventListener('focus', () => ensureStreaming('focus'))"))
+  }
+
+  @Test
+  fun hiddenBrowserDoesNotAutoRecoverAfterViewerInactivityTimeout() {
+    val page = browserPage()
+
+    assertTrue(page.contains("if (!viewerIsForeground() || selfHealInFlight) return;"))
+    assertTrue(page.contains("if (!desiredActive || autoStartSuspended || !viewerIsForeground()) return;"))
+    assertTrue(page.contains("healthAutoStartBlocked(health)"))
+  }
+
+  @Test
   fun browserCodecCrashesRecoverVideoPipeline() {
     val page = browserPage()
 
@@ -186,36 +207,38 @@ class TicketBrowserPageTest {
   }
 
   @Test
-  fun browserStillOnlyForwardsTapsToThePixel() {
+  fun browserNoLongerForwardsTapsToThePixel() {
     val page = browserPage()
 
-    assertTrue(page.contains("send({type: 'tap'"))
+    assertTrue(page.contains("setStatus('Use the request form below the ticket.')"))
+    assertFalse(page.contains("send({type: 'tap'"))
     assertFalse(page.contains("send({type: 'swipe'"))
     assertFalse(page.contains("send({type: 'long_press'"))
   }
 
   @Test
-  fun browserForwardsOnlySupportedKeyboardInput() {
+  fun browserNoLongerForwardsKeyboardInput() {
     val page = browserPage()
 
-    assertTrue(page.contains("function remoteKeyPayload(event)"))
-    assertTrue(page.contains("['Backspace', 'Delete', 'Enter', 'Escape'].includes(key)"))
-    assertTrue(page.contains("send({type: 'key', key: payload.key})"))
-    assertTrue(page.contains("window.addEventListener('keydown', forwardRemoteKey"))
+    assertFalse(page.contains("function remoteKeyPayload(event)"))
+    assertFalse(page.contains("send({type: 'key', key: payload.key})"))
+    assertFalse(page.contains("window.addEventListener('keydown', forwardRemoteKey"))
   }
 
   @Test
-  fun browserShowsFirstControlCodeNoticeThenCookieGatedSmallToast() {
+  fun browserRequestsControlCodeThroughAutomatedCommand() {
     val page = browserPage()
 
-    assertTrue(page.contains("const CONTROL_CODE_NOTICE_COOKIE = 'ticket_control_code_notice_seen'"))
-    assertTrue(page.contains("const CONTROL_CODE_NOTICE_TEXT = 'Kontroles koda režīms'"))
-    assertTrue(page.contains("function handleControlCodeMode(health)"))
-    assertTrue(page.contains("mode.entryId === lastControlCodeEntryId"))
-    assertTrue(page.contains("rememberControlCodeNotice();"))
-    assertTrue(page.contains("showModeNotice('large')"))
-    assertTrue(page.contains("showModeNotice('small')"))
-    assertTrue(page.contains("}, large ? 4200 : 1500);"))
+    assertTrue(page.contains("id=\"codeForm\""))
+    assertTrue(page.contains("inputmode=\"numeric\""))
+    assertTrue(page.contains("pattern=\"[0-9]*\""))
+    assertTrue(page.contains("function cleanDigits(value)"))
+    assertTrue(page.contains("codeRequestTimes.length >= 2"))
+    assertTrue(page.contains("send({type: 'generate_control_code', requestId: currentCodeRequestId, digits})"))
+    assertTrue(page.contains("if (msg.type === 'control_code_result') handleControlCodeResult(msg);"))
+    assertFalse(page.contains("setTimeout(hideCodeResult, 60_000)"))
+    assertFalse(page.contains("CONTROL_CODE_NOTICE_COOKIE"))
+    assertFalse(page.contains("Kontroles koda režīms"))
   }
 
   @Test

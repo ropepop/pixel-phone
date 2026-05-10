@@ -76,7 +76,10 @@ data class PhoneAutomationVisibleNode(
   val bounds: String = "",
   val clickable: Boolean = false,
   val enabled: Boolean = false,
-  val focused: Boolean = false
+  val focused: Boolean = false,
+  val editable: Boolean = false,
+  val focusable: Boolean = false,
+  val hint: String = ""
 )
 
 internal interface PhoneAutomationAccessibilityHost {
@@ -99,10 +102,30 @@ internal interface PhoneAutomationAccessibilityHost {
     expectedPackageName: String
   ): List<PhoneAutomationVisibleNode>
 
+  suspend fun setTextInFocusedInput(
+    expectedPackageName: String,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean
+
+  suspend fun openFirstEditableInput(
+    expectedPackageName: String,
+    timeoutMillis: Long
+  ): Boolean
+
+  suspend fun setTextInFirstEditableInput(
+    expectedPackageName: String,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean
+
   suspend fun performBack(): Boolean
 }
 
 object PhoneAutomationServiceBridge {
+  private const val ACCESSIBILITY_SNAPSHOT_TIMEOUT_MILLIS = 750L
+  private const val ACCESSIBILITY_CALL_GRACE_TIMEOUT_MILLIS = 250L
+
   private val accessibilityService = MutableStateFlow<PhoneAutomationAccessibilityHost?>(null)
   private val notificationListenerConnected = MutableStateFlow(false)
   private val notificationSnapshotReady = MutableStateFlow(false)
@@ -373,12 +396,50 @@ object PhoneAutomationServiceBridge {
 
   suspend fun snapshotVisibleNodes(expectedPackageName: String): List<PhoneAutomationVisibleNode> {
     val service = accessibilityService.value ?: return emptyList()
-    return service.snapshotVisibleNodes(expectedPackageName)
+    return withTimeoutOrNull(ACCESSIBILITY_SNAPSHOT_TIMEOUT_MILLIS) {
+      service.snapshotVisibleNodes(expectedPackageName)
+    }.orEmpty()
+  }
+
+  suspend fun setTextInFocusedInput(
+    expectedPackageName: String,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
+      service.setTextInFocusedInput(expectedPackageName, text, timeoutMillis)
+    } ?: false
+  }
+
+  suspend fun openFirstEditableInput(
+    expectedPackageName: String,
+    timeoutMillis: Long
+  ): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
+      service.openFirstEditableInput(expectedPackageName, timeoutMillis)
+    } ?: false
+  }
+
+  suspend fun setTextInFirstEditableInput(
+    expectedPackageName: String,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
+      service.setTextInFirstEditableInput(expectedPackageName, text, timeoutMillis)
+    } ?: false
   }
 
   suspend fun performBack(): Boolean {
     val service = accessibilityService.value ?: return false
     return service.performBack()
+  }
+
+  private fun Long.accessibilityCallTimeoutMillis(): Long {
+    return coerceAtLeast(1L) + ACCESSIBILITY_CALL_GRACE_TIMEOUT_MILLIS
   }
 
   suspend fun awaitNotificationPostedAfter(

@@ -627,6 +627,23 @@ private class ScriptedAccessibilityHost : PhoneAutomationAccessibilityHost {
     return visibleNodes
   }
 
+  override suspend fun setTextInFocusedInput(
+    expectedPackageName: String,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean = false
+
+  override suspend fun openFirstEditableInput(
+    expectedPackageName: String,
+    timeoutMillis: Long
+  ): Boolean = false
+
+  override suspend fun setTextInFirstEditableInput(
+    expectedPackageName: String,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean = false
+
   override suspend fun performBack(): Boolean = false
 }
 

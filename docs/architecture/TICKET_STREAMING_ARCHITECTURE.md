@@ -41,7 +41,7 @@ The page also performs a no-store bootstrap/version check against `/api/v1/boots
 
 The browser uses two sockets:
 
-- Control socket: `/api/v1/session`, for start, stop, keepalive, taps, keys, health, and recovery commands.
+- Control socket: `/api/v1/session`, for start, stop, keepalive, health, recovery commands, and private control-code request updates. Browser pages do not send arbitrary phone taps or keys.
 - Video socket: `/api/v1/stream`, for stream config and binary video frames.
 
 Each browser page includes internal viewer/page identity query parameters. The service uses them for diagnostics, but it also enforces a single current control socket and a single current video socket for the ticket stream. New sockets replace older sockets of the same kind, including legacy/no-identity sockets, so reloads and reconnects do not accumulate duplicate clients.
@@ -52,6 +52,7 @@ Reconnect behavior:
 
 - Page reload and ordinary tab close are reconnect-friendly and should not stop the phone session.
 - Explicit Stop is deterministic: stop capture, close clients, disable protections, and prevent old browser sockets from auto-starting the stream again.
+- A visible, focused browser page is allowed to recover a phone/backend stream that was killed by inactivity or relay loss. Hidden or unfocused pages must not resurrect the stream on their own.
 - Slow video clients are isolated from frame production. Stale delta frames may be dropped for that client so the newest frame path stays fresh.
 
 Legacy clients without viewer/page identity should still connect, but they do not get same-viewer replacement.
@@ -66,7 +67,7 @@ The accepted production public capture path is now root `screenrecord` H.264 car
 - Default dimensions: about 800 pixels wide, aspect-matched to the current phone display.
 - Default cadence: Android hardware screenrecord cadence, with the live acceptance target at 10 FPS or better.
 - Runtime: Pixel owns root capture start/stop and sends one upstream stream; Arbuzas fans it out to authenticated viewers without decoding or re-encoding.
-- Browser draw: the public page receives a normal WebRTC video track, draws it onto the existing stream canvas for tap mapping, and does not use WebCodecs/PNG/AV1 fallback paths.
+- Browser draw: the public page receives a normal WebRTC video track, draws it onto the existing stream canvas, and does not use WebCodecs/PNG/AV1 fallback paths.
 
 The normal public path must not depend on Android MediaProjection, Android screen-recording permission UI, AV1, H.265, PNG frame streaming, or FFmpeg H.264 fallback. If WebRTC/H.264 cannot be established, the public page shows a hard unavailable state rather than silently changing capture modes.
 
@@ -85,7 +86,7 @@ Fresh-frame behavior:
 - Root `screenrecord` cannot request an IDR frame directly, so keyframe requests restart root capture when no fresh cached IDR is available; this is debounced with a wait window and cooldown.
 - Recent keyframes can be cached and resent to reconnecting clients only when they are from the current stream epoch and younger than the freshness window, currently about 1.5 seconds. Old cached keyframes must never be drawn.
 - If no fresh same-epoch keyframe exists, the relay/browser requests a new keyframe instead of replaying old video.
-- While a private-control claim is active, `ticket_remote` sends an extra fresh cached keyframe once per second only to the active controller's video socket. Other authenticated viewers continue receiving the normal shared video stream and are not hidden or paused by private control.
+- During a control-code request, `ticket_remote` keeps the normal shared stream live. Other authenticated viewers may briefly see the real phone open ViVi's control-code UI, but no viewer receives private phone control or a separate control video stream.
 - Restart reasons and suppressed restart requests are exposed in health.
 - Stop/cleanup stops the active root capture path, clears the current stream epoch/cache, and leaves the ticket service ready for the next authenticated viewer. It does not pre-arm Android capture permission. Cleanup also kills stale app-owned FFmpeg/native-helper processes from explicit test paths and any explicit fallback `screenrecord` processes.
 
@@ -97,41 +98,38 @@ Browser decode behavior:
 - WebRTC failures reconnect the affected browser video path. They should not restart the shared phone stream unless Pixel health shows the stream itself is unhealthy.
 - Control and video socket open timeouts are intentionally short so the page leaves long connecting states quickly. A two-second loading budget triggers video recovery, then escalates if the stream still does not produce a live frame.
 
-## 4. Browser-To-Pixel Input And Safety Gates
+## 4. Control-Code Requests And Safety Gates
 
-The browser forwards only narrow input commands:
+The public browser no longer claims phone control. It can only submit a numeric control-code request:
 
-- Taps mapped from canvas coordinates to source display coordinates.
-- Supported control-code keys only when the control-code popup is confirmed.
-- Keepalive/activity signals.
+- The public page opens a local dialog, accepts only 2-9 digits, and posts the request to `ticket_remote`.
+- `ticket_remote` authorizes the requester through ticket membership, applies the two-requests-per-60-seconds limit, queues requests, and runs only one phone job at a time.
+- The phone receives `generate_control_code` with a request id and digits. The browser never sends tap coordinates, keyboard events, ADB commands, or direct phone-control messages.
+- The Pixel opens ViVi's control-code popup from ticket detail, finds the input and yellow OK button from a fresh root hierarchy dump, taps the input, types the digits with root input, physically taps OK, then captures the post-OK generated-code screen before cleanup. Accessibility text/click actions are fallback only.
+- The phone returns `control_code_result` with the matching request id, success/failure reason, timings, phases, and captured image/value when available.
+- `ticket_remote` sends the captured image only to the requesting signed-in user/session as soon as the phone delivers it. The browser result expires after 60 seconds or closes earlier from the configured close hotspots/cross; phone cleanup continues separately and keeps the queue blocked until safe.
 
 Safety gates:
 
-- The service blocks protected screen edges and unsafe coordinate regions.
-- Normal safe taps use the fast cached ViVi sandbox path.
-- Every remote tap performs a fresh ViVi foreground check with startup grace disabled before the tap command is sent. If ViVi foreground cannot be proven, the tap is blocked and recorded. This applies during control-code mode too.
-- Browser tap and key messages may include an `inputId`. The Pixel returns an `input_result` for accepted and blocked input with the reason and phase timings, and the public relay forwards that result to the controller. Browser UI must treat the phone-side result as the outcome; "sent to phone" is not success.
-- The controller browser keeps an ordered FIFO input queue for control-mode taps and keys. It sends only one input at a time, waits for the phone-side `input_result`, then sends the next item after a short spacing delay. This favors reliable rapid code entry over fire-and-forget burst speed.
-- If the first tap is on the Kontroles kods button while no control claim is active, the browser claims control immediately and queues that exact tap. The tap is dispatched once the same browser owns control and the stream is configured.
-- Queued inputs expire after a short freshness window. A missing acknowledgement may be retried once with the same `inputId`; explicit phone-side safety blocks are not retried.
-- The Pixel caches recent `input_result` messages by `inputId`. If the same input arrives again after a reconnect/retry, it resends the cached result and does not execute a second physical tap/key.
-- Riskier paths may inspect the foreground window, ViVi hierarchy, accessibility snapshots, or control-code popup state.
-- Keyboard input stays restricted to the control-code popup.
-- Post-tap foreground checks run after remote taps to detect unsafe app escape.
-- The control-code button tap is treated as an expected in-app transition. The service keeps all input safety gates, and both confirmed hierarchy hits and the known control-code button coordinate zone get popup-transition grace so normal entry does not interrupt the stream.
-- During control-code transition, an active control-code popup, or a pending queued control-code tap, foreground/page guards may observe and record state but must not tap, navigate, force-stop ViVi, or run fresh reset. Stale post-tap checks must not re-enter control mode after release/expiry has started.
+- The Pixel refuses unsafe foreground/page states before automation and reports a private failure instead of accepting arbitrary user input.
+- Duplicate request ids replay the cached result and do not execute the phone flow twice.
+- Control-code automation is serialized by a Pixel-side mutex as well as the public queue, so overlapping requests cannot interleave physical phone actions.
+- During the popup/result transition, foreground/page guards may observe and record state but must not force-stop ViVi, navigate back to Orchestrator, or run fresh reset.
+- Cleanup failure records attention-needed and keeps public browser input blocked rather than exposing direct control.
 - Active ticket sessions hold the Pixel screen awake and request a wake if the display becomes non-interactive, unless touch brightness is enabled. When touch brightness is enabled, touch brightness owns the screen hold and panel writes. Input remains blocked while the display is not interactive; the wake path is used to restore the live stream instead of launching recovery loops against a black/dozing screen. When all viewers detach or the stream stops, the ticket service releases this bright wake lock immediately; the brightness guard may keep the panel dim only when touch brightness is disabled.
 
-Input health reports the last gate decision, reason, root command reason, command duration, last `input_result`, and tap/key phase timing. Do not remove or weaken protected-edge blocking, foreground checks, notification lockdown, secure-window handling, or control-code-only keyboard restrictions without updating this document and the relevant tests.
+Control-code request health reports the last request id, digit count, status, reason, phase timings, total duration, duplicate replay count, and completion age. Do not restore public tap/key forwarding or weaken protected-edge blocking, foreground checks, notification lockdown, secure-window handling, or control-code cleanup verification without updating this document and the relevant tests.
 
 ## 5. Stop, Cleanup, Reconnect, And Tunnel Behavior
 
 Stop paths:
 
 - Explicit browser Stop calls the session stop endpoint with `explicit=true`.
-- Service stop clears stream state, stops active capture/encoding, closes clients, disables notification lockdown, disables secure-window bypass, and resets control-code mode. With the durable ticket service still enabled, browser Stop keeps the local service and tunnel ready but does not start ViVi or capture again until a viewer asks.
+- Service stop clears stream state, stops active capture/encoding, closes clients, disables notification lockdown, disables secure-window bypass, and clears active control-code request state. With the durable ticket service still enabled, browser Stop keeps the local service and tunnel ready but does not start ViVi or capture again until a viewer asks.
 - During streaming and after a session ends while the durable ticket service remains enabled, the ticket brightness guard enforces safe dim panel brightness only when touch brightness is disabled. When touch brightness is enabled, the ticket guard parks, reports that touch brightness owns panel brightness, and does not write or restore panel brightness. Saved ticket brightness is restored only when ticket service is turned off, touch brightness is not owning the panel, or the phone is intentionally handed back to physical use.
-- After explicit Stop, health should report inactive stream, zero clients, inactive input gate, inactive control-code mode, and no active app-owned capture process.
+- After explicit Stop, health should report inactive stream, zero clients, no active control-code request, and no active app-owned capture process.
+- A stopped or idle stream must actively close any leftover control/video sockets before accepting a fresh start request, and `/api/v1/session/start` must return within a bounded timeout instead of hanging behind stale cleanup.
+- Stopping FFmpeg capture clears old frame counters, frame ages, dimensions, bitrate, and helper state that would otherwise make inactive health look like it is still sending frames.
 - Viewer inactivity timeout is also a non-destructive stop. It may stop capture, close clients, and block browser auto-start until a fresh viewer request arrives, but it must not schedule fresh ticket recovery, force-stop ViVi, or navigate back to Orchestrator.
 
 Reconnect paths:
@@ -140,12 +138,11 @@ Reconnect paths:
 - If all Pixel-side relay clients disconnect or the public relay goes idle, the service parks capture: it records detach state, stops FFmpeg and the root feeder, disables protections, keeps ViVi available, and enforces dim brightness only when touch brightness is disabled. It must not run ViVi recovery loops while no viewer is present.
 - Reload should replace same-viewer sockets and reach a visible frame from the active stream quickly.
 
-Control-mode exit paths:
+Control-code cleanup paths:
 
-- Public `ticket_remote` sends `control_exit` for normal `control_released` and `control_expired` events. It must not send `reset_ticket` for those normal exits.
-- The Pixel handles normal control release, control expiry, controller departure, and control-code popup/result close as soft exits. These paths must not use `FRESH_RESET`, `am force-stop`, or navigation back to Orchestrator.
-- The soft exit distinguishes ticket detail, the keyboard/input popup, and the generated control-code Aztec/result screen. It uses fresh state reads and prefers the accessibility-visible hierarchy, with root hierarchy as fallback, so it does not reuse a stale pre-tap ticket snapshot. It gets one bounded hierarchy-confirmed close attempt for popup/result states, may use the non-destructive ViVi detail autopilot as a final soft cleanup fallback, then verifies ticket detail. When recent control-code state exists, a hierarchy-only `TICKET_DETAIL` result is not enough: control exit also probes the visible SurfaceControl frame for the inline generated-code bar before accepting the screen as clean. A successful close returns health to `live` and requests a fresh FFmpeg keyframe so the browser shows the normal ticket detail/self-updating Aztec state; a failed close records `needs_attention` while keeping the stream available and input safety-gated.
-- If the active controller's control socket disconnects and does not reconnect within the relay grace window, `ticket_remote` releases control and sends `control_exit`. Fast same-session reloads must survive the grace window.
+- Public `ticket_remote` does not send `control_exit`, `reset_ticket`, or user tap/key commands for the request flow.
+- The Pixel treats control-code popup/result close as a soft cleanup path. It must not use `FRESH_RESET`, `am force-stop`, or navigation back to Orchestrator for normal request completion.
+- The cleanup path distinguishes ticket detail, the keyboard/input popup, and the generated control-code Aztec/result screen. It uses fresh state reads and prefers the accessibility-visible hierarchy, with root hierarchy as fallback, so it does not reuse stale pre-request state. It gets one bounded hierarchy-confirmed close attempt for popup/result states, may use the non-destructive ViVi detail autopilot as a final soft cleanup fallback, then verifies ticket detail. When recent control-code state exists, a hierarchy-only `TICKET_DETAIL` result is not enough: cleanup also probes the visible SurfaceControl frame for the inline generated-code bar before accepting the screen as clean. A successful cleanup returns health to `live` and requests a fresh keyframe so the browser shows the normal ticket detail/self-updating Aztec state; a failed cleanup records `needs_attention` while keeping the stream available and public input blocked.
 
 Tunnel behavior:
 
@@ -161,15 +158,15 @@ Tunnel behavior:
 
 The ticket component still follows the stack-wide operation model in [Pixel Stack Architecture](./PIXEL_STACK_ARCHITECTURE.md): `redeploy_component ticket_screen` refreshes the Pixel-side ticket surface, while public bridge/page deploys are separate.
 
-For the public `ticket.jolkins.id.lv` path, Cloudflare Access terminates in front of `ticket_remote`. The browser talks to `ticket_remote`; `ticket_remote` relays control/video privately to the Pixel through `ticket_phone_bridge`. Public socket identity should be visible in `ticket_remote` health, and the relay identity/page version should also be visible in Pixel `streamPipeline` health.
+For the public `ticket.jolkins.id.lv` path, Cloudflare Access terminates in front of `ticket_remote`. The browser talks to `ticket_remote`; `ticket_remote` relays video and queued control-code jobs privately to the Pixel through `ticket_phone_bridge`. Public socket identity should be visible in `ticket_remote` health, and the relay identity/page version should also be visible in Pixel `streamPipeline` health.
 
-All authenticated linked viewers may receive the live video stream at the same time. Private-control mode gates only input: taps and keys still require the active control session, and control-code keyboard input remains restricted to a confirmed control-code popup. A viewer reload or decoder reset must not restart or starve the shared phone stream for other authenticated viewers.
+All authenticated linked viewers may receive the live video stream at the same time. There is no public private-control mode: viewers cannot claim the phone, tap the stream, or type into ViVi directly. A control-code requester receives only their private generated result, while other viewers continue seeing the shared raw ticket stream and may briefly see the real phone automate the request. A viewer reload or decoder reset must not restart or starve the shared phone stream for other authenticated viewers.
 
 ViVi recovery launches `com.pv.vivi/.MainActivity` through the normal app intent and a root `am start` fallback. The fallback is required for post-reboot recovery because Android may leave Messages, Orchestrator, or another app in foreground while the ticket service is already ready.
 
 ## 6. Health Counters, Events, And Measurement Caveats
 
-The ticket session state machine uses bounded user-visible states: `starting`, `live`, `control_transition`, `control_active`, `control_exit`, `soft_recovery`, `needs_attention`, and `stopped`. Active transition states have a one-second budget. If the stream is active, recovery is not running, and ViVi is already on ticket detail, health reports `live` rather than staying stuck in `recovering`.
+The ticket session state machine uses bounded user-visible states: `starting`, `live`, `control_transition`, `control_exit`, `soft_recovery`, `needs_attention`, and `stopped`. Public pages should present control-code request progress separately from the stream state as `queued`, `running`, `succeeded`, `failed`, `expired`, or `closed`. Active transition states have a one-second budget. If the stream is active, recovery is not running, and ViVi is already on ticket detail, health reports `live` rather than staying stuck in `recovering`.
 
 Important health surfaces:
 
@@ -177,19 +174,19 @@ Important health surfaces:
 - `streamPipeline`: clients, configured/running state, frame envelope, stream epoch, frame sequence, quality profile, configured size/bitrate, recent frame/keyframe byte sizes, estimated send bitrate, encoded/sent/keyframe counts, dropped frames, slow writes, closed slow clients, replaced clients, and secure-window bypass state.
 - `rootCapture`: support, active state, size, bitrate, frame counts, restart counts, restart reasons, last restart age, and suppressed restart requests.
 - `brightnessGuard`: active state, safe target percent, current display/panel values, last enforcement age, failure count, last reason, and message. A parked message means touch brightness currently owns panel brightness.
-- `inputGate`: active state, last decision, reason, last command reason, command duration, last input id, last input result reason, last phone-side input duration, duplicate input-result count, and last duplicate `inputId`.
+- `controlCodeRequest`: active state, last request id, digit count, status, reason, total duration, phase timings, duplicate result replay count, and completion age.
 - `ticketState`: current bounded state, state age, last reason, over-one-second transition detail, and ViVi hard-reset count/reason.
 - `loading`: most recent browser loading completion and over-budget phase/duration.
 - `page`: latest HTML version, cache policy, last root/bootstrap/cache-cleanup request age, and last client page version.
 - `recentEvents`: server-side lifecycle, recovery, client, and input events.
 - `recentClientTelemetry`: browser-side startup, WebRTC/media, visible-frame, watchdog, and socket events.
-- Public relay `/api/v1/health.controlKeyframes`: controller-only one-second keyframe pulse counters, sent cached keyframes, phone keyframe requests, and last pulse age.
+- Public relay `/api/v1/health.controlKeyframes`: historical keyframe-pulse counters plus sent cached keyframes, phone keyframe requests, and last pulse age. New control-code requests must not reintroduce controller-only video ownership.
 - Public relay `/api/v1/health.spacetime`: ticket-only SpacetimeDB call counts, errors, slow calls, snapshot/member cache hits and misses, presence throttling, compact phone-health writes, skipped stable phone-health writes, and the latest phone-health compaction result.
 - Public relay `/api/v1/health.telemetry`: client-log counts, server-side suppression counts, aggregate log counts, state-broadcast counts, and state-broadcast suppressions. These counters prove whether public UI diagnostics are calm without removing important error/input/loading events.
 
-SpacetimeDB is the source of truth for ticket membership, control ownership, active control expiry, and current compact phone state. `ticket_remote` keeps a short in-process read cache for non-mutating paths such as client telemetry, ordinary socket setup, health, and browser heartbeat responses. Control/admin mutations still use fresh SpacetimeDB state before making decisions. Only the control socket owns viewer presence; video sockets do not write presence rows. Pixel health is stored in SpacetimeDB as a compact material summary and is written only when that summary changes or a keepalive interval passes; the full current phone diagnostics stay in `ticket_remote` process health for operations.
+SpacetimeDB is the source of truth for ticket membership and current compact phone state. The old public control-ownership flow is not part of the browser UX. `ticket_remote` keeps a short in-process read cache for non-mutating paths such as client telemetry, ordinary socket setup, health, and browser heartbeat responses. It owns the short-lived control-code request queue, rate-limit window, requester-only result delivery, and request cleanup timers. Only the control socket owns viewer presence; video sockets do not write presence rows. Pixel health is stored in SpacetimeDB as a compact material summary and is written only when that summary changes or a keepalive interval passes; the full current phone diagnostics stay in `ticket_remote` process health for operations.
 
-Public status UI should be calm. The scroll-menu status line is a derived presentation state, not a raw health log: repeated equivalent states are debounced, lower-priority phone/health messages do not overwrite a current live/control state, and the browser counts down active control locally from the server expiry time instead of requiring per-second server state broadcasts. Noisy browser telemetry such as frame received/drawn and repeated loading phases should be sampled or summarized; page boot, over-budget loading, decode errors, input results, control changes, and hard failures remain immediate.
+Public status UI should be calm. The scroll-menu status line is a derived presentation state, not a raw health log: repeated equivalent states are debounced, lower-priority phone/health messages do not overwrite the current live stream or active code-request state, and the browser counts down the private result locally instead of requiring per-second server state broadcasts. Noisy browser telemetry such as frame received/drawn and repeated loading phases should be sampled or summarized; page boot, over-budget loading, decode errors, code-request changes, and hard failures remain immediate.
 
 When Cloudflare Access asks for authentication during ticket verification, future agents should keep the existing Brave Work profile and preserve cookies, local storage, session storage, and IndexedDB. Request the Access code for `ticket@jolkins.id.lv` only if needed, read only the newest Cloudflare code from the macOS notification or Apple Mail, submit it in Brave, and then verify the live ticket from the real authenticated Brave page.
 
@@ -204,6 +201,8 @@ Known caveats:
 
 Future agents should add short notes here when changing ticket stream flow, capture behavior, browser socket lifecycle, input safety, health counters, tunnel behavior, or cleanup semantics. Link dated measurements to `ops/reports/` and then fold stable behavior into the sections above.
 
+- 2026-05-09: Control-code request architecture removed public phone control. The public page now collects 2-9 digits locally, `ticket_remote` authorizes/rate-limits/queues one request at a time, the Pixel executes `generate_control_code` automation, captures the generated result, cleans ViVi back to ticket detail, and `ticket_remote` privately shows the requester the result for 60 seconds.
+- 2026-05-10: Fast control-code delivery made the Pixel request path root-macro-first: fresh root hierarchy for ViVi targets, direct input tap/type, direct yellow OK tap before any result wait, screenshot-first private delivery, then independent cleanup back to raw ticket detail.
 - 2026-05-02: Public authenticated loading pass v21 reserved browser cache clearing for root HTML, added origin-local service-worker/cache cleanup that preserves auth state, extended active-session no-client recovery grace for public reloads, and made repeated ticket starts reconcile duplicate tunnel processes while preserving the healthy loop.
 - 2026-05-02: Public authenticated loading pass v22 added no-store bootstrap/cache-cleanup routes, page-version socket diagnostics, and health fields that prove whether Brave is running the latest Pixel-served page.
 - 2026-05-02: Authenticated public pass v7 confirmed `ticket.jolkins.id.lv` is served by `ticket_remote`, added public no-store bootstrap/cache-cleanup/version proof, same-session browser socket replacement, relay identity passthrough to Pixel health, cached-keyframe fast joins, non-blocking browser video delivery, and static-frame keyframe retries that avoid visible loading for quiet screens.
@@ -218,6 +217,8 @@ Future agents should add short notes here when changing ticket stream flow, capt
 - 2026-05-03: Clean control exit pass made the generated control-code Aztec/result screen a first-class ViVi state, made normal release/expiry/controller departure/close attempts verify ticket detail after closing popup or result states, added control-exit cleanup health fields, made accepted popup/result close input release public control immediately, and made cleanup use fresh/accessibility-visible hierarchy, a guarded Back-close, and a non-destructive soft fallback before reporting `needs_attention`.
 - 2026-05-04: Root-fed AV1 prototype added a strict root-only AV1 capture mode and public relay/browser AV1 diagnostics, but live local measurement found it too slow for production: first frame about `5.9-6.3s`, then about `0.5-0.7 FPS`, with the bottleneck in root screencap plus CPU RGB-to-YUV conversion.
 - 2026-05-04: FFmpeg quality hard-cutover changed the accepted production path to root-only FFmpeg H.264 (`captureMode=root_ffmpeg_h264`, `transport=ffmpeg-h264-annexb`, `qualityProfile=ffmpeg_h264_clarity`) from the Pixel Stack arm64 chroot, with all-intra 8 FPS full-resolution frames, no MediaProjection/screenrecord/automatic PNG fallback, sharper browser canvas drawing, FFmpeg health fields, and cleanup for FFmpeg plus the root frame feeder.
+- 2026-05-09: Fresh-stream repair tightened stopped-stream cleanup: stale clients are closed before bounded session starts, inactive health no longer reports ancient FFmpeg frames as active, and stopped/idled sessions clear stale capture counters so the next public viewer receives a genuinely fresh stream.
+- 2026-05-09: Foreground recovery pass made visible/focused ticket browsers responsible for restarting a phone/backend stream after inactivity or relay disconnect, while hidden/unfocused pages stay quiet. Public `ticket_remote` recovery now accepts control-socket recovery requests and can restart the relay even when the old phone sockets are already gone.
 - 2026-05-04: Native capture speed pass replaced the slow root `screencap` feeder with a persistent root `app_process` screen-capture helper (`captureSource=root_surface_capture`, `captureMethod=app_process_screen_capture`) feeding FFmpeg. Live v65 measurement promoted a 900px-wide clarity profile after full resolution proved too heavy, fixed the helper argument handoff, fixed expected pipe-close cleanup, kept the public H.264/WebCodecs contract unchanged, and verified the service/tunnel ready state with capture idle after cleanup.
 - 2026-05-04: Public deployment recovery v70 restored the production public stream to root-only lossless PNG after authenticated Brave rejected the promoted FFmpeg H.264 stream with WebCodecs decode errors. The relay/browser kept the decoder-recovery fixes, the phone serves `captureMode=root_screencap_png`, `codec=png`, `transport=root-screencap-png`, and the authenticated Brave page was verified from the user side with live ticket frames. Active guard success now clears stale `needs_attention` state once ViVi is confirmed on ticket detail.
 - 2026-05-06: WebRTC edge cutover changed the public production path to root `screenrecord` H.264 from the phone and WebRTC RTP fanout inside the existing `ticket_remote` service. The browser now receives a WebRTC video track, while taps/control still use the existing authenticated control socket. No extra Arbuzas ticket service, TURN service, public ADB, or Docker control was added.

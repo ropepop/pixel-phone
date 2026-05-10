@@ -11,6 +11,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.file.Files
+import java.nio.file.Path
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PhoneAutomationBridgeTest {
@@ -314,6 +316,48 @@ class PhoneAutomationBridgeTest {
     assertTrue(PhoneAutomationServiceBridge.performBack())
     assertEquals(1, host.backCalls)
   }
+
+  @Test
+  fun setTextInFirstEditableInputDelegatesToAccessibilityHost() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    val host = FakeAccessibilityHost().apply {
+      firstEditableTextResult = true
+    }
+    PhoneAutomationServiceBridge.bindAccessibilityService(host)
+
+    assertTrue(PhoneAutomationServiceBridge.setTextInFirstEditableInput("com.pv.vivi", "12345", 750L))
+    assertEquals(listOf("com.pv.vivi" to "12345"), host.firstEditableTextRequests)
+  }
+
+  @Test
+  fun openFirstEditableInputDelegatesToAccessibilityHost() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    val host = FakeAccessibilityHost().apply {
+      firstEditableOpenResult = true
+    }
+    PhoneAutomationServiceBridge.bindAccessibilityService(host)
+
+    assertTrue(PhoneAutomationServiceBridge.openFirstEditableInput("com.pv.vivi", 750L))
+    assertEquals(listOf("com.pv.vivi"), host.firstEditableOpenRequests)
+  }
+
+  @Test
+  fun accessibilityServiceSearchesExpectedPackageWindowWhenKeyboardOwnsActiveRoot() {
+    val source = readFirstExisting(
+      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
+      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
+    )
+
+    assertTrue(source.contains("private fun rootForPackage(expectedPackageName: String): AccessibilityNodeInfo?"))
+    assertTrue(source.contains("rootInActiveWindow?.takeIf"))
+    assertTrue(source.contains("windows.asSequence()"))
+    assertTrue(source.contains("rootForPackage(expectedPackageName) ?: return@withContext"))
+  }
+
+  private fun readFirstExisting(vararg paths: Path): String {
+    val path = paths.firstOrNull { Files.exists(it) } ?: error("missing source file: ${paths.joinToString()}")
+    return String(Files.readAllBytes(path), Charsets.UTF_8)
+  }
 }
 
 private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
@@ -322,6 +366,10 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
   val selectorPresencePackages = mutableListOf<String>()
   var selectorPresence = false
   var visibleNodes: List<PhoneAutomationVisibleNode> = emptyList()
+  val firstEditableOpenRequests = mutableListOf<String>()
+  var firstEditableOpenResult = false
+  val firstEditableTextRequests = mutableListOf<Pair<String, String>>()
+  var firstEditableTextResult = false
   var backResult = false
   var backCalls = 0
 
@@ -351,6 +399,29 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
 
   override suspend fun snapshotVisibleNodes(expectedPackageName: String): List<PhoneAutomationVisibleNode> {
     return visibleNodes
+  }
+
+  override suspend fun setTextInFocusedInput(
+    expectedPackageName: String,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean = false
+
+  override suspend fun setTextInFirstEditableInput(
+    expectedPackageName: String,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean {
+    firstEditableTextRequests += expectedPackageName to text
+    return firstEditableTextResult
+  }
+
+  override suspend fun openFirstEditableInput(
+    expectedPackageName: String,
+    timeoutMillis: Long
+  ): Boolean {
+    firstEditableOpenRequests += expectedPackageName
+    return firstEditableOpenResult
   }
 
   override suspend fun performBack(): Boolean {

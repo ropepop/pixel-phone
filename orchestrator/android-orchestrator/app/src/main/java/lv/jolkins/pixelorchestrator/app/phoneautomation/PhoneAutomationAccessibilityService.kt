@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.os.Bundle
 import android.os.Build
 import android.os.Looper
 import android.graphics.Rect
@@ -87,11 +88,7 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     val deadline = System.currentTimeMillis() + timeoutMillis
     while (System.currentTimeMillis() < deadline) {
       val clicked = withContext(Dispatchers.Main.immediate) {
-        val root = rootInActiveWindow ?: return@withContext false
-        val rootPackage = root.packageName?.toString().orEmpty()
-        if (rootPackage != expectedPackageName) {
-          return@withContext false
-        }
+        val root = rootForPackage(expectedPackageName) ?: return@withContext false
         val node = selectors.asSequence().mapNotNull { selector ->
           findMatchingNode(root, selector)
         }.firstOrNull() ?: return@withContext false
@@ -110,11 +107,7 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     selectors: List<PhoneAutomationSelector>
   ): Boolean {
     return withContext(Dispatchers.Main.immediate) {
-      val root = rootInActiveWindow ?: return@withContext false
-      val rootPackage = root.packageName?.toString().orEmpty()
-      if (rootPackage != expectedPackageName) {
-        return@withContext false
-      }
+      val root = rootForPackage(expectedPackageName) ?: return@withContext false
       selectors.any { selector -> findMatchingNode(root, selector) != null }
     }
   }
@@ -123,11 +116,7 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     expectedPackageName: String
   ): List<PhoneAutomationVisibleNode> {
     return withContext(Dispatchers.Main.immediate) {
-      val root = rootInActiveWindow ?: return@withContext emptyList()
-      val rootPackage = root.packageName?.toString().orEmpty()
-      if (rootPackage != expectedPackageName) {
-        return@withContext emptyList()
-      }
+      val root = rootForPackage(expectedPackageName) ?: return@withContext emptyList()
       flattenNodes(root)
         .filter { node -> node.isVisibleToUser }
         .map { node ->
@@ -141,17 +130,122 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
             bounds = "[${bounds.left},${bounds.top}][${bounds.right},${bounds.bottom}]",
             clickable = node.isClickable,
             enabled = node.isEnabled,
-            focused = node.isFocused
+            focused = node.isFocused,
+            editable = node.isEditable,
+            focusable = node.isFocusable,
+            hint = node.hintText?.toString().orEmpty()
           )
         }
         .toList()
     }
   }
 
+  override suspend fun setTextInFocusedInput(
+    expectedPackageName: String,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean {
+    val deadline = System.currentTimeMillis() + timeoutMillis.coerceAtLeast(1L)
+    while (System.currentTimeMillis() < deadline) {
+      val updated = withContext(Dispatchers.Main.immediate) {
+        val root = rootForPackage(expectedPackageName) ?: return@withContext false
+        val target = editableFocusedNode(root) ?: return@withContext false
+        val args = Bundle().apply {
+          putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        PhoneAutomationServiceBridge.markNonTouchInput("accessibility_set_text")
+        target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+      }
+      if (updated) {
+        return true
+      }
+      delay(80)
+    }
+    return false
+  }
+
+  override suspend fun setTextInFirstEditableInput(
+    expectedPackageName: String,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean {
+    val deadline = System.currentTimeMillis() + timeoutMillis.coerceAtLeast(1L)
+    while (System.currentTimeMillis() < deadline) {
+      val updated = withContext(Dispatchers.Main.immediate) {
+        val root = rootForPackage(expectedPackageName) ?: return@withContext false
+        val target = firstEditableNode(root) ?: return@withContext false
+        val args = Bundle().apply {
+          putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        PhoneAutomationServiceBridge.markNonTouchInput("accessibility_set_first_editable_text")
+        target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+      }
+      if (updated) {
+        return true
+      }
+      delay(80)
+    }
+    return false
+  }
+
+  override suspend fun openFirstEditableInput(
+    expectedPackageName: String,
+    timeoutMillis: Long
+  ): Boolean {
+    val deadline = System.currentTimeMillis() + timeoutMillis.coerceAtLeast(1L)
+    while (System.currentTimeMillis() < deadline) {
+      val opened = withContext(Dispatchers.Main.immediate) {
+        val root = rootForPackage(expectedPackageName) ?: return@withContext false
+        val target = firstEditableNode(root) ?: return@withContext false
+        PhoneAutomationServiceBridge.markNonTouchInput("accessibility_open_first_editable")
+        val clicked = target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        val focused = target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        clicked || focused
+      }
+      if (opened) {
+        return true
+      }
+      delay(80)
+    }
+    return false
+  }
+
   override suspend fun performBack(): Boolean {
     return withContext(Dispatchers.Main.immediate) {
       PhoneAutomationServiceBridge.markNonTouchInput("accessibility_back")
       performGlobalAction(GLOBAL_ACTION_BACK)
+    }
+  }
+
+  private fun rootForPackage(expectedPackageName: String): AccessibilityNodeInfo? {
+    rootInActiveWindow?.takeIf { root ->
+      root.packageName?.toString().orEmpty() == expectedPackageName
+    }?.let { return it }
+    return windows.asSequence()
+      .mapNotNull { window -> window.root }
+      .firstOrNull { root -> root.packageName?.toString().orEmpty() == expectedPackageName }
+  }
+
+  private fun firstEditableNode(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+    return flattenNodes(root).firstOrNull { node ->
+      node.isVisibleToUser &&
+        node.isEnabled &&
+        (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true)
+    }
+  }
+
+  private fun editableFocusedNode(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+    root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let { focused ->
+      if (focused.isEnabled && (focused.isEditable || focused.className?.toString()?.contains("EditText", ignoreCase = true) == true)) {
+        return focused
+      }
+    }
+    return flattenNodes(root).firstOrNull { node ->
+      node.isFocused &&
+        node.isEnabled &&
+        (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true)
     }
   }
 

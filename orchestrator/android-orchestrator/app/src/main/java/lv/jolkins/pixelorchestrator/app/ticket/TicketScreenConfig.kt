@@ -58,6 +58,7 @@ data class TicketStreamHealth(
   val inputGate: TicketInputGateHealth = TicketInputGateHealth(),
   val controlCodeSnap: TicketControlCodeSnapHealth = TicketControlCodeSnapHealth(),
   val controlCodeMode: TicketControlCodeModeHealth = TicketControlCodeModeHealth(),
+  val controlCodeRequest: TicketControlCodeRequestHealth = TicketControlCodeRequestHealth(),
   val controlExitCleanup: TicketControlExitCleanupHealth = TicketControlExitCleanupHealth(),
   val loading: TicketLoadingHealth = TicketLoadingHealth(),
   val page: TicketPageHealth = TicketPageHealth(),
@@ -258,6 +259,19 @@ data class TicketControlCodeModeHealth(
   val enteredAgoMillis: Long? = null,
   val transitionGraceActive: Boolean = false,
   val transitionGraceRemainingMillis: Long = 0L
+)
+
+@Serializable
+data class TicketControlCodeRequestHealth(
+  val requestId: String? = null,
+  val status: String = "idle",
+  val reason: String? = null,
+  val value: String? = null,
+  val totalDurationMillis: Long? = null,
+  val completedAgoMillis: Long? = null,
+  val duplicateResults: Long = 0L,
+  val lastDuplicateRequestId: String? = null,
+  val lastDuplicateAgoMillis: Long? = null
 )
 
 @Serializable

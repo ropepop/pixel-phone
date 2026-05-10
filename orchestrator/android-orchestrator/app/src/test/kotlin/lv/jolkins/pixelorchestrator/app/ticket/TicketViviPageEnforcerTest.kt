@@ -134,6 +134,108 @@ class TicketViviPageEnforcerTest {
   }
 
   @Test
+  fun popupIsReadyOnlyWhenInputAndSubmitAreBothPresent() {
+    val missingSubmitXml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.view.View" content-desc="Ievadi kontroles kodu" bounds="[236,1096][845,1149]" />
+        <node package="com.pv.vivi" class="android.widget.EditText" clickable="true" focusable="true" focused="false" hint="kontroles kods" bounds="[251,1175][829,1301]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="Atcelt" clickable="true" bounds="[464,1327][687,1453]" />
+      </hierarchy>
+    """.trimIndent()
+    val missingInputXml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.view.View" content-desc="Ievadi kontroles kodu" bounds="[236,1096][845,1149]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" bounds="[713,1327][881,1453]" />
+      </hierarchy>
+    """.trimIndent()
+
+    assertFalse(TicketViviPageEnforcer.isControlCodePopup(missingSubmitXml))
+    assertNull(TicketViviPageEnforcer.controlCodeInputActionForHierarchy(missingSubmitXml))
+    assertNull(TicketViviPageEnforcer.controlCodeSubmitActionForHierarchy(missingInputXml))
+    assertFalse(TicketViviPageEnforcer.isControlCodePopup(missingInputXml))
+  }
+
+  @Test
+  fun readsControlCodeInputValueWhenKeyboardHidesSubmit() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.view.View" content-desc="Ievadi kontroles kodu" bounds="[236,1096][845,1149]" />
+        <node package="com.pv.vivi" class="android.widget.EditText" text="12" clickable="true" editable="true" focusable="true" focused="true" hint="kontroles kods" bounds="[251,1175][829,1301]" />
+        <node package="com.android.inputmethod.latin" class="android.inputmethodservice.Keyboard" bounds="[0,1500][1080,2424]" />
+      </hierarchy>
+    """.trimIndent()
+
+    assertFalse(TicketViviPageEnforcer.isControlCodePopup(xml))
+    assertTrue(TicketViviPageEnforcer.hasControlCodeInputForHierarchy(xml))
+    assertEquals("12", TicketViviPageEnforcer.controlCodeInputValueLooseForHierarchy(xml))
+  }
+
+  @Test
+  fun detectsControlCodeInputFromHintAndPromptPosition() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.view.View" content-desc="Ievadi kontroles kodu" bounds="[236,1096][845,1149]" />
+        <node package="com.pv.vivi" class="android.view.View" clickable="true" focusable="true" focused="false" hint="Kontroles kods" bounds="[251,1175][829,1301]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" bounds="[713,1327][881,1453]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val input = TicketViviPageEnforcer.controlCodeInputActionForHierarchy(xml)
+    val submit = TicketViviPageEnforcer.controlCodeSubmitActionForHierarchy(xml)
+
+    assertTrue(TicketViviPageEnforcer.isControlCodePopup(xml))
+    assertEquals(TicketViviRecoveryState.CONTROL_CODE_POPUP, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("focus_control_code_input", input?.reason)
+    assertEquals(540, input?.x)
+    assertEquals(1238, input?.y)
+    assertEquals("submit_control_code_popup", submit?.reason)
+  }
+
+  @Test
+  fun detectsLiveControlCodePopupSubmitButton() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.view.View" bounds="[0,0][1080,2424]">
+          <node package="com.pv.vivi" class="android.view.View" bounds="[173,1033][908,1480]">
+            <node package="com.pv.vivi" class="android.view.View" content-desc="Ievadi kontroles kodu" focusable="true" focused="false" bounds="[236,1096][845,1149]" />
+            <node package="com.pv.vivi" class="android.widget.EditText" clickable="true" focusable="true" focused="true" hint="kontroles kods" bounds="[251,1175][829,1301]" />
+            <node package="com.pv.vivi" class="android.widget.Button" content-desc="Atcelt" clickable="true" focusable="true" focused="false" bounds="[464,1327][687,1453]" />
+            <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" focusable="true" focused="false" bounds="[713,1327][881,1453]" />
+          </node>
+        </node>
+      </hierarchy>
+    """.trimIndent()
+
+    val submit = TicketViviPageEnforcer.controlCodeSubmitActionForHierarchy(xml)
+
+    assertEquals("submit_control_code_popup", submit?.reason)
+    assertEquals(797, submit?.x)
+    assertEquals(1390, submit?.y)
+  }
+
+  @Test
+  fun prefersEditTextOverFocusablePromptForControlCodeInput() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.view.View" bounds="[0,0][1080,2424]">
+          <node package="com.pv.vivi" class="android.view.View" bounds="[173,1033][908,1480]">
+            <node package="com.pv.vivi" class="android.view.View" content-desc="Ievadi kontroles kodu" focusable="true" focused="false" bounds="[236,1096][845,1149]" />
+            <node package="com.pv.vivi" class="android.widget.EditText" clickable="true" focusable="true" focused="true" hint="kontroles kods" bounds="[251,1175][829,1301]" />
+            <node package="com.pv.vivi" class="android.widget.Button" content-desc="Atcelt" clickable="true" bounds="[464,1327][687,1453]" />
+            <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" bounds="[713,1327][881,1453]" />
+          </node>
+        </node>
+      </hierarchy>
+    """.trimIndent()
+
+    val input = TicketViviPageEnforcer.controlCodeInputActionForHierarchy(xml)
+
+    assertEquals("focus_control_code_input", input?.reason)
+    assertEquals(540, input?.x)
+    assertEquals(1238, input?.y)
+  }
+
+  @Test
   fun detectsControlCodeResultCloseWithoutTreatingItAsTicketDetail() {
     val xml = """
       <hierarchy>
@@ -151,6 +253,7 @@ class TicketViviPageEnforcerTest {
     assertEquals(908, close?.x)
     assertEquals(1220, close?.y)
     assertEquals("[868,1180][948,1260]", close?.bounds)
+    assertEquals("253986", TicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
   }
 
   @Test
@@ -172,6 +275,68 @@ class TicketViviPageEnforcerTest {
   }
 
   @Test
+  fun filledControlCodePopupWithKeyboardIsNotGeneratedResult() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="KONTROLES KODS" clickable="true" bounds="[53,239][450,365]" />
+        <node package="com.pv.vivi" content-desc="ZONAS" bounds="[68,409][190,461]" />
+        <node package="com.pv.vivi" content-desc="B > A" bounds="[68,475][250,545]" />
+        <node package="com.pv.vivi" content-desc="PV-ELB-20260423-0RJB2M" bounds="[205,1400][875,1470]" />
+        <node package="com.pv.vivi" content-desc="Ievadi kontroles kodu" focusable="true" bounds="[330,910][750,970]" />
+        <node package="com.pv.vivi" class="android.widget.EditText" text="13468" clickable="true" focusable="true" focused="true" hint="kontroles kods" bounds="[350,1000][730,1090]" />
+        <node package="com.android.inputmethod.latin" text="1" clickable="true" bounds="[260,1660][410,1810]" />
+        <node package="com.android.inputmethod.latin" text="2" clickable="true" bounds="[410,1660][560,1810]" />
+        <node package="com.android.inputmethod.latin" text="3" clickable="true" bounds="[560,1660][710,1810]" />
+      </hierarchy>
+    """.trimIndent()
+
+    assertFalse(TicketViviPageEnforcer.isTicketDetail(xml))
+    assertFalse(TicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml)?.isNotBlank() == true)
+    assertEquals(TicketViviRecoveryState.CONTROL_CODE_POPUP, TicketViviPageEnforcer.classifyForRecovery(xml))
+  }
+
+  @Test
+  fun detectsShiftedSubmitButtonAfterKeyboardOpens() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="KONTROLES KODS" clickable="true" bounds="[53,239][450,365]" />
+        <node package="com.pv.vivi" content-desc="Ievadi kontroles kodu" focusable="true" bounds="[330,760][750,820]" />
+        <node package="com.pv.vivi" class="android.widget.EditText" text="13468" clickable="true" editable="true" focusable="true" focused="true" hint="kontroles kods" bounds="[350,850][730,940]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="Atcelt" clickable="true" bounds="[474,980][642,1070]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" bounds="[715,980][879,1070]" />
+        <node package="com.android.inputmethod.latin" text="1" clickable="true" bounds="[260,1660][410,1810]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val submit = TicketViviPageEnforcer.controlCodeSubmitActionLooseForHierarchy(xml)
+
+    assertEquals("submit_control_code_popup", submit?.reason)
+    assertEquals(797, submit?.x)
+    assertEquals(1025, submit?.y)
+    assertEquals(TicketViviRecoveryState.CONTROL_CODE_POPUP, TicketViviPageEnforcer.classifyForRecovery(xml))
+  }
+
+  @Test
+  fun detectsGeneratedControlCodeGraphicWithoutVisibleDigits() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" text="Kontroles kods" bounds="[124,548][700,604]" />
+        <node package="com.pv.vivi" class="android.widget.ImageView" content-desc="Aztec kontroles kods" bounds="[250,780][830,1360]" />
+        <node package="com.pv.vivi" content-desc="Aizvērt" clickable="true" bounds="[868,1040][980,1152]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val close = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml)
+
+    assertFalse(TicketViviPageEnforcer.isTicketDetail(xml))
+    assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("close_control_code_result", close?.reason)
+    assertEquals(924, close?.x)
+    assertEquals(1096, close?.y)
+    assertNull(TicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
+  }
+
+  @Test
   fun detectsGeneratedCodeResultFromSpacedNumericRowWithoutCloseNode() {
     val xml = """
       <hierarchy>
@@ -185,6 +350,7 @@ class TicketViviPageEnforcerTest {
     assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
     assertEquals("close_control_code_result", close?.reason)
     assertTrue("synthetic close should be to the right of the generated code", close?.x ?: 0 > 760)
+    assertEquals("25698415", TicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
   }
 
   @Test
@@ -234,6 +400,30 @@ class TicketViviPageEnforcerTest {
     assertEquals(938, close?.x)
     assertEquals(1378, close?.y)
     assertEquals("[894,1324][982,1432]", close?.bounds)
+  }
+
+  @Test
+  fun detectsNineDigitGeneratedCodeResultOverTicketDetail() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="KONTROLES KODS" clickable="true" bounds="[53,264][450,390]" />
+        <node package="com.pv.vivi" content-desc="ZONAS" bounds="[68,434][190,486]" />
+        <node package="com.pv.vivi" content-desc="PV-ELB-20260423-0RJB2M" bounds="[119,1329][961,1423]" />
+        <node package="com.pv.vivi" text="30 dienu biļete" bounds="[396,1593][684,1653]" />
+        <node package="com.pv.vivi" text="23.04.2026 - 22.05.2026" bounds="[120,1840][700,1910]" />
+        <node package="com.pv.vivi" text="561649898" bounds="[176,1178][900,1280]" />
+        <node package="com.pv.vivi" text="×" clickable="true" bounds="[824,1176][916,1282]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val close = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml)
+
+    assertFalse(TicketViviPageEnforcer.isTicketDetail(xml))
+    assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("561649898", TicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
+    assertEquals("close_control_code_result", close?.reason)
+    assertEquals(870, close?.x)
+    assertEquals(1229, close?.y)
   }
 
   @Test
@@ -583,6 +773,7 @@ class TicketViviPageEnforcerTest {
         <node package="com.pv.vivi" text="Kontroles kods" bounds="[124,548][700,604]" />
         <node package="com.pv.vivi" class="android.widget.EditText" text="" editable="true" focusable="true" focused="$inputFocused" bounds="[120,760][960,850]" />
         <node package="com.pv.vivi" content-desc="Aizvērt" clickable="true" bounds="[936,420][1032,516]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" bounds="[720,890][940,1016]" />
       </hierarchy>
     """.trimIndent()
   }

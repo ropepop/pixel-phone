@@ -55,9 +55,11 @@ import java.net.URLDecoder
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.ArrayDeque
+import java.util.Base64
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
+import kotlin.time.Duration.Companion.milliseconds
 
 class TicketStreamService : Service() {
   private data class TicketClientInfo(
@@ -81,6 +83,67 @@ class TicketStreamService : Service() {
     val accepted: Boolean,
     val reason: String
   )
+
+  private data class ControlCodeImmediateStartDecision(
+    val accepted: Boolean,
+    val reason: String
+  )
+
+  private data class GeneratedControlCodeResult(
+    val value: String,
+    val hierarchy: String
+  )
+
+  private data class FastControlCodeTargets(
+    val input: TicketViviPageAction,
+    val submit: TicketViviPageAction
+  )
+
+  private data class FastControlCodeDelivery(
+    val ok: Boolean,
+    val reason: String,
+    val value: String = "",
+    val imageBytes: ByteArray? = null,
+    val cleanupStart: FastControlCodeCleanupStart? = null,
+    val generatedHierarchy: String = "",
+    val cleanupRequired: Boolean = true
+  )
+
+  private data class FastControlCodeCleanupStart(
+    val startedAtMillis: Long,
+    val closeAction: String,
+    val action: TicketViviPageAction?,
+    val closeSucceeded: Boolean,
+    val fallbackState: TicketViviRecoveryState? = null
+  )
+
+  private data class ControlCodePngCaptureResult(
+    val bytes: ByteArray? = null,
+    val error: String = ""
+  )
+
+  private data class ControlCodePngCaptureSession(
+    val process: Process,
+    val input: BufferedInputStream
+  )
+
+  private data class ControlCodeImageCaptureOutcome(
+    val bytes: ByteArray? = null,
+    val cleanupStart: FastControlCodeCleanupStart? = null,
+    val error: String = ""
+  )
+
+  private data class ControlCodeResultWaitOutcome(
+    val generated: GeneratedControlCodeResult? = null,
+    val failureReason: String = "control_code_result_timeout"
+  )
+
+  private enum class ControlCodeSubmitTransition {
+    GENERATED_RESULT,
+    RETURNED_NO_RESULT,
+    STILL_ON_POPUP,
+    TIMEOUT
+  }
 
   private data class RawFrameRegionStats(
     val sampled: Int,
@@ -111,6 +174,7 @@ class TicketStreamService : Service() {
   private val recentTicketEvents = ArrayDeque<Triple<Long, String, String>>()
   private val encoderLock = Any()
   private val sessionMutex = Mutex()
+  private val controlCodeRequestMutex = Mutex()
   private val running = AtomicBoolean(false)
   private val rootFfmpegH264CaptureEngine = TicketRootFfmpegH264CaptureEngine(
     scope = serviceScope,
@@ -150,6 +214,8 @@ class TicketStreamService : Service() {
   @Volatile private var cachedForegroundViolationReason: String? = null
   @Volatile private var cachedForegroundCheckedAtMillis: Long = 0L
   @Volatile private var controlCodePopupReadyUntilMillis: Long = 0L
+  @Volatile private var controlCodePopupSurfaceCache: TicketViviControlCodePopupSurface? = null
+  @Volatile private var controlCodePopupSurfaceCachedAtMillis: Long = 0L
   @Volatile private var startupDisconnectGraceUntilMillis: Long = 0L
   @Volatile private var ticketSessionState: String = TICKET_SESSION_IDLE
   @Volatile private var ticketSessionStateChangedAtMillis: Long = SystemClock.elapsedRealtime()
@@ -243,6 +309,17 @@ class TicketStreamService : Service() {
   @Volatile private var lastDuplicateInputResultAtMillis: Long = 0L
   private val recentInputResultMessages = mutableMapOf<String, String>()
   private val recentInputResultOrder = ArrayDeque<String>()
+  @Volatile private var lastControlCodeRequestId: String? = null
+  @Volatile private var lastControlCodeRequestStatus: String = "idle"
+  @Volatile private var lastControlCodeRequestReason: String? = null
+  @Volatile private var lastControlCodeRequestValue: String? = null
+  @Volatile private var lastControlCodeRequestDurationMillis: Long? = null
+  @Volatile private var lastControlCodeRequestCompletedAtMillis: Long = 0L
+  @Volatile private var duplicateControlCodeResultCount: Long = 0L
+  @Volatile private var lastDuplicateControlCodeRequestId: String? = null
+  @Volatile private var lastDuplicateControlCodeResultAtMillis: Long = 0L
+  private val recentControlCodeResultMessages = mutableMapOf<String, String>()
+  private val recentControlCodeResultOrder = ArrayDeque<String>()
   @Volatile private var lastControlExitCleanupReason: String? = null
   @Volatile private var lastControlExitCleanupDetectedState: String? = null
   @Volatile private var lastControlExitCleanupCloseAction: String? = null
@@ -605,6 +682,11 @@ class TicketStreamService : Service() {
         val inputId = element["inputId"]?.jsonPrimitive?.contentOrNull
         handleRemoteKey(inputId, key)
       }
+      "generate_control_code" -> {
+        val requestId = element["requestId"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val digits = element["digits"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        handleGenerateControlCode(requestId, digits)
+      }
       "keyframe" -> requestKeyFrame(element["reason"]?.jsonPrimitive?.contentOrNull ?: "browser_request")
       "restart_stream" -> {
         restartActiveStream("browser_restart_stream")
@@ -640,9 +722,27 @@ class TicketStreamService : Service() {
     }
   }
 
-  private suspend fun startTicketSession(): TicketSessionResponse = sessionMutex.withLock {
+  private suspend fun startTicketSession(): TicketSessionResponse {
+    cleanupInactiveClientsIfNeeded("session_start_preflight")
+    return withTimeoutOrNull(SESSION_START_TIMEOUT_MILLIS) {
+      sessionMutex.withLock {
+        cleanupInactiveClientsIfNeeded("session_start_locked")
+        startTicketSessionLocked()
+      }
+    } ?: run {
+      cleanupInactiveClientsIfNeeded("session_start_timeout")
+      recordTicketEvent("session_start_timeout", "timeout_ms=$SESSION_START_TIMEOUT_MILLIS state=$ticketSessionState clients=${totalClientCount()}")
+      TicketSessionResponse(
+        ok = false,
+        state = "start_timeout",
+        message = "Ticket session start timed out; stale clients were cleared and the next request can retry"
+      )
+    }
+  }
+
+  private suspend fun startTicketSessionLocked(): TicketSessionResponse {
     if (!TicketPackageSupport.isInstalled(this, TicketScreenConfig.VIVI_PACKAGE)) {
-      return@withLock TicketSessionResponse(
+      return TicketSessionResponse(
         ok = false,
         state = "vivi_missing",
         message = "ViVi is not installed from a local Pixel app store yet"
@@ -669,7 +769,7 @@ class TicketStreamService : Service() {
       ensureEncoderIfPossible()
       broadcastStatus()
       persistRuntimeState("session_start_already_active")
-      return@withLock TicketSessionResponse(ok = true, state = "active", message = lastMessage)
+      return TicketSessionResponse(ok = true, state = "active", message = lastMessage)
     }
     val sourceSize = currentDisplaySize()
     var ffmpegCapture = rootFfmpegH264CaptureEngine.snapshot()
@@ -697,7 +797,7 @@ class TicketStreamService : Service() {
       updateTicketSessionState(TICKET_SESSION_UNAVAILABLE, "capture_unavailable_root_ffmpeg_h264_required")
       recordTicketEvent("session_unavailable", fallbackReason.orEmpty())
       persistRuntimeState("capture_unavailable_root_ffmpeg_h264_required")
-      return@withLock TicketSessionResponse(
+      return TicketSessionResponse(
         ok = false,
         state = "capture_unavailable",
         message = lastMessage
@@ -724,7 +824,7 @@ class TicketStreamService : Service() {
     }
     broadcastStatus()
     persistRuntimeState("session_start_root_ffmpeg_h264_prepare")
-    return@withLock TicketSessionResponse(ok = true, state = "starting", message = lastMessage)
+    return TicketSessionResponse(ok = true, state = "starting", message = lastMessage)
   }
 
   private suspend fun handleBrowserStopRequest(body: String): TicketSessionResponse {
@@ -931,6 +1031,7 @@ class TicketStreamService : Service() {
     cachedForegroundViolationReason = null
     cachedForegroundCheckedAtMillis = 0L
     controlCodePopupReadyUntilMillis = 0L
+    clearControlCodePopupSurfaceCache()
     controlCodeTransitionGraceUntilMillis = 0L
     resetForegroundViolationConfirmation()
     lastForegroundRecoveryAtMillis = 0L
@@ -1147,22 +1248,43 @@ class TicketStreamService : Service() {
     )
   }
 
+  private suspend fun controlCodeRequestHierarchy(): String? {
+    val accessibilityXml = TicketViviPageEnforcer.hierarchyForVisibleNodes(
+      PhoneAutomationServiceBridge.snapshotVisibleNodes(TicketScreenConfig.VIVI_PACKAGE)
+    )
+    if (accessibilityXml.isNotBlank()) {
+      return accessibilityXml
+    }
+    val dump = dumpViviHierarchy(fresh = true, timeoutMillis = CONTROL_CODE_REQUEST_HIERARCHY_TIMEOUT_MILLIS)
+    return dump.stdout.takeIf { dump.ok && it.isNotBlank() }
+  }
+
+  private fun rememberControlCodePopupSurface(surface: TicketViviControlCodePopupSurface) {
+    controlCodePopupSurfaceCache = surface
+    controlCodePopupSurfaceCachedAtMillis = SystemClock.elapsedRealtime()
+  }
+
+  private fun cachedControlCodePopupSurface(): TicketViviControlCodePopupSurface? {
+    val surface = controlCodePopupSurfaceCache ?: return null
+    val ageMillis = SystemClock.elapsedRealtime() - controlCodePopupSurfaceCachedAtMillis
+    return if (ageMillis in 0..CONTROL_CODE_POPUP_READY_CACHE_MILLIS) {
+      surface
+    } else {
+      clearControlCodePopupSurfaceCache()
+      null
+    }
+  }
+
+  private fun clearControlCodePopupSurfaceCache() {
+    controlCodePopupSurfaceCache = null
+    controlCodePopupSurfaceCachedAtMillis = 0L
+  }
+
   private suspend fun controlExitHierarchy(): String? {
     val accessibilityXml = TicketViviPageEnforcer.hierarchyForVisibleNodes(
       PhoneAutomationServiceBridge.snapshotVisibleNodes(TicketScreenConfig.VIVI_PACKAGE)
     )
     val accessibilityState = TicketViviPageEnforcer.classifyForRecovery(accessibilityXml)
-    val controlExitNeedsRootVerification = accessibilityState == TicketViviRecoveryState.TICKET_DETAIL &&
-      (ticketSessionState == TICKET_SESSION_CONTROL_EXIT || SystemClock.elapsedRealtime() < controlExitPopupLikelyUntilMillis)
-    if (controlExitNeedsRootVerification) {
-      val dump = dumpViviHierarchy(fresh = true, timeoutMillis = CONTROL_EXIT_ROOT_DUMP_TIMEOUT_MILLIS)
-      if (dump.ok && dump.stdout.isNotBlank()) {
-        val rootState = TicketViviPageEnforcer.classifyForRecovery(dump.stdout)
-        if (rootState.controlExitHierarchyIsAuthoritative()) {
-          return dump.stdout
-        }
-      }
-    }
     if (accessibilityState.controlExitHierarchyIsAuthoritative()) {
       return accessibilityXml
     }
@@ -1795,6 +1917,13 @@ class TicketStreamService : Service() {
     clients.forEach { it.close() }
   }
 
+  private fun cleanupInactiveClientsIfNeeded(reason: String) {
+    if (streamActive || ticketSessionState == TICKET_SESSION_STARTING || totalClientCount() == 0) {
+      return
+    }
+    closeAllClients("inactive_stream_$reason")
+  }
+
   private fun totalClientCount(): Int = controlClients.size + videoClients.size
 
   private fun recordClientTelemetry(message: String) {
@@ -1926,6 +2055,8 @@ class TicketStreamService : Service() {
       latestKeyFrameEnvelope = null
       latestKeyFrameAtMillis = 0L
       latestKeyFrameTimestampUs = 0L
+      lastFrameSentAtMillis = 0L
+      lastKeyFrameEncodedAtMillis = 0L
       lastFrameBytes = 0
       lastKeyFrameBytes = 0
       estimatedSendBitrate = 0L
@@ -2049,6 +2180,7 @@ class TicketStreamService : Service() {
   }
 
   private fun health(): TicketStreamHealth {
+    cleanupInactiveClientsIfNeeded("health")
     val nowMillis = SystemClock.elapsedRealtime()
     val installedStores = TicketPackageSupport.installedLocalStores(this)
     val ffmpegCapture = rootFfmpegH264CaptureEngine.snapshot(nowMillis)
@@ -2127,6 +2259,17 @@ class TicketStreamService : Service() {
         enteredAgoMillis = ageMillis(controlCodeModeEnteredAtMillis, nowMillis),
         transitionGraceActive = nowMillis < controlCodeTransitionGraceUntilMillis,
         transitionGraceRemainingMillis = (controlCodeTransitionGraceUntilMillis - nowMillis).coerceAtLeast(0L)
+      ),
+      controlCodeRequest = TicketControlCodeRequestHealth(
+        requestId = lastControlCodeRequestId,
+        status = lastControlCodeRequestStatus,
+        reason = lastControlCodeRequestReason,
+        value = lastControlCodeRequestValue,
+        totalDurationMillis = lastControlCodeRequestDurationMillis,
+        completedAgoMillis = ageMillis(lastControlCodeRequestCompletedAtMillis, nowMillis),
+        duplicateResults = duplicateControlCodeResultCount,
+        lastDuplicateRequestId = lastDuplicateControlCodeRequestId,
+        lastDuplicateAgoMillis = ageMillis(lastDuplicateControlCodeResultAtMillis, nowMillis)
       ),
       controlExitCleanup = TicketControlExitCleanupHealth(
         lastReason = lastControlExitCleanupReason,
@@ -2415,6 +2558,38 @@ class TicketStreamService : Service() {
     payload
   }
 
+  private suspend fun captureRootScreencapProbeRaw(): ByteArray? = withContext(Dispatchers.IO) {
+    val process = ProcessBuilder("su", "-c", "screencap")
+      .redirectErrorStream(false)
+      .start()
+    val payload = withTimeoutOrNull(CONTROL_EXIT_FAST_SCREENCAP_TIMEOUT_MILLIS) {
+      BufferedInputStream(process.inputStream).use { it.readBytes() }
+    }
+    val exitCode = withTimeoutOrNull(SECURE_CAPTURE_PROBE_EXIT_TIMEOUT_MILLIS) {
+      process.waitFor()
+    }
+    if (payload == null || exitCode == null) {
+      runCatching { process.destroyForcibly() }
+      return@withContext null
+    }
+    val stderr = process.errorStream.bufferedReader().use { it.readText() }.trim()
+    if (exitCode != 0 || payload.size < 12) {
+      if (stderr.isNotBlank()) {
+        Log.w(TAG, "ticket_root_screencap_probe_stderr $stderr")
+      }
+      return@withContext null
+    }
+    val header = ByteBuffer.wrap(payload, 0, 12).order(ByteOrder.LITTLE_ENDIAN)
+    val actualWidth = header.int
+    val actualHeight = header.int
+    val format = header.int
+    if (actualWidth <= 0 || actualHeight <= 0 || payload.size < 12 + actualWidth * actualHeight * 4) {
+      Log.w(TAG, "ticket_root_screencap_probe_bad_frame width=$actualWidth height=$actualHeight format=$format bytes=${payload.size}")
+      return@withContext null
+    }
+    payload
+  }
+
   private fun rootSurfaceRawFrameLooksVisible(frame: ByteArray): Boolean {
     if (frame.size <= 12) {
       return false
@@ -2504,11 +2679,13 @@ class TicketStreamService : Service() {
 
   private suspend fun controlExitGeneratedResultSurfaceProbe(
     reason: String,
-    detectorSource: String
+    detectorSource: String,
+    allowCached: Boolean = true
   ): TicketViviRecoveryState? {
     val now = SystemClock.elapsedRealtime()
     val cachedAge = ageMillis(lastControlExitSurfaceProbeAtMillis, now)
     if (
+      allowCached &&
       lastControlExitSurfaceProbeReason == reason &&
       cachedAge != null &&
       cachedAge <= CONTROL_EXIT_SURFACE_PROBE_CACHE_MILLIS
@@ -2525,6 +2702,28 @@ class TicketStreamService : Service() {
       .coerceAtLeast(2)
       .let { if (it % 2 == 0) it else it + 1 }
     val frame = captureRootSurfaceProbeRaw(probeWidth, probeHeight)
+    val state = when {
+      frame == null -> null
+      rootSurfaceRawFrameLooksLikeGeneratedCodeResult(frame) -> TicketViviRecoveryState.CONTROL_CODE_RESULT
+      else -> TicketViviRecoveryState.TICKET_DETAIL
+    }
+    lastControlExitSurfaceProbeAtMillis = SystemClock.elapsedRealtime()
+    lastControlExitSurfaceProbeReason = reason
+    lastControlExitSurfaceProbeState = state
+    lastControlExitCleanupDetectorSource = detectorSource
+    lastControlExitCleanupSurfaceProbeResult = state?.name ?: "unavailable"
+    recordTicketEvent(
+      "control_exit_surface_probe",
+      "source=$detectorSource result=${state?.name ?: "unavailable"} reason=$reason"
+    )
+    return state
+  }
+
+  private suspend fun controlExitGeneratedResultFastScreencapProbe(
+    reason: String,
+    detectorSource: String
+  ): TicketViviRecoveryState? {
+    val frame = captureRootScreencapProbeRaw()
     val state = when {
       frame == null -> null
       rootSurfaceRawFrameLooksLikeGeneratedCodeResult(frame) -> TicketViviRecoveryState.CONTROL_CODE_RESULT
@@ -3189,11 +3388,13 @@ class TicketStreamService : Service() {
   ) {
     if (!controlCodeModeActive && controlCodeModeEnteredAtMillis == 0L) {
       controlCodePopupReadyUntilMillis = 0L
+      clearControlCodePopupSurfaceCache()
       return
     }
     controlCodeModeActive = false
     controlCodeModeEnteredAtMillis = 0L
     controlCodePopupReadyUntilMillis = 0L
+    clearControlCodePopupSurfaceCache()
     if (streamActive && !reason.startsWith("session_stop_") && reason != "foreground_guard_cancelled") {
       updateTicketSessionState(TICKET_SESSION_CONTROL_EXIT, reason)
     }
@@ -3902,6 +4103,7 @@ class TicketStreamService : Service() {
     controlCodeModeActive = false
     controlCodeModeEnteredAtMillis = 0L
     controlCodePopupReadyUntilMillis = 0L
+    clearControlCodePopupSurfaceCache()
     controlExitPopupLikelyUntilMillis = 0L
     lastControlCodeSurfaceState = null
     lastControlCodeSurfaceSeenAtMillis = 0L
@@ -4035,18 +4237,1503 @@ class TicketStreamService : Service() {
     )
   }
 
+  private suspend fun handleGenerateControlCode(requestId: String, digits: String) {
+    val cleanRequestId = requestId.trim()
+    val cleanDigits = digits.trim()
+    if (cleanRequestId.isBlank()) {
+      sendControlCodeResult("", false, "missing_request_id", "", null, null, 0L, emptyMap(), cleanupPending = false)
+      return
+    }
+    if (!CONTROL_CODE_REQUEST_DIGITS_REGEX.matches(cleanDigits)) {
+      sendControlCodeResult(cleanRequestId, false, "invalid_code", "", null, null, 0L, emptyMap(), cleanupPending = false)
+      return
+    }
+    if (sendCachedControlCodeResult(cleanRequestId)) {
+      return
+    }
+    controlCodeRequestMutex.withLock {
+      if (sendCachedControlCodeResult(cleanRequestId)) {
+        return
+      }
+      val startedAtMillis = SystemClock.elapsedRealtime()
+      val phases = linkedMapOf<String, Long>()
+      lastControlCodeRequestId = cleanRequestId
+      lastControlCodeRequestStatus = "running"
+      lastControlCodeRequestReason = null
+      lastControlCodeRequestValue = null
+      lastControlCodeRequestDurationMillis = null
+      lastControlCodeRequestCompletedAtMillis = 0L
+      broadcastStatus()
+
+      var ok = false
+      var reason = "failed"
+      var value = ""
+      var imageMime: String? = null
+      var imageBase64: String? = null
+      var imageBytes: ByteArray? = null
+      var resultSent = false
+
+      try {
+        phases["phone_command_received"] = 0L
+        if (!measureInputPhase(phases, "gate") { canForwardRemoteInput() }) {
+          reason = inputGateReason
+        } else {
+          markControlCodeRequestPhase(phases, "request_gate_passed", startedAtMillis)
+	          val delivery = runFastControlCodeDeliveryForRequest(cleanDigits, phases, startedAtMillis)
+	          ok = delivery.ok
+	          reason = delivery.reason
+	          value = delivery.value
+	          imageBytes = delivery.imageBytes
+	          imageMime = if (imageBytes == null) null else "image/png"
+	          if (ok) {
+            val cleanupStart = delivery.cleanupStart ?: beginGeneratedControlCodeResultFastClose(
+              generatedHierarchy = delivery.generatedHierarchy,
+              reason = "control_code_request_complete",
+              phases = phases,
+              requestStartedAtMillis = startedAtMillis
+            )
+            imageBase64 = encodeControlCodeImageBase64(imageBytes)
+	            markControlCodeRequestPhase(phases, "image_delivered", startedAtMillis)
+	            sendControlCodeResult(
+	              requestId = cleanRequestId,
+              ok = ok,
+              reason = reason,
+              value = value,
+              imageMime = imageMime,
+              imageBase64 = imageBase64,
+              startedAtMillis = startedAtMillis,
+              phases = phases,
+              cleanupPending = true
+            )
+            resultSent = true
+            recordTicketEvent("control_code_fast_cleanup_phase", "result_delivered")
+            val cleanupSucceeded = finishGeneratedControlCodeResultFastCleanup(
+              cleanupStart = cleanupStart,
+              reason = "control_code_request_complete",
+              phases = phases,
+              requestStartedAtMillis = startedAtMillis
+            )
+            sendControlCodeCleanup(
+              requestId = cleanRequestId,
+              ok = cleanupSucceeded,
+              reason = if (cleanupSucceeded) "ticket_detail" else "control_code_cleanup_attention_needed",
+	              startedAtMillis = startedAtMillis
+	            )
+	            if (!cleanupSucceeded) {
+	              scheduleControlExitSoftSettle("control_code_request_cleanup_failed")
+	            }
+	          } else if (reason == "control_code_image_capture_failed" && delivery.generatedHierarchy.isNotBlank()) {
+	            val cleanupStart = delivery.cleanupStart ?: beginGeneratedControlCodeResultFastClose(
+	              generatedHierarchy = delivery.generatedHierarchy,
+	              reason = "control_code_request_capture_failed",
+	              phases = phases,
+	              requestStartedAtMillis = startedAtMillis
+	            )
+	            val cleanupSucceeded = finishGeneratedControlCodeResultFastCleanup(
+	              cleanupStart = cleanupStart,
+	              reason = "control_code_request_capture_failed",
+	              phases = phases,
+	              requestStartedAtMillis = startedAtMillis
+	            )
+	            sendControlCodeResult(
+	              requestId = cleanRequestId,
+	              ok = false,
+	              reason = reason,
+	              value = value,
+	              imageMime = imageMime,
+	              imageBase64 = imageBase64,
+	              startedAtMillis = startedAtMillis,
+	              phases = phases,
+	              cleanupPending = true
+	            )
+	            resultSent = true
+	            sendControlCodeCleanup(
+	              requestId = cleanRequestId,
+	              ok = cleanupSucceeded,
+	              reason = if (cleanupSucceeded) "ticket_detail" else "control_code_cleanup_attention_needed",
+	              startedAtMillis = startedAtMillis
+	            )
+	            if (!cleanupSucceeded) {
+	              scheduleControlExitSoftSettle("control_code_request_capture_failed_cleanup_unverified")
+	            }
+	          } else if (delivery.cleanupRequired) {
+	            sendControlCodeResult(
+	              requestId = cleanRequestId,
+	              ok = false,
+	              reason = reason,
+	              value = value,
+	              imageMime = imageMime,
+	              imageBase64 = imageBase64,
+	              startedAtMillis = startedAtMillis,
+	              phases = phases,
+	              cleanupPending = true
+	            )
+	            resultSent = true
+	            val cleanupSucceeded = recoverControlCodeRequestSurface("control_code_request_failed_cleanup")
+	            sendControlCodeCleanup(
+	              requestId = cleanRequestId,
+	              ok = cleanupSucceeded,
+	              reason = if (cleanupSucceeded) "ticket_detail" else "control_code_cleanup_attention_needed",
+	              startedAtMillis = startedAtMillis
+	            )
+	            if (!cleanupSucceeded) {
+	              scheduleControlExitSoftSettle("control_code_request_failed_cleanup_unverified")
+	            }
+	          }
+	        }
+	      } catch (cancelled: CancellationException) {
+	        throw cancelled
+	      } catch (error: Throwable) {
+	        reason = "control_code_request_failed"
+	        Log.w(TAG, "ticket_control_code_request_failed request=$cleanRequestId", error)
+	        val cleanupSucceeded = runCatching {
+	          recoverControlCodeRequestSurface("control_code_request_error_cleanup")
+	        }.getOrDefault(false)
+	        sendControlCodeResult(
+	          requestId = cleanRequestId,
+	          ok = false,
+	          reason = reason,
+	          value = value,
+	          imageMime = imageMime,
+	          imageBase64 = imageBase64,
+	          startedAtMillis = startedAtMillis,
+	          phases = phases,
+	          cleanupPending = true
+	        )
+	        resultSent = true
+	        sendControlCodeCleanup(
+	          requestId = cleanRequestId,
+	          ok = cleanupSucceeded,
+	          reason = if (cleanupSucceeded) "ticket_detail" else "control_code_cleanup_attention_needed",
+	          startedAtMillis = startedAtMillis
+	        )
+	        if (!cleanupSucceeded) {
+	          scheduleControlExitSoftSettle("control_code_request_error_cleanup_unverified")
+	        }
+	      }
+
+      if (!resultSent) {
+        sendControlCodeResult(
+          requestId = cleanRequestId,
+          ok = ok,
+          reason = reason,
+          value = value,
+          imageMime = imageMime,
+          imageBase64 = imageBase64,
+          startedAtMillis = startedAtMillis,
+          phases = phases,
+          cleanupPending = false
+        )
+      }
+    }
+  }
+
+  private suspend fun runFastControlCodeDeliveryForRequest(
+    cleanDigits: String,
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long
+  ): FastControlCodeDelivery {
+    val targets = openControlCodePopupFastForRequest(phases, requestStartedAtMillis) ?: return FastControlCodeDelivery(
+      ok = false,
+      reason = inputGateReason.ifBlank { "control_code_popup_timeout" }
+    )
+    if (!enterControlCodeDigitsFastForRequest(cleanDigits, targets, phases, requestStartedAtMillis)) {
+      return FastControlCodeDelivery(
+        ok = false,
+        reason = inputGateReason.ifBlank { "control_code_input_set_failed" }
+      )
+    }
+    val submitAttempted = tapControlCodeSubmitFastForRequest(targets, cleanDigits, phases, requestStartedAtMillis)
+    if (!submitAttempted) {
+      return FastControlCodeDelivery(
+        ok = false,
+        reason = inputGateReason.ifBlank { "control_code_submit_missing" }
+      )
+    }
+    val waitOutcome = waitForGeneratedControlCodeResultAfterSubmit(phases, requestStartedAtMillis)
+    val generated = waitOutcome.generated ?: return FastControlCodeDelivery(
+      ok = false,
+      reason = waitOutcome.failureReason
+    )
+    val capture = captureGeneratedControlCodeImageBytes(
+      phases = phases,
+      requestStartedAtMillis = requestStartedAtMillis,
+      generatedHierarchy = generated.hierarchy
+    )
+    if (capture.bytes == null) {
+      return FastControlCodeDelivery(
+        ok = false,
+        reason = "control_code_image_capture_failed",
+        value = generated.value,
+        cleanupStart = capture.cleanupStart,
+        generatedHierarchy = generated.hierarchy
+      )
+    }
+    markViewerInput("control_code_request_digits")
+    return FastControlCodeDelivery(
+      ok = true,
+      reason = "generated",
+      value = generated.value,
+      imageBytes = capture.bytes,
+      cleanupStart = capture.cleanupStart,
+      generatedHierarchy = generated.hierarchy
+    )
+  }
+
+  private suspend fun prepareViviForControlCodeRequest(phases: MutableMap<String, Long>): Boolean {
+    return measureInputPhase(phases, "prepare_ticket_detail_fast") {
+      val fastState = ticketAutopilot.observeFastState("control_code_request_prepare_fast")
+      if (fastState?.state == TicketViviRecoveryState.TICKET_DETAIL || fastState?.state == TicketViviRecoveryState.CONTROL_CODE_POPUP) {
+        return@measureInputPhase true
+      }
+      val result = ticketAutopilot.driveToTicketDetail(
+        reason = "control_code_request_prepare",
+        forceFreshLaunch = false,
+        allowControlCodePopup = true,
+        restartPolicy = TicketAutopilotRestartPolicy.SOFT_RECOVERY,
+        maxSteps = CONTROL_CODE_REQUEST_PREPARE_MAX_STEPS,
+        timeoutMillis = CONTROL_CODE_REQUEST_PREPARE_TIMEOUT_MILLIS
+      )
+      val prepared = result.success &&
+        (result.state == TicketViviRecoveryState.TICKET_DETAIL || result.state == TicketViviRecoveryState.CONTROL_CODE_POPUP)
+      if (prepared) {
+        recordTicketEvent("control_code_request_prepare_ready", result.state.name)
+        return@measureInputPhase true
+      }
+      val reason = "control_code_request_prepare_${result.state.name.lowercase()}"
+      recordInputGateDecision(allowed = false, reason = reason)
+      recordTicketEvent("control_code_request_prepare_failed", "${result.state}:${result.step}")
+      false
+    }
+  }
+
+  private suspend fun openControlCodePopupFastForRequest(
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long
+  ): FastControlCodeTargets? {
+    openControlCodePopupImmediateForRequest(phases, requestStartedAtMillis)?.let { return it }
+    if (controlCodeRequestNeedsSurfaceRecovery()) {
+      val recovered = measureInputPhase(phases, "pre_request_surface_cleanup") {
+        runControlExitCleanup("control_code_request_preflight_cleanup")
+      }
+      if (!recovered) {
+        recordInputGateDecision(allowed = false, reason = "control_code_request_preflight_cleanup_failed")
+        return null
+      }
+      openControlCodePopupImmediateForRequest(phases, requestStartedAtMillis)?.let { return it }
+    }
+    if (!prepareViviForControlCodeRequest(phases)) {
+      return null
+    }
+    return openControlCodePopupFromVerifiedStateFastForRequest(phases, requestStartedAtMillis)
+  }
+
+  private fun controlCodeRequestNeedsSurfaceRecovery(): Boolean {
+    val current = viviStateMemory.current()
+    val currentAge = ageMillis(current.observedAtMillis, SystemClock.elapsedRealtime())
+    val recentControlSurface = currentAge != null &&
+      currentAge <= CONTROL_CODE_SNAP_UNSAFE_STATE_MEMORY_MAX_AGE_MILLIS &&
+      (
+        current.state == TicketViviRecoveryState.CONTROL_CODE_POPUP ||
+          current.state == TicketViviRecoveryState.CONTROL_CODE_RESULT
+        )
+    return recentControlSurface ||
+      controlCodeModeActive ||
+      ticketSessionState == TICKET_SESSION_CONTROL_EXIT ||
+      (ticketSessionState == TICKET_SESSION_NEEDS_ATTENTION && controlCodeSurfaceMemoryState() != null)
+  }
+
+  private suspend fun openControlCodePopupImmediateForRequest(
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long
+  ): FastControlCodeTargets? {
+    val decision = controlCodeImmediateStartDecision()
+    if (!decision.accepted) {
+      recordTicketEvent("control_code_immediate_start_skipped", decision.reason)
+      return null
+    }
+    val action = streamSize?.let { size ->
+      controlCodeGeometryTarget(size, "generated_request_immediate").copy(reason = decision.reason)
+    } ?: fallbackControlCodeButtonTarget().copy(reason = "${decision.reason}:display_geometry")
+    recordInputGateDecision(allowed = true, reason = action.reason)
+    markControlCodeTransition("control_code_request_open_popup_immediate")
+    val tap = measureInputPhase(phases, "first_tap_fast") {
+      runFastNonTouchInput("input tap ${action.x} ${action.y}", "control_code_request_open_popup_immediate")
+    }
+    recordControlCodeSnapAttempt(
+      rawX = action.x,
+      rawY = action.y,
+      candidateZone = action.candidateZone,
+      snapTarget = SNAP_TARGET_CONTROL_CODE_BUTTON,
+      accepted = tap.ok,
+      reason = if (tap.ok) action.reason else "root_command_failed",
+      finalX = action.x,
+      finalY = action.y,
+      detectedButtonBounds = action.detectedButtonBounds
+    )
+    if (!tap.ok) {
+      recordInputGateDecision(allowed = false, reason = "control_code_immediate_tap_failed")
+      return null
+    }
+    markControlCodeRequestPhase(phases, "first_phone_tap", requestStartedAtMillis)
+    return waitForControlCodePopupTargetsFast(phases, "fast_popup_root_immediate")?.also {
+      markControlCodeRequestPhase(phases, "popup_ready", requestStartedAtMillis)
+      markControlCodeModeEntered("control_code_request_popup_ready_immediate")
+    }
+  }
+
+  private suspend fun openControlCodePopupFromVerifiedStateFastForRequest(
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long
+	  ): FastControlCodeTargets? {
+	    val hierarchy = controlCodeRequestRootHierarchy(phases, "fast_find_button")
+	    if (hierarchy.isNullOrBlank()) {
+	      val recovered = measureInputPhase(phases, "recover_hierarchy_unavailable") {
+	        runControlExitCleanup("control_code_request_hierarchy_unavailable")
+	      }
+	      if (recovered) {
+	        return openControlCodePopupFromRecoveredStateFastForRequest(phases, requestStartedAtMillis)
+	      }
+	      recordInputGateDecision(allowed = false, reason = "control_code_request_hierarchy_unavailable")
+	      return null
+	    }
+	    val state = TicketViviPageEnforcer.classifyForRecovery(hierarchy)
+    if (state == TicketViviRecoveryState.CONTROL_CODE_POPUP) {
+      controlCodeFastTargetsForHierarchy(hierarchy)?.let { targets ->
+        controlCodePopupReadyUntilMillis = SystemClock.elapsedRealtime() + CONTROL_CODE_POPUP_READY_CACHE_MILLIS
+        markControlCodeRequestPhase(phases, "popup_ready", requestStartedAtMillis)
+        markControlCodeModeEntered("control_code_request_popup_already_open")
+        return targets
+	      }
+	    }
+	    if (state == TicketViviRecoveryState.CONTROL_CODE_RESULT) {
+	      rememberControlCodeSurface(state)
+	      val recovered = measureInputPhase(phases, "recover_previous_result") {
+	        runControlExitCleanup("control_code_request_previous_result")
+	      }
+	      if (recovered) {
+	        return openControlCodePopupFromRecoveredStateFastForRequest(phases, requestStartedAtMillis)
+	      }
+	      recordInputGateDecision(allowed = false, reason = "control_code_request_previous_result_cleanup_failed")
+	      return null
+	    }
+	    if (state != TicketViviRecoveryState.TICKET_DETAIL) {
+	      recordInputGateDecision(allowed = false, reason = "control_code_request_unsafe_state:${state.name}")
+	      scheduleTicketRecovery("control_code_request_unsafe_${state.name.lowercase()}", TicketRecoveryMode.ACTIVE_SOFT)
+      return null
+    }
+    val action = TicketViviPageEnforcer.controlCodeButtonActionForHierarchy(hierarchy)?.let { detected ->
+      TicketTapTarget(
+        x = detected.x,
+        y = detected.y,
+        reason = detected.reason,
+        candidateZone = "generated_request_fast",
+        detectedButtonBounds = detected.bounds
+      )
+    } ?: streamSize?.let { size ->
+      controlCodeGeometryTarget(size, "generated_request_fast").copy(reason = "control_code_button_request_geometry_fast")
+    } ?: fallbackControlCodeButtonTarget()
+    recordInputGateDecision(allowed = true, reason = action.reason)
+    markControlCodeTransition("control_code_request_open_popup_fast")
+    val tap = measureInputPhase(phases, "open_popup_fast") {
+      runFastNonTouchInput("input tap ${action.x} ${action.y}", "control_code_request_open_popup_fast")
+    }
+    recordControlCodeSnapAttempt(
+      rawX = action.x,
+      rawY = action.y,
+      candidateZone = action.candidateZone,
+      snapTarget = SNAP_TARGET_CONTROL_CODE_BUTTON,
+      accepted = tap.ok,
+      reason = if (tap.ok) action.reason else "root_command_failed",
+      finalX = action.x,
+      finalY = action.y,
+      detectedButtonBounds = action.detectedButtonBounds
+    )
+    if (!tap.ok) {
+      recordInputGateDecision(allowed = false, reason = "control_code_popup_open_failed")
+      return null
+    }
+    markControlCodeRequestPhase(phases, "first_phone_tap", requestStartedAtMillis)
+    val targets = waitForControlCodePopupTargetsFast(phases, "fast_popup_root")
+    if (targets != null) {
+      markControlCodeRequestPhase(phases, "popup_ready", requestStartedAtMillis)
+      markControlCodeModeEntered("control_code_request_popup_ready_fast")
+      return targets
+    }
+	    recordInputGateDecision(allowed = false, reason = "control_code_popup_timeout")
+	    return null
+	  }
+
+	  private suspend fun openControlCodePopupFromRecoveredStateFastForRequest(
+	    phases: MutableMap<String, Long>,
+	    requestStartedAtMillis: Long
+	  ): FastControlCodeTargets? {
+	    val action = streamSize?.let { size ->
+	      controlCodeGeometryTarget(size, "generated_request_recovered").copy(reason = "control_code_button_request_recovered_geometry")
+	    } ?: fallbackControlCodeButtonTarget().copy(reason = "control_code_button_request_recovered_display_geometry")
+	    recordInputGateDecision(allowed = true, reason = action.reason)
+	    markControlCodeTransition("control_code_request_open_popup_recovered")
+	    val tap = measureInputPhase(phases, "open_popup_recovered") {
+	      runFastNonTouchInput("input tap ${action.x} ${action.y}", "control_code_request_open_popup_recovered")
+	    }
+	    recordControlCodeSnapAttempt(
+	      rawX = action.x,
+	      rawY = action.y,
+	      candidateZone = action.candidateZone,
+	      snapTarget = SNAP_TARGET_CONTROL_CODE_BUTTON,
+	      accepted = tap.ok,
+	      reason = if (tap.ok) action.reason else "root_command_failed",
+	      finalX = action.x,
+	      finalY = action.y,
+	      detectedButtonBounds = action.detectedButtonBounds
+	    )
+	    if (!tap.ok) {
+	      recordInputGateDecision(allowed = false, reason = "control_code_popup_open_failed")
+	      return null
+	    }
+	    markControlCodeRequestPhase(phases, "first_phone_tap", requestStartedAtMillis)
+	    val targets = waitForControlCodePopupTargetsFast(phases, "fast_popup_root_recovered")
+	    if (targets != null) {
+	      markControlCodeRequestPhase(phases, "popup_ready", requestStartedAtMillis)
+	      markControlCodeModeEntered("control_code_request_popup_ready_recovered")
+	      return targets
+	    }
+	    recordInputGateDecision(allowed = false, reason = "control_code_popup_timeout")
+	    return null
+	  }
+
+  private suspend fun waitForControlCodePopupTargetsFast(
+    phases: MutableMap<String, Long>,
+    phase: String
+  ): FastControlCodeTargets? {
+    val deadline = SystemClock.elapsedRealtime() + CONTROL_CODE_FAST_POPUP_TIMEOUT_MILLIS
+    while (SystemClock.elapsedRealtime() < deadline) {
+      delay(CONTROL_CODE_FAST_POLL_MILLIS)
+      val currentHierarchy = controlCodeRequestRootHierarchy(phases, phase)
+      val targets = currentHierarchy?.let { controlCodeFastTargetsForHierarchy(it) }
+      if (targets != null) {
+        controlCodePopupReadyUntilMillis = SystemClock.elapsedRealtime() + CONTROL_CODE_POPUP_READY_CACHE_MILLIS
+        return targets
+      }
+    }
+    return null
+  }
+
+  private suspend fun enterControlCodeDigitsFastForRequest(
+    digits: String,
+    targets: FastControlCodeTargets,
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long
+  ): Boolean {
+    val focus = measureInputPhase(phases, "focus_input_fast") {
+      runFastNonTouchInput("input tap ${targets.input.x} ${targets.input.y}", "control_code_input_focus_fast")
+    }
+    if (!focus.ok) {
+      recordInputGateDecision(allowed = false, reason = "control_code_input_focus_failed")
+      return false
+    }
+    delay(CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS)
+    val typed = measureInputPhase(phases, "type_digits_fast") {
+      runFastNonTouchInput(
+        """
+        input keyevent KEYCODE_MOVE_END
+        for i in 1 2 3 4 5 6 7 8 9; do input keyevent KEYCODE_DEL; done
+        input text $digits
+        """.trimIndent(),
+        "control_code_request_type_digits_fast"
+      )
+    }
+    if (!typed.ok) {
+      recordInputGateDecision(allowed = false, reason = "control_code_input_set_failed")
+      return false
+    }
+    delay(CONTROL_CODE_FAST_POLL_MILLIS)
+    markControlCodeRequestPhase(phases, "digits_typed", requestStartedAtMillis)
+    recordTicketEvent("control_code_input_typed_submit_now", "shell_text_ok")
+    return true
+  }
+
+  private suspend fun tapControlCodeSubmitFastForRequest(
+    targets: FastControlCodeTargets,
+    digits: String,
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long
+  ): Boolean {
+    var submitAttempted = false
+    val submit = fallbackControlCodeShiftedSubmitAction() ?: targets.submit
+    val tap = measureInputPhase(phases, "submit_digits_fast") {
+      runFastNonTouchInput("input tap ${submit.x} ${submit.y}", "control_code_request_submit_button_fast")
+    }
+    if (tap.ok) {
+      submitAttempted = true
+      phases["control_code_submit_attempted"] = 1L
+      markControlCodeRequestPhase(phases, "ok_tapped", requestStartedAtMillis)
+      recordTicketEvent("control_code_submit_attempted", "coordinate_ok digits=${digits.length}")
+    }
+    if (!submitAttempted) {
+      val accessibilitySubmitted = measureInputPhase(phases, "submit_accessibility_fallback") {
+        PhoneAutomationServiceBridge.clickSelectors(
+          expectedPackageName = TicketScreenConfig.VIVI_PACKAGE,
+          selectors = controlCodeSubmitSelectors(),
+          timeoutMillis = CONTROL_CODE_ACCESSIBILITY_SUBMIT_TIMEOUT_MILLIS
+        )
+      }
+      submitAttempted = accessibilitySubmitted
+      if (submitAttempted) {
+        phases["control_code_submit_attempted"] = 1L
+        markControlCodeRequestPhase(phases, "ok_tapped", requestStartedAtMillis)
+        recordTicketEvent("control_code_submit_attempted", "accessibility_fallback digits=${digits.length}")
+      }
+    }
+    if (!submitAttempted) {
+      recordInputGateDecision(allowed = false, reason = "control_code_submit_missing")
+    }
+    return submitAttempted
+  }
+
+  private suspend fun waitForGeneratedControlCodeResultAfterSubmit(
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long
+  ): ControlCodeResultWaitOutcome {
+    val startedAtMillis = SystemClock.elapsedRealtime()
+    val deadline = startedAtMillis + CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS
+    var consecutiveTicketDetail = 0
+    var sawPopup = false
+    while (SystemClock.elapsedRealtime() < deadline) {
+      val fastState = ticketAutopilot.observeFastState("control_code_result_fast_wait")?.state
+      when (fastState) {
+        TicketViviRecoveryState.CONTROL_CODE_RESULT -> {
+          val hierarchy = TicketViviPageEnforcer.hierarchyForVisibleNodes(
+            PhoneAutomationServiceBridge.snapshotVisibleNodes(TicketScreenConfig.VIVI_PACKAGE)
+          )
+          if (hierarchy.isNotBlank() && !TicketViviPageEnforcer.hasControlCodeInputForHierarchy(hierarchy)) {
+            val value = TicketViviPageEnforcer.strictControlCodeResultValueForHierarchy(hierarchy).orEmpty()
+            phases["wait_result_fast"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+            markControlCodeRequestPhase(phases, "result_first_visible", requestStartedAtMillis)
+            markControlCodeModeEntered("control_code_request_result_detected_fast")
+            recordTicketEvent("control_code_request_result_detected_fast", value.ifBlank { "image_only" })
+            return ControlCodeResultWaitOutcome(
+              generated = GeneratedControlCodeResult(value = value, hierarchy = hierarchy),
+              failureReason = ""
+            )
+          }
+        }
+
+        TicketViviRecoveryState.CONTROL_CODE_POPUP -> {
+          sawPopup = true
+          consecutiveTicketDetail = 0
+          delay(CONTROL_CODE_FAST_POLL_MILLIS)
+          continue
+        }
+
+        TicketViviRecoveryState.TICKET_DETAIL -> {
+          consecutiveTicketDetail += 1
+          if (
+            consecutiveTicketDetail >= CONTROL_CODE_REQUEST_NO_RESULT_TICKET_DETAIL_COUNT &&
+            SystemClock.elapsedRealtime() - startedAtMillis >= CONTROL_CODE_REQUEST_NO_RESULT_GRACE_MILLIS
+          ) {
+            phases["wait_result_fast"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+            recordTicketEvent("control_code_request_not_generated", "ticket_detail_after_submit")
+            return ControlCodeResultWaitOutcome(failureReason = "control_code_submit_returned_no_result")
+          }
+          delay(CONTROL_CODE_FAST_POLL_MILLIS)
+          continue
+        }
+
+        else -> Unit
+      }
+      val hierarchy = controlCodeRequestRootHierarchy(phases, "fast_wait_result_root")
+      if (!hierarchy.isNullOrBlank()) {
+        val state = TicketViviPageEnforcer.classifyForRecovery(hierarchy)
+        viviStateMemory.record(
+          state = state,
+          ticketId = TicketViviPageEnforcer.ticketIdForHierarchy(hierarchy),
+          source = "control_code_fast",
+          reason = "control_code_request_wait_after_submit"
+        )
+        if (TicketViviPageEnforcer.hasControlCodeInputForHierarchy(hierarchy)) {
+          sawPopup = true
+        }
+        val value = TicketViviPageEnforcer.strictControlCodeResultValueForHierarchy(hierarchy).orEmpty()
+        if (state == TicketViviRecoveryState.CONTROL_CODE_RESULT || value.isNotBlank()) {
+          phases["wait_result_fast"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+          markControlCodeRequestPhase(phases, "result_first_visible", requestStartedAtMillis)
+          markControlCodeModeEntered("control_code_request_result_detected_fast")
+          recordTicketEvent("control_code_request_result_detected_fast", value.ifBlank { "image_only" })
+          return ControlCodeResultWaitOutcome(
+            generated = GeneratedControlCodeResult(value = value, hierarchy = hierarchy),
+            failureReason = ""
+          )
+        }
+        if (state == TicketViviRecoveryState.TICKET_DETAIL) {
+          consecutiveTicketDetail += 1
+          if (
+            consecutiveTicketDetail >= CONTROL_CODE_REQUEST_NO_RESULT_TICKET_DETAIL_COUNT &&
+            SystemClock.elapsedRealtime() - startedAtMillis >= CONTROL_CODE_REQUEST_NO_RESULT_GRACE_MILLIS
+          ) {
+            phases["wait_result_fast"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+            recordTicketEvent("control_code_request_not_generated", "ticket_detail_after_submit")
+            return ControlCodeResultWaitOutcome(failureReason = "control_code_submit_returned_no_result")
+          }
+        } else {
+          consecutiveTicketDetail = 0
+          if (state != TicketViviRecoveryState.CONTROL_CODE_POPUP && !TicketViviPageEnforcer.hasControlCodeInputForHierarchy(hierarchy)) {
+            phases["wait_result_fast"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+            markControlCodeModeEntered("control_code_request_result_assumed_fast")
+            recordTicketEvent("control_code_request_result_assumed_fast", state.name)
+            return ControlCodeResultWaitOutcome(
+              generated = GeneratedControlCodeResult(value = value, hierarchy = hierarchy),
+              failureReason = ""
+            )
+          }
+        }
+      }
+      delay(CONTROL_CODE_FAST_POLL_MILLIS)
+    }
+    phases["wait_result_fast"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+    val popupStillPresent = controlCodePopupStillPresentAfterSubmit(phases)
+    return if (sawPopup || popupStillPresent) {
+      ControlCodeResultWaitOutcome(failureReason = "control_code_submit_timeout")
+    } else {
+      ControlCodeResultWaitOutcome(failureReason = "control_code_result_timeout")
+    }
+  }
+
+  private suspend fun controlCodeRequestRootHierarchy(
+    phases: MutableMap<String, Long>,
+    phase: String
+  ): String? {
+    return measureInputPhase(phases, phase) {
+      val accessibilityXml = TicketViviPageEnforcer.hierarchyForVisibleNodes(
+        PhoneAutomationServiceBridge.snapshotVisibleNodes(TicketScreenConfig.VIVI_PACKAGE)
+      )
+      val accessibilityState = TicketViviPageEnforcer.classifyForRecovery(accessibilityXml)
+      if (
+        accessibilityXml.isNotBlank() &&
+        accessibilityState != TicketViviRecoveryState.BLANK &&
+        accessibilityState != TicketViviRecoveryState.OUTSIDE_VIVI
+      ) {
+        return@measureInputPhase accessibilityXml
+      }
+      val dump = dumpViviHierarchy(fresh = true, timeoutMillis = CONTROL_CODE_FAST_ROOT_DUMP_TIMEOUT_MILLIS)
+      dump.stdout.takeIf { dump.ok && it.isNotBlank() }
+    }
+  }
+
+  private fun controlCodeFastTargetsForHierarchy(hierarchy: String): FastControlCodeTargets? {
+    val surface = TicketViviPageEnforcer.controlCodePopupSurfaceForHierarchy(hierarchy)
+    if (surface != null) {
+      rememberControlCodePopupSurface(surface)
+      return FastControlCodeTargets(input = surface.input, submit = surface.submit)
+    }
+    val input = TicketViviPageEnforcer.controlCodeInputActionLooseForHierarchy(hierarchy) ?: return null
+    val submit = TicketViviPageEnforcer.controlCodeSubmitActionLooseForHierarchy(hierarchy)
+      ?: cachedControlCodePopupSurface()?.submit
+      ?: fallbackControlCodeShiftedSubmitAction()
+    return FastControlCodeTargets(input = input, submit = submit)
+  }
+
+  private suspend fun findControlCodeSubmitActionFastForRequest(phases: MutableMap<String, Long>): TicketViviPageAction? {
+    return controlCodeRequestRootHierarchy(phases, "find_submit_fast")
+      ?.let { hierarchy ->
+        TicketViviPageEnforcer.controlCodeSubmitActionLooseForHierarchy(hierarchy)
+          ?: TicketViviPageEnforcer.controlCodePopupSurfaceForHierarchy(hierarchy)?.also { surface ->
+            rememberControlCodePopupSurface(surface)
+          }?.submit
+      }
+  }
+
+  private suspend fun verifyControlCodeDigitsEnteredFast(
+    digits: String,
+    phases: MutableMap<String, Long>
+  ): Boolean {
+    return controlCodeRequestRootHierarchy(phases, "verify_digits_fast")
+      ?.let { hierarchy ->
+        val inputValue = TicketViviPageEnforcer.controlCodeInputValueForHierarchy(hierarchy)
+          ?: TicketViviPageEnforcer.controlCodeInputValueLooseForHierarchy(hierarchy)
+        inputValue != null && (inputValue == digits || inputValue.filter { char -> char.isDigit() } == digits)
+      } == true
+  }
+
+  private suspend fun controlCodeInputStillAvailableFastForRequest(
+    phases: MutableMap<String, Long>,
+    phase: String
+  ): Boolean {
+    return controlCodeRequestRootHierarchy(phases, phase)
+      ?.let { hierarchy ->
+        TicketViviPageEnforcer.hasControlCodeInputForHierarchy(hierarchy) ||
+          TicketViviPageEnforcer.controlCodePopupSurfaceForHierarchy(hierarchy) != null
+      } == true
+  }
+
+  private suspend fun controlCodePopupStillPresentAfterSubmit(phases: MutableMap<String, Long>): Boolean {
+    return controlCodeRequestRootHierarchy(phases, "verify_popup_after_submit")
+      ?.let { hierarchy ->
+        TicketViviPageEnforcer.hasControlCodeInputForHierarchy(hierarchy) ||
+          TicketViviPageEnforcer.controlCodePopupSurfaceForHierarchy(hierarchy) != null
+      } == true
+  }
+
+  private fun fallbackControlCodeButtonTarget(): TicketTapTarget {
+    val (width, height) = currentDisplaySize()
+    return TicketTapTarget(
+      x = (width * CONTROL_CODE_FAST_BUTTON_X_FRACTION).roundToInt(),
+      y = (height * CONTROL_CODE_FAST_BUTTON_Y_FRACTION).roundToInt(),
+      reason = "control_code_button_request_display_geometry_fast",
+      candidateZone = "generated_request_fast"
+    )
+  }
+
+  private fun controlCodeImmediateStartDecision(): ControlCodeImmediateStartDecision {
+    if (!streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_FFMPEG_H264) {
+      return ControlCodeImmediateStartDecision(false, "control_code_immediate_stream_inactive")
+    }
+    if (ticketSessionState != TICKET_SESSION_LIVE) {
+      return ControlCodeImmediateStartDecision(false, "control_code_immediate_ticket_state_stale:$ticketSessionState")
+    }
+    if (lastRootH264BlankProbeResult != "visible") {
+      return ControlCodeImmediateStartDecision(false, "control_code_immediate_secure_probe_not_visible")
+    }
+    val nowMillis = SystemClock.elapsedRealtime()
+    val current = viviStateMemory.current()
+    val currentAge = ageMillis(current.observedAtMillis, nowMillis)
+    if (
+      currentAge != null &&
+      currentAge <= CONTROL_CODE_SNAP_UNSAFE_STATE_MEMORY_MAX_AGE_MILLIS &&
+      current.state != TicketViviRecoveryState.TICKET_DETAIL
+    ) {
+      return ControlCodeImmediateStartDecision(false, "control_code_immediate_recent_state_${current.state.name.lowercase()}")
+    }
+    if (
+      current.state == TicketViviRecoveryState.TICKET_DETAIL &&
+      currentAge != null &&
+      currentAge <= CONTROL_CODE_IMMEDIATE_TICKET_DETAIL_MEMORY_MAX_AGE_MILLIS
+    ) {
+      return ControlCodeImmediateStartDecision(true, "control_code_button_immediate_recent_ticket_detail")
+    }
+    if (viviStateMemory.recentTicketDetailWithin(CONTROL_CODE_IMMEDIATE_TICKET_DETAIL_MEMORY_MAX_AGE_MILLIS) != null) {
+      return ControlCodeImmediateStartDecision(true, "control_code_button_immediate_recent_ticket_detail")
+    }
+    return ControlCodeImmediateStartDecision(false, "control_code_immediate_no_recent_ticket_detail")
+  }
+
+  private fun fallbackControlCodeShiftedSubmitAction(): TicketViviPageAction {
+    val (width, height) = currentDisplaySize()
+    return TicketViviPageAction(
+      x = (width * CONTROL_CODE_FAST_SHIFTED_OK_X_FRACTION).roundToInt(),
+      y = (height * CONTROL_CODE_FAST_SHIFTED_OK_Y_FRACTION).roundToInt(),
+      reason = "submit_control_code_popup_shifted_geometry"
+    )
+  }
+
+  private suspend fun openControlCodePopupForRequest(phases: MutableMap<String, Long>): Boolean {
+    val hierarchy = measureInputPhase(phases, "find_button") {
+      controlCodeRequestHierarchy()
+    }
+    if (hierarchy.isNullOrBlank()) {
+      recordInputGateDecision(allowed = false, reason = "control_code_request_hierarchy_unavailable")
+      return false
+    }
+    val state = TicketViviPageEnforcer.classifyForRecovery(hierarchy)
+    if (state == TicketViviRecoveryState.CONTROL_CODE_POPUP) {
+      TicketViviPageEnforcer.controlCodePopupSurfaceForHierarchy(hierarchy)?.let { surface ->
+        rememberControlCodePopupSurface(surface)
+      }
+      controlCodePopupReadyUntilMillis = SystemClock.elapsedRealtime() + CONTROL_CODE_POPUP_READY_CACHE_MILLIS
+      markControlCodeModeEntered("control_code_request_popup_already_open")
+      return true
+    }
+    if (state != TicketViviRecoveryState.TICKET_DETAIL) {
+      recordInputGateDecision(allowed = false, reason = "control_code_request_unsafe_state:${state.name}")
+      scheduleTicketRecovery("control_code_request_unsafe_${state.name.lowercase()}", TicketRecoveryMode.ACTIVE_SOFT)
+      return false
+    }
+    val action = TicketViviPageEnforcer.controlCodeButtonActionForHierarchy(hierarchy)?.let { detected ->
+      TicketTapTarget(
+        x = detected.x,
+        y = detected.y,
+        reason = detected.reason,
+        candidateZone = "generated_request",
+        detectedButtonBounds = detected.bounds
+      )
+    } ?: streamSize?.let { size ->
+      controlCodeGeometryTarget(size, "generated_request").copy(reason = "control_code_button_request_geometry")
+    }
+    if (action == null) {
+      recordInputGateDecision(allowed = false, reason = "control_code_button_missing")
+      return false
+    }
+    recordInputGateDecision(allowed = true, reason = action.reason)
+    markControlCodeTransition("control_code_request_open_popup")
+    val tap = measureInputPhase(phases, "open_popup") {
+      runFastNonTouchInput("input tap ${action.x} ${action.y}", "control_code_request_open_popup")
+    }
+    recordControlCodeSnapAttempt(
+      rawX = action.x,
+      rawY = action.y,
+      candidateZone = action.candidateZone,
+      snapTarget = SNAP_TARGET_CONTROL_CODE_BUTTON,
+      accepted = tap.ok,
+      reason = if (tap.ok) action.reason else "root_command_failed",
+      finalX = action.x,
+      finalY = action.y,
+      detectedButtonBounds = action.detectedButtonBounds
+    )
+    if (!tap.ok) {
+      recordInputGateDecision(allowed = false, reason = "control_code_popup_open_failed")
+      return false
+    }
+    val deadline = SystemClock.elapsedRealtime() + CONTROL_CODE_REQUEST_POPUP_TIMEOUT_MILLIS
+    while (SystemClock.elapsedRealtime() < deadline) {
+      delay(CONTROL_CODE_REQUEST_POLL_MILLIS)
+      val currentHierarchy = controlCodeRequestHierarchy()
+      val surface = currentHierarchy
+        ?.takeIf { it.isNotBlank() }
+        ?.let { TicketViviPageEnforcer.controlCodePopupSurfaceForHierarchy(it) }
+      if (surface != null) {
+        rememberControlCodePopupSurface(surface)
+        controlCodePopupReadyUntilMillis = SystemClock.elapsedRealtime() + CONTROL_CODE_POPUP_READY_CACHE_MILLIS
+        markControlCodeModeEntered("control_code_request_popup_ready")
+        return true
+      }
+    }
+    recordInputGateDecision(allowed = false, reason = "control_code_popup_timeout")
+    return false
+  }
+
+  private suspend fun enterControlCodeDigitsForRequest(digits: String, phases: MutableMap<String, Long>): Boolean {
+    val initialSubmitAction = cachedControlCodePopupSurface()?.submit
+      ?: findControlCodeSubmitActionForRequest(phases, "find_submit_before_input")
+    if (initialSubmitAction == null) {
+      recordInputGateDecision(allowed = false, reason = "control_code_submit_missing")
+      return false
+    }
+    if (!setControlCodeDigitsForRequest(digits, phases)) {
+      return false
+    }
+    return submitControlCodeDigitsForRequest(initialSubmitAction, digits, phases)
+  }
+
+  private suspend fun tapControlCodeSubmitActionForRequest(
+    action: TicketViviPageAction,
+    phases: MutableMap<String, Long>,
+    phase: String
+  ): Boolean {
+    val submitted = measureInputPhase(phases, phase) {
+      runFastNonTouchInput(
+        "input tap ${action.x} ${action.y}",
+        "control_code_request_submit_button"
+      )
+    }
+    return submitted.ok
+  }
+
+  private suspend fun submitControlCodeDigitsForRequest(
+    initialSubmitAction: TicketViviPageAction,
+    digits: String,
+    phases: MutableMap<String, Long>
+  ): Boolean {
+    var submitAttempted = false
+    val visibleSubmitAction = findControlCodeSubmitActionForRequest(phases, "find_submit_visible")
+      ?: initialSubmitAction
+    if (controlCodePopupStillPresentForCachedSubmit(phases, null)) {
+      if (tapControlCodeSubmitActionForRequest(visibleSubmitAction, phases, "submit_digits_visible")) {
+        submitAttempted = true
+        when (waitForControlCodeSubmitTransition(phases)) {
+          ControlCodeSubmitTransition.GENERATED_RESULT -> {
+            markViewerInput("control_code_request_digits")
+            return true
+          }
+
+          ControlCodeSubmitTransition.RETURNED_NO_RESULT -> {
+            recordInputGateDecision(allowed = false, reason = "control_code_submit_returned_no_result")
+            return false
+          }
+
+          ControlCodeSubmitTransition.STILL_ON_POPUP,
+          ControlCodeSubmitTransition.TIMEOUT -> {
+            if (!controlCodePopupStillPresentForCachedSubmit(phases, null)) {
+              recordInputGateDecision(allowed = false, reason = "control_code_submit_timeout")
+              return false
+            }
+          }
+        }
+      }
+    }
+
+    val accessibilityBack = measureInputPhase(phases, "control_code_request_hide_keyboard") {
+      PhoneAutomationServiceBridge.performBack()
+    }
+    if (!accessibilityBack) {
+      measureInputPhase(phases, "dismiss_keyboard_for_submit") {
+        runFastNonTouchInput("input keyevent KEYCODE_BACK", "control_code_request_hide_keyboard")
+      }
+    }
+    delay(CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS)
+
+    val submitAction = findControlCodeSubmitActionForRequest(phases, "find_submit_after_keyboard")
+      ?: if (controlCodePopupStillPresentForCachedSubmit(phases, null)) initialSubmitAction else null
+    if (submitAction == null) {
+      recordInputGateDecision(
+        allowed = false,
+        reason = if (submitAttempted) "control_code_submit_timeout" else "control_code_submit_missing"
+      )
+      return false
+    } else {
+      val submitted = tapControlCodeSubmitActionForRequest(submitAction, phases, "submit_digits")
+      if (!submitted) {
+        val accessibilitySubmitted = measureInputPhase(phases, "submit_accessibility") {
+          PhoneAutomationServiceBridge.clickSelectors(
+            expectedPackageName = TicketScreenConfig.VIVI_PACKAGE,
+            selectors = controlCodeSubmitSelectors(),
+            timeoutMillis = CONTROL_CODE_ACCESSIBILITY_SUBMIT_TIMEOUT_MILLIS
+          )
+        }
+        submitAttempted = accessibilitySubmitted
+        if (!submitAttempted) {
+          recordInputGateDecision(allowed = false, reason = "control_code_submit_failed")
+          return false
+        }
+      } else {
+        submitAttempted = true
+      }
+    }
+    if (!submitAttempted) {
+      recordInputGateDecision(allowed = false, reason = "control_code_submit_missing")
+      return false
+    }
+    return when (waitForControlCodeSubmitTransition(phases)) {
+      ControlCodeSubmitTransition.GENERATED_RESULT -> {
+        markViewerInput("control_code_request_digits")
+        true
+      }
+
+      ControlCodeSubmitTransition.RETURNED_NO_RESULT -> {
+        recordInputGateDecision(allowed = false, reason = "control_code_submit_returned_no_result")
+        false
+      }
+
+      ControlCodeSubmitTransition.STILL_ON_POPUP,
+      ControlCodeSubmitTransition.TIMEOUT -> {
+        recordInputGateDecision(allowed = false, reason = "control_code_submit_timeout")
+        false
+      }
+    }
+  }
+
+  private suspend fun findControlCodeSubmitActionForRequest(
+    phases: MutableMap<String, Long>,
+    phase: String
+  ): TicketViviPageAction? {
+    return measureInputPhase(phases, phase) {
+      val deadline = SystemClock.elapsedRealtime() + CONTROL_CODE_SUBMIT_FIND_TIMEOUT_MILLIS
+      var action: TicketViviPageAction? = null
+      while (SystemClock.elapsedRealtime() < deadline && action == null) {
+        action = controlCodeRequestHierarchy()
+          ?.let { hierarchy ->
+            TicketViviPageEnforcer.controlCodePopupSurfaceForHierarchy(hierarchy)?.also { surface ->
+              rememberControlCodePopupSurface(surface)
+            }?.submit
+          }
+        if (action == null) {
+          delay(CONTROL_CODE_SUBMIT_FIND_POLL_MILLIS)
+        }
+      }
+      action
+    }
+  }
+
+  private suspend fun controlCodePopupStillPresentForCachedSubmit(
+    phases: MutableMap<String, Long>,
+    expectedDigits: String?
+  ): Boolean {
+    return measureInputPhase(phases, "verify_cached_submit_popup") {
+      controlCodeRequestHierarchy()
+        ?.let { hierarchy ->
+          TicketViviPageEnforcer.controlCodePopupSurfaceForHierarchy(hierarchy) != null ||
+            (
+              TicketViviPageEnforcer.hasControlCodeInputForHierarchy(hierarchy) &&
+                (
+                  expectedDigits == null ||
+                    TicketViviPageEnforcer.controlCodeInputValueForHierarchy(hierarchy)
+                      ?.filter { char -> char.isDigit() } == expectedDigits ||
+                    TicketViviPageEnforcer.controlCodeInputValueLooseForHierarchy(hierarchy)
+                      ?.filter { char -> char.isDigit() } == expectedDigits
+                )
+              )
+        } == true
+    }
+  }
+
+  private suspend fun waitForControlCodeSubmitTransition(phases: MutableMap<String, Long>): ControlCodeSubmitTransition {
+    val startedAtMillis = SystemClock.elapsedRealtime()
+    val deadline = startedAtMillis + CONTROL_CODE_REQUEST_SUBMIT_TRANSITION_TIMEOUT_MILLIS
+    var consecutiveTicketDetail = 0
+    var sawPopup = false
+    while (SystemClock.elapsedRealtime() < deadline) {
+      val hierarchy = controlCodeRequestHierarchy()
+      if (!hierarchy.isNullOrBlank()) {
+        val state = TicketViviPageEnforcer.classifyForRecovery(hierarchy)
+        when (state) {
+          TicketViviRecoveryState.CONTROL_CODE_RESULT -> {
+            phases["submit_transition"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+            markControlCodeModeEntered("control_code_request_result_detected")
+            return ControlCodeSubmitTransition.GENERATED_RESULT
+          }
+
+          TicketViviRecoveryState.TICKET_DETAIL -> {
+            consecutiveTicketDetail += 1
+            if (
+              consecutiveTicketDetail >= CONTROL_CODE_REQUEST_NO_RESULT_TICKET_DETAIL_COUNT &&
+              SystemClock.elapsedRealtime() - startedAtMillis >= CONTROL_CODE_REQUEST_NO_RESULT_GRACE_MILLIS
+            ) {
+              phases["submit_transition"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+              recordTicketEvent("control_code_request_not_generated", "ticket_detail_after_submit")
+              return ControlCodeSubmitTransition.RETURNED_NO_RESULT
+            }
+          }
+
+          TicketViviRecoveryState.CONTROL_CODE_POPUP -> {
+            consecutiveTicketDetail = 0
+            sawPopup = true
+          }
+
+          else -> {
+            consecutiveTicketDetail = 0
+          }
+        }
+        if (TicketViviPageEnforcer.hasControlCodeInputForHierarchy(hierarchy)) {
+          sawPopup = true
+        }
+        val value = TicketViviPageEnforcer.strictControlCodeResultValueForHierarchy(hierarchy)
+        if (!value.isNullOrBlank()) {
+          phases["submit_transition"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+          markControlCodeModeEntered("control_code_request_result_detected")
+          recordTicketEvent("control_code_request_result_detected", value)
+          return ControlCodeSubmitTransition.GENERATED_RESULT
+        }
+      }
+      delay(CONTROL_CODE_REQUEST_POLL_MILLIS)
+    }
+    phases["submit_transition"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+    return if (sawPopup) ControlCodeSubmitTransition.STILL_ON_POPUP else ControlCodeSubmitTransition.TIMEOUT
+  }
+
+  private suspend fun setControlCodeDigitsForRequest(digits: String, phases: MutableMap<String, Long>): Boolean {
+    if (!openControlCodeInputFieldForRequest(phases)) {
+      return false
+    }
+
+    var verifyFailed = false
+
+    val focusedAccessibilitySet = measureInputPhase(phases, "set_digits_focused_accessibility") {
+      PhoneAutomationServiceBridge.setTextInFocusedInput(
+        expectedPackageName = TicketScreenConfig.VIVI_PACKAGE,
+        text = digits,
+        timeoutMillis = CONTROL_CODE_ACCESSIBILITY_SET_TEXT_TIMEOUT_MILLIS
+      )
+    }
+    if (focusedAccessibilitySet) {
+      delay(CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS)
+      if (verifyControlCodeDigitsEntered(digits, phases)) {
+        return true
+      }
+      verifyFailed = true
+    }
+
+    val firstEditableSet = measureInputPhase(phases, "set_digits_first_editable_accessibility") {
+      PhoneAutomationServiceBridge.setTextInFirstEditableInput(
+        expectedPackageName = TicketScreenConfig.VIVI_PACKAGE,
+        text = digits,
+        timeoutMillis = CONTROL_CODE_ACCESSIBILITY_SET_TEXT_TIMEOUT_MILLIS
+      )
+    }
+    if (firstEditableSet) {
+      delay(CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS)
+      if (verifyControlCodeDigitsEntered(digits, phases)) {
+        return true
+      }
+      verifyFailed = true
+    }
+
+    val paste = measureInputPhase(phases, "paste_digits") {
+      runFastNonTouchInput(
+        """
+        input keyevent KEYCODE_MOVE_END
+        for i in 1 2 3 4 5 6 7 8 9; do input keyevent KEYCODE_DEL; done
+        cmd clipboard set text ${shellQuote(digits)} >/dev/null 2>&1 && input keyevent KEYCODE_PASTE
+        """.trimIndent(),
+        "control_code_request_paste_digits"
+      )
+    }
+    if (paste.ok) {
+      delay(CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS)
+      if (verifyControlCodeDigitsEntered(digits, phases)) {
+        return true
+      }
+      verifyFailed = true
+    }
+
+    val clear = measureInputPhase(phases, "clear_input") {
+      runFastNonTouchInput(
+        "input keyevent KEYCODE_MOVE_END; for i in 1 2 3 4 5 6 7 8 9; do input keyevent KEYCODE_DEL; done",
+        "control_code_request_clear_input"
+      )
+    }
+    if (!clear.ok) {
+      recordInputGateDecision(allowed = false, reason = "control_code_input_clear_failed")
+      return false
+    }
+    val typed = measureInputPhase(phases, "type_digits") {
+      runFastNonTouchInput("input text $digits", "control_code_request_type_digits")
+    }
+    if (typed.ok) {
+      delay(CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS)
+      if (verifyControlCodeDigitsEntered(digits, phases)) {
+        return true
+      }
+      if (controlCodeInputStillAvailableForRequest(phases, "verify_type_input_still_open")) {
+        return true
+      }
+      verifyFailed = true
+    }
+    recordInputGateDecision(
+      allowed = false,
+      reason = if (verifyFailed) "control_code_input_verify_failed" else "control_code_input_set_failed"
+    )
+    return false
+  }
+
+  private suspend fun controlCodeInputStillAvailableForRequest(
+    phases: MutableMap<String, Long>,
+    phase: String
+  ): Boolean {
+    return measureInputPhase(phases, phase) {
+      controlCodeRequestHierarchy()
+        ?.let { hierarchy ->
+          TicketViviPageEnforcer.hasControlCodeInputForHierarchy(hierarchy) ||
+            TicketViviPageEnforcer.controlCodePopupSurfaceForHierarchy(hierarchy) != null
+        } == true
+    }
+  }
+
+  private suspend fun openControlCodeInputFieldForRequest(phases: MutableMap<String, Long>): Boolean {
+    val inputAction = cachedControlCodePopupSurface()?.input ?: measureInputPhase(phases, "find_input") {
+      controlCodeRequestHierarchy()
+        ?.let { hierarchy ->
+          TicketViviPageEnforcer.controlCodePopupSurfaceForHierarchy(hierarchy)?.also { surface ->
+            rememberControlCodePopupSurface(surface)
+          }?.input
+        }
+    }
+    if (inputAction == null) {
+      recordInputGateDecision(allowed = false, reason = "control_code_input_missing")
+      return false
+    }
+    val accessibilityOpened = measureInputPhase(phases, "open_input_accessibility") {
+      PhoneAutomationServiceBridge.openFirstEditableInput(
+        expectedPackageName = TicketScreenConfig.VIVI_PACKAGE,
+        timeoutMillis = CONTROL_CODE_ACCESSIBILITY_OPEN_INPUT_TIMEOUT_MILLIS
+      )
+    }
+    delay(CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS)
+    val focusedAfterAccessibility = if (accessibilityOpened) {
+      measureInputPhase(phases, "verify_input_focused") {
+        controlCodeRequestHierarchy()
+          ?.let { hierarchy -> TicketViviPageEnforcer.isControlCodeInputFocused(hierarchy) } == true
+      }
+    } else {
+      false
+    }
+    var tapped = false
+    if (!accessibilityOpened || !focusedAfterAccessibility) {
+      val refreshedInputAction = measureInputPhase(phases, "find_input_after_accessibility") {
+        controlCodeRequestHierarchy()
+          ?.let { hierarchy ->
+            TicketViviPageEnforcer.controlCodeInputActionLooseForHierarchy(hierarchy)
+              ?: TicketViviPageEnforcer.controlCodePopupSurfaceForHierarchy(hierarchy)?.input
+          }
+      } ?: inputAction
+      tapped = measureInputPhase(phases, "focus_input") {
+        runFastNonTouchInput("input tap ${refreshedInputAction.x} ${refreshedInputAction.y}", "control_code_input_focus")
+      }.ok
+    }
+    if (!accessibilityOpened && !tapped) {
+      recordInputGateDecision(allowed = false, reason = "control_code_input_focus_failed")
+      return false
+    }
+    if (tapped) {
+      delay(CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS)
+    }
+    val popupStillPresent = measureInputPhase(phases, "verify_input_open") {
+      controlCodeRequestHierarchy()
+        ?.let { hierarchy ->
+          TicketViviPageEnforcer.controlCodePopupSurfaceForHierarchy(hierarchy) != null ||
+            TicketViviPageEnforcer.hasControlCodeInputForHierarchy(hierarchy)
+        } == true
+    }
+    if (!popupStillPresent && !accessibilityOpened && !tapped) {
+      recordInputGateDecision(allowed = false, reason = "control_code_input_focus_failed")
+      return false
+    }
+    return true
+  }
+
+  private suspend fun verifyControlCodeDigitsEntered(
+    digits: String,
+    phases: MutableMap<String, Long>,
+    allowHiddenValue: Boolean = false
+  ): Boolean {
+    val verified = measureInputPhase(phases, "verify_digits") {
+      val hierarchy = controlCodeRequestHierarchy()
+      if (hierarchy.isNullOrBlank()) {
+        false
+      } else {
+        val inputValue = TicketViviPageEnforcer.controlCodeInputValueForHierarchy(hierarchy)
+          ?: TicketViviPageEnforcer.controlCodeInputValueLooseForHierarchy(hierarchy)
+        inputValue != null &&
+          (inputValue == digits || inputValue.filter { char -> char.isDigit() } == digits || (allowHiddenValue && inputValue.isBlank()))
+      }
+    }
+    if (!verified) {
+      recordInputGateDecision(allowed = false, reason = "control_code_input_verify_failed")
+    }
+    return verified
+  }
+
+  private suspend fun strictControlCodeResultVisibleForRequest(phases: MutableMap<String, Long>): Boolean {
+    return measureInputPhase(phases, "check_result_after_input") {
+      val hierarchy = controlCodeRequestHierarchy()
+      !hierarchy.isNullOrBlank() &&
+        TicketViviPageEnforcer.classifyForRecovery(hierarchy) == TicketViviRecoveryState.CONTROL_CODE_RESULT &&
+        !TicketViviPageEnforcer.hasControlCodeInputForHierarchy(hierarchy)
+    }
+  }
+
+  private suspend fun waitForGeneratedControlCodeResult(phases: MutableMap<String, Long>): ControlCodeResultWaitOutcome {
+    val startedAtMillis = SystemClock.elapsedRealtime()
+    val deadline = startedAtMillis + CONTROL_CODE_REQUEST_RESULT_TIMEOUT_MILLIS
+    var consecutiveTicketDetail = 0
+    while (SystemClock.elapsedRealtime() < deadline) {
+      val hierarchy = controlCodeRequestHierarchy()
+      if (!hierarchy.isNullOrBlank()) {
+        val state = TicketViviPageEnforcer.classifyForRecovery(hierarchy)
+        viviStateMemory.record(
+          state = state,
+          ticketId = TicketViviPageEnforcer.ticketIdForHierarchy(hierarchy),
+          source = "control_code_request",
+          reason = "control_code_request_wait"
+        )
+        when (state) {
+          TicketViviRecoveryState.CONTROL_CODE_RESULT -> {
+            val value = TicketViviPageEnforcer.controlCodeResultValueForHierarchy(hierarchy).orEmpty()
+            phases["wait_result"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+            markControlCodeModeEntered("control_code_request_result_detected")
+            recordTicketEvent("control_code_request_result_detected", value.ifBlank { "image_only" })
+            return ControlCodeResultWaitOutcome(
+              generated = GeneratedControlCodeResult(value = value, hierarchy = hierarchy),
+              failureReason = ""
+            )
+          }
+
+          TicketViviRecoveryState.TICKET_DETAIL -> {
+            consecutiveTicketDetail += 1
+            if (
+              consecutiveTicketDetail >= CONTROL_CODE_REQUEST_NO_RESULT_TICKET_DETAIL_COUNT &&
+              SystemClock.elapsedRealtime() - startedAtMillis >= CONTROL_CODE_REQUEST_NO_RESULT_GRACE_MILLIS
+            ) {
+              phases["wait_result"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+              recordTicketEvent("control_code_request_not_generated", "ticket_detail_after_submit")
+              return ControlCodeResultWaitOutcome(failureReason = "control_code_not_generated")
+            }
+          }
+
+          else -> {
+            consecutiveTicketDetail = 0
+          }
+        }
+        val value = TicketViviPageEnforcer.strictControlCodeResultValueForHierarchy(hierarchy)
+        if (!value.isNullOrBlank()) {
+          phases["wait_result"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+          markControlCodeModeEntered("control_code_request_result_detected")
+          recordTicketEvent("control_code_request_result_detected", value)
+          return ControlCodeResultWaitOutcome(
+            generated = GeneratedControlCodeResult(value = value, hierarchy = hierarchy),
+            failureReason = ""
+          )
+        }
+      }
+      delay(CONTROL_CODE_REQUEST_POLL_MILLIS)
+    }
+    phases["wait_result"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+    return ControlCodeResultWaitOutcome(failureReason = "control_code_result_timeout")
+  }
+
+  private suspend fun captureGeneratedControlCodeImageBytes(
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long,
+    generatedHierarchy: String
+  ): ControlCodeImageCaptureOutcome {
+    markControlCodeRequestPhase(phases, "capture_started", requestStartedAtMillis)
+    val captureStartedAtMillis = SystemClock.elapsedRealtime()
+    var session: ControlCodePngCaptureSession? = null
+    var cleanupStart: FastControlCodeCleanupStart? = null
+    try {
+      session = startControlCodePngCaptureDirect()
+      if (session == null) {
+        cleanupStart = beginControlCodeImageCaptureFailureCleanup(generatedHierarchy, phases, requestStartedAtMillis)
+        recordTicketEvent("control_code_image_capture_failed", "start_failed")
+        return ControlCodeImageCaptureOutcome(cleanupStart = cleanupStart, error = "start_failed")
+      }
+
+      val signature = readControlCodePngSignature(session)
+      if (signature == null || !looksLikePng(signature)) {
+        cleanupStart = beginGeneratedControlCodeResultFastClose(
+          generatedHierarchy = generatedHierarchy,
+          reason = "control_code_request_capture_failed",
+          phases = phases,
+          requestStartedAtMillis = requestStartedAtMillis
+        )
+        recordTicketEvent("control_code_image_capture_failed", "invalid_png_header")
+        return ControlCodeImageCaptureOutcome(cleanupStart = cleanupStart, error = "invalid_png_header")
+      }
+
+      cleanupStart = beginGeneratedControlCodeResultFastClose(
+        generatedHierarchy = generatedHierarchy,
+        reason = "control_code_request_complete",
+        phases = phases,
+        requestStartedAtMillis = requestStartedAtMillis
+      )
+
+      val result = readRemainingControlCodePngBytes(session, signature)
+      val bytes = result.bytes
+      if (bytes == null || !looksLikePng(bytes)) {
+        recordTicketEvent("control_code_image_capture_failed", result.error.ifBlank { "invalid_png" })
+        return ControlCodeImageCaptureOutcome(cleanupStart = cleanupStart, error = result.error.ifBlank { "invalid_png" })
+      }
+      markControlCodeRequestPhase(phases, "capture_bytes_ready", requestStartedAtMillis)
+      recordTicketEvent("control_code_image_capture_ready", "bytes=${bytes.size}")
+      return ControlCodeImageCaptureOutcome(bytes = bytes, cleanupStart = cleanupStart)
+    } catch (cancelled: CancellationException) {
+      if (cleanupStart == null) {
+        cleanupStart = beginControlCodeImageCaptureFailureCleanup(generatedHierarchy, phases, requestStartedAtMillis)
+      }
+      throw cancelled
+    } catch (error: Throwable) {
+      if (cleanupStart == null) {
+        cleanupStart = beginControlCodeImageCaptureFailureCleanup(generatedHierarchy, phases, requestStartedAtMillis)
+      }
+      val message = error.message?.take(120).orEmpty().ifBlank { error::class.java.simpleName }
+      recordTicketEvent("control_code_image_capture_failed", message)
+      return ControlCodeImageCaptureOutcome(cleanupStart = cleanupStart, error = message)
+    } finally {
+      phases["capture_image"] = (SystemClock.elapsedRealtime() - captureStartedAtMillis).coerceAtLeast(0L)
+      session?.let { closeControlCodePngCaptureSession(it) }
+    }
+  }
+
+  private suspend fun startControlCodePngCaptureDirect(): ControlCodePngCaptureSession? = withContext(Dispatchers.IO) {
+    runCatching {
+      val process = ProcessBuilder("su", "-c", "screencap -p")
+        .redirectErrorStream(false)
+        .start()
+      ControlCodePngCaptureSession(
+        process = process,
+        input = BufferedInputStream(process.inputStream)
+      )
+    }.getOrElse { error ->
+      Log.w(TAG, "ticket_control_code_screencap_start_failed", error)
+      null
+    }
+  }
+
+  private suspend fun readControlCodePngSignature(session: ControlCodePngCaptureSession): ByteArray? = withContext(Dispatchers.IO) {
+    withTimeoutOrNull(CONTROL_CODE_REQUEST_CAPTURE_HEADER_TIMEOUT_MILLIS) {
+      readExactControlCodePngBytes(session.input, PNG_SIGNATURE.size)
+    }
+  }
+
+  private suspend fun readRemainingControlCodePngBytes(
+    session: ControlCodePngCaptureSession,
+    signature: ByteArray
+  ): ControlCodePngCaptureResult = withContext(Dispatchers.IO) {
+    val remaining = withTimeoutOrNull(CONTROL_CODE_REQUEST_CAPTURE_TIMEOUT_MILLIS) {
+      session.input.readBytes()
+    }
+    val exitCode = withTimeoutOrNull(SECURE_CAPTURE_PROBE_EXIT_TIMEOUT_MILLIS) {
+      session.process.waitFor()
+    }
+    if (remaining == null || exitCode == null) {
+      runCatching { session.process.destroyForcibly() }
+      return@withContext ControlCodePngCaptureResult(error = "timeout")
+    }
+    val stderr = runCatching {
+      session.process.errorStream.bufferedReader().use { it.readText() }.trim()
+    }.getOrDefault("")
+    if (exitCode != 0) {
+      return@withContext ControlCodePngCaptureResult(error = stderr.ifBlank { "exit=$exitCode" })
+    }
+    ControlCodePngCaptureResult(bytes = signature + remaining)
+  }
+
+  private fun readExactControlCodePngBytes(input: BufferedInputStream, size: Int): ByteArray? {
+    val buffer = ByteArray(size)
+    var offset = 0
+    while (offset < size) {
+      val read = input.read(buffer, offset, size - offset)
+      if (read < 0) {
+        return null
+      }
+      offset += read
+    }
+    return buffer
+  }
+
+  private fun closeControlCodePngCaptureSession(session: ControlCodePngCaptureSession) {
+    runCatching { session.input.close() }
+    if (session.process.isAlive) {
+      runCatching { session.process.destroyForcibly() }
+    }
+  }
+
+  private suspend fun encodeControlCodeImageBase64(imageBytes: ByteArray?): String? {
+    return withContext(Dispatchers.Default) {
+      imageBytes
+        ?.takeIf { it.size > 32 && looksLikePng(it) }
+        ?.let { Base64.getEncoder().encodeToString(it) }
+    }
+  }
+
+  private fun looksLikePng(bytes: ByteArray): Boolean {
+    return bytes.size >= PNG_SIGNATURE.size &&
+      PNG_SIGNATURE.indices.all { index -> bytes[index] == PNG_SIGNATURE[index] }
+  }
+
+  private suspend fun beginControlCodeImageCaptureFailureCleanup(
+    generatedHierarchy: String,
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long
+  ): FastControlCodeCleanupStart {
+    return beginGeneratedControlCodeResultFastClose(
+      generatedHierarchy = generatedHierarchy,
+      reason = "control_code_request_capture_failed",
+      phases = phases,
+      requestStartedAtMillis = requestStartedAtMillis
+    )
+  }
+
   private suspend fun requireControlCodePopupForRemoteKey(): Boolean {
     if (SystemClock.elapsedRealtime() < controlCodePopupReadyUntilMillis) {
       return true
     }
-    val dump = dumpViviHierarchy(fresh = true)
-    if (!dump.ok || dump.stdout.isBlank()) {
+    val hierarchy = controlCodeRequestHierarchy()
+    if (hierarchy.isNullOrBlank()) {
       recordInputGateDecision(allowed = false, reason = "control_code_popup_check_failed")
-      Log.w(TAG, "ticket_remote_key_blocked reason=control_code_popup_check_failed stderr=${dump.stderr}")
+      Log.w(TAG, "ticket_remote_key_blocked reason=control_code_popup_check_failed")
       return false
     }
-    if (!TicketViviPageEnforcer.isControlCodePopup(dump.stdout)) {
-      val state = TicketViviPageEnforcer.classifyForRecovery(dump.stdout)
+    if (!TicketViviPageEnforcer.isControlCodePopup(hierarchy)) {
+      val state = TicketViviPageEnforcer.classifyForRecovery(hierarchy)
       val reason = if (state == TicketViviRecoveryState.CONTROL_CODE_RESULT) {
         "control_code_result_visible"
       } else {
@@ -4059,8 +5746,8 @@ class TicketStreamService : Service() {
       Log.i(TAG, "ticket_remote_key_blocked reason=$reason")
       return false
     }
-    if (!TicketViviPageEnforcer.isControlCodeInputFocused(dump.stdout)) {
-      val action = TicketViviPageEnforcer.controlCodeInputActionForHierarchy(dump.stdout)
+    if (!TicketViviPageEnforcer.isControlCodeInputFocused(hierarchy)) {
+      val action = TicketViviPageEnforcer.controlCodeInputActionForHierarchy(hierarchy)
       if (action == null) {
         recordInputGateDecision(allowed = false, reason = "control_code_input_missing")
         Log.i(TAG, "ticket_remote_key_blocked reason=control_code_input_missing")
@@ -4079,20 +5766,225 @@ class TicketStreamService : Service() {
     return true
   }
 
+  private suspend fun beginGeneratedControlCodeResultFastClose(
+    generatedHierarchy: String,
+    reason: String,
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long
+  ): FastControlCodeCleanupStart {
+    val startedAtMillis = SystemClock.elapsedRealtime()
+    markControlCodeRequestPhase(phases, "cleanup_started", requestStartedAtMillis)
+    recordTicketEvent("control_code_fast_cleanup_phase", "result_ready_for_delivery")
+    updateTicketSessionState(TICKET_SESSION_CONTROL_EXIT, reason)
+
+    val detectedState = if (generatedHierarchy.isBlank()) {
+      TicketViviRecoveryState.UNKNOWN_VIVI
+    } else {
+      TicketViviRecoveryState.CONTROL_CODE_RESULT
+    }
+    if (detectedState != TicketViviRecoveryState.CONTROL_CODE_RESULT) {
+      recordTicketEvent("control_code_fast_cleanup_fallback", "state=${detectedState.name}")
+      return FastControlCodeCleanupStart(
+        startedAtMillis = startedAtMillis,
+        closeAction = "none",
+        action = null,
+        closeSucceeded = false,
+        fallbackState = detectedState
+      )
+    }
+    rememberControlCodeSurface(TicketViviRecoveryState.CONTROL_CODE_RESULT)
+
+    val action = controlCodeResultGeometryCloseAction()
+    val closeSucceeded = sendFastGeneratedResultCloseTap(action, phases, requestStartedAtMillis, "control_code_fast_cleanup_close")
+    if (closeSucceeded) {
+      requestKeyFrame("control_code_fast_cleanup_close")
+      markControlCodeRequestPhase(phases, "cleanup_keyframe_requested", requestStartedAtMillis)
+      recordTicketEvent("control_code_fast_cleanup_phase", "keyframe_requested")
+    }
+    return FastControlCodeCleanupStart(
+      startedAtMillis = startedAtMillis,
+      closeAction = action.reason,
+      action = action,
+      closeSucceeded = closeSucceeded,
+      fallbackState = if (closeSucceeded) null else TicketViviRecoveryState.CONTROL_CODE_RESULT
+    )
+  }
+
+  private suspend fun finishGeneratedControlCodeResultFastCleanup(
+    cleanupStart: FastControlCodeCleanupStart,
+    reason: String,
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long
+  ): Boolean {
+    if (!cleanupStart.closeSucceeded) {
+      recordTicketEvent("control_code_fast_cleanup_fallback", "surface=${cleanupStart.fallbackState?.name ?: "close_failed"}")
+      return runControlExitCleanup(reason)
+    }
+
+    val firstState = waitForCleanTicketSurfaceFast(
+      reason = reason,
+      phases = phases,
+      requestStartedAtMillis = requestStartedAtMillis,
+      timeoutMillis = CONTROL_CODE_FAST_CLEANUP_VERIFY_TIMEOUT_MILLIS / 2
+    )
+    if (firstState == TicketViviRecoveryState.TICKET_DETAIL) {
+      markControlCodeRequestPhase(phases, "phone_raw_recovered", requestStartedAtMillis)
+      return completeFastVerifiedTicketDetailControlExitCleanup(reason, cleanupStart.closeAction, cleanupStart.startedAtMillis, "surface_clean")
+    }
+
+    if (firstState == TicketViviRecoveryState.CONTROL_CODE_RESULT) {
+      recordTicketEvent("control_code_fast_cleanup_phase", "retry_close_after_dirty_surface")
+      val retrySucceeded = sendFastGeneratedResultCloseTap(
+        action = cleanupStart.action ?: controlCodeResultGeometryCloseAction(),
+        phases = phases,
+        requestStartedAtMillis = requestStartedAtMillis,
+        commandReason = "control_code_fast_cleanup_close_retry"
+      )
+      if (retrySucceeded) {
+        requestKeyFrame("control_code_fast_cleanup_close")
+        val retryState = waitForCleanTicketSurfaceFast(
+          reason = reason,
+          phases = phases,
+          requestStartedAtMillis = requestStartedAtMillis,
+          timeoutMillis = CONTROL_CODE_FAST_CLEANUP_VERIFY_TIMEOUT_MILLIS / 2
+        )
+        if (retryState == TicketViviRecoveryState.TICKET_DETAIL) {
+          markControlCodeRequestPhase(phases, "phone_raw_recovered", requestStartedAtMillis)
+          return completeFastVerifiedTicketDetailControlExitCleanup(reason, cleanupStart.closeAction, cleanupStart.startedAtMillis, "surface_clean_after_retry")
+        }
+      }
+    }
+
+    recordTicketEvent("control_code_fast_cleanup_fallback", "surface=${firstState?.name ?: "unavailable"}")
+    return runControlExitCleanup(reason)
+  }
+
+  private suspend fun sendFastGeneratedResultCloseTap(
+    action: TicketViviPageAction,
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long,
+    commandReason: String
+  ): Boolean {
+    val tap = measureInputPhase(phases, commandReason) {
+      runFastNonTouchInput("input tap ${action.x} ${action.y}", commandReason)
+    }
+    if (!tap.ok) {
+      recordTicketEvent("control_code_fast_cleanup_close_failed", "reason=$commandReason duration_ms=${tap.durationMs}")
+      return false
+    }
+    lastControlExitDirectCloseAtMillis = SystemClock.elapsedRealtime()
+    markControlCodeRequestPhase(phases, "cleanup_close_tap_sent", requestStartedAtMillis)
+    markControlCodeRequestPhase(phases, "close_tap_sent", requestStartedAtMillis)
+    recordTicketEvent("control_code_fast_cleanup_phase", "close_tap_sent action=${action.reason}")
+    return true
+  }
+
+  private fun controlCodeResultGeometryCloseAction(): TicketViviPageAction {
+    val (width, height) = currentDisplaySize()
+    val x = (width * CONTROL_EXIT_RESULT_CLOSE_X_FRACTION).roundToInt()
+    val y = (height * CONTROL_EXIT_RESULT_CLOSE_Y_FRACTION).roundToInt()
+    return TicketViviPageAction(
+      x = x,
+      y = y,
+      reason = "geometry_close_control_code_result"
+    )
+  }
+
+  private suspend fun waitForCleanTicketSurfaceFast(
+    reason: String,
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long,
+    timeoutMillis: Long
+  ): TicketViviRecoveryState? {
+    val startedAtMillis = SystemClock.elapsedRealtime()
+    val deadlineMillis = startedAtMillis + timeoutMillis.coerceAtLeast(CONTROL_CODE_FAST_CLEANUP_POLL_MILLIS)
+    var lastState: TicketViviRecoveryState? = null
+    var fastScreencapAttempted = false
+    while (SystemClock.elapsedRealtime() <= deadlineMillis) {
+      val accessibilityState = ticketAutopilot.observeFastState("control_code_fast_cleanup:$reason")?.state
+      if (accessibilityState == TicketViviRecoveryState.TICKET_DETAIL) {
+        lastControlExitCleanupDetectorSource = "accessibility_fast_cleanup"
+        lastControlExitCleanupSurfaceProbeResult = "accessibility_clean"
+        markControlCodeRequestPhase(phases, "cleanup_clean_surface", requestStartedAtMillis)
+        markControlCodeRequestPhase(phases, "raw_ticket_fast_proof", requestStartedAtMillis)
+        recordTicketEvent(
+          "control_code_fast_cleanup_phase",
+          "accessibility_clean duration_ms=${(SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)}"
+        )
+        return TicketViviRecoveryState.TICKET_DETAIL
+      }
+      if (accessibilityState == TicketViviRecoveryState.CONTROL_CODE_RESULT) {
+        rememberControlCodeSurface(TicketViviRecoveryState.CONTROL_CODE_RESULT)
+        lastState = TicketViviRecoveryState.CONTROL_CODE_RESULT
+      }
+      val state = if (!fastScreencapAttempted) {
+        fastScreencapAttempted = true
+        controlExitGeneratedResultFastScreencapProbe(
+          reason = reason,
+          detectorSource = "fast_cleanup_screencap"
+        )
+      } else {
+        null
+      }
+      lastState = state
+      if (state == TicketViviRecoveryState.TICKET_DETAIL) {
+        markControlCodeRequestPhase(phases, "cleanup_clean_surface", requestStartedAtMillis)
+        markControlCodeRequestPhase(phases, "raw_ticket_fast_proof", requestStartedAtMillis)
+        recordTicketEvent(
+          "control_code_fast_cleanup_phase",
+          "clean_surface duration_ms=${(SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)}"
+        )
+        return state
+      }
+      if (state == TicketViviRecoveryState.CONTROL_CODE_RESULT) {
+        rememberControlCodeSurface(TicketViviRecoveryState.CONTROL_CODE_RESULT)
+      }
+      delay(CONTROL_CODE_FAST_CLEANUP_POLL_MILLIS)
+    }
+    phases["cleanup_fast_verify"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+    return lastState
+  }
+
+  private fun completeFastVerifiedTicketDetailControlExitCleanup(
+    reason: String,
+    closeAction: String,
+    startedAtMillis: Long,
+    firstVerificationResult: String
+  ): Boolean {
+    recordTicketEvent("control_code_fast_cleanup_phase", "cleanup_complete")
+    return completeControlExitCleanup(
+      reason = reason,
+      detectedState = TicketViviRecoveryState.CONTROL_CODE_RESULT.name,
+      closeAction = closeAction,
+      startedAtMillis = startedAtMillis,
+      verificationResult = firstVerificationResult,
+      freshFrameRequested = true
+    )
+  }
+
   private suspend fun closeControlCodePopupFromRemote(reason: String): Boolean {
     val startedAtMillis = SystemClock.elapsedRealtime()
     val hierarchy = controlExitHierarchy()
     if (hierarchy.isNullOrBlank()) {
       recordInputGateDecision(allowed = false, reason = "control_code_popup_check_failed")
       Log.w(TAG, "ticket_control_code_close_failed reason=$reason hierarchy_unavailable")
-      return false
+      return runControlExitCleanup(reason)
     }
     val detectedState = TicketViviPageEnforcer.classifyForRecovery(hierarchy)
+    if (detectedState == TicketViviRecoveryState.TICKET_DETAIL) {
+      return completeVerifiedTicketDetailControlExitCleanup(
+        reason = reason,
+        detectedState = detectedState.name,
+        closeAction = "none",
+        startedAtMillis = startedAtMillis,
+        firstVerificationResult = detectedState.name
+      )
+    }
     val action = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(hierarchy)
     if (action == null) {
       recordInputGateDecision(allowed = false, reason = "control_code_close_missing")
       Log.i(TAG, "ticket_control_code_close_blocked reason=control_code_close_missing")
-      return false
+      return runControlExitCleanup(reason)
     }
     val tap = runFastNonTouchInput("input tap ${action.x} ${action.y}", reason)
     return if (tap.ok) {
@@ -4106,6 +5998,10 @@ class TicketStreamService : Service() {
       Log.w(TAG, "ticket_control_code_close_failed reason=$reason stderr=${tap.stderr}")
       false
     }
+  }
+
+  private suspend fun recoverControlCodeRequestSurface(reason: String): Boolean {
+    return closeControlCodePopupFromRemote(reason)
   }
 
   private suspend fun closeControlCodeSurfaceTapFromRemote(x: Int, y: Int, reason: String): Boolean? {
@@ -4314,6 +6210,18 @@ class TicketStreamService : Service() {
     }
   }
 
+  private fun markControlCodeRequestPhase(
+    phases: MutableMap<String, Long>,
+    phase: String,
+    requestStartedAtMillis: Long
+  ) {
+    phases[phase] = if (requestStartedAtMillis > 0L) {
+      (SystemClock.elapsedRealtime() - requestStartedAtMillis).coerceAtLeast(0L)
+    } else {
+      0L
+    }
+  }
+
   private fun sendInputResult(
     inputId: String?,
     kind: String,
@@ -4348,6 +6256,113 @@ class TicketStreamService : Service() {
       "input_result",
       "${inputId.orEmpty()} $kind accepted=$accepted reason=$reason duration_ms=$totalDurationMillis"
     )
+  }
+
+  private fun sendControlCodeResult(
+    requestId: String,
+    ok: Boolean,
+    reason: String,
+    value: String,
+    imageMime: String?,
+    imageBase64: String?,
+    startedAtMillis: Long,
+    phases: Map<String, Long>,
+    cleanupPending: Boolean
+  ) {
+    val nowMillis = SystemClock.elapsedRealtime()
+    val totalDurationMillis = if (startedAtMillis > 0L) {
+      (nowMillis - startedAtMillis).coerceAtLeast(0L)
+    } else {
+      0L
+    }
+    lastControlCodeRequestId = requestId.takeIf { it.isNotBlank() }
+    lastControlCodeRequestStatus = if (ok) "succeeded" else "failed"
+    lastControlCodeRequestReason = reason
+    lastControlCodeRequestValue = value.ifBlank { null }
+    lastControlCodeRequestDurationMillis = totalDurationMillis
+    lastControlCodeRequestCompletedAtMillis = nowMillis
+    val phaseJson = buildJsonObject {
+      phases.forEach { (name, duration) -> put(name, duration) }
+    }
+    val message = buildJsonObject {
+      put("type", "control_code_result")
+      put("requestId", requestId)
+      put("ok", ok)
+      put("accepted", ok)
+      put("reason", reason)
+      put("value", value)
+      put("imageMime", imageMime.orEmpty())
+      put("imageBase64", imageBase64.orEmpty())
+      put("totalDurationMillis", totalDurationMillis)
+      put("cleanupPending", cleanupPending)
+      put("phases", phaseJson)
+    }.toString()
+    rememberControlCodeResult(requestId, message)
+    controlClientSnapshot().forEach { client -> client.sendText(message) }
+    recordTicketEvent(
+      "control_code_result",
+      "$requestId ok=$ok reason=$reason value=${value.ifBlank { "empty" }} duration_ms=$totalDurationMillis"
+    )
+    broadcastStatus()
+  }
+
+  private fun sendControlCodeCleanup(
+    requestId: String,
+    ok: Boolean,
+    reason: String,
+    startedAtMillis: Long
+  ) {
+    val nowMillis = SystemClock.elapsedRealtime()
+    val totalDurationMillis = if (startedAtMillis > 0L) {
+      (nowMillis - startedAtMillis).coerceAtLeast(0L)
+    } else {
+      0L
+    }
+    if (!ok) {
+      lastControlCodeRequestReason = reason
+    }
+    val message = buildJsonObject {
+      put("type", "control_code_cleanup_complete")
+      put("requestId", requestId)
+      put("ok", ok)
+      put("accepted", ok)
+      put("reason", reason)
+      put("totalDurationMillis", totalDurationMillis)
+    }.toString()
+    controlClientSnapshot().forEach { client -> client.sendText(message) }
+    recordTicketEvent(
+      "control_code_cleanup_complete",
+      "$requestId ok=$ok reason=$reason duration_ms=$totalDurationMillis"
+    )
+    broadcastStatus()
+  }
+
+  private fun sendCachedControlCodeResult(requestId: String): Boolean {
+    val id = requestId.takeIf { it.isNotBlank() } ?: return false
+    val message = synchronized(recentControlCodeResultMessages) {
+      recentControlCodeResultMessages[id]
+    } ?: return false
+    duplicateControlCodeResultCount += 1
+    lastDuplicateControlCodeRequestId = id
+    lastDuplicateControlCodeResultAtMillis = SystemClock.elapsedRealtime()
+    controlClientSnapshot().forEach { client -> client.sendText(message) }
+    recordTicketEvent("control_code_result_duplicate", id)
+    broadcastStatus()
+    return true
+  }
+
+  private fun rememberControlCodeResult(requestId: String, message: String) {
+    val id = requestId.takeIf { it.isNotBlank() } ?: return
+    synchronized(recentControlCodeResultMessages) {
+      if (!recentControlCodeResultMessages.containsKey(id)) {
+        recentControlCodeResultOrder.addLast(id)
+      }
+      recentControlCodeResultMessages[id] = message
+      while (recentControlCodeResultOrder.size > RECENT_CONTROL_CODE_RESULT_CACHE_SIZE) {
+        val removed = recentControlCodeResultOrder.removeFirst()
+        recentControlCodeResultMessages.remove(removed)
+      }
+    }
   }
 
   private fun sendCachedInputResult(inputId: String?, kind: String): Boolean {
@@ -4385,6 +6400,10 @@ class TicketStreamService : Service() {
   private suspend fun runFastNonTouchInput(command: String, reason: String): RootResult {
     PhoneAutomationServiceBridge.markNonTouchInput("ticket:$reason")
     return inputRootExecutor.run(command).also { recordInputCommandResult(reason, it) }
+  }
+
+  private fun shellQuote(value: String): String {
+    return "'" + value.replace("'", "'\"'\"'") + "'"
   }
 
   private fun recordInputCommandResult(reason: String, result: RootResult) {
@@ -4597,7 +6616,8 @@ class TicketStreamService : Service() {
     private const val RECENT_CLIENT_TELEMETRY_LIMIT = 80
     private const val RECENT_TICKET_EVENT_LIMIT = 80
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
-    const val SERVER_VERSION = "ticket-stream-2026-05-07-root-ffmpeg-h264-ws-v107"
+    private const val SESSION_START_TIMEOUT_MILLIS = 12_000L
+    const val SERVER_VERSION = "ticket-stream-2026-05-10-control-code-fast-delivery-v118"
     private const val FRAME_ENVELOPE_VERSION = "tsf2"
     private const val FRAME_ENVELOPE_MAGIC = 0x54534632
     private const val FRAME_ENVELOPE_HEADER_BYTES = 29
@@ -4642,15 +6662,46 @@ class TicketStreamService : Service() {
     private const val ROOT_FFMPEG_RAW_FRAME_SUPPRESSION_FAILURE_THRESHOLD = 30L
     private const val CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS = 120L
     private const val CONTROL_CODE_POPUP_READY_CACHE_MILLIS = 2_000L
+    private const val CONTROL_CODE_ACCESSIBILITY_OPEN_INPUT_TIMEOUT_MILLIS = 350L
+    private const val CONTROL_CODE_ACCESSIBILITY_SET_TEXT_TIMEOUT_MILLIS = 450L
+    private const val CONTROL_CODE_ACCESSIBILITY_SUBMIT_TIMEOUT_MILLIS = 450L
+    private const val CONTROL_CODE_FAST_ROOT_DUMP_TIMEOUT_MILLIS = 1_100L
+    private const val CONTROL_CODE_FAST_POPUP_TIMEOUT_MILLIS = 2_400L
+    private const val CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS = 4_000L
+    private const val CONTROL_CODE_FAST_RESULT_SETTLE_MILLIS = 650L
+    private const val CONTROL_CODE_FAST_POLL_MILLIS = 120L
+    private const val CONTROL_CODE_FAST_BUTTON_X_FRACTION = 0.23f
+    private const val CONTROL_CODE_FAST_BUTTON_Y_FRACTION = 0.136f
+    private const val CONTROL_CODE_FAST_SHIFTED_OK_X_FRACTION = 0.738f
+    private const val CONTROL_CODE_FAST_SHIFTED_OK_Y_FRACTION = 0.422f
+    private const val CONTROL_CODE_IMMEDIATE_TICKET_DETAIL_MEMORY_MAX_AGE_MILLIS = 15_000L
+    private const val CONTROL_CODE_REQUEST_PREPARE_MAX_STEPS = 5
+    private const val CONTROL_CODE_REQUEST_PREPARE_TIMEOUT_MILLIS = 8_000L
+    private const val CONTROL_CODE_REQUEST_HIERARCHY_TIMEOUT_MILLIS = 6_000L
+    private const val CONTROL_CODE_REQUEST_POPUP_TIMEOUT_MILLIS = 4_000L
+    private const val CONTROL_CODE_REQUEST_SUBMIT_TRANSITION_TIMEOUT_MILLIS = 3_500L
+    private const val CONTROL_CODE_SUBMIT_FIND_TIMEOUT_MILLIS = 1_200L
+    private const val CONTROL_CODE_SUBMIT_FIND_POLL_MILLIS = 120L
+    private const val CONTROL_CODE_REQUEST_RESULT_TIMEOUT_MILLIS = 12_000L
+    private const val CONTROL_CODE_REQUEST_POLL_MILLIS = 180L
+    private const val CONTROL_CODE_REQUEST_CAPTURE_HEADER_TIMEOUT_MILLIS = 1_500L
+    private const val CONTROL_CODE_REQUEST_CAPTURE_TIMEOUT_MILLIS = 6_000L
+    private const val CONTROL_CODE_REQUEST_NO_RESULT_GRACE_MILLIS = 900L
+    private const val CONTROL_CODE_REQUEST_NO_RESULT_TICKET_DETAIL_COUNT = 2
     private const val CONTROL_CODE_SNAP_MEMORY_MAX_AGE_MILLIS = 5_000L
     private const val CONTROL_CODE_SNAP_UNSAFE_STATE_MEMORY_MAX_AGE_MILLIS = 10_000L
     private const val RECENT_INPUT_RESULT_CACHE_SIZE = 80
+    private const val RECENT_CONTROL_CODE_RESULT_CACHE_SIZE = 80
     private const val SNAP_TARGET_CONTROL_CODE_BUTTON = "control_code_button"
+    private val CONTROL_CODE_REQUEST_DIGITS_REGEX = Regex("""^[0-9]{2,9}$""")
     private const val CONTROL_CODE_SOFT_CHECK_DELAY_MILLIS = 200L
     private const val CONTROL_CODE_SOFT_CHECK_TIMEOUT_MILLIS = 10_000L
     private const val CONTROL_CODE_SOFT_CHECK_MAX_STEPS = 2
     private const val CONTROL_CODE_EXIT_VERIFY_SETTLE_MILLIS = 220L
     private const val CONTROL_CODE_EXIT_VERIFY_TIMEOUT_MILLIS = 1_200L
+    private const val CONTROL_CODE_FAST_CLEANUP_VERIFY_TIMEOUT_MILLIS = 900L
+    private const val CONTROL_CODE_FAST_CLEANUP_POLL_MILLIS = 75L
+    private const val CONTROL_EXIT_FAST_SCREENCAP_TIMEOUT_MILLIS = 900L
     private const val CONTROL_EXIT_SECOND_VERIFY_DELAY_MILLIS = 260L
     private const val CONTROL_EXIT_RECENT_DIRECT_CLOSE_MILLIS = 1_500L
     private const val TICKET_HIERARCHY_DEFAULT_TIMEOUT_MILLIS = 1_100L
@@ -4661,7 +6712,7 @@ class TicketStreamService : Service() {
     private const val CONTROL_EXIT_FINAL_CONFIRM_DELAY_MILLIS = 350L
     private const val CONTROL_EXIT_RECENT_SURFACE_MEMORY_MILLIS = 12_000L
     private const val CONTROL_EXIT_RESULT_CLOSE_X_FRACTION = 0.82f
-    private const val CONTROL_EXIT_RESULT_CLOSE_Y_FRACTION = 0.565f
+    private const val CONTROL_EXIT_RESULT_CLOSE_Y_FRACTION = 0.592f
     private const val CONTROL_EXIT_DUPLICATE_SUCCESS_KEEP_MILLIS = 15_000L
     private const val CONTROL_EXIT_CLEANUP_MAX_STEPS = 2
     private const val CONTROL_EXIT_CLEANUP_TIMEOUT_MILLIS = 1_800L
@@ -4674,6 +6725,16 @@ class TicketStreamService : Service() {
     private const val CONTROL_EXIT_RESULT_BAR_MAX_MEAN = 135.0
     private const val CONTROL_EXIT_RESULT_BAR_BAND_DARK_RATIO = 0.45
     private const val CONTROL_EXIT_RESULT_BAR_BAND_MAX_MEAN = 115.0
+    private val PNG_SIGNATURE = byteArrayOf(
+      0x89.toByte(),
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a
+    )
     private val CONTROL_EXIT_CLOSE_SELECTORS = listOf(
       PhoneAutomationSelector(contentDescription = "Aizvērt"),
       PhoneAutomationSelector(text = "Aizvērt"),
@@ -4686,6 +6747,19 @@ class TicketStreamService : Service() {
       PhoneAutomationSelector(text = "x"),
       PhoneAutomationSelector(text = "×")
     )
+    private val CONTROL_CODE_SUBMIT_SELECTORS = listOf(
+      PhoneAutomationSelector(contentDescription = "OK"),
+      PhoneAutomationSelector(text = "OK"),
+      PhoneAutomationSelector(contentDescription = "Ok"),
+      PhoneAutomationSelector(text = "Ok"),
+      PhoneAutomationSelector(contentDescription = "Labi"),
+      PhoneAutomationSelector(text = "Labi"),
+      PhoneAutomationSelector(contentDescription = "Apstiprināt"),
+      PhoneAutomationSelector(text = "Apstiprināt"),
+      PhoneAutomationSelector(contentDescription = "Apstiprinat"),
+      PhoneAutomationSelector(text = "Apstiprinat")
+    )
+    private fun controlCodeSubmitSelectors(): List<PhoneAutomationSelector> = CONTROL_CODE_SUBMIT_SELECTORS
     private const val CONTROL_CODE_TRANSITION_GRACE_MILLIS = 3_000L
     private const val REMOTE_TAP_FOREGROUND_SETTLE_MILLIS = 350L
     private const val CACHED_FOREGROUND_MAX_AGE_MILLIS = 2_000L
@@ -4798,13 +6872,16 @@ internal fun browserPage(): String {
     #idleTimer.urgent { color: #ffd6d6; border-color: rgba(255, 115, 115, .45); background: rgba(70, 18, 18, .74); }
     #status { max-width: min(420px, calc(100vw - 32px)); color: #b9c2cf; font-size: 13px; line-height: 1.35; text-align: center; pointer-events: none; }
     #status:empty { display: none; }
-    #modeNotice { position: fixed; left: 50%; top: max(18px, env(safe-area-inset-top)); z-index: 6; max-width: min(360px, calc(100vw - 32px)); pointer-events: none; opacity: 0; transform: translate3d(-50%, -8px, 0); transition: opacity 150ms ease, transform 150ms ease; }
-    #modeNotice.visible { opacity: 1; transform: translate3d(-50%, 0, 0); }
-    .mode-notice { border: 1px solid rgba(196, 212, 232, .28); border-radius: 8px; background: rgba(9, 14, 22, .88); color: #f3f7fb; box-shadow: 0 12px 32px rgba(0, 0, 0, .34); backdrop-filter: blur(10px); text-align: center; }
-    .mode-notice.small { padding: 7px 12px; font-size: 12px; line-height: 1.2; }
-    .mode-notice.large { padding: 14px 16px; font-size: 14px; line-height: 1.35; }
-    .mode-notice-title { display: block; font-weight: 700; }
-    .mode-notice-body { display: block; margin-top: 4px; color: #c9d4e2; font-size: 12px; }
+    .code-panel { width: min(420px, calc(100vw - 40px)); display: grid; gap: 10px; border: 1px solid #1d2a3c; border-radius: 8px; padding: 14px; background: #0d1724; }
+    .code-panel label { display: grid; gap: 7px; color: #cdd7e6; font-size: 13px; font-weight: 700; }
+    .code-panel input { min-height: 46px; border: 1px solid #37445a; border-radius: 6px; padding: 0 12px; background: #111b2a; color: #f3f7fb; font: inherit; font-size: 22px; text-align: center; font-variant-numeric: tabular-nums; }
+    .code-actions { display: flex; gap: 8px; align-items: center; }
+    .code-actions .primary { flex: 1 1 auto; }
+    .code-result { position: relative; min-height: 90px; display: grid; justify-items: center; gap: 8px; border: 1px solid #29405b; border-radius: 8px; padding: 12px 40px 12px 12px; background: #09111d; text-align: center; }
+    .code-result[hidden] { display: none; }
+    .code-result img { width: min(100%, 320px); max-height: 360px; object-fit: contain; border-radius: 8px; background: #fff; }
+    .code-result-value { overflow-wrap: anywhere; font-size: 26px; font-weight: 760; font-variant-numeric: tabular-nums; }
+    .code-close { position: absolute; top: 8px; right: 8px; width: 28px; min-width: 28px; height: 28px; min-height: 28px; display: grid; place-items: center; border-radius: 999px; padding: 0; }
   </style>
 </head>
 <body>
@@ -4823,13 +6900,25 @@ internal fun browserPage(): String {
         <button id="start" data-testid="start" type="button" class="primary">Start</button>
         <span id="status"></span>
       </div>
+      <form id="codeForm" class="code-panel">
+        <label>
+          <span>Control code digits</span>
+          <input id="codeDigits" type="text" inputmode="numeric" pattern="[0-9]*" minlength="2" maxlength="9" autocomplete="one-time-code">
+        </label>
+        <div class="code-actions">
+          <button id="codeSubmit" type="submit" class="primary">Request code</button>
+        </div>
+        <div id="codeResult" class="code-result" hidden>
+          <button id="codeClose" class="code-close" type="button" aria-label="Close generated code">×</button>
+          <span id="codeResultStatus"></span>
+          <img id="codeResultImage" alt="Generated control code" hidden>
+          <span id="codeResultValue" class="code-result-value" hidden></span>
+        </div>
+      </form>
     </section>
   </main>
-  <div id="modeNotice" aria-live="polite" aria-atomic="true"></div>
   <script>
     const PAGE_VERSION = "${TicketStreamService.SERVER_VERSION}";
-    const CONTROL_CODE_NOTICE_COOKIE = 'ticket_control_code_notice_seen';
-    const CONTROL_CODE_NOTICE_TEXT = 'Kontroles koda režīms';
     const VIEWER_ID_STORAGE_KEY = 'ticket_stream_viewer_id';
     const CONTROL_SOCKET_TIMEOUT_MS = 2500;
     const VIDEO_SOCKET_TIMEOUT_MS = 2000;
@@ -4846,13 +6935,20 @@ internal fun browserPage(): String {
     const pageId = `${'$'}{Date.now().toString(36)}-${'$'}{Math.random().toString(36).slice(2)}`;
     const statusEl = document.getElementById('status');
     const idleTimerEl = document.getElementById('idleTimer');
-    const modeNoticeEl = document.getElementById('modeNotice');
     const streamPage = document.getElementById('streamPage');
     const streamStage = document.getElementById('streamStage');
     const controlsPanel = document.getElementById('controlsPanel');
     const streamPlaceholder = document.getElementById('streamPlaceholder');
     const canvas = document.getElementById('screen');
     const startButton = document.getElementById('start');
+    const codeForm = document.getElementById('codeForm');
+    const codeDigits = document.getElementById('codeDigits');
+    const codeSubmit = document.getElementById('codeSubmit');
+    const codeResult = document.getElementById('codeResult');
+    const codeClose = document.getElementById('codeClose');
+    const codeResultStatus = document.getElementById('codeResultStatus');
+    const codeResultImage = document.getElementById('codeResultImage');
+    const codeResultValue = document.getElementById('codeResultValue');
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
     document.body.dataset.streamReady = 'false';
@@ -4891,8 +6987,9 @@ internal fun browserPage(): String {
     let configuredFrameEnvelope = 'legacy';
     let lastFrameDropLogAt = 0;
     let lastStaleFrameKeyframeAt = 0;
-    let lastControlCodeEntryId = 0;
-    let modeNoticeTimer = null;
+    let currentCodeRequestId = '';
+    let codeResultTimer = null;
+    const codeRequestTimes = [];
     let loadingStartedAt = 0;
     let loadingBlockingPhase = '';
     let loadingOverBudgetLogged = false;
@@ -5016,7 +7113,7 @@ internal fun browserPage(): String {
       clientLog('loading_over_2s', {phase, durationMs, escalation: loadingEscalationCount});
       loadingOverBudgetLogged = true;
       loadingEscalationCount += 1;
-      if (desiredActive && !autoStartSuspended && pageIsVisible()) {
+      if (desiredActive && !autoStartSuspended && viewerIsForeground()) {
         if (configured || videoWs) {
           recoverVideoPipeline('loading_over_budget', 'Reconnecting stream...', loadingEscalationCount >= 2);
         } else {
@@ -5104,35 +7201,78 @@ internal fun browserPage(): String {
       idleTimerEl.classList.toggle('urgent', remaining <= 60_000);
       idleTimerEl.hidden = false;
     }
-    function cookieValue(name) {
-      const prefix = name + '=';
-      return document.cookie.split(';').map((item) => item.trim()).find((item) => item.startsWith(prefix))?.slice(prefix.length) || '';
+    function cleanDigits(value) {
+      return String(value || '').replace(/\D/g, '').slice(0, 9);
     }
-    function rememberControlCodeNotice() {
-      document.cookie = CONTROL_CODE_NOTICE_COOKIE + '=1; Max-Age=31536000; Path=/; SameSite=Lax';
+    function noteCodeRequestWindow() {
+      const now = Date.now();
+      while (codeRequestTimes.length && now - codeRequestTimes[0] >= 60_000) {
+        codeRequestTimes.shift();
+      }
+      if (codeRequestTimes.length >= 2) return false;
+      codeRequestTimes.push(now);
+      return true;
     }
-    function showModeNotice(kind) {
-      if (modeNoticeTimer) clearTimeout(modeNoticeTimer);
-      const large = kind === 'large';
-      modeNoticeEl.className = 'visible';
-      modeNoticeEl.innerHTML = large
-        ? '<div class="mode-notice large"><span class="mode-notice-title">' + CONTROL_CODE_NOTICE_TEXT + '</span><span class="mode-notice-body">Var ievadīt kodu no šīs lapas.</span></div>'
-        : '<div class="mode-notice small">' + CONTROL_CODE_NOTICE_TEXT + '</div>';
-      modeNoticeTimer = setTimeout(() => {
-        modeNoticeEl.classList.remove('visible');
-      }, large ? 4200 : 1500);
+    function clearCodeResultTimer() {
+      if (codeResultTimer) clearTimeout(codeResultTimer);
+      codeResultTimer = null;
     }
-    function handleControlCodeMode(health) {
-      const mode = health && health.controlCodeMode;
-      if (!mode || !mode.active || !mode.entryId || mode.entryId === lastControlCodeEntryId) return;
-      lastControlCodeEntryId = mode.entryId;
-      if (cookieValue(CONTROL_CODE_NOTICE_COOKIE) === '1') {
-        showModeNotice('small');
+    function hideCodeResult() {
+      clearCodeResultTimer();
+      codeResult.hidden = true;
+      codeResultImage.hidden = true;
+      codeResultImage.removeAttribute('src');
+      codeResultValue.hidden = true;
+      codeResultValue.textContent = '';
+      codeResultStatus.textContent = '';
+      currentCodeRequestId = '';
+    }
+    function showCodeResult(message, value = '', imageMime = '', imageBase64 = '') {
+      clearCodeResultTimer();
+      codeResult.hidden = false;
+      codeResultStatus.textContent = message;
+      if (imageBase64) {
+        codeResultImage.src = 'data:' + (imageMime || 'image/png') + ';base64,' + imageBase64;
+        codeResultImage.hidden = false;
+      } else {
+        codeResultImage.hidden = true;
+        codeResultImage.removeAttribute('src');
+      }
+      codeResultValue.textContent = value || '';
+      codeResultValue.hidden = !value;
+    }
+    function handleControlCodeResult(msg) {
+      if (msg.requestId && currentCodeRequestId && msg.requestId !== currentCodeRequestId) return;
+      codeSubmit.disabled = false;
+      if (msg.ok === true || msg.accepted === true) {
+        showCodeResult('Code ready', msg.value || '', msg.imageMime || '', msg.imageBase64 || '');
+      } else {
+        showCodeResult(msg.reason || 'Code request failed');
+      }
+    }
+    codeDigits.addEventListener('input', () => {
+      const cleaned = cleanDigits(codeDigits.value);
+      if (codeDigits.value !== cleaned) codeDigits.value = cleaned;
+    });
+    codeForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const digits = cleanDigits(codeDigits.value);
+      codeDigits.value = digits;
+      if (digits.length < 2 || digits.length > 9) {
+        showCodeResult('Enter 2-9 digits');
         return;
       }
-      rememberControlCodeNotice();
-      showModeNotice('large');
-    }
+      if (!noteCodeRequestWindow()) {
+        showCodeResult('Two requests per minute');
+        return;
+      }
+      hideCodeResult();
+      currentCodeRequestId = randomId();
+      codeSubmit.disabled = true;
+      showCodeResult('Request queued');
+      send({type: 'generate_control_code', requestId: currentCodeRequestId, digits});
+    });
+    codeClose.addEventListener('click', hideCodeResult);
     function noteActivity(force = false) {
       if (!desiredActive) return;
       const now = Date.now();
@@ -5328,6 +7468,14 @@ internal fun browserPage(): String {
     function pageIsVisible() {
       return document.visibilityState !== 'hidden';
     }
+    function viewerIsForeground() {
+      return document.visibilityState === 'visible' && (typeof document.hasFocus !== 'function' || document.hasFocus());
+    }
+    function healthAutoStartBlocked(health) {
+      if (!health || health.autoStartAllowed !== false) return false;
+      if (health.autoStartBlockedReason === 'viewer_inactivity_timeout' && viewerIsForeground()) return false;
+      return true;
+    }
     function autoStartBlockedMessage(health, fallback = '') {
       if (health && health.autoStartBlockedReason === 'viewer_inactivity_timeout') return 'Session ended';
       return fallback || '';
@@ -5518,8 +7666,7 @@ internal fun browserPage(): String {
             clientLog('loading_phase', {phase: 'session_active', sinceNavigationMs: Math.round(performance.now())});
           }
           if (msg.data) updateIdleTimer(msg.data);
-          if (msg.data) handleControlCodeMode(msg.data);
-          if (msg.data && msg.data.autoStartAllowed === false && !desiredActive) {
+          if (msg.data && msg.data.autoStartAllowed === false && !desiredActive && healthAutoStartBlocked(msg.data)) {
             suspendAutoStart(autoStartBlockedMessage(msg.data, msg.message || ''));
             return;
           }
@@ -5542,6 +7689,7 @@ internal fun browserPage(): String {
           }
         }
         if (msg.type === 'idle') updateIdleTimer(msg);
+        if (msg.type === 'control_code_result') handleControlCodeResult(msg);
       }
     }
     async function connectVideo(force = false) {
@@ -5777,7 +7925,7 @@ internal fun browserPage(): String {
     window.addEventListener('scroll', updateDetailsReveal, {passive: true});
     async function ensureStreaming(reason = 'self_heal') {
       if (autoStartSuspended) return;
-      if (!pageIsVisible() || selfHealInFlight) return;
+      if (!viewerIsForeground() || selfHealInFlight) return;
       if (desiredActive && configured && firstFrameReceived) {
         if (!ws || ws.readyState === WebSocket.CLOSED) connect(true).catch(() => {});
         if (!videoWs || videoWs.readyState === WebSocket.CLOSED) connectVideo(true).catch(() => scheduleStartupReconnect());
@@ -5786,7 +7934,7 @@ internal fun browserPage(): String {
       selfHealInFlight = true;
       try {
         const health = await refreshHealth();
-        if (health.autoStartAllowed === false && !desiredActive) {
+        if (health.autoStartAllowed === false && !desiredActive && healthAutoStartBlocked(health)) {
           suspendAutoStart(autoStartBlockedMessage(health, health.message || ''));
           return;
         }
@@ -5822,7 +7970,7 @@ internal fun browserPage(): String {
     function startStreamWatchdog() {
       if (streamWatchdogTimer) clearInterval(streamWatchdogTimer);
       streamWatchdogTimer = setInterval(() => {
-        if (!desiredActive || autoStartSuspended || !pageIsVisible()) return;
+        if (!desiredActive || autoStartSuspended || !viewerIsForeground()) return;
         const now = performance.now();
         if (!configured) {
           if (!reconnectTimer) scheduleStartupReconnect();
@@ -5860,8 +8008,7 @@ internal fun browserPage(): String {
         clientLog('loading_phase', {phase: 'session_active', sinceNavigationMs: Math.round(performance.now())});
       }
       updateIdleTimer(health);
-      handleControlCodeMode(health);
-      if (health.autoStartAllowed === false && !desiredActive) {
+      if (health.autoStartAllowed === false && !desiredActive && healthAutoStartBlocked(health)) {
         const message = autoStartBlockedMessage(health, health.message || '');
         setStreamState('ended', message);
         setStatus(message);
@@ -5907,21 +8054,6 @@ internal fun browserPage(): String {
         y: Math.round(((event.clientY - rect.top) / rect.height) * canvas.height)
       };
     }
-    function remoteKeyPayload(event) {
-      if (!desiredActive || !configured) return null;
-      if (event.ctrlKey || event.metaKey || event.altKey) return null;
-      const key = event.key === 'Esc' ? 'Escape' : event.key;
-      if (key.length === 1 && /^[A-Za-z0-9]${'$'}/.test(key)) return {key};
-      if (['Backspace', 'Delete', 'Enter', 'Escape'].includes(key)) return {key};
-      return null;
-    }
-    function forwardRemoteKey(event) {
-      noteActivity(true);
-      const payload = remoteKeyPayload(event);
-      if (!payload) return;
-      event.preventDefault();
-      send({type: 'key', key: payload.key});
-    }
     canvas.addEventListener('pointerdown', (event) => {
       if (!desiredActive || !configured) return;
       if (event.button != null && event.button !== 0) return;
@@ -5958,7 +8090,7 @@ internal fun browserPage(): String {
       const distance = Math.hypot(dx, dy);
       const heldMs = performance.now() - pointerStart.at;
       if (distance < maxTapTravelPx && heldMs <= maxTapDurationMs) {
-        send({type: 'tap', x: end.x, y: end.y});
+        setStatus('Use the request form below the ticket.');
       }
       pointerStart = null;
     });
@@ -5984,7 +8116,6 @@ internal fun browserPage(): String {
       canvas.addEventListener(eventName, blockStreamGesture, {passive: false});
       document.addEventListener(eventName, blockStreamGesture, {passive: false});
     }
-    window.addEventListener('keydown', forwardRemoteKey, {capture: true});
     window.addEventListener('wheel', () => noteActivity(), {capture: true, passive: true});
     window.addEventListener('pointermove', () => noteActivity(), {capture: true, passive: true});
     document.addEventListener('visibilitychange', () => {

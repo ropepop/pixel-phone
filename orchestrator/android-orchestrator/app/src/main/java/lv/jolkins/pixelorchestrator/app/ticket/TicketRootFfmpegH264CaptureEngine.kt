@@ -172,7 +172,8 @@ class TicketRootFfmpegH264CaptureEngine(
       cleanupMatchingProcesses()
     }
     state = "idle"
-    message = "FFmpeg capture stopped: $reason"
+    message = if (available) "FFmpeg H.264 capture is available" else "FFmpeg capture stopped: $reason"
+    clearFrameState()
     publish()
   }
 
@@ -183,6 +184,10 @@ class TicketRootFfmpegH264CaptureEngine(
   suspend fun cleanupStaleProcesses() {
     stopProcesses()
     cleanupMatchingProcesses()
+    clearFrameState()
+    state = if (available) "idle" else state
+    message = if (available) "FFmpeg H.264 capture is available" else message
+    publish()
   }
 
   fun snapshot(nowMillis: Long = SystemClock.elapsedRealtime()): TicketFfmpegHealth {
@@ -490,6 +495,29 @@ class TicketRootFfmpegH264CaptureEngine(
     runCatching { ffmpeg?.destroy() }
     runCatching { feeder?.destroyForcibly() }
     runCatching { ffmpeg?.destroyForcibly() }
+  }
+
+  private fun clearFrameState() {
+    width = null
+    height = null
+    bitrate = null
+    fps = null
+    frames = 0L
+    keyFrames = 0L
+    lastFrameBytes = 0
+    lastFrameAtMillis = 0L
+    lastStartAtMillis = 0L
+    lastRootFrameReadDurationMillis = null
+    lastFfmpegWriteDurationMillis = null
+    lastFrameTotalDurationMillis = null
+    suppressedRawFrames = 0L
+    lastSuppressedRawFrameAtMillis = 0L
+    firstVisibleRawFrameAtMillis = 0L
+    lastRawFrameVisible = false
+    droppedFrames = 0L
+    estimatedBitrate = 0L
+    bitrateWindowStartedAtMillis = 0L
+    bitrateWindowBytes = 0L
   }
 
   private suspend fun cleanupMatchingProcesses() {
