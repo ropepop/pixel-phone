@@ -1,0 +1,2143 @@
+{
+  "segments": [
+    {
+      "segment": 1,
+      "start_ms": 1779202148361,
+      "end_ms": 1779202267363,
+      "start": "2026-05-19T14:49:08.361+00:00",
+      "end": "2026-05-19T14:51:07.363+00:00",
+      "duration_ms": 119002,
+      "max": 3628,
+      "samples": 413,
+      "prev_zero_gap_ms": 356,
+      "next_zero_gap_ms": 251,
+      "edge_values_dt_ms": [
+        [
+          0,
+          788
+        ],
+        [
+          379,
+          788
+        ],
+        [
+          702,
+          788
+        ],
+        [
+          1064,
+          788
+        ],
+        [
+          1322,
+          788
+        ],
+        [
+          1692,
+          788
+        ],
+        [
+          "...",
+          "..."
+        ],
+        [
+          117758,
+          1
+        ],
+        [
+          117987,
+          1
+        ],
+        [
+          118193,
+          1
+        ],
+        [
+          118466,
+          1
+        ],
+        [
+          118683,
+          1
+        ],
+        [
+          119002,
+          0
+        ]
+      ],
+      "classification": "expected 2-minute visible idle interval",
+      "context_display_percent_counts": [
+        [
+          "0.0",
+          59
+        ]
+      ],
+      "context_screen_brightness_counts": [
+        [
+          "1",
+          56
+        ],
+        [
+          "0",
+          3
+        ]
+      ],
+      "context_focus_counts": [
+        [
+          "mCurrentFocus=Window{956ddcf u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          46
+        ],
+        [
+          "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          12
+        ],
+        [
+          "mCurrentFocus=null",
+          1
+        ]
+      ],
+      "nearest_context_at_start": [
+        {
+          "dt_ms": -2464,
+          "t": "2026-05-19T14:49:05.897+00:00",
+          "screen_brightness": "0",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": -311,
+          "t": "2026-05-19T14:49:08.050+00:00",
+          "screen_brightness": "1",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": 1778,
+          "t": "2026-05-19T14:49:10.139+00:00",
+          "screen_brightness": "1",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": 3898,
+          "t": "2026-05-19T14:49:12.259+00:00",
+          "screen_brightness": "1",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{956ddcf u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{185012053 u0 com.pv.vivi/.MainActivity t2348}",
+          "wakefulness": "mWakefulness=Awake"
+        }
+      ],
+      "events": [
+        [
+          2104,
+          "TB:panel_sleep_timer_started",
+          "touch_brightness_debug reason=panel_sleep_timer_started touches=0 source=unknown power_source=unknown last_raw=n/a timer=pending(115763ms) panel_target=0 power_rebound=none overlay=0 raw(btn",
+          968
+        ],
+        [
+          2226,
+          "TB:start_visible_idle",
+          "touch_brightness_debug reason=start_visible_idle touches=0 source=unknown power_source=unknown last_raw=n/a timer=pending(115640ms) panel_target=0 power_rebound=none overlay=0 raw(btn=false,",
+          969
+        ],
+        [
+          2378,
+          "TicketStreamService",
+          "ticket_websocket_open kind=video clients=1",
+          972
+        ],
+        [
+          2384,
+          "TicketStreamService",
+          "ticket_websocket_open kind=control clients=2",
+          973
+        ],
+        [
+          2452,
+          "TE:inactive_stream_cleanup_deferred",
+          "ticket_event event=inactive_stream_cleanup_deferred detail=health clients=2",
+          974
+        ],
+        [
+          2458,
+          "TB:touch_source_selected",
+          "touch_brightness_debug reason=touch_source_selected touches=0 source=synaptics_tcm_touch power_source=unknown last_raw=n/a timer=pending(115408ms) panel_target=0 power_rebound=none overlay=0",
+          975
+        ],
+        [
+          2526,
+          "TE:session_start_requested",
+          "ticket_event event=session_start_requested detail=root_hardware_h264_available=true root_hardware_h264_state=idle selected_mode=root_hardware_h264",
+          976
+        ],
+        [
+          2527,
+          "TB:power_source_selected",
+          "touch_brightness_debug reason=power_source_selected touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=pending(115339ms) panel_target=0 power_rebound=none overlay",
+          977
+        ],
+        [
+          2531,
+          "TE:session_capture_mode_selected",
+          "ticket_event event=session_capture_mode_selected detail=mode=root_hardware_h264 fallback=",
+          980
+        ],
+        [
+          2531,
+          "TE:session_started",
+          "ticket_event event=session_started detail=mode=root_hardware_h264",
+          981
+        ],
+        [
+          2541,
+          "TE:wake_started",
+          "ticket_event event=wake_started detail=session_start_root_hardware_h264_capture",
+          982
+        ],
+        [
+          2542,
+          "TE:stream_epoch_reset",
+          "ticket_event event=stream_epoch_reset detail=root_hardware_h264_capture_config",
+          983
+        ],
+        [
+          2997,
+          "TE:screen_wake",
+          "ticket_event event=screen_wake detail=session_start_root_hardware_h264_capture ok=true duration_ms=446",
+          987
+        ],
+        [
+          2997,
+          "TE:wake_phase",
+          "ticket_event event=wake_phase detail=phase=wake_command elapsed_ms=457 duration_ms=457",
+          988
+        ],
+        [
+          2998,
+          "TE:wake_phase",
+          "ticket_event event=wake_phase detail=phase=screen_interactive elapsed_ms=458 duration_ms=1",
+          989
+        ],
+        [
+          2998,
+          "TE:wake_launch_vivi_root",
+          "ticket_event event=wake_launch_vivi_root detail=session_start_root_hardware_h264_capture",
+          990
+        ],
+        [
+          3213,
+          "TE:wake_launch_vivi_root",
+          "ticket_event event=wake_launch_vivi_root detail=ok=true duration_ms=215",
+          993
+        ],
+        [
+          3777,
+          "TE:session_start_maintenance",
+          "ticket_event event=session_start_maintenance detail=reason=session_start waited_ms=1240 frame_sequence=0",
+          994
+        ],
+        [
+          3960,
+          "TicketStreamService",
+          "ticket_notification_lockdown_enabled reason=session_start",
+          995
+        ],
+        [
+          4415,
+          "TicketStreamService",
+          "secure_window_capture_bypass_enabled",
+          998
+        ],
+        [
+          4458,
+          "TE:ticket_state_over_1s",
+          "ticket_event event=ticket_state_over_1s detail=starting duration_ms=1931 reason=root_hardware_h264_prepare_session_start_root_hardware_h264_capture",
+          999
+        ],
+        [
+          4960,
+          "TE:root_hardware_h264_startup_frame",
+          "ticket_event event=root_hardware_h264_startup_frame detail=awaiting_ticket_ready",
+          1004
+        ],
+        [
+          5309,
+          "TE:active_guard_deferred",
+          "ticket_event event=active_guard_deferred detail=foreground_guard wake_in_progress=true",
+          1005
+        ],
+        [
+          5712,
+          "TE:secure_capture_probe",
+          "ticket_event event=secure_capture_probe detail=visible=true source=hardware_h264_health reason=root_hardware_h264_frame health=blocked",
+          1006
+        ],
+        [
+          6256,
+          "TE:active_guard_deferred",
+          "ticket_event event=active_guard_deferred detail=foreground_guard wake_in_progress=true",
+          1007
+        ],
+        [
+          7216,
+          "TE:active_guard_deferred",
+          "ticket_event event=active_guard_deferred detail=foreground_guard wake_in_progress=true",
+          1008
+        ],
+        [
+          7605,
+          "TE:wake_phase",
+          "ticket_event event=wake_phase detail=phase=vivi_foreground elapsed_ms=5065 duration_ms=4607",
+          1009
+        ],
+        [
+          8167,
+          "TE:active_guard_deferred",
+          "ticket_event event=active_guard_deferred detail=foreground_guard wake_in_progress=true",
+          1010
+        ],
+        [
+          8632,
+          "TE:input_command",
+          "ticket_event event=input_command detail=wake_recovery_action:open_tickets_tab duration_ms=328 ok=true",
+          1011
+        ],
+        [
+          8632,
+          "TE:wake_recovery_action",
+          "ticket_event event=wake_recovery_action detail=state=OTHER_VIVI_TAB action=open_tickets_tab ok=true duration_ms=328 reason=session_start_root_hardware_h264_capture",
+          1012
+        ],
+        [
+          9864,
+          "TE:active_guard_failed",
+          "ticket_event event=active_guard_failed detail=root:OTHER_VIVI_TAB",
+          1073
+        ],
+        [
+          11911,
+          "TE:input_command",
+          "ticket_event event=input_command detail=wake_recovery_action:open_time_ticket_tab duration_ms=140 ok=true",
+          1074
+        ],
+        [
+          11911,
+          "TE:wake_recovery_action",
+          "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_EMPTY action=open_time_ticket_tab ok=true duration_ms=140 reason=session_start_root_hardware_h264_capture",
+          1075
+        ],
+        [
+          13468,
+          "TE:input_command",
+          "ticket_event event=input_command detail=wake_recovery_action:open_time_ticket_tab duration_ms=135 ok=true",
+          1132
+        ],
+        [
+          13469,
+          "TE:wake_recovery_action",
+          "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_EMPTY action=open_time_ticket_tab ok=true duration_ms=135 reason=session_start_root_hardware_h264_capture",
+          1133
+        ],
+        [
+          14435,
+          "TE:active_guard_failed",
+          "ticket_event event=active_guard_failed detail=root:TICKET_LIST_WITH_CARD",
+          1135
+        ],
+        [
+          16875,
+          "TE:input_command",
+          "ticket_event event=input_command detail=wake_recovery_action:open_ticket_card duration_ms=137 ok=true",
+          1136
+        ],
+        [
+          16875,
+          "TE:wake_recovery_action",
+          "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_WITH_CARD action=open_ticket_card ok=true duration_ms=137 reason=session_start_root_hardware_h264_capture",
+          1137
+        ],
+        [
+          19363,
+          "TE:active_guard_failed",
+          "ticket_event event=active_guard_failed detail=root:UNKNOWN_VIVI",
+          1197
+        ],
+        [
+          19363,
+          "TE:active_guard_inconclusive",
+          "ticket_event event=active_guard_inconclusive detail=root hierarchy dump timed out after 3000 ms",
+          1198
+        ],
+        [
+          21997,
+          "TE:wake_phase",
+          "ticket_event event=wake_phase detail=phase=ticket_ready elapsed_ms=19457 duration_ms=14392",
+          1199
+        ],
+        [
+          21998,
+          "TE:root_hardware_h264_vivi_prepare",
+          "ticket_event event=root_hardware_h264_vivi_prepare detail=TICKET_DETAIL:wake_root_ticket_detail:success=true",
+          1200
+        ],
+        [
+          21998,
+          "TE:wake_finished",
+          "ticket_event event=wake_finished detail=success=true reason=ticket_ready total_ms=19458 slowest=ticket_ready:14392",
+          1201
+        ],
+        [
+          21998,
+          "TE:hardware_h264_wake_frames_allowed",
+          "ticket_event event=hardware_h264_wake_frames_allowed detail=session_start_root_hardware_h264_capture",
+          1202
+        ],
+        [
+          22011,
+          "TE:ticket_state_event",
+          "ticket_event event=ticket_state_event detail=seq=1 state=raw_ticket reason=session_start_raw_ticket_ready request= epoch=1367195265 frame=96 min=96",
+          1204
+        ],
+        [
+          24620,
+          "TE:active_guard_recent_ticket_detail",
+          "ticket_event event=active_guard_recent_ticket_detail detail=reason=foreground_guard",
+          1207
+        ],
+        [
+          27265,
+          "TicketStreamService",
+          "ticket_websocket_close kind=control clients=1",
+          1208
+        ],
+        [
+          27309,
+          "TicketStreamService",
+          "ticket_websocket_close kind=video clients=0",
+          1230
+        ],
+        [
+          31654,
+          "TicketStreamService",
+          "secure_window_capture_bypass_disabled",
+          1231
+        ],
+        [
+          32146,
+          "TicketStreamService",
+          "ticket_notification_lockdown_disabled reason=service_destroyed",
+          1232
+        ],
+        [
+          35895,
+          "TicketStreamService",
+          "ticket_websocket_open kind=control clients=1",
+          1234
+        ],
+        [
+          35968,
+          "TicketStreamService",
+          "ticket_websocket_open kind=video clients=2",
+          1236
+        ],
+        [
+          35971,
+          "TE:inactive_stream_cleanup_deferred",
+          "ticket_event event=inactive_stream_cleanup_deferred detail=health clients=2",
+          1237
+        ],
+        [
+          36293,
+          "TE:session_start_requested",
+          "ticket_event event=session_start_requested detail=root_hardware_h264_available=true root_hardware_h264_state=idle selected_mode=root_hardware_h264",
+          1238
+        ],
+        [
+          36310,
+          "TE:session_capture_mode_selected",
+          "ticket_event event=session_capture_mode_selected detail=mode=root_hardware_h264 fallback=",
+          1241
+        ],
+        [
+          36310,
+          "TE:session_started",
+          "ticket_event event=session_started detail=mode=root_hardware_h264",
+          1242
+        ],
+        [
+          36313,
+          "TE:wake_started",
+          "ticket_event event=wake_started detail=session_start_root_hardware_h264_capture",
+          1243
+        ],
+        [
+          36322,
+          "TE:stream_epoch_reset",
+          "ticket_event event=stream_epoch_reset detail=root_hardware_h264_capture_config",
+          1244
+        ],
+        [
+          36793,
+          "TE:screen_wake",
+          "ticket_event event=screen_wake detail=session_start_root_hardware_h264_capture ok=true duration_ms=436",
+          1248
+        ],
+        [
+          36794,
+          "TE:wake_phase",
+          "ticket_event event=wake_phase detail=phase=wake_command elapsed_ms=480 duration_ms=480",
+          1249
+        ]
+      ]
+    },
+    {
+      "segment": 2,
+      "start_ms": 1779202287344,
+      "end_ms": 1779202289213,
+      "start": "2026-05-19T14:51:27.344+00:00",
+      "end": "2026-05-19T14:51:29.213+00:00",
+      "duration_ms": 1869,
+      "max": 2981,
+      "samples": 6,
+      "prev_zero_gap_ms": 424,
+      "next_zero_gap_ms": 311,
+      "edge_values_dt_ms": [
+        [
+          0,
+          284
+        ],
+        [
+          368,
+          1211
+        ],
+        [
+          711,
+          2236
+        ],
+        [
+          1010,
+          2981
+        ],
+        [
+          1290,
+          2981
+        ],
+        [
+          1510,
+          2981
+        ],
+        [
+          368,
+          1211
+        ],
+        [
+          711,
+          2236
+        ],
+        [
+          1010,
+          2981
+        ],
+        [
+          1290,
+          2981
+        ],
+        [
+          1510,
+          2981
+        ],
+        [
+          1869,
+          0
+        ]
+      ],
+      "classification": "ticket wake/recovery input spike",
+      "context_display_percent_counts": [
+        [
+          "0.0",
+          4
+        ]
+      ],
+      "context_screen_brightness_counts": [
+        [
+          "0",
+          3
+        ],
+        [
+          "1",
+          1
+        ]
+      ],
+      "context_focus_counts": [
+        [
+          "mCurrentFocus=Window{4fdd12 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          4
+        ]
+      ],
+      "nearest_context_at_start": [
+        {
+          "dt_ms": -2332,
+          "t": "2026-05-19T14:51:25.012+00:00",
+          "screen_brightness": "0",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=manual [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{4fdd12 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{263323538 u0 com.pv.vivi/.MainActivity t2349}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": -147,
+          "t": "2026-05-19T14:51:27.197+00:00",
+          "screen_brightness": "1",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{4fdd12 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{263323538 u0 com.pv.vivi/.MainActivity t2349}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": 1994,
+          "t": "2026-05-19T14:51:29.338+00:00",
+          "screen_brightness": "0",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{4fdd12 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{263323538 u0 com.pv.vivi/.MainActivity t2349}",
+          "wakefulness": "mWakefulness=Awake"
+        }
+      ],
+      "events": [
+        [
+          -7655,
+          "TE:wake_phase",
+          "ticket_event event=wake_phase detail=phase=vivi_foreground elapsed_ms=3169 duration_ms=3062",
+          1459
+        ],
+        [
+          -7169,
+          "TE:input_command",
+          "ticket_event event=input_command detail=wake_recovery_action:open_tickets_tab duration_ms=150 ok=true",
+          1460
+        ],
+        [
+          -7169,
+          "TE:wake_recovery_action",
+          "ticket_event event=wake_recovery_action detail=state=OTHER_VIVI_TAB action=open_tickets_tab ok=true duration_ms=150 reason=rs_monthly_ticket_return:generated",
+          1461
+        ],
+        [
+          -5800,
+          "TB:panel_sleep_guard x4",
+          "first/last guard dt_ms=-5800/9515",
+          -1
+        ],
+        [
+          -3573,
+          "TE:input_command",
+          "ticket_event event=input_command detail=wake_recovery_action:open_time_ticket_tab duration_ms=225 ok=true",
+          1463
+        ],
+        [
+          -3573,
+          "TE:wake_recovery_action",
+          "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_EMPTY action=open_time_ticket_tab ok=true duration_ms=225 reason=rs_monthly_ticket_return:generated",
+          1464
+        ],
+        [
+          -22,
+          "TE:input_command",
+          "ticket_event event=input_command detail=wake_recovery_action:open_ticket_card duration_ms=169 ok=true",
+          1468
+        ],
+        [
+          -22,
+          "TE:wake_recovery_action",
+          "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_WITH_CARD action=open_ticket_card ok=true duration_ms=169 reason=rs_monthly_ticket_return:generated",
+          1469
+        ],
+        [
+          4536,
+          "TE:wake_phase",
+          "ticket_event event=wake_phase detail=phase=ticket_ready elapsed_ms=15359 duration_ms=12190",
+          1470
+        ],
+        [
+          4536,
+          "TE:wake_finished",
+          "ticket_event event=wake_finished detail=success=true reason=ticket_ready total_ms=15360 slowest=ticket_ready:12190",
+          1471
+        ],
+        [
+          4536,
+          "TE:rs_monthly_ticket_return_ticket",
+          "ticket_event event=rs_monthly_ticket_return_ticket detail=reason=generated state=TICKET_DETAIL step=wake_root_ticket_detail success=true",
+          1472
+        ],
+        [
+          4538,
+          "TE:ticket_state_event",
+          "ticket_event event=ticket_state_event detail=seq=4 state=raw_ticket reason=rs_monthly_ticket_return_ticket request= epoch=1367290526 frame=236 min=236",
+          1473
+        ],
+        [
+          4557,
+          "TE:control_code_cleanup_complete",
+          "ticket_event event=control_code_cleanup_complete detail=a59f20a57eb0b0ce2de33fe0c261d47e ok=true reason=ticket_detail duration_ms=42375",
+          1474
+        ]
+      ]
+    },
+    {
+      "segment": 3,
+      "start_ms": 1779202546293,
+      "end_ms": 1779202548908,
+      "start": "2026-05-19T14:55:46.293+00:00",
+      "end": "2026-05-19T14:55:48.908+00:00",
+      "duration_ms": 2615,
+      "max": 2568,
+      "samples": 9,
+      "prev_zero_gap_ms": 409,
+      "next_zero_gap_ms": 370,
+      "edge_values_dt_ms": [
+        [
+          0,
+          2568
+        ],
+        [
+          351,
+          1503
+        ],
+        [
+          717,
+          384
+        ],
+        [
+          1057,
+          1
+        ],
+        [
+          1291,
+          1
+        ],
+        [
+          1589,
+          1
+        ],
+        [
+          1291,
+          1
+        ],
+        [
+          1589,
+          1
+        ],
+        [
+          1943,
+          1
+        ],
+        [
+          2149,
+          1
+        ],
+        [
+          2324,
+          1
+        ],
+        [
+          2615,
+          0
+        ]
+      ],
+      "classification": "RS monthly-ticket programmatic flow spike",
+      "context_display_percent_counts": [
+        [
+          "0.0",
+          4
+        ]
+      ],
+      "context_screen_brightness_counts": [
+        [
+          "0",
+          3
+        ],
+        [
+          "1",
+          1
+        ]
+      ],
+      "context_focus_counts": [
+        [
+          "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          3
+        ],
+        [
+          "mCurrentFocus=Window{4fdd12 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          1
+        ]
+      ],
+      "nearest_context_at_start": [
+        {
+          "dt_ms": -1978,
+          "t": "2026-05-19T14:55:44.315+00:00",
+          "screen_brightness": "0",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{4fdd12 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{263323538 u0 com.pv.vivi/.MainActivity t2349}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": 170,
+          "t": "2026-05-19T14:55:46.463+00:00",
+          "screen_brightness": "1",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=manual [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": 2350,
+          "t": "2026-05-19T14:55:48.643+00:00",
+          "screen_brightness": "0",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=manual [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "wakefulness": "mWakefulness=Awake"
+        }
+      ],
+      "events": [
+        [
+          -7905,
+          "TE:screen_wake",
+          "ticket_event event=screen_wake detail=session_start_root_hardware_h264_capture ok=true duration_ms=135",
+          1685
+        ],
+        [
+          -7905,
+          "TE:wake_phase",
+          "ticket_event event=wake_phase detail=phase=wake_command elapsed_ms=153 duration_ms=153",
+          1686
+        ],
+        [
+          -7905,
+          "TE:wake_phase",
+          "ticket_event event=wake_phase detail=phase=screen_interactive elapsed_ms=153 duration_ms=0",
+          1687
+        ],
+        [
+          -7847,
+          "TE:hardware_reliability_failure",
+          "ticket_event event=hardware_reliability_failure detail=count=1 reason=hardware_encoder_restart:hardware_encoder_exit_137",
+          1688
+        ],
+        [
+          -7763,
+          "TE:wake_phase",
+          "ticket_event event=wake_phase detail=phase=vivi_foreground elapsed_ms=295 duration_ms=142",
+          1689
+        ],
+        [
+          -7763,
+          "TE:wake_phase",
+          "ticket_event event=wake_phase detail=phase=ticket_ready elapsed_ms=295 duration_ms=0",
+          1690
+        ],
+        [
+          -7762,
+          "TE:wake_recent_ticket_detail_fast_ready",
+          "ticket_event event=wake_recent_ticket_detail_fast_ready detail=reason=session_start_root_hardware_h264_capture age_ms=246651",
+          1691
+        ],
+        [
+          -7762,
+          "TE:wake_finished",
+          "ticket_event event=wake_finished detail=success=true reason=wake_recent_ticket_detail_fast_ready total_ms=295 slowest=wake_command:153",
+          1692
+        ],
+        [
+          -7762,
+          "TE:hardware_h264_wake_frames_allowed",
+          "ticket_event event=hardware_h264_wake_frames_allowed detail=session_start_root_hardware_h264_capture",
+          1693
+        ],
+        [
+          -7761,
+          "TE:ticket_state_event",
+          "ticket_event event=ticket_state_event detail=seq=6 state=raw_ticket reason=session_start_raw_ticket_ready request= epoch=1367582600 frame=1 min=1",
+          1695
+        ],
+        [
+          -6834,
+          "TE:session_start_maintenance",
+          "ticket_event event=session_start_maintenance detail=reason=session_start waited_ms=1223 frame_sequence=0",
+          1696
+        ],
+        [
+          -6701,
+          "TE:ticket_state_over_1s",
+          "ticket_event event=ticket_state_over_1s detail=starting duration_ms=1059 reason=root_hardware_h264_waiting_first_visible_frame",
+          1697
+        ],
+        [
+          -5644,
+          "TicketStreamService",
+          "ticket_notification_lockdown_enabled reason=session_start",
+          1702
+        ],
+        [
+          -4721,
+          "TB:panel_sleep_guard x4",
+          "first/last guard dt_ms=-4721/10071",
+          -1
+        ],
+        [
+          -4330,
+          "TicketStreamService",
+          "secure_window_capture_bypass_disabled",
+          1706
+        ],
+        [
+          -3506,
+          "TicketStreamService",
+          "secure_window_capture_bypass_enabled",
+          1707
+        ],
+        [
+          -2431,
+          "TicketStreamService",
+          "ticket_notification_lockdown_disabled reason=http_stop_without_explicit",
+          1708
+        ],
+        [
+          -2399,
+          "TE:root_capture_ready_waiting",
+          "ticket_event event=root_capture_ready_waiting detail=client_detached_http_stop_without_explicit",
+          1709
+        ],
+        [
+          -960,
+          "TicketStreamService",
+          "ticket_websocket_open kind=control clients=3",
+          1712
+        ],
+        [
+          -960,
+          "TE:client_replaced",
+          "ticket_event event=client_replaced detail=control viewer= generation=12",
+          1713
+        ],
+        [
+          -960,
+          "TicketStreamService",
+          "ticket_websocket_close kind=control clients=1",
+          1714
+        ],
+        [
+          -959,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=control generation=12 viewer= page_version=",
+          1715
+        ],
+        [
+          -860,
+          "TE:rs_monthly_ticket_request_started",
+          "ticket_event event=rs_monthly_ticket_request_started detail=request=068dde7b1b495ee4a1440d48a9a00095",
+          1739
+        ],
+        [
+          -859,
+          "TE:foreground_guard_paused_for_control_code",
+          "ticket_event event=foreground_guard_paused_for_control_code detail=rs_monthly_ticket_request",
+          1740
+        ],
+        [
+          -859,
+          "TE:control_code_transition",
+          "ticket_event event=control_code_transition detail=rs_monthly_ticket_request",
+          1741
+        ],
+        [
+          -640,
+          "TicketStreamService",
+          "ticket_websocket_close kind=video clients=1",
+          1743
+        ],
+        [
+          -93,
+          "TicketStreamService",
+          "ticket_websocket_open kind=control clients=2",
+          1749
+        ],
+        [
+          -93,
+          "TicketStreamService",
+          "ticket_websocket_open kind=video clients=3",
+          1750
+        ],
+        [
+          -92,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=control generation=13 viewer= page_version=",
+          1751
+        ],
+        [
+          -92,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=video generation=14 viewer= page_version=",
+          1752
+        ],
+        [
+          1956,
+          "TE:session_start_deferred_for_control_code",
+          "ticket_event event=session_start_deferred_for_control_code detail=relay_websocket_start",
+          1771
+        ]
+      ]
+    },
+    {
+      "segment": 4,
+      "start_ms": 1779202634234,
+      "end_ms": 1779202635664,
+      "start": "2026-05-19T14:57:14.234+00:00",
+      "end": "2026-05-19T14:57:15.664+00:00",
+      "duration_ms": 1430,
+      "max": 2981,
+      "samples": 5,
+      "prev_zero_gap_ms": 243,
+      "next_zero_gap_ms": 425,
+      "edge_values_dt_ms": [
+        [
+          0,
+          335
+        ],
+        [
+          285,
+          1264
+        ],
+        [
+          608,
+          2146
+        ],
+        [
+          896,
+          2896
+        ],
+        [
+          1149,
+          2981
+        ],
+        [
+          1430,
+          0
+        ],
+        [
+          0,
+          335
+        ],
+        [
+          285,
+          1264
+        ],
+        [
+          608,
+          2146
+        ],
+        [
+          896,
+          2896
+        ],
+        [
+          1149,
+          2981
+        ],
+        [
+          1430,
+          0
+        ]
+      ],
+      "classification": "ticket wake/recovery input spike",
+      "context_display_percent_counts": [
+        [
+          "0.0",
+          4
+        ]
+      ],
+      "context_screen_brightness_counts": [
+        [
+          "0",
+          3
+        ],
+        [
+          "1",
+          1
+        ]
+      ],
+      "context_focus_counts": [
+        [
+          "mCurrentFocus=Window{4a180e8 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          4
+        ]
+      ],
+      "nearest_context_at_start": [
+        {
+          "dt_ms": -2045,
+          "t": "2026-05-19T14:57:12.189+00:00",
+          "screen_brightness": "0",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=manual [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{4a180e8 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{133917128 u0 com.pv.vivi/.MainActivity t2350}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": 108,
+          "t": "2026-05-19T14:57:14.342+00:00",
+          "screen_brightness": "1",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{4a180e8 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{133917128 u0 com.pv.vivi/.MainActivity t2350}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": 2209,
+          "t": "2026-05-19T14:57:16.443+00:00",
+          "screen_brightness": "0",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{4a180e8 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{133917128 u0 com.pv.vivi/.MainActivity t2350}",
+          "wakefulness": "mWakefulness=Awake"
+        }
+      ],
+      "events": [
+        [
+          -7596,
+          "TE:wake_phase",
+          "ticket_event event=wake_phase detail=phase=vivi_foreground elapsed_ms=3272 duration_ms=3110",
+          1988
+        ],
+        [
+          -7086,
+          "TE:input_command",
+          "ticket_event event=input_command detail=wake_recovery_action:open_tickets_tab duration_ms=179 ok=true",
+          1989
+        ],
+        [
+          -7085,
+          "TE:wake_recovery_action",
+          "ticket_event event=wake_recovery_action detail=state=OTHER_VIVI_TAB action=open_tickets_tab ok=true duration_ms=179 reason=rs_monthly_ticket_return:generated",
+          1990
+        ],
+        [
+          -6044,
+          "TB:panel_sleep_guard x4",
+          "first/last guard dt_ms=-6044/8653",
+          -1
+        ],
+        [
+          -3530,
+          "TE:input_command",
+          "ticket_event event=input_command detail=wake_recovery_action:open_time_ticket_tab duration_ms=169 ok=true",
+          1992
+        ],
+        [
+          -3530,
+          "TE:wake_recovery_action",
+          "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_EMPTY action=open_time_ticket_tab ok=true duration_ms=169 reason=rs_monthly_ticket_return:generated",
+          1993
+        ],
+        [
+          -114,
+          "TE:input_command",
+          "ticket_event event=input_command detail=wake_recovery_action:open_ticket_card duration_ms=151 ok=true",
+          1997
+        ],
+        [
+          -114,
+          "TE:wake_recovery_action",
+          "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_WITH_CARD action=open_ticket_card ok=true duration_ms=151 reason=rs_monthly_ticket_return:generated",
+          1998
+        ],
+        [
+          3707,
+          "TE:wake_phase",
+          "ticket_event event=wake_phase detail=phase=ticket_ready elapsed_ms=14576 duration_ms=11304",
+          1999
+        ],
+        [
+          3707,
+          "TE:wake_finished",
+          "ticket_event event=wake_finished detail=success=true reason=ticket_ready total_ms=14576 slowest=ticket_ready:11304",
+          2000
+        ],
+        [
+          3707,
+          "TE:rs_monthly_ticket_return_ticket",
+          "ticket_event event=rs_monthly_ticket_return_ticket detail=reason=generated state=TICKET_DETAIL step=wake_root_ticket_detail success=true",
+          2001
+        ],
+        [
+          3710,
+          "TE:ticket_state_event",
+          "ticket_event event=ticket_state_event detail=seq=11 state=raw_ticket reason=rs_monthly_ticket_return_ticket request= epoch=1367582600 frame=488 min=488",
+          2002
+        ],
+        [
+          3725,
+          "TE:control_code_cleanup_complete",
+          "ticket_event event=control_code_cleanup_complete detail=d483451e6a5fb41a7cf38c022c1f37ff ok=true reason=ticket_detail duration_ms=41186",
+          2003
+        ]
+      ]
+    },
+    {
+      "segment": 5,
+      "start_ms": 1779202713965,
+      "end_ms": 1779202717941,
+      "start": "2026-05-19T14:58:33.965+00:00",
+      "end": "2026-05-19T14:58:37.941+00:00",
+      "duration_ms": 3976,
+      "max": 2711,
+      "samples": 16,
+      "prev_zero_gap_ms": 204,
+      "next_zero_gap_ms": 257,
+      "edge_values_dt_ms": [
+        [
+          0,
+          2711
+        ],
+        [
+          268,
+          1921
+        ],
+        [
+          492,
+          1323
+        ],
+        [
+          708,
+          676
+        ],
+        [
+          907,
+          87
+        ],
+        [
+          1119,
+          1
+        ],
+        [
+          "...",
+          "..."
+        ],
+        [
+          2687,
+          1
+        ],
+        [
+          2924,
+          1
+        ],
+        [
+          3208,
+          1
+        ],
+        [
+          3408,
+          1
+        ],
+        [
+          3660,
+          1
+        ],
+        [
+          3976,
+          0
+        ]
+      ],
+      "classification": "RS monthly-ticket programmatic flow spike",
+      "context_display_percent_counts": [
+        [
+          "0.0",
+          5
+        ]
+      ],
+      "context_screen_brightness_counts": [
+        [
+          "0",
+          4
+        ],
+        [
+          "1",
+          1
+        ]
+      ],
+      "context_focus_counts": [
+        [
+          "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          4
+        ],
+        [
+          "mCurrentFocus=Window{4a180e8 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          1
+        ]
+      ],
+      "nearest_context_at_start": [
+        {
+          "dt_ms": -2461,
+          "t": "2026-05-19T14:58:31.504+00:00",
+          "screen_brightness": "0",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{4a180e8 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{133917128 u0 com.pv.vivi/.MainActivity t2350}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": -323,
+          "t": "2026-05-19T14:58:33.642+00:00",
+          "screen_brightness": "0",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=manual [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": 1794,
+          "t": "2026-05-19T14:58:35.759+00:00",
+          "screen_brightness": "1",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=manual [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": 3944,
+          "t": "2026-05-19T14:58:37.909+00:00",
+          "screen_brightness": "0",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=manual [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "wakefulness": "mWakefulness=Awake"
+        }
+      ],
+      "events": [
+        [
+          -6318,
+          "TB:panel_sleep_guard x5",
+          "first/last guard dt_ms=-6318/11240",
+          -1
+        ],
+        [
+          -911,
+          "TicketStreamService",
+          "ticket_websocket_open kind=control clients=3",
+          2037
+        ],
+        [
+          -910,
+          "TE:client_replaced",
+          "ticket_event event=client_replaced detail=control viewer= generation=24",
+          2038
+        ],
+        [
+          -909,
+          "TicketStreamService",
+          "ticket_websocket_close kind=control clients=1",
+          2039
+        ],
+        [
+          -909,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=control generation=24 viewer= page_version=",
+          2040
+        ],
+        [
+          -847,
+          "TicketStreamService",
+          "ticket_websocket_close kind=video clients=1",
+          2063
+        ],
+        [
+          -837,
+          "TE:rs_monthly_ticket_request_started",
+          "ticket_event event=rs_monthly_ticket_request_started detail=request=2ca0e2dbe41ba5b49d8edf4e449a97d6",
+          2064
+        ],
+        [
+          -837,
+          "TE:control_code_transition",
+          "ticket_event event=control_code_transition detail=rs_monthly_ticket_request",
+          2065
+        ],
+        [
+          -310,
+          "TicketStreamService",
+          "ticket_websocket_open kind=video clients=2",
+          2071
+        ],
+        [
+          -310,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=video generation=25 viewer= page_version=",
+          2072
+        ],
+        [
+          -305,
+          "TicketStreamService",
+          "ticket_websocket_open kind=control clients=3",
+          2075
+        ],
+        [
+          -303,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=control generation=26 viewer= page_version=",
+          2076
+        ],
+        [
+          71,
+          "TicketStreamService",
+          "ticket_websocket_open kind=control clients=4",
+          2095
+        ],
+        [
+          78,
+          "TE:client_replaced",
+          "ticket_event event=client_replaced detail=control viewer= generation=27",
+          2096
+        ],
+        [
+          82,
+          "TicketStreamService",
+          "ticket_websocket_close kind=control clients=2",
+          2118
+        ],
+        [
+          82,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=control generation=27 viewer= page_version=",
+          2119
+        ],
+        [
+          507,
+          "TicketStreamService",
+          "ticket_websocket_close kind=video clients=2",
+          2122
+        ],
+        [
+          1549,
+          "TicketStreamService",
+          "ticket_websocket_open kind=control clients=3",
+          2124
+        ],
+        [
+          1550,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=control generation=28 viewer= page_version=",
+          2125
+        ],
+        [
+          1553,
+          "TicketStreamService",
+          "ticket_websocket_open kind=video clients=4",
+          2128
+        ],
+        [
+          1554,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=video generation=29 viewer= page_version=",
+          2129
+        ],
+        [
+          1555,
+          "TicketStreamService",
+          "ticket_websocket_open kind=control clients=5",
+          2130
+        ],
+        [
+          1555,
+          "TE:client_replaced",
+          "ticket_event event=client_replaced detail=control viewer= generation=30",
+          2131
+        ],
+        [
+          1558,
+          "TicketStreamService",
+          "ticket_websocket_close kind=control clients=3",
+          2132
+        ],
+        [
+          1558,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=control generation=30 viewer= page_version=",
+          2133
+        ],
+        [
+          1751,
+          "TE:session_start_deferred_for_control_code",
+          "ticket_event event=session_start_deferred_for_control_code detail=relay_websocket_start",
+          2139
+        ],
+        [
+          2148,
+          "TicketStreamService",
+          "ticket_websocket_open kind=control clients=5",
+          2141
+        ],
+        [
+          2148,
+          "TE:client_replaced",
+          "ticket_event event=client_replaced detail=control viewer= generation=31",
+          2142
+        ],
+        [
+          2149,
+          "TicketStreamService",
+          "ticket_websocket_close kind=control clients=3",
+          2143
+        ],
+        [
+          2150,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=control generation=31 viewer= page_version=",
+          2144
+        ],
+        [
+          2398,
+          "TicketStreamService",
+          "ticket_websocket_close kind=video clients=3",
+          2167
+        ],
+        [
+          2429,
+          "TicketStreamService",
+          "ticket_websocket_close kind=control clients=2",
+          2168
+        ],
+        [
+          2934,
+          "TicketStreamService",
+          "ticket_websocket_open kind=video clients=3",
+          2170
+        ],
+        [
+          2935,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=video generation=32 viewer= page_version=",
+          2171
+        ],
+        [
+          2938,
+          "TicketStreamService",
+          "ticket_websocket_open kind=control clients=4",
+          2173
+        ],
+        [
+          2938,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=control generation=33 viewer= page_version=",
+          2175
+        ],
+        [
+          3114,
+          "TicketStreamService",
+          "ticket_websocket_open kind=control clients=5",
+          2180
+        ],
+        [
+          3115,
+          "TE:client_replaced",
+          "ticket_event event=client_replaced detail=control viewer= generation=34",
+          2181
+        ],
+        [
+          3122,
+          "TicketStreamService",
+          "ticket_websocket_close kind=control clients=3",
+          2182
+        ],
+        [
+          3122,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=control generation=34 viewer= page_version=",
+          2183
+        ],
+        [
+          3623,
+          "TE:session_start_deferred_for_control_code",
+          "ticket_event event=session_start_deferred_for_control_code detail=relay_websocket_start",
+          2206
+        ],
+        [
+          3730,
+          "TicketStreamService",
+          "ticket_websocket_close kind=video clients=3",
+          2207
+        ],
+        [
+          4440,
+          "TicketStreamService",
+          "ticket_websocket_close kind=control clients=2",
+          2208
+        ],
+        [
+          4780,
+          "TicketStreamService",
+          "ticket_websocket_open kind=control clients=3",
+          2210
+        ],
+        [
+          4780,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=control generation=35 viewer= page_version=",
+          2211
+        ],
+        [
+          4785,
+          "TicketStreamService",
+          "ticket_websocket_open kind=video clients=4",
+          2213
+        ],
+        [
+          4786,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=video generation=36 viewer= page_version=",
+          2214
+        ],
+        [
+          4993,
+          "TE:session_start_deferred_for_control_code",
+          "ticket_event event=session_start_deferred_for_control_code detail=relay_websocket_start",
+          2217
+        ],
+        [
+          5072,
+          "TicketStreamService",
+          "ticket_websocket_open kind=control clients=5",
+          2219
+        ],
+        [
+          5073,
+          "TE:client_replaced",
+          "ticket_event event=client_replaced detail=control viewer= generation=37",
+          2220
+        ],
+        [
+          5074,
+          "TicketStreamService",
+          "ticket_websocket_close kind=control clients=3",
+          2221
+        ],
+        [
+          5075,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=control generation=37 viewer= page_version=",
+          2222
+        ],
+        [
+          5452,
+          "TicketStreamService",
+          "ticket_websocket_close kind=control clients=3",
+          2245
+        ],
+        [
+          5535,
+          "TicketStreamService",
+          "ticket_websocket_close kind=video clients=2",
+          2246
+        ],
+        [
+          6824,
+          "TE:session_start_deferred_for_control_code",
+          "ticket_event event=session_start_deferred_for_control_code detail=relay_websocket_start",
+          2247
+        ],
+        [
+          7468,
+          "TicketStreamService",
+          "ticket_websocket_close kind=control clients=1",
+          2248
+        ],
+        [
+          7596,
+          "TicketStreamService",
+          "ticket_websocket_open kind=control clients=2",
+          2251
+        ],
+        [
+          7597,
+          "TicketStreamService",
+          "ticket_websocket_open kind=video clients=2",
+          2252
+        ],
+        [
+          7598,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=control generation=38 viewer= page_version=",
+          2253
+        ],
+        [
+          7601,
+          "TE:client_connected",
+          "ticket_event event=client_connected detail=video generation=39 viewer= page_version=",
+          2254
+        ]
+      ]
+    },
+    {
+      "segment": 6,
+      "start_ms": 1779202750189,
+      "end_ms": 1779202752553,
+      "start": "2026-05-19T14:59:10.189+00:00",
+      "end": "2026-05-19T14:59:12.553+00:00",
+      "duration_ms": 2364,
+      "max": 2981,
+      "samples": 9,
+      "prev_zero_gap_ms": 306,
+      "next_zero_gap_ms": 282,
+      "edge_values_dt_ms": [
+        [
+          0,
+          683
+        ],
+        [
+          222,
+          1422
+        ],
+        [
+          497,
+          2113
+        ],
+        [
+          731,
+          2813
+        ],
+        [
+          1004,
+          2981
+        ],
+        [
+          1265,
+          2981
+        ],
+        [
+          1004,
+          2981
+        ],
+        [
+          1265,
+          2981
+        ],
+        [
+          1544,
+          2981
+        ],
+        [
+          1850,
+          2981
+        ],
+        [
+          2127,
+          2981
+        ],
+        [
+          2364,
+          0
+        ]
+      ],
+      "classification": "ticket wake/recovery input spike",
+      "context_display_percent_counts": [
+        [
+          "0.0",
+          4
+        ]
+      ],
+      "context_screen_brightness_counts": [
+        [
+          "0",
+          3
+        ],
+        [
+          "1",
+          1
+        ]
+      ],
+      "context_focus_counts": [
+        [
+          "mCurrentFocus=Window{3015908 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          4
+        ]
+      ],
+      "nearest_context_at_start": [
+        {
+          "dt_ms": -2320,
+          "t": "2026-05-19T14:59:07.869+00:00",
+          "screen_brightness": "0",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=manual [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{3015908 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{110991273 u0 com.pv.vivi/.MainActivity t2351}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": -135,
+          "t": "2026-05-19T14:59:10.054+00:00",
+          "screen_brightness": "1",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{3015908 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{110991273 u0 com.pv.vivi/.MainActivity t2351}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": 1994,
+          "t": "2026-05-19T14:59:12.183+00:00",
+          "screen_brightness": "0",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{3015908 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{110991273 u0 com.pv.vivi/.MainActivity t2351}",
+          "wakefulness": "mWakefulness=Awake"
+        }
+      ],
+      "events": [
+        [
+          -7088,
+          "TE:active_guard_deferred",
+          "ticket_event event=active_guard_deferred detail=foreground_guard wake_in_progress=true",
+          2466
+        ],
+        [
+          -6127,
+          "TE:active_guard_deferred",
+          "ticket_event event=active_guard_deferred detail=foreground_guard wake_in_progress=true",
+          2467
+        ],
+        [
+          -4961,
+          "TB:panel_sleep_guard x4",
+          "first/last guard dt_ms=-4961/9335",
+          -1
+        ],
+        [
+          -4934,
+          "TE:input_command",
+          "ticket_event event=input_command detail=wake_recovery_action:open_time_ticket_tab duration_ms=153 ok=true",
+          2469
+        ],
+        [
+          -4934,
+          "TE:wake_recovery_action",
+          "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_EMPTY action=open_time_ticket_tab ok=true duration_ms=153 reason=rs_monthly_ticket_return:generated",
+          2470
+        ],
+        [
+          -3595,
+          "TE:input_command",
+          "ticket_event event=input_command detail=wake_recovery_action:open_time_ticket_tab duration_ms=86 ok=true",
+          2527
+        ],
+        [
+          -3595,
+          "TE:wake_recovery_action",
+          "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_EMPTY action=open_time_ticket_tab ok=true duration_ms=86 reason=rs_monthly_ticket_return:generated",
+          2528
+        ],
+        [
+          -2622,
+          "TE:active_guard_failed",
+          "ticket_event event=active_guard_failed detail=root:TICKET_LIST_WITH_CARD",
+          2530
+        ],
+        [
+          -206,
+          "TE:input_command",
+          "ticket_event event=input_command detail=wake_recovery_action:open_ticket_card duration_ms=189 ok=true",
+          2532
+        ],
+        [
+          -206,
+          "TE:wake_recovery_action",
+          "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_WITH_CARD action=open_ticket_card ok=true duration_ms=189 reason=rs_monthly_ticket_return:generated",
+          2533
+        ],
+        [
+          817,
+          "TE:active_guard_failed",
+          "ticket_event event=active_guard_failed detail=root:TICKET_LIST_WITH_CARD",
+          2537
+        ],
+        [
+          3864,
+          "TE:wake_phase",
+          "ticket_event event=wake_phase detail=phase=ticket_ready elapsed_ms=15683 duration_ms=12627",
+          2538
+        ],
+        [
+          3865,
+          "TE:wake_finished",
+          "ticket_event event=wake_finished detail=success=true reason=ticket_ready total_ms=15683 slowest=ticket_ready:12627",
+          2539
+        ],
+        [
+          3865,
+          "TE:rs_monthly_ticket_return_ticket",
+          "ticket_event event=rs_monthly_ticket_return_ticket detail=reason=generated state=TICKET_DETAIL step=wake_root_ticket_detail success=true",
+          2540
+        ],
+        [
+          3866,
+          "TE:ticket_state_event",
+          "ticket_event event=ticket_state_event detail=seq=13 state=raw_ticket reason=rs_monthly_ticket_return_ticket request= epoch=1367582600 frame=1048 min=1048",
+          2541
+        ],
+        [
+          3879,
+          "TE:control_code_cleanup_complete",
+          "ticket_event event=control_code_cleanup_complete detail=2ca0e2dbe41ba5b49d8edf4e449a97d6 ok=true reason=ticket_detail duration_ms=40949",
+          2542
+        ]
+      ]
+    },
+    {
+      "segment": 7,
+      "start_ms": 1779203300559,
+      "end_ms": 1779203302250,
+      "start": "2026-05-19T15:08:20.559+00:00",
+      "end": "2026-05-19T15:08:22.250+00:00",
+      "duration_ms": 1691,
+      "max": 2824,
+      "samples": 6,
+      "prev_zero_gap_ms": 406,
+      "next_zero_gap_ms": 322,
+      "edge_values_dt_ms": [
+        [
+          0,
+          2824
+        ],
+        [
+          286,
+          2026
+        ],
+        [
+          551,
+          1432
+        ],
+        [
+          793,
+          1432
+        ],
+        [
+          1040,
+          1432
+        ],
+        [
+          1351,
+          1432
+        ],
+        [
+          286,
+          2026
+        ],
+        [
+          551,
+          1432
+        ],
+        [
+          793,
+          1432
+        ],
+        [
+          1040,
+          1432
+        ],
+        [
+          1351,
+          1432
+        ],
+        [
+          1691,
+          0
+        ]
+      ],
+      "classification": "ticket session/stream churn spike",
+      "context_display_percent_counts": [
+        [
+          "0.0",
+          3
+        ]
+      ],
+      "context_screen_brightness_counts": [
+        [
+          "0",
+          2
+        ],
+        [
+          "1",
+          1
+        ]
+      ],
+      "context_focus_counts": [
+        [
+          "mCurrentFocus=Window{3015908 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          3
+        ]
+      ],
+      "nearest_context_at_start": [
+        {
+          "dt_ms": 600,
+          "t": "2026-05-19T15:08:21.159+00:00",
+          "screen_brightness": "1",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ dim throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{3015908 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{110991273 u0 com.pv.vivi/.MainActivity t2351}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": 1727,
+          "t": "2026-05-19T15:08:22.286+00:00",
+          "screen_brightness": "0",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ dim throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{3015908 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{110991273 u0 com.pv.vivi/.MainActivity t2351}",
+          "wakefulness": "mWakefulness=Awake"
+        },
+        {
+          "dt_ms": 3787,
+          "t": "2026-05-19T15:08:24.346+00:00",
+          "screen_brightness": "0",
+          "mode": "0",
+          "display_percentage": "0.0",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ dim throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "focus": "mCurrentFocus=Window{3015908 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "activity": "topResumedActivity=ActivityRecord{110991273 u0 com.pv.vivi/.MainActivity t2351}",
+          "wakefulness": "mWakefulness=Awake"
+        }
+      ],
+      "events": [
+        [
+          -5757,
+          "TB:panel_sleep_guard x4",
+          "first/last guard dt_ms=-5757/9190",
+          -1
+        ],
+        [
+          -5749,
+          "TE:stream_epoch_reset",
+          "ticket_event event=stream_epoch_reset detail=session_stop_browser_stop",
+          2794
+        ],
+        [
+          -5739,
+          "TicketStreamService",
+          "ticket_websocket_close kind=video clients=1",
+          2795
+        ],
+        [
+          -281,
+          "TicketStreamService",
+          "secure_window_capture_bypass_disabled",
+          2797
+        ],
+        [
+          14,
+          "TicketStreamService",
+          "ticket_notification_lockdown_disabled reason=browser_stop",
+          2798
+        ],
+        [
+          17,
+          "TE:session_stopped",
+          "ticket_event event=session_stopped detail=browser_stop",
+          2799
+        ],
+        [
+          48,
+          "TE:clients_closed",
+          "ticket_event event=clients_closed detail=inactive_stream_health count=1",
+          2800
+        ],
+        [
+          53,
+          "TicketStreamService",
+          "ticket_websocket_close kind=control clients=0",
+          2801
+        ],
+        [
+          112,
+          "TE:root_hardware_h264_ready_waiting",
+          "ticket_event event=root_hardware_h264_ready_waiting detail=session_stop_browser_stop",
+          2802
+        ]
+      ]
+    }
+  ],
+  "spike_count_excluding_visible_idle": 6,
+  "spike_total_ms_excluding_visible_idle": 13945,
+  "fast_span_ms": 1639531,
+  "post_first_visible_idle_span_ms": 1423547
+}

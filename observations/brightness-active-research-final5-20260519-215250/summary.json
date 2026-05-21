@@ -1,0 +1,31 @@
+{
+  "duration_observed_ms": 90358,
+  "first_local_epoch_ms": 1779227573094,
+  "high_90pct_segment_count": 0,
+  "high_90pct_segments_preview": [],
+  "high_90pct_total_ms": 0,
+  "last_local_epoch_ms": 1779227663452,
+  "max_panel_brightness_capacity": 3939,
+  "max_panel_brightness_seen": 3471,
+  "median_interval_ms": 612,
+  "nonzero_segment_count": 2,
+  "nonzero_segments_preview": [
+    {
+      "duration_ms": 1669,
+      "end_local_epoch_ms": 1779227603098,
+      "max_value": 3471,
+      "samples": 3,
+      "start_local_epoch_ms": 1779227602041
+    },
+    {
+      "duration_ms": 1290,
+      "end_local_epoch_ms": 1779227634215,
+      "max_value": 2468,
+      "samples": 2,
+      "start_local_epoch_ms": 1779227633537
+    }
+  ],
+  "nonzero_total_ms": 2959,
+  "observer_finished_utc": "2026-05-19T21:54:24.602+00:00",
+  "sample_count": 148
+}

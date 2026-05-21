@@ -1,0 +1,7 @@
+--------- beginning of main
+         1779201803.587  4366 21590 I TicketStreamService: ticket_event event=session_start_requested detail=root_hardware_h264_available=true root_hardware_h264_state=idle selected_mode=idle
+         1779201804.012  4366 21590 I TicketStreamService: secure_window_capture_bypass_disabled
+         1779201804.301  4366 21590 I TicketStreamService: ticket_notification_lockdown_disabled reason=capture_unavailable
+         1779201804.309  4366 21590 I TicketStreamService: ticket_event event=session_unavailable detail=hardware_h264_marked_unreliable:hardware_encoder_restart:hardware_encoder_exit_137
+         1779201804.904  4366 26015 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=false
+         1779201806.456  4366  7997 I TicketStreamService: ticket_event event=inactive_stream_cleanup_deferred detail=health clients=2

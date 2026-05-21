@@ -1,0 +1,16 @@
+{
+  "duration_observed_ms": 2574,
+  "first_local_epoch_ms": 1779201846599,
+  "high_90pct_segment_count": 0,
+  "high_90pct_segments_preview": [],
+  "high_90pct_total_ms": 0,
+  "last_local_epoch_ms": 1779201849173,
+  "max_panel_brightness_capacity": 3939,
+  "max_panel_brightness_seen": 0,
+  "median_interval_ms": 420,
+  "nonzero_segment_count": 0,
+  "nonzero_segments_preview": [],
+  "nonzero_total_ms": 0,
+  "observer_finished_utc": "2026-05-19T14:44:12.288+00:00",
+  "sample_count": 7
+}

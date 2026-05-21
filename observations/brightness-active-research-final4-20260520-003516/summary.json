@@ -1,0 +1,45 @@
+{
+  "duration_observed_ms": 563232,
+  "first_local_epoch_ms": 1779226520214,
+  "high_90pct_segment_count": 0,
+  "high_90pct_segments_preview": [],
+  "high_90pct_total_ms": 0,
+  "last_local_epoch_ms": 1779227083446,
+  "max_panel_brightness_capacity": 3939,
+  "max_panel_brightness_seen": 2855,
+  "median_interval_ms": 691,
+  "nonzero_segment_count": 4,
+  "nonzero_segments_preview": [
+    {
+      "duration_ms": 1160,
+      "end_local_epoch_ms": 1779226550537,
+      "max_value": 1446,
+      "samples": 2,
+      "start_local_epoch_ms": 1779226550068
+    },
+    {
+      "duration_ms": 1283,
+      "end_local_epoch_ms": 1779226814605,
+      "max_value": 1288,
+      "samples": 2,
+      "start_local_epoch_ms": 1779226814013
+    },
+    {
+      "duration_ms": 1352,
+      "end_local_epoch_ms": 1779226841395,
+      "max_value": 2855,
+      "samples": 2,
+      "start_local_epoch_ms": 1779226840734
+    },
+    {
+      "duration_ms": 691,
+      "end_local_epoch_ms": 1779227064292,
+      "max_value": 1098,
+      "samples": 1,
+      "start_local_epoch_ms": 1779227064292
+    }
+  ],
+  "nonzero_total_ms": 4486,
+  "observer_finished_utc": "2026-05-19T21:44:43.783+00:00",
+  "sample_count": 818
+}

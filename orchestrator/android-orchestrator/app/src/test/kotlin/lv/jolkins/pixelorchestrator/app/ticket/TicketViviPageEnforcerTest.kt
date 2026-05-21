@@ -17,6 +17,25 @@ class TicketViviPageEnforcerTest {
   }
 
   @Test
+  fun rawTicketWithAztecAndNumericDateIsStillTicketDetail() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="KONTROLES KODS" clickable="true" bounds="[53,264][450,390]" />
+        <node package="com.pv.vivi" class="android.widget.Button" clickable="true" bounds="[880,260][1014,394]" />
+        <node package="com.pv.vivi" content-desc="ZONAS" bounds="[68,434][190,486]" />
+        <node package="com.pv.vivi" class="android.widget.ImageView" bounds="[212,646][868,1302]" />
+        <node package="com.pv.vivi" content-desc="PV-ELB-20260423-0RJB2M" bounds="[119,1329][961,1423]" />
+        <node package="com.pv.vivi" content-desc="23.04.2026 - 22.05.2026" bounds="[66,1846][592,1914]" />
+      </hierarchy>
+    """.trimIndent()
+
+    assertEquals(TicketViviRecoveryState.TICKET_DETAIL, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertTrue(TicketViviPageEnforcer.isTicketDetail(xml))
+    assertTrue(TicketViviPageEnforcer.hasTicketCodeGraphicForHierarchy(xml))
+    assertNull(TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml))
+  }
+
+  @Test
   fun rejectsNonViviTicketDetailMarkers() {
     val xml = """
       <hierarchy>
@@ -79,6 +98,62 @@ class TicketViviPageEnforcerTest {
     assertEquals("open_tickets_tab", action?.reason)
     assertEquals(405, action?.x)
     assertEquals(2285, action?.y)
+  }
+
+  @Test
+  fun recoversRouteHomeEvenWhenTicketsTabHasNoAccessibleLabel() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="Maršruta plānošana" bounds="[228,955][852,1052]" />
+        <node package="com.pv.vivi" content-desc="MEKLĒT" clickable="true" bounds="[79,2040][1001,2197]" />
+        <node package="com.pv.vivi" content-desc="home&#10;1. cilne no 4" clickable="true" selected="true" bounds="[0,2209][270,2361]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val action = TicketViviPageEnforcer.recoveryActionForHierarchy(xml)
+
+    assertEquals(TicketViviRecoveryState.UNKNOWN_VIVI, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("open_tickets_tab_route_fallback", action?.reason)
+    assertEquals(405, action?.x)
+    assertEquals(2285, action?.y)
+  }
+
+  @Test
+  fun recognizesLiveLatvianSettingsScreenForBackRecovery() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="LIETOTNES VALODA" bounds="[79,530][429,592]" />
+        <node package="com.pv.vivi" content-desc="Latviešu" bounds="[705,530][881,592]" />
+        <node package="com.pv.vivi" content-desc="PAZIŅOJUMI" bounds="[79,761][306,823]" />
+        <node package="com.pv.vivi" content-desc="LIETOTNES VERSIJA" bounds="[79,1221][477,1283]" />
+        <node package="com.pv.vivi" content-desc="NOTEIKUMI" clickable="true" bounds="[79,1677][287,1739]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val action = TicketViviPageEnforcer.recoveryActionForHierarchy(xml)
+
+    assertEquals(TicketViviRecoveryState.SETTINGS_OR_PROFILE, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("leave_settings_or_profile", action?.reason)
+    assertEquals(-1, action?.x)
+    assertEquals(-1, action?.y)
+  }
+
+  @Test
+  fun cartRecoveryUsesVisibleTopRightCloseFallbackWhenHierarchyBackButtonIsStale() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="Atpakaļ" clickable="true" bounds="[11,163][137,289]" />
+        <node package="com.pv.vivi" content-desc="0" bounds="[575,204][610,250]" />
+        <node package="com.pv.vivi" content-desc="Grozs ir tukšs" bounds="[336,1314][744,1409]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val action = TicketViviPageEnforcer.recoveryActionForHierarchy(xml)
+
+    assertEquals(TicketViviRecoveryState.CART_OR_CHECKOUT, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("leave_cart_or_checkout", action?.reason)
+    assertEquals(1016, action?.x)
+    assertEquals(226, action?.y)
   }
 
   @Test
@@ -334,6 +409,23 @@ class TicketViviPageEnforcerTest {
     assertEquals(924, close?.x)
     assertEquals(1096, close?.y)
     assertNull(TicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
+  }
+
+  @Test
+  fun generatedGraphicCloseFallbackIgnoresTopRightTicketExit() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" text="Kontroles kods" bounds="[124,548][700,604]" />
+        <node package="com.pv.vivi" class="android.widget.ImageView" content-desc="Aztec kontroles kods" bounds="[200,800][880,1480]" />
+        <node package="com.pv.vivi" content-desc="Aizvērt" clickable="true" bounds="[936,420][1032,516]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val close = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml)
+
+    assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("close_control_code_result", close?.reason)
+    assertTrue("generated-code close must be aligned with the Aztec, not the ticket exit", close?.y ?: 0 > 900)
   }
 
   @Test
@@ -611,8 +703,8 @@ class TicketViviPageEnforcerTest {
 
     assertEquals(TicketViviRecoveryState.CART_OR_CHECKOUT, TicketViviPageEnforcer.classifyForRecovery(cartXml))
     assertEquals("leave_cart_or_checkout", action?.reason)
-    assertEquals(84, action?.x)
-    assertEquals(136, action?.y)
+    assertEquals(994, action?.x)
+    assertEquals(225, action?.y)
   }
 
   @Test
@@ -656,8 +748,12 @@ class TicketViviPageEnforcerTest {
         <node package="com.pv.vivi" content-desc="Tickets&#10;2. cilne no 4" clickable="true" bounds="[270,2209][540,2361]" />
       </hierarchy>
     """.trimIndent()
+    val settingsAction = TicketViviPageEnforcer.recoveryActionForHierarchy(settingsXml)
+
     assertEquals(TicketViviRecoveryState.SETTINGS_OR_PROFILE, TicketViviPageEnforcer.classifyForRecovery(settingsXml))
-    assertNull(TicketViviPageEnforcer.recoveryActionForHierarchy(settingsXml))
+    assertEquals("open_tickets_tab", settingsAction?.reason)
+    assertEquals(405, settingsAction?.x)
+    assertEquals(2285, settingsAction?.y)
   }
 
   @Test

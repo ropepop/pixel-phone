@@ -1,0 +1,9 @@
+snapshot_utc=2026-05-19T22:48:38Z
+panel=0
+actual=0
+max=3939
+screen_brightness=0
+screen_brightness_mode=0
+wakefulness=mWakefulness=Awake
+orchestrator_pid=7697
+ticket_pid=

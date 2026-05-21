@@ -1,0 +1,17 @@
+[
+  {
+    "path": "/api/v1/session/stop",
+    "status": 200,
+    "body": "{\"ok\":true,\"state\":\"inactive\",\"message\":\"Ticket server is listening on 127.0.0.1:9388\"}"
+  },
+  {
+    "path": "/api/v1/session/start",
+    "status": 200,
+    "body": "{\"ok\":true,\"state\":\"starting\",\"message\":\"Preparing ViVi for secure H.264 capture\"}"
+  },
+  {
+    "path": "/api/v1/health",
+    "status": 200,
+    "body": "{\"ok\":true,\"serverVersion\":\"ticket-stream-2026-05-19-raw-ticket-recovery-v201\",\"phoneUptimeMillis\":1371629525,\"sessionState\":\"starting\",\"serverRunning\":true,\"viviInstalled\":true,\"accrescentInstalled\":true,\"installedStorePackages\":[\"app.accrescent.client\",\"app.grapheneos.apps\",\"com.aurora.store\",\"org.fdroid.fdroid\"],\"streamActive\":true,\"streamVerdict\":\"live\",\"clients\":0,\"inactivityActive\":true,\"inactivityTimeoutMillis\":600000,\"inactivityRemainingMillis\":597809,\"autoStartAllowed\":true,\"autoStartBlockedReason\":null,\"serviceReadiness\":{\"enabled\":true,\"state\":\"ready\",\"detail\":\"Local ticket server and tunnel are ready\",\"lastEnsureReason\":\"lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION\",\"lastEnsureAgeMillis\":158,\"lastEnsureSucceeded\":true,\"lastEnsureResult\":\"Local ticket server and tunnel are ready\",\"localServerReachable\":true,\"tunnelReady\":true,\"componentStatus\":\"running\"},\"inputGate\":{\"tapOnly\":true,\"active\":true,\"allowed\":false,\"reason\":\"no_active_control\",\"lastDecisionAgoMillis\":null,\"lastCommandReason\":null,\"lastCommandDurationMillis\":null,\"lastCommandCompletedAgoMillis\":null,\"lastInputId\":null,\"lastInputKind\":null,\"lastInputAccepted\":null,\"lastInputReason\":null,\"lastIn"
+  }
+]

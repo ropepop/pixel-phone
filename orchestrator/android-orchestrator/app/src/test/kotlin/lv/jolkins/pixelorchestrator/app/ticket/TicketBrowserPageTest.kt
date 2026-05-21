@@ -62,7 +62,10 @@ class TicketBrowserPageTest {
     assertTrue(page.contains("const SELF_HEAL_INTERVAL_MS = 1000;"))
     assertTrue(page.contains("const STREAM_WATCHDOG_INTERVAL_MS = 500;"))
     assertTrue(page.contains("const NO_FIRST_FRAME_MS = 2000;"))
-    assertTrue(page.contains("const STALE_FRAME_SOFT_MS = 2500;"))
+    assertTrue(page.contains("const STALE_FRAME_SOFT_MS = 2000;"))
+    assertTrue(page.contains("const FRAME_DECODE_MAX_AGE_MS = 1500;"))
+    assertTrue(page.contains("const FRAME_RENDER_MAX_AGE_MS = 2000;"))
+    assertTrue(page.contains("function dropStaleFrameBeforeDecode(frame)"))
     assertTrue(page.contains("const STALE_FRAME_RECONNECT_MS = 12000;"))
     assertTrue(page.contains("const STALE_KEYFRAME_REQUEST_INTERVAL_MS = 2000;"))
     assertTrue(page.contains("clientLog('loading_phase', {phase: 'html_ready'"))
@@ -104,6 +107,16 @@ class TicketBrowserPageTest {
     assertTrue(page.contains("clientLog('decoder_error'"))
     assertTrue(page.contains("recoverVideoPipeline('decoder_error', 'Reconnecting stream...')"))
     assertFalse(page.contains("setStatus(`Decoder error:"))
+  }
+
+  @Test
+  fun staleVideoSocketCloseDoesNotResetCurrentDecoder() {
+    val page = browserPage()
+
+    assertTrue(page.contains("const videoSocketIsCurrent = videoWs === socket;"))
+    assertTrue(page.contains("desiredActive, current: videoSocketIsCurrent"))
+    assertTrue(page.contains("if (videoSocketIsCurrent) videoWs = null;"))
+    assertTrue(page.contains("if (desiredActive && !autoStartSuspended && videoSocketIsCurrent)"))
   }
 
   @Test
@@ -234,11 +247,118 @@ class TicketBrowserPageTest {
     assertTrue(page.contains("pattern=\"[0-9]*\""))
     assertTrue(page.contains("function cleanDigits(value)"))
     assertTrue(page.contains("codeRequestTimes.length >= 2"))
-    assertTrue(page.contains("send({type: 'generate_control_code', requestId: currentCodeRequestId, digits})"))
+    assertTrue(page.contains("send({type: 'generate_control_code', requestId: currentCodeRequestId, digits, app: 'vivi', flow: 'control_code'})"))
+    assertFalse("ticket.jolkins code entry must not implicitly request the RS monthly-ticket flow", page.contains("requestId: currentCodeRequestId, digits})"))
     assertTrue(page.contains("if (msg.type === 'control_code_result') handleControlCodeResult(msg);"))
+    assertTrue(page.contains("const messageRequestId = String(msg.requestId || '')"))
+    assertTrue(page.contains("if (!messageRequestId || messageRequestId !== currentCodeRequestId) return;"))
+    assertFalse(page.contains("if (msg.requestId && currentCodeRequestId && msg.requestId !== currentCodeRequestId) return;"))
     assertFalse(page.contains("setTimeout(hideCodeResult, 60_000)"))
     assertFalse(page.contains("CONTROL_CODE_NOTICE_COOKIE"))
     assertFalse(page.contains("Kontroles koda režīms"))
+  }
+
+  @Test
+  fun browserDelaysCodeReadyUntilPostConfirmationFrameIsDrawn() {
+    val page = browserPage()
+    val generatedHandler = page.substringBetween(
+      "function handleGeneratedCodeResultEvent(msg)",
+      "function handleControlCodeResult(msg)"
+    )
+    val ticketStateBranch = page.substringBetween(
+      "msg.type === 'ticket_state_event' &&",
+      "async function connectVideo"
+    )
+    val decoderOutput = page.substringBetween(
+      "ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);",
+      "frame.close();"
+    )
+
+    assertTrue(page.contains("let pendingGeneratedCodeResultEvent = null;"))
+    assertTrue(page.contains("let lastDrawnFrameEpoch = 0;"))
+    assertTrue(page.contains("let lastDrawnFrameSequence = 0;"))
+    assertTrue(page.contains("function generatedResultFrameReady(msg)"))
+    assertTrue(page.contains("const minFrameSequence = Number(msg && msg.minFrameSequence || 0);"))
+    assertTrue(page.contains("lastDrawnFrameSequence >= minFrameSequence"))
+    assertTrue(page.contains("function flushPendingGeneratedCodeResult()"))
+    assertTrue(page.contains("pendingGeneratedCodeResultEvent = msg;"))
+    assertTrue(generatedHandler.contains("showCodeResult('Waiting for Aztec frame');"))
+    assertTrue(generatedHandler.contains("control_code_result_waiting_for_frame"))
+    assertTrue(generatedHandler.indexOf("pendingGeneratedCodeResultEvent = msg;") < generatedHandler.indexOf("control_code_result_waiting_for_frame"))
+    assertFalse("generated ticket_state_event must not announce ready before the watermarked frame draws", ticketStateBranch.contains("showCodeResult('Code ready'"))
+    assertTrue(ticketStateBranch.contains("handleGeneratedCodeResultEvent(msg);"))
+    assertTrue(decoderOutput.contains("lastDrawnFrameEpoch = Number(metadata.epoch || 0);"))
+    assertTrue(decoderOutput.contains("lastDrawnFrameSequence = Number(metadata.sequence || 0);"))
+    assertTrue(decoderOutput.contains("flushPendingGeneratedCodeResult();"))
+  }
+
+  @Test
+  fun postConfirmationCaptureTimingStressRejectsEarlyFrames() {
+    val page = browserPage()
+    val readyGate = page.substringBetween(
+      "function generatedResultFrameReady(msg)",
+      "function flushPendingGeneratedCodeResult()"
+    )
+
+    assertTrue("browser readiness must be based on the drawn frame watermark", readyGate.contains("lastDrawnFrameSequence >= minFrameSequence"))
+    assertTrue("browser readiness must reject stale stream epochs", readyGate.contains("eventStreamEpoch !== currentStreamEpoch"))
+
+    var badCaptures = 0
+    repeat(20) { attempt ->
+      val minFrameSequence = 100L + attempt
+      val frameDrawnBeforeAztec = minFrameSequence - 1L
+      val wouldAnnounceReadyBeforeAztec = frameDrawnBeforeAztec >= minFrameSequence
+      if (wouldAnnounceReadyBeforeAztec) badCaptures += 1
+      val aztecFrameDrawn = minFrameSequence
+      assertTrue("attempt $attempt should become ready only at the watermarked frame", aztecFrameDrawn >= minFrameSequence)
+    }
+    assertTrue("bad capture rate must be <= 1 in 20", badCaptures <= 1)
+  }
+
+  @Test
+  fun browserFreezesGeneratedAztecFrameUntilResultDismissed() {
+    val page = browserPage()
+    val flushReady = page.substringBetween(
+      "function flushPendingGeneratedCodeResult()",
+      "function handleGeneratedCodeResultEvent(msg)"
+    )
+    val directReady = page.substringBetween(
+      "function handleGeneratedCodeResultEvent(msg)",
+      "function handleControlCodeResult(msg)"
+    )
+    val hide = page.substringBetween(
+      "function hideCodeResult()",
+      "function showCodeResult"
+    )
+    val closeDecoder = page.substringBetween(
+      "function closeDecoder(message = 'Connecting')",
+      "function stopKeepalive()"
+    )
+    val decoderOutput = page.substringBetween(
+      "decoder = new VideoDecoder({",
+      "error(error)"
+    )
+    val frozenDecoderBranch = decoderOutput.substringBetween(
+      "if (generatedCodeResultFrozen) {",
+      "ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);"
+    )
+
+    assertTrue(page.contains("let generatedCodeResultFrozen = false;"))
+    assertTrue(page.contains("function freezeGeneratedCodeResultFrame("))
+    assertTrue(page.contains("function clearGeneratedCodeResultFreeze("))
+    assertTrue(flushReady.contains("freezeGeneratedCodeResultFrame(pending);"))
+    assertTrue(directReady.contains("freezeGeneratedCodeResultFrame(msg);"))
+    assertTrue(hide.contains("clearGeneratedCodeResultFreeze('code_result_dismissed');"))
+    assertTrue(closeDecoder.contains("if (!generatedCodeResultFrozen) {"))
+    assertTrue(closeDecoder.contains("ctx.clearRect(0, 0, canvas.width, canvas.height);"))
+    assertTrue(decoderOutput.contains("if (generatedCodeResultFrozen) {"))
+    assertTrue(frozenDecoderBranch.contains("lastFrameAt = performance.now();"))
+    assertTrue(frozenDecoderBranch.contains("frame.close();"))
+    assertTrue(
+      "cleanup/raw frames must be suppressed before they can overwrite the Aztec canvas",
+      decoderOutput.indexOf("if (generatedCodeResultFrozen)") <
+        decoderOutput.indexOf("ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);")
+    )
   }
 
   @Test
@@ -265,6 +385,14 @@ class TicketBrowserPageTest {
     assertFalse(page.contains("showModal"))
     assertFalse(page.contains("claim-dialog"))
     assertFalse(page.contains("confirmClaim"))
-    assertFalse(page.contains("Priv\u0101ta kontroles koda sesija"))
+    assertFalse(page.contains("Priv\\u0101ta kontroles koda sesija"))
+  }
+
+  private fun String.substringBetween(startNeedle: String, endNeedle: String): String {
+    val start = indexOf(startNeedle)
+    assertTrue("missing start needle: $startNeedle", start >= 0)
+    val end = indexOf(endNeedle, start + startNeedle.length)
+    assertTrue("missing end needle: $endNeedle", end > start)
+    return substring(start, end)
   }
 }

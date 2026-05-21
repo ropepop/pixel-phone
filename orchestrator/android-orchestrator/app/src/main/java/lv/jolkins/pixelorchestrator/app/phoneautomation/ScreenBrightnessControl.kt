@@ -70,13 +70,9 @@ internal object ScreenBrightnessControl {
             panel_current="$(cat "${'$'}panel_dir/brightness" 2>/dev/null || true)"
             panel_writes=1
             if [ $holdMs -gt 0 ]; then
-              if [ "${'$'}panel_current" = "${'$'}panel_target" ]; then
+              panel_writes=$(( ($holdMs + $intervalMs - 1) / $intervalMs ))
+              if [ "${'$'}panel_writes" -lt 1 ]; then
                 panel_writes=1
-              else
-                panel_writes=$(( ($holdMs + $intervalMs - 1) / $intervalMs ))
-                if [ "${'$'}panel_writes" -lt 1 ]; then
-                  panel_writes=1
-                fi
               fi
             fi
             panel_write_index=0

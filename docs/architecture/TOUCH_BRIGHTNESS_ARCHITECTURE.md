@@ -44,7 +44,9 @@ Wake flow:
 
 When touch brightness is enabled, the ticket brightness guard is parked.
 
-- Ticket code must not write panel brightness, restore ticket brightness, or own a separate ticket wake hold while touch brightness owns the panel.
+- Ticket code must not write panel brightness, restore ticket brightness, or own a display-bright wake hold while touch brightness owns the panel.
+- Ticket code may keep a CPU-only partial wake hold while touch brightness owns the panel; display wake/brightness remains touch-brightness-owned.
+- Ticket root input and wake paths must mark software/non-touch input through `PhoneAutomationServiceBridge` before and after the root action so touch brightness can reassert panel sleep immediately. Ticket-prefixed non-touch events are authoritative: if a misclassified software touch has already pushed runtime into visible idle, the runtime cancels that timer and returns to `panel_sleep` instead of waiting two minutes. Long bulk root scripts that can switch apps or run delayed taps must continue publishing non-touch intent while active, currently every 250 ms, so the 100/250/500/1000/1500 ms runtime reassertion bursts keep covering the full transition instead of only script start/end.
 - The ticket service may hide any stale black overlay defensively, but it must not use that overlay as a normal sleep mechanism.
 - Remote ticket viewers should continue seeing live rendered ticket content while the physical Pixel panel is at brightness `0`.
 - Ticket health reports the guard as inactive/parked with a message explaining that touch brightness owns panel brightness.
@@ -55,14 +57,16 @@ When touch brightness is disabled, the ticket brightness guard may use its norma
 
 Primary code paths:
 
-- `TouchBrightnessRuntime.kt`: two-minute timer, panel sleep state, physical touch reset, power-button rebound, and visible brightness restore.
+- `TouchBrightnessRuntime.kt`: two-minute timer, panel sleep state, physical touch reset, non-touch reassertion bursts, power-button rebound, and visible brightness restore.
 - `RootTouchMonitor.kt`: physical touchscreen discovery and touch-count tracking.
 - `RootPowerKeyMonitor.kt`: physical power-button discovery and press events.
-- `TouchScreenPowerController.kt`: ordinary wake and forced wake used during rebound.
-- `TicketStreamService.kt`: guard parking while touch brightness owns the panel.
+- `TouchScreenPowerController.kt`: ordinary wake and forced wake used during rebound; panel-sleep wake holds must use a non-bright/non-wake-causing display hold (`SCREEN_DIM_WAKE_LOCK`), not `SCREEN_BRIGHT_WAKE_LOCK` or `ACQUIRE_CAUSES_WAKEUP`.
+- `PhoneAutomationBridge.kt`: software/non-touch input suppression events shared from ticket/automation code into touch brightness.
+- `TicketStreamService.kt`: guard parking, non-touch root input/script marking, active long-script reassert heartbeats, rooted panel/display clamp wrappers around wake/app-switch scripts, and CPU-only ticket wake hold while touch brightness owns the panel.
 
-Stable tests should cover the two-minute timer, physical touch reset, software-input non-reset, panel `0`, power-button wake rebound, ordinary screen-off suspension, disable restore, and ticket guard parking.
+Stable tests should cover the two-minute timer, physical touch reset, software-input non-reset, panel `0`, non-touch panel-sleep reassertion, long-script non-touch heartbeats, power-button wake rebound, ordinary screen-off suspension, disable restore, and ticket guard parking.
 
 ## Architecture Update Notes
 
+- 2026-05-19/20: Ticket/RS software wake and root-input paths now publish non-touch input events to touch brightness before/after root work. While already in `panel_sleep`, touch brightness immediately rewrites panel brightness `0` and runs a short 100/250/500/1000/1500 ms reassertion burst to fight Android brightness ramps caused by wake, app-switch, or root input. Later active research found remaining spikes inside long RS root scripts and touch-brightness wake-hold refreshes, so `TicketStreamService` now wraps bulk `inputRootExecutor.runScript` flows with a rooted clamp that writes sysfs panel `0` every 5 ms via `/system/bin/usleep`, keeps Android display brightness/settings at `0`, and continues for 2.5 s after the script exits. Runtime panel-sleep holds now use `SCREEN_DIM_WAKE_LOCK` without `ACQUIRE_CAUSES_WAKEUP`; when touch brightness owns the panel, ticket uses a CPU-only partial wake hold instead of a display-bright wake lock. Evidence is summarized in [Active Brightness Research - 2026-05-19](../../ops/reports/active-brightness-research-20260519.md) and [Touch Brightness Ticket/RS Enforcement - 2026-05-19](../../ops/reports/touch-brightness-ticket-rs-enforcement-20260519.md).
 - 2026-05-07: Touch brightness panel sleep became the owner of zero-panel-brightness behavior. Sleep now means panel brightness `0` while Android remains awake, with a two-minute physical-touch timer, root power-button wake rebound, and ticket brightness guard parking whenever touch brightness is enabled. Live Pixel and authenticated Brave evidence is summarized in [Touch Brightness Panel Sleep Verification - 2026-05-07](../../ops/reports/touch-brightness-panel-sleep-20260507.md).

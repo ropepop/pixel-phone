@@ -1,0 +1,4 @@
+--------- beginning of main
+         1779201849.131  4366  4451 I TicketStreamService: ticket_event event=inactive_stream_cleanup_deferred detail=health clients=2
+         1779201849.679  4366  8567 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=false
+         1779201853.194  4366  4394 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=false

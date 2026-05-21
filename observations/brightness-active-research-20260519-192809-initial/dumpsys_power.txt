@@ -1,0 +1,1397 @@
+POWER MANAGER (dumpsys power)
+
+Power Manager State:
+  Settings power_manager_constants:
+    no_cached_wake_locks=true
+  mDirty=0x0
+  mWakefulness=Awake
+  mWakefulnessChanging=false
+  mIsPowered=true
+  mPlugType=1
+  mBatteryLevel=80
+  mDreamsBatteryLevelDrain=0
+  mDockState=0
+  mStayOn=true
+  mProximityPositive=false
+  mBootCompleted=true
+  mSystemReady=true
+  mEnhancedDischargeTimeElapsed=0
+  mLastEnhancedDischargeTimeUpdatedElapsed=0
+  mEnhancedDischargePredictionIsPersonalized=false
+  mUseAutoSuspend=true
+  mHalAutoSuspendModeEnabled=false
+  mHalInteractiveModeEnabled=true
+  mWakeLockSummary=0x23
+  mNotifyLongScheduled=+59s430ms
+  mNotifyLongDispatched=-929ms
+  mNotifyLongNextCheck=(none)
+  mRequestWaitForNegativeProximity=false
+  mInterceptedPowerKeyForProximity=false
+  mSandmanScheduled=false
+  mBatteryLevelLow=false
+  mLightDeviceIdleMode=false
+  mDeviceIdleMode=false
+  mDeviceIdleWhitelist=[1000, 2000, 10066, 10067, 10073, 10077, 10082, 10085, 10089, 10096, 10133, 10134, 10139, 10155, 10163, 10165, 10176, 10191, 10193, 10197, 10202, 10205]
+  mDeviceIdleTempWhitelist=[]
+  mLowPowerStandbyActive=false
+  mLastWakeTime=1330492465 (42641744 ms ago)
+  mLastSleepTime=1330491401 (42642808 ms ago)
+  mLastSleepReason=power_button
+  mLastGlobalWakeTimeRealtime=1330494606 (42639603 ms ago)
+  mLastGlobalSleepTimeRealtime=1330493703 (42640506 ms ago)
+  mLastInteractivePowerHintTime=1373132371 (1838 ms ago)
+  mLastScreenBrightnessBoostTime=0 (1373134209 ms ago)
+  mScreenBrightnessBoostInProgress=false
+  mHoldingWakeLockSuspendBlocker=true
+  mHoldingDisplaySuspendBlocker=true
+  mLastFlipTime=215035667
+  mIsFaceDown=false
+
+Settings and Configuration:
+  mDecoupleHalAutoSuspendModeFromDisplayConfig=true
+  mDecoupleHalInteractiveModeFromDisplayConfig=true
+  mWakeUpWhenPluggedOrUnpluggedConfig=true
+  mWakeUpWhenPluggedOrUnpluggedInTheaterModeConfig=false
+  mTheaterModeEnabled=false
+  mKeepDreamingWhenUnplugging=false
+  mSuspendWhenScreenOffDueToProximityConfig=true
+  mDreamsSupportedConfig=true
+  mDreamsEnabledByDefaultConfig=false
+  mDreamsActivatedOnSleepByDefaultConfig=true
+  mDreamsActivatedOnDockByDefaultConfig=false
+  mDreamsActivatedWhilePosturedByDefaultConfig=false
+  mDreamsActivatedOnlyWhileWirelessChargingConfig=false
+  mDreamsEnabledOnBatteryConfig=false
+  mDreamsBatteryLevelMinimumWhenPoweredConfig=-1
+  mDreamsBatteryLevelMinimumWhenNotPoweredConfig=15
+  mDreamsBatteryLevelDrainCutoffConfig=5
+  mDreamsEnabledSetting=false
+  mDreamsActivateOnSleepSetting=true
+  mDreamsActivateOnDockSetting=false
+  mDreamsActivateWhilePosturedSetting=false
+  mDreamsOnlyOnWirelessChargingSetting=false
+  mDozeAfterScreenOff=true
+  mBrightWhenDozingConfig=false
+  mAttentiveWarningDurationConfig=30000
+  mStayOnWhilePluggedInSetting=15
+  mUserActivityTimeoutOverrideFromWindowManager=-1
+  mUserInactiveOverrideFromWindowManager=false
+  mDozeScreenStateOverrideFromDreamManager=1
+  mDrawWakeLockOverrideFromSidekick=false
+  mDozeScreenBrightnessOverrideFromDreamManager=0.0
+  mUseNormalBrightnessForDoze=false
+  mScreenBrightnessMinimum=0.0
+  mScreenBrightnessMaximum=1.0
+  mScreenBrightnessDefault=0.077178635
+  mDoubleTapWakeEnabled=false
+  mForegroundProfile=0
+  mUserId=0
+
+Attentive timeout: -1 ms
+Sleep timeout: -1 ms
+Screen off timeout: 30000 ms
+Screen dim duration: 6000 ms
+
+UID states (changing=false changed=false):
+  UID 1000:   ACTIVE  count=0 state=0
+  UID 1001:   ACTIVE  count=0 state=0
+  UID 1027:   ACTIVE  count=0 state=0
+  UID 1068:   ACTIVE  count=0 state=0
+  UID 1073:   ACTIVE  count=0 state=0
+  UID u0a73: INACTIVE  count=0 state=8
+  UID u0a82: INACTIVE  count=0 state=19
+  UID u0a89: INACTIVE  count=0 state=19
+  UID u0a96:   ACTIVE  count=0 state=4
+  UID u0a116:   ACTIVE  count=0 state=5
+  UID u0a118:   ACTIVE  count=0 state=0
+  UID u0a122: INACTIVE  count=0 state=19
+  UID u0a123: INACTIVE  count=0 state=16
+  UID u0a141:   ACTIVE  count=0 state=7
+  UID u0a143:   ACTIVE  count=0 state=0
+  UID u0a144:   ACTIVE  count=0 state=0
+  UID u0a145:   ACTIVE  count=0 state=0
+  UID u0a146:   ACTIVE  count=0 state=0
+  UID u0a153:   ACTIVE  count=0 state=5
+  UID u0a156:   ACTIVE  count=0 state=0
+  UID u0a157:   ACTIVE  count=0 state=0
+  UID u0a163: INACTIVE  count=0 state=19
+  UID u0a170: INACTIVE  count=0 state=19
+  UID u0a178: INACTIVE  count=0 state=10
+  UID u0a181:   ACTIVE  count=0 state=0
+  UID u0a187:   ACTIVE  count=0 state=5
+  UID u0a189:   ACTIVE  count=0 state=19
+  UID u0a196: INACTIVE  count=0 state=19
+  UID u0a197: INACTIVE  count=0 state=10
+  UID u0a199: INACTIVE  count=0 state=19
+  UID u0a202: INACTIVE  count=0 state=19
+  UID u0a205:   ACTIVE  count=1 state=4
+  UID u0a206:   ACTIVE  count=0 state=2
+
+Looper state:
+  Looper (PowerManagerService, tid 51) {9fca730}
+    (MessageQueue is using Concurrent implementation)
+    State: android.os.MessageQueue$TimedParkStateNode@aa3ffa9
+    PriorityQueue Messages: 
+    AsyncPriorityQueue Messages: 
+    Message 1: { when=+22s161ms what=1 target=android.os.Handler async=true heapIndex=-1 }
+    Message 2: { when=+59s429ms what=4 target=android.os.Handler async=true heapIndex=-1 }
+    (Total messages: 3, polling=true, quitting=false)
+
+Wake Locks: size=1
+  SCREEN_BRIGHT_WAKE_LOCK           'lv.jolkins.pixelorchestrator:touch-brightness' ACQUIRE_CAUSES_WAKEUP ACQ=-12m37s920ms (uid=10205 isFrozen=false pid=27227)
+
+Suspend Blockers: size=5
+  PowerManagerService.Booting: ref count=0 []
+  PowerManagerService.WakeLocks: ref count=1 [unknown: (05-19 19:15:33.898)]
+  PowerManagerService.Display: ref count=1 [holding display: (05-19 07:37:30.249)]
+  PowerManagerService.Broadcasts: ref count=0 []
+  PowerManagerService.WirelessChargerDetector: ref count=0 []
+
+Display Power: com.android.server.power.PowerManagerService$1@56f892e
+
+ScreenTimeoutConstants: 
+  mAttentiveTimeoutConfig=-1
+  mAttentiveTimeoutSetting=-1
+  mMinimumScreenOffTimeoutConfig=10000
+  mMaximumScreenDimDurationConfig=7000
+  mMaximumScreenDimRatioConfig=0.20000005
+  mMaximumScreenOffTimeoutFromDeviceAdmin=9223372036854775807 (enforced=false)
+  mScreenOffTimeoutSetting=30000
+  mSleepTimeoutSetting=-1
+
+Battery saving stats:
+  Battery Saver is currently: OFF
+    Times full enabled: 0
+    Times adaptive enabled: 0
+  
+  Drain stats:
+                     Battery saver OFF                          ON
+  NonDoze NonIntr:      0m      0mAh(  3%)      0.0mAh/h          0m      0mAh(  0%)      0.0mAh/h
+             Intr:      3m     30mAh(  2%)    575.9mAh/h          0m      0mAh(  0%)      0.0mAh/h
+  Deep    NonIntr:      0m      0mAh(  0%)      0.0mAh/h          0m      0mAh(  0%)      0.0mAh/h
+             Intr:      0m      0mAh(  0%)      0.0mAh/h          0m      0mAh(  0%)      0.0mAh/h
+  Light   NonIntr:      0m      0mAh(  0%)      0.0mAh/h          0m      0mAh(  0%)      0.0mAh/h
+             Intr:      0m      0mAh(  0%)      0.0mAh/h          0m      0mAh(  0%)      0.0mAh/h
+
+Battery saver policy (*NOTE* they only apply when battery saver is ON):
+  Settings: battery_saver_constants
+    value: 
+  Settings: (overlay)
+    value: 
+  DeviceConfig: battery_saver
+    N/A
+  mAccessibilityEnabled=false
+  mAutomotiveProjectionActive=false
+  mPolicyLevel=0
+  
+  Policy 'default full'
+    advertise_is_enabled=true
+    disable_vibration=false
+    disable_animation=false
+    defer_full_backup=true
+    defer_keyvalue_backup=true
+    enable_firewall=true
+    enable_datasaver=false
+    disable_launch_boost=true
+    enable_brightness_adjustment=false
+    adjust_brightness_factor=0.5
+    location_mode=3
+    force_all_apps_standby=true
+    force_background_check=true
+    disable_optional_sensors=true
+    disable_aod=true
+    soundtrigger_mode=1
+    enable_quick_doze=true
+    enable_night_mode=true
+  
+  Policy 'current full'
+    advertise_is_enabled=true
+    disable_vibration=false
+    disable_animation=false
+    defer_full_backup=true
+    defer_keyvalue_backup=true
+    enable_firewall=true
+    enable_datasaver=false
+    disable_launch_boost=true
+    enable_brightness_adjustment=false
+    adjust_brightness_factor=0.5
+    location_mode=3
+    force_all_apps_standby=true
+    force_background_check=true
+    disable_optional_sensors=true
+    disable_aod=true
+    soundtrigger_mode=1
+    enable_quick_doze=true
+    enable_night_mode=true
+  
+  Policy 'default adaptive'
+    advertise_is_enabled=false
+    disable_vibration=false
+    disable_animation=false
+    defer_full_backup=false
+    defer_keyvalue_backup=false
+    enable_firewall=false
+    enable_datasaver=false
+    disable_launch_boost=false
+    enable_brightness_adjustment=false
+    adjust_brightness_factor=1.0
+    location_mode=0
+    force_all_apps_standby=false
+    force_background_check=false
+    disable_optional_sensors=false
+    disable_aod=false
+    soundtrigger_mode=0
+    enable_quick_doze=false
+    enable_night_mode=false
+  
+  Policy 'current adaptive'
+    advertise_is_enabled=false
+    disable_vibration=false
+    disable_animation=false
+    defer_full_backup=false
+    defer_keyvalue_backup=false
+    enable_firewall=false
+    enable_datasaver=false
+    disable_launch_boost=false
+    enable_brightness_adjustment=false
+    adjust_brightness_factor=1.0
+    location_mode=0
+    force_all_apps_standby=false
+    force_background_check=false
+    disable_optional_sensors=false
+    disable_aod=false
+    soundtrigger_mode=0
+    enable_quick_doze=false
+    enable_night_mode=false
+  
+  Policy 'effective'
+    advertise_is_enabled=false
+    disable_vibration=false
+    disable_animation=false
+    defer_full_backup=false
+    defer_keyvalue_backup=false
+    enable_firewall=false
+    enable_datasaver=false
+    disable_launch_boost=false
+    enable_brightness_adjustment=false
+    adjust_brightness_factor=1.0
+    location_mode=0
+    force_all_apps_standby=false
+    force_background_check=false
+    disable_optional_sensors=false
+    disable_aod=false
+    soundtrigger_mode=0
+    enable_quick_doze=false
+    enable_night_mode=false
+
+Battery saver state machine:
+  Enabled=false
+    full=false
+    adaptive=false
+  mState=1
+  mLastChangedIntReason=0
+  mLastChangedStrReason=null
+  mBootCompleted=true
+  mSettingsLoaded=true
+  mBatteryStatusSet=true
+  mIsPowered=true
+  mBatteryLevel=80
+  mIsBatteryLevelLow=false
+  mSettingAutomaticBatterySaver=0
+  mSettingBatterySaverEnabled=false
+  mSettingBatterySaverEnabledSticky=false
+  mSettingBatterySaverStickyAutoDisableEnabled=true
+  mSettingBatterySaverStickyAutoDisableThreshold=90
+  mSettingBatterySaverTriggerThreshold=0
+  mBatterySaverStickyBehaviourDisabled=false
+  mBatterySaverTurnedOffNotificationEnabled=true
+  mDynamicPowerSavingsDefaultDisableThreshold=80
+  mDynamicPowerSavingsDisableThreshold=80
+  mDynamicPowerSavingsEnableBatterySaver=false
+  mLastAdaptiveBatterySaverChangedExternallyElapsed=0
+AttentionDetector:
+ mIsSettingEnabled=false
+ mMaxExtensionMillis=900000
+ mPreDimCheckDurationMillis=2000
+ mEffectivePostDimTimeout=0
+ mLastUserActivityTime(excludingAttention)=1373132371
+ mAttentionServiceSupported=false
+ mRequested=false
+
+Profile power states: size=0
+Power Group User Activity:
+groupId: 0
+userActivitySummary=0x1
+mWakeLockSummary=0x23
+lastUserActivityTime=1373132371 (1845 ms ago)
+lastUserActivityTimeNoChangeLights=1330528335 (42605881 ms ago)
+mLastWakeReason=15
+mLastSleepReason=4
+mDimDuration=-1
+mWakefulness=1
+mIsDefaultGroupAdjacent=false
+mSupportsSandman=true
+mDreamManagerAttemptedDozing=false
+mScreenOffTimeout=-1
+
+Wireless Charger Detector State:
+  mGravitySensor={Sensor name="Gravity Sensor", vendor="Google", version=1, type=9, maxRange=9.81, resolution=1.0E-5, power=0.001, minDelay=5000}
+  mPoweredWirelessly=false
+  mAtRest=false
+  mRestX=0.0, mRestY=0.0, mRestZ=0.0
+  mDetectionInProgress=false
+  mDetectionStartTime=0 (never)
+  mMustUpdateRestPosition=false
+  mTotalSamples=0
+  mMovingSamples=0
+  mFirstSampleX=0.0, mFirstSampleY=0.0, mFirstSampleZ=0.0
+  mLastSampleX=0.0, mLastSampleY=0.0, mLastSampleZ=0.0
+Notifier:
+Partial Wakelock Log:
+Wake Lock Log
+  05-04 01:36:55.968 - 10082 (com.chiller3.custota) - ACQ *alarm* (partial)
+  05-04 05:55:12.998 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-04 06:05:05.034 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-04 05:32:13.726 - 10203 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-04 06:11:30.416 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-04 04:24:09.785 - 10122 (app.grapheneos.apps) - ACQ *alarm* (partial)
+  05-04 05:41:56.094 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-04 06:34:23.606 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-04 15:09:37.813 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-04 16:25:37.947 - 1000 (System) - ACQ time_detector (partial)
+  05-04 17:46:27.008 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-04 17:52:01.764 - 10195 (app.accrescent.client) - ACQ *alarm* (partial)
+  05-04 23:32:41.751 - 10203 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-05 01:35:54.253 - 10082 (com.chiller3.custota) - ACQ *alarm* (partial)
+  05-05 04:24:37.359 - 10122 (app.grapheneos.apps) - ACQ *alarm* (partial)
+  05-05 09:10:55.498 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-05 10:55:36.599 - 1000 (System) - ACQ NetworkTimeUpdateService (partial)
+  05-05 10:55:36.849 - 1000 (System) - ACQ time_detector (partial)
+  05-05 13:38:19.893 - 10082 (com.chiller3.custota) - ACQ *alarm* (partial)
+  05-05 19:37:23.444 - 10082 (com.chiller3.custota) - ACQ *alarm* (partial)
+  05-05 22:35:31.839 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-05 22:38:06.136 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-05 23:00:00.002 - 10197 (com.google.android.gms) - ACQ *alarm* (partial)
+  05-06 01:32:10.592 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-06 03:13:08.932 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-06 04:57:51.790 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-06 04:57:52.113 - 1000 (System) - ACQ time_detector (partial)
+  05-06 06:02:30.001 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-06 09:35:32.466 - 10195 (app.accrescent.client) - ACQ *alarm* (partial)
+  05-06 11:35:07.175 - 10170 (com.android.permissioncontroller) - ACQ *alarm* (partial)
+  05-06 16:49:17.065 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-06 19:27:14.209 - 10082 (com.chiller3.custota) - ACQ *alarm* (partial)
+  05-06 21:36:06.681 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-06 23:03:04.153 - 1000 (System) - ACQ NetworkTimeUpdateService (partial)
+  05-06 23:03:04.440 - 1000 (System) - ACQ time_detector (partial)
+  05-07 04:12:29.193 - 10195 (app.accrescent.client) - ACQ *alarm* (partial)
+  05-07 05:45:52.802 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-07 09:06:25.737 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-07 10:04:41.899 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-07 11:06:26.103 - 10197 (com.google.android.gms) - ACQ GCoreFlp (partial)
+  05-07 11:06:26.103 - 10197 (com.google.android.gms) - ACQ NetworkLocationScanner (partial)
+  05-07 17:14:54.558 - 1000 (System) - ACQ time_detector (partial)
+  05-07 20:22:44.381 - 10189 (giilmkonhuutj.ih.wb) - ACQ *launch* (partial)
+  05-07 20:34:06.686 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-07 20:06:59.986 - 10203 - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-07 22:25:42.168 - 10163 (com.android.rkpdapp) - ACQ *alarm* (partial)
+  05-08 00:00:58.371 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-08 01:11:46.450 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-08 03:38:26.626 - 10195 (app.accrescent.client) - ACQ *alarm* (partial)
+  05-08 05:44:03.006 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-08 09:33:54.816 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-08 10:23:25.662 - 10122 (app.grapheneos.apps) - ACQ *alarm* (partial)
+  05-08 10:36:16.899 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-08 11:33:22.532 - 10197 (com.google.android.gms) - ACQ NetworkLocationScanner (partial)
+  05-08 18:12:48.226 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-08 19:41:50.561 - 10170 (com.android.permissioncontroller) - ACQ *alarm* (partial)
+  05-08 19:47:08.024 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-08 20:57:19.881 - 10195 (app.accrescent.client) - ACQ *alarm* (partial)
+  05-08 21:03:19.450 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-09 04:53:07.500 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-09 04:03:05.768 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-09 05:30:03.430 - 1000 (System) - ACQ NetworkTimeUpdateService (partial)
+  05-09 05:30:03.730 - 1000 (System) - ACQ time_detector (partial)
+  05-09 09:33:10.261 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-09 11:56:22.081 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-09 12:36:07.376 - 10170 (com.android.permissioncontroller) - ACQ *alarm* (partial)
+  05-09 19:24:58.715 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-09 21:09:23.766 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-09 21:53:15.917 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-09 23:37:13.951 - 1000 (System) - ACQ time_detector (partial)
+  05-10 00:36:02.844 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-10 03:59:05.968 - 10189 (giilmkonhuutj.ih.wb) - ACQ *launch* (partial)
+  05-10 03:57:55.914 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-10 03:56:32.493 - 10197 (com.google.android.gms) - ACQ *alarm* (partial)
+  05-10 04:00:52.267 - 10189 (giilmkonhuutj.ih.wb) - ACQ *launch* (partial)
+  05-10 03:53:30.659 - 10189 (giilmkonhuutj.ih.wb) - ACQ *launch* (partial)
+  05-10 09:23:16.167 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-10 12:33:21.283 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-10 13:39:05.374 - 10082 (com.chiller3.custota) - ACQ *alarm* (partial)
+  05-10 17:08:06.443 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-10 17:37:39.116 - 1000 (System) - ACQ NetworkTimeUpdateService (partial)
+  05-10 17:37:39.366 - 1000 (System) - ACQ time_detector (partial)
+  05-11 01:21:13.383 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-11 01:02:51.009 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-11 01:28:36.209 - 10082 (com.chiller3.custota) - ACQ *alarm* (partial)
+  05-11 04:41:18.959 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-11 09:24:49.538 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-11 11:43:09.587 - 1000 (System) - ACQ NetworkTimeUpdateService (partial)
+  05-11 11:43:09.814 - 1000 (System) - ACQ time_detector (partial)
+  05-11 14:49:51.473 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-11 19:03:56.137 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-12 01:21:42.973 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-12 01:57:37.798 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-12 05:49:45.054 - 1000 (System) - ACQ time_detector (partial)
+  05-12 07:26:53.998 - 10082 (com.chiller3.custota) - ACQ *alarm* (partial)
+  05-12 08:32:45.058 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-12 11:35:34.289 - 10170 (com.android.permissioncontroller) - ACQ *alarm* (partial)
+  05-12 11:44:54.243 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-12 17:39:56.273 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-12 23:58:44.733 - 10197 (com.google.android.gms) - ACQ *gms_scheduler*/c.g.a.g/.t.t.s.s.TrustedTimeMaintenanceTaskService (partial)
+  05-12 23:58:44.788 - 1000 (System) - ACQ time_detector (partial)
+  05-13 02:07:11.476 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-13 05:18:04.863 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-13 07:26:59.034 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-13 10:53:00.236 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-13 12:04:11.750 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-13 19:34:12.200 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-13 13:38:52.516 - 10082 (com.chiller3.custota) - ACQ *alarm* (partial)
+  05-13 17:33:40.400 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-13 18:02:08.296 - 1000 (System) - ACQ NetworkTimeUpdateService (partial)
+  05-13 18:02:08.477 - 10197 (com.google.android.gms) - ACQ *gms_scheduler*/c.g.a.g/.s.s.SnetNormalTaskService (partial)
+  05-13 18:02:08.527 - 1000 (System) - ACQ time_detector (partial)
+  05-14 07:35:49.311 - 10082 (com.chiller3.custota) - ACQ *alarm* (partial)
+  05-14 02:33:34.935 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-14 06:27:45.690 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-14 12:03:09.087 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-14 12:03:09.095 - 1000 (System) - ACQ NetworkTimeUpdateService (partial)
+  05-14 12:03:09.377 - 1000 (System) - ACQ time_detector (partial)
+  05-14 19:33:21.510 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-14 19:43:10.764 - 10170 (com.android.permissioncontroller) - ACQ *alarm* (partial)
+  05-15 07:14:08.075 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-15 07:36:03.132 - 10082 (com.chiller3.custota) - ACQ *alarm* (partial)
+  05-15 03:05:53.235 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-15 06:12:54.290 - 1000 (System) - ACQ time_detector (partial)
+  05-15 11:26:38.249 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-16 00:25:00.310 - 1000 (System) - ACQ NetworkTimeUpdateService (partial)
+  05-16 00:25:00.605 - 1000 (System) - ACQ time_detector (partial)
+  05-16 08:51:07.346 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-16 18:26:45.006 - 1000 (System) - ACQ time_detector (partial)
+  05-17 07:44:14.877 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-17 09:37:00.097 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-17 11:01:57.160 - 1000 (System) - ACQ dream:doze (doze)
+  05-17 11:02:13.389 - 1000 (System) - ACQ *vibrator* (partial)
+  05-17 11:02:13.389 - 10145 (com.android.systemui) - ACQ Doze:KeyguardIndication (partial)
+  05-17 12:55:20.508 - 1000 (System) - ACQ NetworkTimeUpdateService (partial)
+  05-17 12:55:20.784 - 1000 (System) - ACQ time_detector (partial)
+  05-17 13:40:13.160 - 10082 (com.chiller3.custota) - ACQ *alarm* (partial)
+  05-18 03:46:24.353 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-18 05:14:17.609 - 1000 (System) - ACQ *launch* (partial)
+  05-18 05:14:32.180 - 10079 (com.android.packageinstaller) - ACQ *launch* (partial)
+  05-18 05:32:36.623 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-18 05:45:30.420 - 10170 (com.android.permissioncontroller) - ACQ *launch* (partial)
+  05-18 07:25:19.406 - 1000 (System) - ACQ NetworkTimeUpdateService (partial)
+  05-18 07:25:19.565 - 10197 (com.google.android.gms) - ACQ *gms_scheduler*/c.g.a.g/.t.t.s.s.TrustedTimeMaintenanceTaskService (partial)
+  05-18 07:25:19.704 - 1000 (System) - ACQ time_detector (partial)
+  05-18 09:37:28.795 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-18 13:10:22.912 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-18 13:38:44.256 - 10082 (com.chiller3.custota) - ACQ *alarm* (partial)
+  05-18 14:32:36.733 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-18 15:03:19.047 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-18 15:33:06.310 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-18 20:53:59.728 - 10196 (com.android.vending) - ACQ *alarm* (partial)
+  05-19 01:28:48.733 - 1000 (System) - ACQ time_detector (partial)
+  05-19 04:09:14.319 - 10170 (com.android.permissioncontroller) - ACQ *launch* (partial)
+  05-19 11:24:04.331 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-19 13:29:14.841 - 10082 (com.chiller3.custota) - ACQ *alarm* (partial)
+  05-19 16:35:52.522 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-19 17:04:03.318 - 10202 (com.aurora.store) - ACQ *alarm* (partial)
+  05-19 18:45:50.822 - 10199 (org.zwanoo.android.speedtest) - ACQ *alarm* (partial)
+  05-19 19:23:33.466 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:33.684 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:35.063 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:35.290 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:36.664 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:36.891 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:38.264 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:38.481 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:39.865 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:40.085 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:41.566 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:41.798 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:43.062 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:43.281 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:44.561 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:44.778 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:46.166 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:46.385 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:47.770 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:47.990 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:49.475 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:49.694 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:50.322 - 1000 (System) - ACQ *alarm* (partial)
+  05-19 19:23:50.324 - 1000 (System) - REL *alarm*
+  05-19 19:23:50.984 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:51.205 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:52.693 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:52.912 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:54.305 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:54.521 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:55.711 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:55.933 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:57.221 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:57.440 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:23:58.721 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:23:58.944 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:00.002 - 1000 (System) - ACQ *alarm* (partial)
+  05-19 19:24:00.009 - 1000 (System) - REL *alarm*
+  05-19 19:24:00.424 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:00.646 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:02.027 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:02.247 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:03.626 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:03.845 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:05.127 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:05.344 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:06.729 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:06.960 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:08.336 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:08.557 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:09.859 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:10.080 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:11.358 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:11.580 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:12.855 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:13.075 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:14.457 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:14.680 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:16.054 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:16.276 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:17.762 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:17.983 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:19.363 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:19.585 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:20.955 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:21.175 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:22.557 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:22.777 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:24.144 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:24.362 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:25.645 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:25.865 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:27.255 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:27.476 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:28.601 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:28.759 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:28.819 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:28.972 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:30.460 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:30.683 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:31.156 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:31.200 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:31.218 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:31.231 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:31.248 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:31.370 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:31.414 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:31.427 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:31.441 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:31.471 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:31.844 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:32.062 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:33.196 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:33.426 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:33.536 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:33.748 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:33.981 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:34.201 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:35.135 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:35.355 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:36.755 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:36.971 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:38.455 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:38.681 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:40.053 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:40.272 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:41.533 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:41.751 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:43.257 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:43.477 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:44.859 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:45.086 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:46.363 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:46.584 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:47.854 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:48.071 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:49.442 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:49.662 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:50.943 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:51.164 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:52.643 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:52.865 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:54.342 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:54.565 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:56.037 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:56.262 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:57.724 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:57.944 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:58.913 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:59.134 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:24:59.449 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:24:59.669 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:00.004 - 1000 (System) - ACQ *alarm* (partial)
+  05-19 19:25:00.012 - 1000 (System) - REL *alarm*
+  05-19 19:25:01.051 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:01.272 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:02.649 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:02.871 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:04.359 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:04.579 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:05.858 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:06.078 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:07.348 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:07.564 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:08.948 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:09.166 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:10.451 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:10.671 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:12.061 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:12.278 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:13.568 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:13.787 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:15.173 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:15.393 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:16.882 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:17.103 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:18.491 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:18.707 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:20.094 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:20.313 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:21.600 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:21.818 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:23.199 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:23.421 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:24.806 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:25.026 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:26.414 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:26.636 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:27.911 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:28.133 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:29.628 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:29.849 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:31.125 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:31.350 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:32.525 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:32.749 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:34.023 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:34.241 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:35.734 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:35.956 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:37.343 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:37.564 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:39.079 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:39.299 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:40.579 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:40.800 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:42.179 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:42.400 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:43.889 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:44.113 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:45.594 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:45.820 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:47.195 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:47.413 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:48.696 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:48.917 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:50.181 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:50.325 - 1000 (System) - ACQ *alarm* (partial)
+  05-19 19:25:50.328 - 1000 (System) - REL *alarm*
+  05-19 19:25:50.395 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:51.882 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:52.103 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:53.387 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:53.613 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:54.996 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:55.216 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:56.519 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:56.738 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:58.124 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:58.342 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:25:59.729 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:25:59.951 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:00.002 - 1000 (System) - ACQ *alarm* (partial)
+  05-19 19:26:00.009 - 1000 (System) - REL *alarm*
+  05-19 19:26:01.439 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:01.652 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:03.047 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:03.267 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:04.655 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:04.872 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:06.252 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:06.473 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:07.754 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:07.975 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:09.246 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:09.467 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:10.872 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:11.083 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:12.268 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:12.490 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:13.760 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:13.983 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:15.466 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:15.688 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:16.986 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:17.209 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:18.591 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:18.810 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:20.191 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:20.414 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:21.791 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:22.016 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:23.493 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:23.713 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:24.993 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:25.214 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:26.592 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:26.812 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:28.190 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:28.409 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:29.789 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:30.008 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:31.388 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:31.609 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:32.877 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:32.930 - 1000 (System) - ACQ *job*r/android/com.android.server.notification.NotificationHistoryJobService (partial)
+  05-19 19:26:32.946 - 1000 (System) - ACQ *job*r/android/com.android.server.notification.NotificationHistoryJobService (partial)
+  05-19 19:26:32.981 - 1000 (System) - REL *job*r/android/com.android.server.notification.NotificationHistoryJobService
+  05-19 19:26:32.993 - 1000 (System) - REL *job*r/android/com.android.server.notification.NotificationHistoryJobService
+  05-19 19:26:33.010 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:26:33.011 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:26:33.011 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:26:33.072 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:26:33.072 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:26:33.072 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:26:33.074 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:26:33.075 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:26:33.075 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:26:33.090 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:33.098 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:26:33.098 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:26:33.098 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:26:33.100 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:26:33.101 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:26:33.101 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:26:33.109 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:26:33.109 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:26:33.110 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:26:33.832 - 1000 (System) - ACQ NetworkStats (partial)
+  05-19 19:26:33.884 - 1000 (System) - REL NetworkStats
+  05-19 19:26:34.020 - 10082 (com.chiller3.custota) - ACQ *alarm* (partial)
+  05-19 19:26:34.023 - 10082 (com.chiller3.custota) - REL *alarm*
+  05-19 19:26:34.025 - 10082 (com.chiller3.custota) - ACQ *job*r/com.chiller3.custota/.updater.UpdaterJob (partial)
+  05-19 19:26:34.028 - 10082 (com.chiller3.custota) - ACQ *job*r/com.chiller3.custota/.updater.UpdaterJob (partial)
+  05-19 19:26:34.053 - 10082 (com.chiller3.custota) - REL *job*r/com.chiller3.custota/.updater.UpdaterJob
+  05-19 19:26:34.105 - 10082 (com.chiller3.custota) - REL *job*r/com.chiller3.custota/.updater.UpdaterJob
+  05-19 19:26:34.125 - 10082 (com.chiller3.custota) - ACQ NotificationManagerService:post:com.chiller3.custota (partial)
+  05-19 19:26:34.126 - 10082 (com.chiller3.custota) - REL NotificationManagerService:post:com.chiller3.custota
+  05-19 19:26:34.133 - 10082 (com.chiller3.custota) - ACQ NotificationManagerService:post:com.chiller3.custota (partial)
+  05-19 19:26:34.189 - 10082 (com.chiller3.custota) - ACQ UpdaterThread (partial)
+  05-19 19:26:34.197 - 10082 (com.chiller3.custota) - ACQ NotificationManagerService:post:com.chiller3.custota (partial)
+  05-19 19:26:34.369 - 10082 (com.chiller3.custota) - REL NotificationManagerService:post:com.chiller3.custota
+  05-19 19:26:34.413 - 10082 (com.chiller3.custota) - REL NotificationManagerService:post:com.chiller3.custota
+  05-19 19:26:36.240 - 10082 (com.chiller3.custota) - REL UpdaterThread
+  05-19 19:26:36.249 - 10082 (com.chiller3.custota) - ACQ NotificationManagerService:post:com.chiller3.custota (partial)
+  05-19 19:26:36.475 - 10082 (com.chiller3.custota) - REL NotificationManagerService:post:com.chiller3.custota
+  05-19 19:26:38.683 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:38.904 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:40.184 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:40.405 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:41.319 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:41.535 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:42.603 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:42.828 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:43.754 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:43.967 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:44.901 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:45.119 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:46.416 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:46.631 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:47.916 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:48.136 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:49.413 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:49.637 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:50.865 - 10197 (com.google.android.gms) - ACQ GCM_READ (partial)
+  05-19 19:26:50.867 - 10197 (com.google.android.gms) - ACQ GCM_WORK (partial)
+  05-19 19:26:50.868 - 10197 (com.google.android.gms) - REL GCM_READ
+  05-19 19:26:50.880 - 10197 (com.google.android.gms) - REL GCM_WORK
+  05-19 19:26:51.121 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:51.344 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:52.702 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:52.923 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:54.111 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:54.325 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:55.510 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:55.732 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:56.995 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:57.209 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:58.486 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:58.704 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:59.000 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:26:59.215 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:26:59.864 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:00.001 - 1000 (System) - ACQ *alarm* (partial)
+  05-19 19:27:00.004 - 1000 (System) - REL *alarm*
+  05-19 19:27:00.081 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:01.339 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:01.408 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:01.458 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:01.476 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:01.483 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:01.494 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:01.553 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:01.624 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:01.668 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:01.692 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:01.698 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:01.705 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:02.823 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:03.042 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:03.544 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:03.758 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:04.320 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:04.414 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:04.439 - 10201 (com.pv.vivi) - ACQ *launch* (partial)
+  05-19 19:27:04.524 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:04.628 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:04.998 - 10201 (com.pv.vivi) - ACQ wake:com.google.firebase.messaging (partial)
+  05-19 19:27:04.998 - 10201 (com.pv.vivi) - REL *launch*
+  05-19 19:27:05.549 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:05.760 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:05.766 - 10201 (com.pv.vivi) - REL wake:com.google.firebase.messaging
+  05-19 19:27:07.040 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:07.274 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:08.732 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:08.946 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:10.231 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:10.452 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:11.057 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (partial)
+  05-19 19:27:11.634 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:11.842 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:11.970 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:12.019 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:12.184 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:12.236 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:12.998 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:13.002 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:13.060 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:13.127 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:13.226 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:13.234 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:13.273 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:13.341 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:13.945 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:14.030 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:14.071 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:14.160 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:14.242 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:14.285 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:14.393 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:14.605 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:15.161 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:15.384 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:15.414 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:15.459 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:15.635 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:15.671 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:15.880 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:16.102 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:16.266 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:16.327 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:16.483 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:16.544 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:17.483 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:17.513 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:17.702 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:17.734 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:18.349 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:18.561 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:18.951 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:18.990 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:19.018 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:19.178 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:19.203 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:19.233 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:19.806 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:19.847 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:20.022 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:20.071 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:20.542 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:20.763 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:21.056 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:21.269 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:22.008 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:22.221 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:22.222 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:22.440 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:23.373 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:23.594 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:23.606 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:23.823 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:24.857 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:25.007 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:25.070 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:25.229 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:25.346 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:25.556 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:26.000 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:26.140 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:26.207 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:26.348 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:27.611 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:27.838 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:28.859 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:29.067 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:29.900 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:30.123 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:31.396 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:31.610 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:32.985 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:33.200 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:34.483 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:34.714 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:36.102 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:36.324 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:37.700 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:37.920 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:39.195 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:39.411 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:40.800 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:41.025 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:41.064 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 19:27:42.305 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:42.519 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:43.817 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:44.041 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:45.346 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:45.562 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:46.940 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:47.154 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:48.274 - 1000 (System) - ACQ NetworkStats (partial)
+  05-19 19:27:48.305 - 1000 (System) - REL NetworkStats
+  05-19 19:27:48.642 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:48.856 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:49.320 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:27:49.321 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:27:49.321 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:27:49.384 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:27:49.384 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:27:49.385 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:27:49.388 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:27:49.388 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:27:49.388 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:27:49.411 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:27:49.411 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:27:49.411 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:27:49.412 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:27:49.413 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:27:49.413 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:27:49.421 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:27:49.421 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - ACQ *telephony-radio* (partial)
+  05-19 19:27:49.421 - 1001 (com.samsung.slsi.telephony.oem.oemrilhookservice,...) - REL *telephony-radio*
+  05-19 19:27:50.032 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:50.253 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:50.329 - 1000 (System) - ACQ *alarm* (partial)
+  05-19 19:27:50.333 - 1000 (System) - REL *alarm*
+  05-19 19:27:51.557 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:51.778 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:52.950 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:53.163 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:54.461 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:54.679 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:56.076 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:56.297 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:57.227 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:57.434 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:58.499 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:58.720 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:27:59.739 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:27:59.948 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:28:00.002 - 1000 (System) - ACQ *alarm* (partial)
+  05-19 19:28:00.004 - 1000 (System) - REL *alarm*
+  05-19 19:28:00.871 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:28:01.081 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:28:02.367 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:28:02.584 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:28:03.968 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:28:04.184 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:28:05.443 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:28:05.661 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:28:06.943 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:28:07.164 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:28:08.546 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:28:08.760 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:28:09.923 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:28:10.141 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  05-19 19:28:11.418 - 10205 (lv.jolkins.pixelorchestrator) - ACQ NotificationManagerService:post:lv.jolkins.pixelorchestrator (partial)
+  05-19 19:28:11.642 - 10205 (lv.jolkins.pixelorchestrator) - REL NotificationManagerService:post:lv.jolkins.pixelorchestrator
+  -
+  Events: 687, Time-Resets: 194
+  Buffer, Bytes used: 3066
+  Tag Database: size(64), entries: 64, Bytes used: 7758
+
+Full Wakelock Log:
+Wake Lock Log
+  05-19 11:50:06.798 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 11:48:26.165 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 11:50:08.502 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 11:50:10.559 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 11:50:40.579 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 12:00:26.275 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 12:47:58.248 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 12:47:58.368 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 12:48:01.141 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 12:50:03.403 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 12:50:33.426 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 12:53:00.568 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 12:53:05.382 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 12:55:02.181 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 12:55:32.203 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 12:57:29.475 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 12:57:31.231 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 12:57:31.432 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 12:57:34.404 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 12:59:35.182 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 13:00:05.200 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 13:03:16.998 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 13:03:18.863 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 13:03:19.000 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 13:03:21.931 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 13:05:21.549 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 13:05:51.557 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 13:06:24.326 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 13:06:54.346 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 13:15:21.953 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 13:22:50.417 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 13:23:20.420 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 13:23:23.789 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 13:23:53.793 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 13:23:58.390 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 13:24:28.410 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 13:36:04.523 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 13:36:05.858 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 13:36:17.016 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 13:36:34.887 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 13:37:59.736 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 13:40:54.188 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 13:41:24.212 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 13:47:00.904 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 13:47:05.807 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 13:49:21.169 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 13:49:51.194 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 13:59:05.850 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 14:00:15.621 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 14:06:40.939 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:06:42.721 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:06:43.006 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:06:43.008 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:06:56.243 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:11:54.647 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 14:11:54.647 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:11:57.384 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 14:12:01.074 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:12:02.055 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:12:11.311 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:16:47.116 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:16:56.279 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:17:13.757 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:17:15.576 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:17:50.089 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:17:56.318 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:18:16.832 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:18:19.280 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:18:52.844 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:18:55.027 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:19:30.148 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:19:31.823 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:20:18.131 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:20:20.330 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:20:55.125 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:20:56.277 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:22:39.465 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:22:41.357 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:23:19.120 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:23:21.434 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:23:57.381 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 14:23:59.680 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:24:02.415 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:24:39.146 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:24:41.278 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:25:22.089 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:25:24.926 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:26:08.929 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:26:11.345 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:26:49.148 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:26:50.753 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:38:17.360 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:38:22.445 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 14:38:27.229 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:38:28.855 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:38:41.263 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:38:51.796 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:38:56.132 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:38:57.826 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:39:11.257 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:40:19.976 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:40:22.454 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:41:12.478 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:41:12.653 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:41:50.184 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:41:51.651 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:42:25.375 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:42:26.505 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:43:01.762 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:43:04.038 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:43:44.156 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:43:45.876 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:44:21.652 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:44:23.960 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:46:41.146 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:46:41.271 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:47:15.285 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:47:17.768 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:47:51.518 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:47:53.598 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:48:34.146 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:48:35.697 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:49:14.654 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:49:17.452 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:49:56.952 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:49:58.865 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 14:50:22.452 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 14:50:34.152 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 14:50:36.416 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:04:11.364 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:04:11.733 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:07:56.391 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:08:11.696 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:43:36.671 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:43:41.331 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 15:43:47.776 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:43:47.907 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:43:57.765 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:44:09.899 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:44:12.630 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:44:12.653 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:44:12.661 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:44:14.828 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:44:26.209 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:44:47.531 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:44:49.849 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:44:49.920 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:44:56.321 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:46:04.632 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:46:22.824 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:46:24.828 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:46:26.260 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:46:53.285 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:46:56.315 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:46:57.068 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:47:08.485 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:47:11.161 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:47:11.434 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:47:24.465 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:47:26.337 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:47:44.931 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:47:56.330 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:48:09.131 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:48:11.378 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:48:31.392 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:48:41.335 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:48:57.295 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:49:11.334 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:49:20.238 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:49:23.134 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:52:32.335 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 15:52:32.344 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:52:37.590 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 15:52:41.854 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:52:43.017 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:52:56.329 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:53:07.835 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:53:10.306 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:53:10.860 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:53:11.310 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:53:12.668 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:53:26.398 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:56:24.071 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:56:25.854 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:56:27.251 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:56:41.372 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 15:58:41.385 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 15:58:41.461 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 16:04:37.608 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 16:06:28.830 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 16:06:33.923 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 16:06:38.231 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 16:06:39.892 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 16:06:39.962 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 16:06:39.964 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 16:06:41.349 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 16:07:03.875 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 16:07:08.256 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 16:07:09.969 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 16:07:11.352 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 16:09:57.435 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 16:10:11.143 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 16:18:33.944 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 17:11:54.558 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:11:56.058 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:11:58.163 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:12:11.173 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:12:15.607 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:12:26.178 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:12:48.999 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:12:51.600 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:13:26.909 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:13:29.852 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:21:28.082 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:21:33.203 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 17:21:37.242 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:21:38.872 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:21:41.165 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:22:03.584 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:22:07.998 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:22:09.753 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:22:11.067 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:32:09.027 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:32:11.224 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:32:49.087 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:32:52.016 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:33:33.211 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 17:35:14.595 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:35:26.247 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:39:32.457 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:39:41.220 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:39:57.129 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:40:10.745 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:41:13.229 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:41:25.713 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:41:57.426 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:42:26.399 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:42:27.236 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:49:06.232 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 17:49:10.890 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:49:12.798 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:49:12.821 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:49:12.825 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:49:13.278 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:49:40.510 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:49:44.668 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:49:46.349 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:49:55.716 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:50:47.596 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:50:55.752 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:55:23.232 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:55:25.728 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:55:39.609 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:55:40.724 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:55:42.789 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:55:55.751 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:58:51.296 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:58:54.858 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 17:58:54.866 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 17:58:55.744 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 18:01:06.242 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 18:08:20.581 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 18:18:16.848 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 18:18:46.869 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 18:27:41.518 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 18:28:11.537 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 18:28:50.568 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 18:29:20.586 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 18:30:57.663 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 18:30:59.686 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 18:30:59.716 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 18:30:59.720 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 18:31:31.058 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:TicketStream (screen-bright,acq-causes-wake)
+  05-19 18:32:30.552 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:TicketStream
+  05-19 18:44:58.910 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 19:00:33.825 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 19:00:35.796 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 19:09:57.252 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 19:09:59.776 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 19:13:49.865 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 19:13:52.821 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 19:14:39.963 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 19:14:43.124 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  05-19 19:15:28.874 - 10205 (lv.jolkins.pixelorchestrator) - REL lv.jolkins.pixelorchestrator:touch-brightness
+  05-19 19:15:34.069 - 10205 (lv.jolkins.pixelorchestrator) - ACQ lv.jolkins.pixelorchestrator:touch-brightness (screen-bright,acq-causes-wake)
+  -
+  Events: 285, Time-Resets: 262
+  Buffer, Bytes used: 3065
+  Tag Database: size(16), entries: 7, Bytes used: 790
+
+
+Wakefulness Session Observer:
+default timeout: 30000
+override timeout: 10000
+  Wakefulness Session Power Group powerGroupId: 0
+    current wakefulness: 1
+    current user activity event: 2
+    current user activity duration: 2712
+    previous user activity event: 1
+    previous user activity duration: 3975
+    is in override timeout: false
+    mIsInteractive: true
+    current screen policy: 3
+    current screen policy duration: 757983
+    previous screen policy: 2
+    past screen policy duration: 5194
+
+FaceDownDetector:
+  mFaceDown=false
+  mActive=true
+  mLastFlipTime=0
+  mSensorMaxLatencyMicros=2000000
+  mUserInteractionBackoffMillis=60000
+  mPreviousResultTime=215039904
+  mPreviousResultType=3
+  mMillisSaved=15934
+  mZAccelerationThreshold=-9.5
+  mAccelerationThreshold=0.2
+  mTimeThreshold=PT1S
+  mEnabledOverride=true
+AmbientDisplaySuppressionController:
+ ambientDisplaySuppressed=false
+ mSuppressionTokens={}
+ mSuppressions={}
+
+Low Power Standby Controller:
+  mIsActive=false
+  mIsEnabled=false
+  mSupportedConfig=false
+  mEnabledByDefaultConfig=false
+  mStandbyTimeoutConfig=0
+  mEnableCustomPolicy=false
+  Allowed UIDs=[]
+  
+  UID allowed reasons:
+
+ScreenTimeoutOverridePolicy:
+  mScreenTimeoutOverrideConfig=10000
+  mLastAutoReleaseReason=-1
+PowerManagerFlags:
+ enable_early_screen_timeout_detector:                 true (def:true)
+ improve_wakelock_latency:                             true (def:true)
+ per_display_wake_by_touch:                            true (def:true)
+ move_wsc_logging_to_notifier:                         true (def:true)
+ lock_on_unplug:                                       true (def:true)
+ wakelock_attribution_via_workchain:                   true (def:true)
+ disable_frozen_process_wakelocks:                     false (def:false)
+ force_disable_wakelocks:                              true (def:true)
+ enable_app_wakelock_data_source:                      true (def:true)
+ partial_sleep_wakelocks:                              false (def:false)
+ separate_timeouts_flicker:                            true (def:true)
+ wake_adjacent_displays_on_wakeup_call:                true (def:true)

@@ -84,6 +84,37 @@ class PhoneAutomationBridgeTest {
   }
 
   @Test
+  fun nonTouchInputEventsArePublishedWithSuppressionDeadline() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    val observedEvents = mutableListOf<PhoneAutomationNonTouchInputEvent>()
+    val job = backgroundScope.launch {
+      PhoneAutomationServiceBridge.nonTouchInputEvents.take(1).toList(observedEvents)
+    }
+    runCurrent()
+
+    PhoneAutomationServiceBridge.markNonTouchInput(
+      reason = "ticket:tap",
+      durationMillis = 250L,
+      observedAtUptimeMillis = 1_000L
+    )
+    runCurrent()
+
+    assertEquals(
+      listOf(
+        PhoneAutomationNonTouchInputEvent(
+          reason = "ticket:tap",
+          observedAtUptimeMillis = 1_000L,
+          suppressedUntilUptimeMillis = 1_250L
+        )
+      ),
+      observedEvents
+    )
+    assertTrue(PhoneAutomationServiceBridge.isNonTouchInputSuppressed(1_250L))
+    assertFalse(PhoneAutomationServiceBridge.isNonTouchInputSuppressed(1_251L))
+    job.cancel()
+  }
+
+  @Test
   fun blackoutWakeStoresWallClockTimestamp() {
     PhoneAutomationServiceBridge.resetForTests()
     val before = System.currentTimeMillis()
@@ -352,6 +383,8 @@ class PhoneAutomationBridgeTest {
     assertTrue(source.contains("rootInActiveWindow?.takeIf"))
     assertTrue(source.contains("windows.asSequence()"))
     assertTrue(source.contains("rootForPackage(expectedPackageName) ?: return@withContext"))
+    assertTrue("Flutter/secure windows can expose the expected package only on descendant nodes", source.contains("nodePackageMatchesExpected"))
+    assertTrue("Snapshot should fall back to semantically useful nodes when accessibility marks all nodes not-visible", source.contains("visibleNodes.ifEmpty"))
   }
 
   private fun readFirstExisting(vararg paths: Path): String {

@@ -68,6 +68,12 @@ sealed interface PhoneAutomationBlackoutOverlayEvent {
   ) : PhoneAutomationBlackoutOverlayEvent
 }
 
+data class PhoneAutomationNonTouchInputEvent(
+  val reason: String,
+  val observedAtUptimeMillis: Long,
+  val suppressedUntilUptimeMillis: Long
+)
+
 data class PhoneAutomationVisibleNode(
   val text: String,
   val resourceId: String,
@@ -144,10 +150,13 @@ object PhoneAutomationServiceBridge {
   private val rawTouchEvents = MutableSharedFlow<PhoneAutomationTouchEvent>(extraBufferCapacity = 64)
   private val rawBlackoutOverlayEvents =
     MutableSharedFlow<PhoneAutomationBlackoutOverlayEvent>(extraBufferCapacity = 16)
+  private val rawNonTouchInputEvents =
+    MutableSharedFlow<PhoneAutomationNonTouchInputEvent>(extraBufferCapacity = 64)
 
   val notificationEvents: Flow<PhoneAutomationNotificationEvent> = rawNotificationEvents.asSharedFlow()
   val touchEvents: Flow<PhoneAutomationTouchEvent> = rawTouchEvents.asSharedFlow()
   val blackoutOverlayEvents: Flow<PhoneAutomationBlackoutOverlayEvent> = rawBlackoutOverlayEvents.asSharedFlow()
+  val nonTouchInputEvents: Flow<PhoneAutomationNonTouchInputEvent> = rawNonTouchInputEvents.asSharedFlow()
   val accessibilityAvailability: Flow<Boolean> = accessibilityService
     .map { it != null }
     .distinctUntilChanged()
@@ -276,6 +285,13 @@ object PhoneAutomationServiceBridge {
     nonTouchInputSuppressedUntilUptimeMillis.update { current ->
       maxOf(current, untilMillis)
     }
+    rawNonTouchInputEvents.tryEmit(
+      PhoneAutomationNonTouchInputEvent(
+        reason = reason,
+        observedAtUptimeMillis = observedAtUptimeMillis,
+        suppressedUntilUptimeMillis = untilMillis
+      )
+    )
   }
 
   fun isNonTouchInputSuppressed(

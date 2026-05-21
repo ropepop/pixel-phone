@@ -1,0 +1,424 @@
+{
+  "sample_counts": {
+    "samples_panel": 2710,
+    "fast_panel": 5640
+  },
+  "segments_samples_gt0": [
+    {
+      "start_ms": 1779202149006,
+      "end_ms": 1779202267815,
+      "duration_ms": 118809,
+      "samples": 178,
+      "max": 3628,
+      "values_top": [
+        [
+          2981,
+          100
+        ],
+        [
+          788,
+          25
+        ],
+        [
+          1,
+          25
+        ],
+        [
+          3628,
+          23
+        ],
+        [
+          852,
+          1
+        ],
+        [
+          2813,
+          1
+        ],
+        [
+          3175,
+          1
+        ],
+        [
+          2628,
+          1
+        ]
+      ]
+    },
+    {
+      "start_ms": 1779202287737,
+      "end_ms": 1779202289729,
+      "duration_ms": 1992,
+      "samples": 3,
+      "max": 2981,
+      "values_top": [
+        [
+          2981,
+          2
+        ],
+        [
+          1315,
+          1
+        ]
+      ]
+    },
+    {
+      "start_ms": 1779202546592,
+      "end_ms": 1779202549190,
+      "duration_ms": 2598,
+      "samples": 4,
+      "max": 1503,
+      "values_top": [
+        [
+          1,
+          3
+        ],
+        [
+          1503,
+          1
+        ]
+      ]
+    },
+    {
+      "start_ms": 1779202634233,
+      "end_ms": 1779202635487,
+      "duration_ms": 1254,
+      "samples": 2,
+      "max": 2427,
+      "values_top": [
+        [
+          427,
+          1
+        ],
+        [
+          2427,
+          1
+        ]
+      ]
+    },
+    {
+      "start_ms": 1779202713995,
+      "end_ms": 1779202717804,
+      "duration_ms": 3809,
+      "samples": 7,
+      "max": 2476,
+      "values_top": [
+        [
+          1,
+          5
+        ],
+        [
+          2476,
+          1
+        ],
+        [
+          1168,
+          1
+        ]
+      ]
+    },
+    {
+      "start_ms": 1779202750379,
+      "end_ms": 1779202752947,
+      "duration_ms": 2568,
+      "samples": 4,
+      "max": 2981,
+      "values_top": [
+        [
+          2981,
+          3
+        ],
+        [
+          1466,
+          1
+        ]
+      ]
+    },
+    {
+      "start_ms": 1779203300984,
+      "end_ms": 1779203302241,
+      "duration_ms": 1257,
+      "samples": 2,
+      "max": 1477,
+      "values_top": [
+        [
+          1477,
+          1
+        ],
+        [
+          1432,
+          1
+        ]
+      ]
+    }
+  ],
+  "segments_fast_gt0": [
+    {
+      "start_ms": 1779202148361,
+      "end_ms": 1779202267363,
+      "duration_ms": 119002,
+      "samples": 413,
+      "max": 3628,
+      "values_top": [
+        [
+          2981,
+          232
+        ],
+        [
+          788,
+          61
+        ],
+        [
+          1,
+          57
+        ],
+        [
+          3628,
+          54
+        ],
+        [
+          329,
+          1
+        ],
+        [
+          1258,
+          1
+        ],
+        [
+          1929,
+          1
+        ],
+        [
+          2625,
+          1
+        ]
+      ]
+    },
+    {
+      "start_ms": 1779202287344,
+      "end_ms": 1779202289213,
+      "duration_ms": 1869,
+      "samples": 6,
+      "max": 2981,
+      "values_top": [
+        [
+          2981,
+          3
+        ],
+        [
+          284,
+          1
+        ],
+        [
+          1211,
+          1
+        ],
+        [
+          2236,
+          1
+        ]
+      ]
+    },
+    {
+      "start_ms": 1779202546293,
+      "end_ms": 1779202548908,
+      "duration_ms": 2615,
+      "samples": 9,
+      "max": 2568,
+      "values_top": [
+        [
+          1,
+          6
+        ],
+        [
+          2568,
+          1
+        ],
+        [
+          1503,
+          1
+        ],
+        [
+          384,
+          1
+        ]
+      ]
+    },
+    {
+      "start_ms": 1779202634234,
+      "end_ms": 1779202635664,
+      "duration_ms": 1430,
+      "samples": 5,
+      "max": 2981,
+      "values_top": [
+        [
+          335,
+          1
+        ],
+        [
+          1264,
+          1
+        ],
+        [
+          2146,
+          1
+        ],
+        [
+          2896,
+          1
+        ],
+        [
+          2981,
+          1
+        ]
+      ]
+    },
+    {
+      "start_ms": 1779202713965,
+      "end_ms": 1779202717941,
+      "duration_ms": 3976,
+      "samples": 16,
+      "max": 2711,
+      "values_top": [
+        [
+          1,
+          11
+        ],
+        [
+          2711,
+          1
+        ],
+        [
+          1921,
+          1
+        ],
+        [
+          1323,
+          1
+        ],
+        [
+          676,
+          1
+        ],
+        [
+          87,
+          1
+        ]
+      ]
+    },
+    {
+      "start_ms": 1779202750189,
+      "end_ms": 1779202752553,
+      "duration_ms": 2364,
+      "samples": 9,
+      "max": 2981,
+      "values_top": [
+        [
+          2981,
+          5
+        ],
+        [
+          683,
+          1
+        ],
+        [
+          1422,
+          1
+        ],
+        [
+          2113,
+          1
+        ],
+        [
+          2813,
+          1
+        ]
+      ]
+    },
+    {
+      "start_ms": 1779203300559,
+      "end_ms": 1779203302250,
+      "duration_ms": 1691,
+      "samples": 6,
+      "max": 2824,
+      "values_top": [
+        [
+          1432,
+          4
+        ],
+        [
+          2824,
+          1
+        ],
+        [
+          2026,
+          1
+        ]
+      ]
+    }
+  ],
+  "touch_brightness_reasons": {
+    "panel_sleep_guard": 477,
+    "panel_sleep_timer_started": 1,
+    "start_visible_idle": 1,
+    "touch_source_selected": 1,
+    "power_source_selected": 1,
+    "panel_sleep_timer_fired": 1
+  },
+  "ticket_events": {
+    "inactive_stream_cleanup_deferred": 61,
+    "session_start_requested": 52,
+    "session_unavailable": 47,
+    "clients_closed": 27,
+    "session_capture_mode_selected": 5,
+    "session_started": 5,
+    "wake_started": 8,
+    "stream_epoch_reset": 9,
+    "screen_wake": 8,
+    "wake_phase": 32,
+    "wake_launch_vivi_root": 10,
+    "session_start_maintenance": 5,
+    "ticket_state_over_1s": 8,
+    "root_hardware_h264_startup_frame": 2,
+    "active_guard_deferred": 14,
+    "secure_capture_probe": 2,
+    "input_command": 14,
+    "wake_recovery_action": 14,
+    "active_guard_failed": 5,
+    "active_guard_inconclusive": 1,
+    "root_hardware_h264_vivi_prepare": 2,
+    "wake_finished": 8,
+    "hardware_h264_wake_frames_allowed": 5,
+    "ticket_state_event": 14,
+    "active_guard_recent_ticket_detail": 23,
+    "client_detached": 3,
+    "wake_recent_ticket_detail_fast_ready": 3,
+    "root_capture_ready_waiting": 3,
+    "client_replaced": 15,
+    "client_connected": 43,
+    "rs_monthly_ticket_request_started": 6,
+    "foreground_guard_paused_for_control_code": 2,
+    "control_code_transition": 6,
+    "session_start_deferred_for_control_code": 11,
+    "fast_visible_hierarchy_empty": 51,
+    "rs_monthly_ticket_fast_hierarchy_wait_finished": 6,
+    "root_visible_hierarchy_dumped": 9,
+    "rs_monthly_ticket_flow_finished": 6,
+    "control_code_result_image_captured": 6,
+    "rs_monthly_ticket_app_screenshot_ready": 6,
+    "rigassatiksme_qr_result": 6,
+    "rs_monthly_ticket_control_screen": 6,
+    "rs_monthly_ticket_idle_cleanup_started": 3,
+    "rs_monthly_ticket_fast_return_started": 3,
+    "rs_monthly_ticket_fast_return_hierarchy_wait_finished": 3,
+    "rs_monthly_ticket_fast_return_finished": 3,
+    "rs_monthly_ticket_return_ticket": 3,
+    "control_code_cleanup_complete": 3,
+    "hardware_reliability_failure": 1,
+    "rs_monthly_ticket_idle_cleanup_canceled": 3,
+    "control_code_result_duplicate": 8,
+    "video_write_slow": 1,
+    "session_stopped": 1,
+    "root_hardware_h264_ready_waiting": 1
+  }
+}

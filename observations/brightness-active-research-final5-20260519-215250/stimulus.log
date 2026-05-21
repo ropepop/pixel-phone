@@ -1,0 +1,8 @@
+# stimulus offset=30 utc=2026-05-19T21:53:20Z
+# rs dummy websocket stimulus 2026-05-20T00:53:20+0300
+handshake HTTP/1.1 101 Switching Protocols
+sent {'type': 'generate_control_code', 'requestId': '[REDACTED]', 'digits': '[REDACTED]', 'app': 'rigas_satiksme', 'flow': 'monthly_ticket'}
+recv {"type": "health"}
+recv {"type": "health"}
+recv {"cleanupPending": true, "ok": false, "reason": "wrong_code", "requestId": "[REDACTED]", "type": "control_code_result"}
+counts {'health': 2, 'control_code_result': 1} elapsed_s 10.6

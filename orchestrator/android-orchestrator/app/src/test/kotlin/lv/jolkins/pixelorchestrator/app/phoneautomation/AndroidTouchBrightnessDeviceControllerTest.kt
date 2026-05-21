@@ -3,6 +3,7 @@ package lv.jolkins.pixelorchestrator.app.phoneautomation
 import android.content.ContextWrapper
 import kotlin.time.Duration
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -141,6 +142,51 @@ class AndroidTouchBrightnessDeviceControllerTest {
     assertTrue(result.success)
     assertEquals(3, rootExecutor.scripts.size)
     assertTrue(rootExecutor.scripts[1].contains("screen_brightness 0"))
+  }
+
+  @Test
+  fun setBrightnessPercentZeroStillRunsPanelHoldWhenPanelAlreadyReadsZero() = runTest {
+    val rootExecutor = QueuedRootExecutor(
+      scriptResults = ArrayDeque(
+        listOf(
+          okResult(
+            stdout = """
+              mode=0
+              value=0
+              display_percentage=0.0
+              panel_path=/sys/class/backlight/panel0-backlight
+              panel_brightness=0
+              panel_actual_brightness=0
+              panel_max_brightness=3939
+            """.trimIndent()
+          ),
+          okResult(stdout = ""),
+          okResult(
+            stdout = """
+              mode=0
+              value=0
+              display_percentage=0.0
+              panel_path=/sys/class/backlight/panel0-backlight
+              panel_brightness=0
+              panel_actual_brightness=0
+              panel_max_brightness=3939
+            """.trimIndent()
+          )
+        )
+      )
+    )
+    val controller = AndroidTouchBrightnessDeviceController(
+      context = ContextWrapper(null),
+      rootExecutor = rootExecutor
+    )
+
+    val result = controller.setBrightnessPercent(0)
+
+    assertTrue(result.success)
+    assertEquals(3, rootExecutor.scripts.size)
+    assertTrue(rootExecutor.scripts[1].contains("screen_brightness 0"))
+    assertTrue(rootExecutor.scripts[1].contains("panel_writes=$(( (1500 + 50 - 1) / 50 ))"))
+    assertFalse(rootExecutor.scripts[1].contains("if [ \"${'$'}panel_current\" = \"${'$'}panel_target\" ]"))
   }
 
   @Test

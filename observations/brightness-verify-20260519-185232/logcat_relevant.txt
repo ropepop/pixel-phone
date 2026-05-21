@@ -1,0 +1,38 @@
+--------- beginning of main
+05-19 18:52:35.156 D/TouchBrightness(31535): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=409076ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-19 18:52:36.660 D/TouchBrightness(31535): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=410580ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-19 18:52:37.153 I/TicketStreamService(31535): ticket_http_request method=POST path=/api/v1/session/start upgrade=
+05-19 18:52:37.160 I/TicketStreamService(31535): ticket_event event=session_start_requested detail=root_hardware_h264_available=true root_hardware_h264_state=idle selected_mode=root_hardware_h264
+05-19 18:52:37.173 D/TicketStreamService(31535): ticket_viewer_input reason=session_start_root_hardware_h264_prepare
+05-19 18:52:37.173 I/TicketStreamService(31535): ticket_event event=session_capture_mode_selected detail=mode=root_hardware_h264 fallback=
+05-19 18:52:37.173 I/TicketStreamService(31535): ticket_event event=session_started detail=mode=root_hardware_h264
+05-19 18:52:37.178 I/TicketStreamService(31535): ticket_event event=wake_started detail=session_start_root_hardware_h264_capture
+05-19 18:52:37.181 I/TicketStreamService(31535): ticket_event event=stream_epoch_reset detail=root_hardware_h264_capture_config
+05-19 18:52:37.189 I/TicketStreamService(31535): ticket_stream_config_sent width=720 height=1482 video_clients=0
+05-19 18:52:37.194 I/TicketStreamService(31535): ticket_root_hardware_h264_capture_requested width=720 height=1482 bitrate=1200000 video_clients=0
+05-19 18:52:37.361 I/TicketStreamService(31535): ticket_event event=screen_wake detail=session_start_root_hardware_h264_capture ok=true duration_ms=157
+05-19 18:52:37.361 I/TicketStreamService(31535): ticket_event event=wake_phase detail=phase=wake_command elapsed_ms=184 duration_ms=184
+05-19 18:52:37.365 I/TicketStreamService(31535): ticket_event event=wake_phase detail=phase=screen_interactive elapsed_ms=188 duration_ms=4
+05-19 18:52:37.836 I/TicketStreamService(31535): ticket_event event=wake_phase detail=phase=vivi_foreground elapsed_ms=658 duration_ms=470
+05-19 18:52:37.836 I/TicketStreamService(31535): ticket_event event=wake_phase detail=phase=ticket_ready elapsed_ms=659 duration_ms=1
+05-19 18:52:37.836 I/TicketStreamService(31535): ticket_event event=wake_recent_ticket_detail_fast_ready detail=reason=session_start_root_hardware_h264_capture age_ms=407970
+05-19 18:52:37.837 I/TicketStreamService(31535): ticket_event event=wake_finished detail=success=true reason=wake_recent_ticket_detail_fast_ready total_ms=659 slowest=vivi_foreground:470
+05-19 18:52:37.837 I/TicketStreamService(31535): ticket_event event=hardware_h264_wake_frames_allowed detail=session_start_root_hardware_h264_capture
+05-19 18:52:37.842 I/TicketStreamService(31535): ticket_event event=ticket_state_event detail=seq=2 state=raw_ticket reason=session_start_raw_ticket_ready request= epoch=1371001543 frame=1 min=1
+05-19 18:52:38.165 D/TouchBrightness(31535): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=970ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-19 18:52:38.179 D/TouchBrightness(31535): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=984ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-19 18:52:38.181 D/TouchBrightness(31535): touch_brightness_debug reason=non_touch_input_event:ticket:wake_start:session_start_root_hardware_h264_capture touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=986ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-19 18:52:38.395 I/TicketStreamService(31535): ticket_event event=session_start_maintenance detail=reason=session_start waited_ms=1211 frame_sequence=0
+05-19 18:52:38.603 I/TicketStreamService(31535): ticket_notification_lockdown_enabled reason=session_start
+05-19 18:52:38.766 I/TicketStreamService(31535): ticket_event event=active_guard_recent_ticket_detail detail=reason=foreground_guard
+05-19 18:52:38.902 I/TicketStreamService(31535): secure_window_capture_bypass_enabled
+05-19 18:52:38.974 D/TouchBrightness(31535): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1613ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-19 18:52:38.975 D/TouchBrightness(31535): touch_brightness_debug reason=non_touch_input_event:ticket:wake_command_complete:session_start_root_hardware_h264_capture touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1614ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-19 18:52:39.339 I/TicketStreamService(31535): ticket_event event=secure_capture_probe detail=visible=true source=hardware_h264_health reason=root_hardware_h264_frame health=visible
+05-19 18:52:39.376 I/TicketStreamService(31535): ticket_http_request method=GET path=/api/v1/health upgrade=
+05-19 18:52:39.416 D/TouchBrightness(31535): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2055ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-19 18:52:39.605 D/TouchBrightness(31535): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2244ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-19 18:52:39.606 D/TouchBrightness(31535): touch_brightness_debug reason=non_touch_input_event:ticket:wake_interactive:session_start_root_hardware_h264_capture touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2244ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-19 18:52:40.364 D/TouchBrightness(31535): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=3002ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-19 18:52:40.674 D/TouchBrightness(31535): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=3312ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-19 18:52:41.380 D/TouchBrightness(31535): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_250ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=4018ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true

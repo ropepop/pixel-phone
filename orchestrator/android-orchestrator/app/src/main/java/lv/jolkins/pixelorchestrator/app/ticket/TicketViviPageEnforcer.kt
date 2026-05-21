@@ -17,6 +17,16 @@ internal data class TicketViviControlCodePopupSurface(
   val inputValue: String
 )
 
+internal data class TicketViviGraphicBounds(
+  val left: Int,
+  val top: Int,
+  val right: Int,
+  val bottom: Int
+) {
+  val width: Int get() = (right - left).coerceAtLeast(0)
+  val height: Int get() = (bottom - top).coerceAtLeast(0)
+}
+
 internal enum class TicketViviRecoveryState {
   BLANK,
   OUTSIDE_VIVI,
@@ -121,6 +131,12 @@ internal object TicketViviPageEnforcer {
     return controlCodeInputNodeForHierarchy(xml) != null
   }
 
+  fun hasTicketCodeGraphicForHierarchy(xml: String): Boolean {
+    return hasViviPackage(xml) &&
+      hasControlCodeText(xml) &&
+      controlCodeResultGraphicBounds(xml) != null
+  }
+
   fun controlCodeExitCloseActionForHierarchy(xml: String): TicketViviPageAction? {
     if (isControlCodePopup(xml)) {
       return controlCodeCloseActionForHierarchy(xml)
@@ -133,6 +149,10 @@ internal object TicketViviPageEnforcer {
 
   fun controlCodeResultValueForHierarchy(xml: String): String? {
     return strictControlCodeResultValueForHierarchy(xml)
+  }
+
+  fun controlCodeResultGraphicBoundsForHierarchy(xml: String): TicketViviGraphicBounds? {
+    return controlCodeResultGraphicBounds(xml)?.toGraphicBounds()
   }
 
   fun strictControlCodeResultValueForHierarchy(xml: String): String? {
@@ -280,11 +300,16 @@ internal object TicketViviPageEnforcer {
       TicketViviRecoveryState.CONTROL_CODE_POPUP -> controlCodeCloseActionForHierarchy(xml)
       TicketViviRecoveryState.CONTROL_CODE_RESULT -> controlCodeExitCloseActionForHierarchy(xml)
       TicketViviRecoveryState.DISMISSIBLE_BLOCKER -> dismissibleBlockerActionForHierarchy(xml)
-      TicketViviRecoveryState.CART_OR_CHECKOUT -> backButtonBounds(xml)?.action("leave_cart_or_checkout")
+      TicketViviRecoveryState.CART_OR_CHECKOUT -> closeBounds(xml)?.action("leave_cart_or_checkout")
+        ?: cartTopRightCloseFallbackAction(xml)
+        ?: backButtonBounds(xml)?.action("leave_cart_or_checkout")
         ?: backAction("leave_cart_or_checkout")
       TicketViviRecoveryState.TICKET_LIST_WITH_CARD -> ticketCardBounds(xml)?.action("open_ticket_card")
       TicketViviRecoveryState.TICKET_LIST_EMPTY -> emptyTicketListAlternateTabBounds(xml)?.action("open_time_ticket_tab")
       TicketViviRecoveryState.OTHER_VIVI_TAB -> ticketsTabBounds(xml)?.action("open_tickets_tab")
+      TicketViviRecoveryState.SETTINGS_OR_PROFILE -> ticketsTabBounds(xml)?.action("open_tickets_tab")
+        ?: backAction("leave_settings_or_profile")
+      TicketViviRecoveryState.UNKNOWN_VIVI -> routeHomeTicketsFallbackAction(xml)
       else -> null
     }
   }
@@ -680,6 +705,11 @@ internal object TicketViviPageEnforcer {
     return SETTINGS_OR_PROFILE_PAGE_TOKENS.any { token -> normalized.contains(token) }
   }
 
+  private fun looksLikeRouteHomePage(xml: String): Boolean {
+    val normalized = visibleText(xml).lowercase()
+    return ROUTE_HOME_PAGE_TOKENS.any { token -> normalized.contains(token) }
+  }
+
   private fun looksLikeCartOrCheckoutPage(xml: String): Boolean {
     val normalized = visibleText(xml).lowercase()
     return CART_OR_CHECKOUT_TOKENS.any { token -> normalized.contains(token) }
@@ -764,6 +794,28 @@ internal object TicketViviPageEnforcer {
           null
         }
       }
+  }
+
+  private fun routeHomeTicketsFallbackAction(xml: String): TicketViviPageAction? {
+    if (!hasViviPackage(xml) || !looksLikeRouteHomePage(xml)) {
+      return null
+    }
+    return TicketViviPageAction(
+      x = ROUTE_HOME_TICKETS_TAB_FALLBACK_X,
+      y = ROUTE_HOME_TICKETS_TAB_FALLBACK_Y,
+      reason = "open_tickets_tab_route_fallback"
+    )
+  }
+
+  private fun cartTopRightCloseFallbackAction(xml: String): TicketViviPageAction? {
+    if (!hasViviPackage(xml) || !looksLikeCartOrCheckoutPage(xml)) {
+      return null
+    }
+    return TicketViviPageAction(
+      x = CART_TOP_RIGHT_CLOSE_FALLBACK_X,
+      y = CART_TOP_RIGHT_CLOSE_FALLBACK_Y,
+      reason = "leave_cart_or_checkout"
+    )
   }
 
   private fun backButtonBounds(xml: String): Bounds? {
@@ -882,6 +934,10 @@ internal object TicketViviPageEnforcer {
     fun toHealthString(): String {
       return "[$left,$top][$right,$bottom]"
     }
+
+    fun toGraphicBounds(): TicketViviGraphicBounds {
+      return TicketViviGraphicBounds(left = left, top = top, right = right, bottom = bottom)
+    }
   }
 
   private data class ControlCodeInputCandidate(
@@ -918,6 +974,10 @@ internal object TicketViviPageEnforcer {
   private const val TOP_BAR_MAX_BOTTOM = 360
   private const val PROFILE_TAB_FALLBACK_MIN_LEFT = 500
   private const val PROFILE_TAB_FALLBACK_MAX_RIGHT = 850
+  private const val ROUTE_HOME_TICKETS_TAB_FALLBACK_X = 405
+  private const val ROUTE_HOME_TICKETS_TAB_FALLBACK_Y = 2285
+  private const val CART_TOP_RIGHT_CLOSE_FALLBACK_X = 1016
+  private const val CART_TOP_RIGHT_CLOSE_FALLBACK_Y = 226
   private val CLOSE_LABEL_TOKENS = listOf(
     "aizvērt",
     "aizvert",
@@ -965,7 +1025,22 @@ internal object TicketViviPageEnforcer {
     "lietotājs",
     "lietotajs",
     "account",
-    "konts"
+    "konts",
+    "lietotnes valoda",
+    "paziņojumi",
+    "pazinojumi",
+    "lietotnes versija",
+    "privātuma paziņojums",
+    "privatuma pazinojums",
+    "noteikumi"
+  )
+  private val ROUTE_HOME_PAGE_TOKENS = listOf(
+    "maršruta plānošana",
+    "marsruta planosana",
+    "meklēt",
+    "meklet",
+    "ievadi atslēgvārdu",
+    "ievadi atslegvardu"
   )
   private val CART_OR_CHECKOUT_TOKENS = listOf(
     "grozs",

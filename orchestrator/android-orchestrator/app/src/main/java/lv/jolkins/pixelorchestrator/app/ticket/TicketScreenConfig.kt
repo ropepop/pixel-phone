@@ -11,22 +11,33 @@ object TicketScreenConfig {
   const val SERVICE_PORT = 9388
   const val VIVI_PACKAGE = "com.pv.vivi"
   const val VIVI_LAUNCH_ACTIVITY = "com.pv.vivi/.MainActivity"
+  const val RIGAS_SATIKSME_PACKAGE = "com.flutter.rspassenger"
+  const val RIGAS_SATIKSME_LAUNCH_ACTIVITY = "com.flutter.rspassenger/.MainActivity"
+  const val TICKET_QR_APP_VIVI = "vivi"
+  const val TICKET_QR_APP_RIGAS_SATIKSME = "rigas_satiksme"
+  const val TICKET_QR_FLOW_CONTROL_CODE = "control_code"
+  const val TICKET_QR_FLOW_MONTHLY_TICKET = "monthly_ticket"
+  const val TICKET_QR_RESULT_SOURCE_APP_RIGAS_SATIKSME = RIGAS_SATIKSME_PACKAGE
+  const val TICKET_QR_RESULT_FLOW_RIGAS_SATIKSME_ANDROID_MONTHLY = "rigas_satiksme_android_monthly_ticket_control"
   const val ACCRESCENT_PACKAGE = "app.accrescent.client"
   const val MAX_FPS = 10
   const val MAX_EQUIVALENT_PIXELS = 1920 * 1080
-  const val ROOT_FFMPEG_H264_CAPTURE_MODE = "root_ffmpeg_h264"
-  const val ROOT_FFMPEG_H264_TRANSPORT = "ffmpeg-h264-annexb"
-  const val ROOT_FFMPEG_H264_QUALITY_PROFILE = "ffmpeg_h264_clarity"
-  const val ROOT_FFMPEG_H264_CODEC_STRING = "avc1.42C028"
-  const val ROOT_FFMPEG_H264_FPS = 10
-  const val ROOT_FFMPEG_H264_BITRATE = 5_000_000
-  const val ROOT_FFMPEG_H264_TARGET_WIDTH = 900
-  const val ROOT_FFMPEG_H264_KEYFRAME_INTERVAL_MILLIS = 1_000
-  const val ROOT_FFMPEG_H264_CHROOT = "/data/local/pixel-stack/chroots/pihole"
-  const val ROOT_FFMPEG_H264_BINARY = "/usr/bin/ffmpeg"
-  const val ROOT_FFMPEG_H264_CAPTURE_SOURCE = "root_surface_capture"
-  const val ROOT_FFMPEG_H264_CAPTURE_METHOD = "app_process_screen_capture"
-  const val ROOT_CAPTURE_QUALITY_PROFILE = ROOT_FFMPEG_H264_QUALITY_PROFILE
+  const val ROOT_HARDWARE_H264_CAPTURE_MODE = "root_hardware_h264"
+  const val ROOT_HARDWARE_H264_TRANSPORT = "hardware-h264-annexb"
+  const val ROOT_HARDWARE_H264_QUALITY_PROFILE = "hardware_h264_light_marker_low_latency"
+  const val ROOT_HARDWARE_H264_CODEC_STRING = "avc1.42C028"
+  const val ROOT_HARDWARE_H264_FPS = 8
+  const val ROOT_HARDWARE_H264_STEADY_FPS = 4
+  const val ROOT_HARDWARE_H264_BURST_HOLD_MILLIS = 6_000L
+  const val ROOT_HARDWARE_H264_BITRATE = 1_200_000
+  const val ROOT_HARDWARE_H264_TARGET_WIDTH = 720
+  const val ROOT_HARDWARE_H264_KEYFRAME_INTERVAL_MILLIS = 1000
+  const val ROOT_HARDWARE_H264_CAPTURE_SOURCE = "root_display_capture"
+  const val ROOT_HARDWARE_H264_CAPTURE_METHOD = "app_process_mediacodec_surface_secure_screen_capture"
+  const val ROOT_HARDWARE_H264_COLOR_CORRECTION = "red_blue_swap_gpu_paint"
+  const val ROOT_HARDWARE_H264_COLOR_STANDARD = "bt709_limited_sdr"
+  const val TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS = 200
+  const val ROOT_CAPTURE_QUALITY_PROFILE = ROOT_HARDWARE_H264_QUALITY_PROFILE
 
   val localStorePackages = listOf(
     ACCRESCENT_PACKAGE,
@@ -41,6 +52,7 @@ object TicketScreenConfig {
 data class TicketStreamHealth(
   val ok: Boolean,
   val serverVersion: String,
+  val phoneUptimeMillis: Long = 0L,
   val sessionState: String = "idle",
   val serverRunning: Boolean,
   val viviInstalled: Boolean,
@@ -61,18 +73,60 @@ data class TicketStreamHealth(
   val controlCodeRequest: TicketControlCodeRequestHealth = TicketControlCodeRequestHealth(),
   val controlExitCleanup: TicketControlExitCleanupHealth = TicketControlExitCleanupHealth(),
   val loading: TicketLoadingHealth = TicketLoadingHealth(),
+  val wake: TicketWakeHealth = TicketWakeHealth(),
+  val automation: TicketAutomationHealth = TicketAutomationHealth(),
   val page: TicketPageHealth = TicketPageHealth(),
   val notificationLockdown: TicketNotificationLockdownHealth = TicketNotificationLockdownHealth(),
   val brightnessGuard: TicketBrightnessGuardHealth = TicketBrightnessGuardHealth(),
   val visibleFrame: TicketVisibleFrameHealth = TicketVisibleFrameHealth(),
   val ffmpeg: TicketFfmpegHealth = TicketFfmpegHealth(),
+  val hardwareH264: TicketHardwareH264Health = TicketHardwareH264Health(),
   val recovery: TicketRecoveryHealth = TicketRecoveryHealth(),
   val ticketState: TicketControlStateHealth = TicketControlStateHealth(),
   val viviState: TicketViviStateHealth = TicketViviStateHealth(),
   val streamPipeline: TicketStreamPipeline,
+  val pixelTicketStateEvent: TicketPixelStateEventHealth = TicketPixelStateEventHealth(),
   val recentClientTelemetry: List<TicketClientTelemetry> = emptyList(),
   val recentEvents: List<TicketSessionEvent> = emptyList(),
   val message: String
+)
+
+@Serializable
+data class TicketPixelStateEventHealth(
+  val eventSeq: Long = 0L,
+  val ticketState: String = "",
+  val reason: String = "",
+  val requestId: String = "",
+  val streamEpoch: Long = 0L,
+  val frameSequence: Long = 0L,
+  val minFrameSequence: Long = 0L,
+  val lastSentAgoMillis: Long? = null
+)
+
+@Serializable
+data class TicketAutomationHealth(
+  val ticketAutomationMode: String = "root_only",
+  val fallbackPolicy: String = "fail_fast",
+  val nonRootAccessibilityAllowed: Boolean = false,
+  val lastRootReadinessResult: String = "not_run",
+  val lastRootReadinessDurationMillis: Long? = null,
+  val lastRootReadinessAgoMillis: Long? = null
+)
+
+@Serializable
+data class TicketWakeHealth(
+  val budgetMillis: Long = 5_000L,
+  val lastReason: String? = null,
+  val lastStartedAgoMillis: Long? = null,
+  val lastWakeCommandMillis: Long? = null,
+  val lastInteractiveMillis: Long? = null,
+  val lastViviForegroundMillis: Long? = null,
+  val lastTicketReadyMillis: Long? = null,
+  val lastTotalMillis: Long? = null,
+  val lastSucceeded: Boolean? = null,
+  val lastSlowestPhase: String? = null,
+  val lastSlowestPhaseDurationMillis: Long? = null,
+  val lastFailureReason: String? = null
 )
 
 @Serializable
@@ -103,11 +157,19 @@ data class TicketStreamPipeline(
   val qualityProfile: String = TicketScreenConfig.ROOT_CAPTURE_QUALITY_PROFILE,
   val configuredWidth: Int? = null,
   val configuredHeight: Int? = null,
+  val configuredSourceWidth: Int? = null,
+  val configuredSourceHeight: Int? = null,
+  val sourceTopCrop: Int = TicketScreenConfig.TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS,
+  val sourceVisibleHeight: Int? = null,
   val configuredBitrate: Int? = null,
   val lastFrameBytes: Int = 0,
   val lastKeyFrameBytes: Int = 0,
   val estimatedSendBitrate: Long = 0L,
   val freshKeyFrameCacheMaxAgeMillis: Long = 0L,
+  val colorCorrection: String = "",
+  val colorStandard: String = "",
+  val postCleanupFreshFrameVerifiedAgoMillis: Long? = null,
+  val postCleanupFreshFrameVerificationReason: String? = null,
   val encoderRunning: Boolean,
   val streamConfigured: Boolean,
   val encodedFrames: Long,
@@ -178,21 +240,22 @@ data class TicketRootCaptureHealth(
 
 @Serializable
 data class TicketFfmpegHealth(
+  val mode: String = "removed",
   val available: Boolean = false,
   val active: Boolean = false,
   val version: String? = null,
   val binarySha: String? = null,
   val encoderName: String? = null,
-  val chrootPath: String = TicketScreenConfig.ROOT_FFMPEG_H264_CHROOT,
-  val binaryPath: String = TicketScreenConfig.ROOT_FFMPEG_H264_BINARY,
+  val chrootPath: String = "",
+  val binaryPath: String = "",
   val frameFeederActive: Boolean = false,
-  val captureSource: String = TicketScreenConfig.ROOT_FFMPEG_H264_CAPTURE_SOURCE,
-  val captureMethod: String = TicketScreenConfig.ROOT_FFMPEG_H264_CAPTURE_METHOD,
+  val captureSource: String = "removed",
+  val captureMethod: String = "removed",
   val captureHelperAvailable: Boolean = false,
   val captureHelperState: String = "unavailable",
-  val captureHelperMessage: String = "",
+  val captureHelperMessage: String = "FFmpeg/raw capture has been removed",
   val state: String = "unavailable",
-  val message: String = "",
+  val message: String = "FFmpeg/raw capture has been removed",
   val width: Int? = null,
   val height: Int? = null,
   val bitrate: Int? = null,
@@ -210,6 +273,52 @@ data class TicketFfmpegHealth(
   val lastSuppressedRawFrameAgoMillis: Long? = null,
   val firstVisibleRawFrameAgoMillis: Long? = null,
   val lastRawFrameVisible: Boolean = false,
+  val captureProcessCount: Int = 0,
+  val ffmpegProcessCount: Int = 0,
+  val staleCaptureProcessCount: Int = 0,
+  val lastCaptureCleanupResult: String = "not_run",
+  val droppedFrames: Long = 0L,
+  val restartCount: Long = 0L,
+  val lastExitReason: String? = null,
+  val lastExitAgoMillis: Long? = null,
+  val stderrTail: String = ""
+)
+
+@Serializable
+data class TicketHardwareH264Health(
+  val available: Boolean = false,
+  val active: Boolean = false,
+  val encoderName: String? = null,
+  val captureSource: String = TicketScreenConfig.ROOT_HARDWARE_H264_CAPTURE_SOURCE,
+  val captureMethod: String = TicketScreenConfig.ROOT_HARDWARE_H264_CAPTURE_METHOD,
+  val captureHelperAvailable: Boolean = false,
+  val captureHelperState: String = "unavailable",
+  val captureHelperMessage: String = "",
+  val state: String = "unavailable",
+  val message: String = "",
+  val width: Int? = null,
+  val height: Int? = null,
+  val bitrate: Int? = null,
+  val fps: Int? = null,
+  val colorCorrection: String = TicketScreenConfig.ROOT_HARDWARE_H264_COLOR_CORRECTION,
+  val colorStandard: String = TicketScreenConfig.ROOT_HARDWARE_H264_COLOR_STANDARD,
+  val frames: Long = 0L,
+  val keyFrames: Long = 0L,
+  val lastFrameBytes: Int = 0,
+  val estimatedBitrate: Long = 0L,
+  val lastFrameAgoMillis: Long? = null,
+  val lastStartAgoMillis: Long? = null,
+  val lastFrameTotalDurationMillis: Long? = null,
+  val secureLayerCaptureEnabled: Boolean = true,
+  val protectedContentCaptureEnabled: Boolean = true,
+  val lastCaptureDurationMillis: Long? = null,
+  val lastDrawDurationMillis: Long? = null,
+  val lastEncodeDurationMillis: Long? = null,
+  val lastVisibilityCheckResult: String = "not_run",
+  val blankFrameFailures: Long = 0L,
+  val encoderProcessCount: Int = 0,
+  val staleCaptureProcessCount: Int = 0,
+  val lastCaptureCleanupResult: String = "not_run",
   val droppedFrames: Long = 0L,
   val restartCount: Long = 0L,
   val lastExitReason: String? = null,
@@ -268,6 +377,7 @@ data class TicketControlCodeRequestHealth(
   val reason: String? = null,
   val value: String? = null,
   val totalDurationMillis: Long? = null,
+  val phases: Map<String, Long> = emptyMap(),
   val completedAgoMillis: Long? = null,
   val duplicateResults: Long = 0L,
   val lastDuplicateRequestId: String? = null,
@@ -285,7 +395,9 @@ data class TicketControlExitCleanupHealth(
   val lastCompletedAgoMillis: Long? = null,
   val lastVerificationResult: String? = null,
   val lastSucceeded: Boolean? = null,
-  val lastFreshFrameRequested: Boolean = false
+  val lastFreshFrameRequested: Boolean = false,
+  val lastFreshFrameVerified: Boolean = false,
+  val lastFreshFrameVerifiedAgoMillis: Long? = null
 )
 
 @Serializable
@@ -404,28 +516,37 @@ data class TicketStreamSize(
   val width: Int,
   val height: Int,
   val sourceWidth: Int,
-  val sourceHeight: Int
+  val sourceHeight: Int,
+  val sourceTopCrop: Int = 0
 ) {
+  val sourceVisibleHeight: Int = (sourceHeight - sourceTopCrop).coerceAtLeast(1)
+
   fun sourceX(encodedX: Int): Int {
     return ((encodedX.coerceIn(0, width) / width.toFloat()) * sourceWidth).roundToInt()
       .coerceIn(0, sourceWidth)
   }
 
   fun sourceY(encodedY: Int): Int {
-    return ((encodedY.coerceIn(0, height) / height.toFloat()) * sourceHeight).roundToInt()
-      .coerceIn(0, sourceHeight)
+    return (
+      sourceTopCrop +
+        ((encodedY.coerceIn(0, height) / height.toFloat()) * sourceVisibleHeight).roundToInt()
+      ).coerceIn(sourceTopCrop, sourceHeight)
   }
 }
 
 object TicketStreamSizing {
-  fun rootFfmpegH264(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
-    val width = minOf(sourceWidth, TicketScreenConfig.ROOT_FFMPEG_H264_TARGET_WIDTH).evenAtLeastTwo()
-    val height = ((sourceHeight / sourceWidth.toFloat()) * width).roundToInt().evenAtLeastTwo()
+  fun rootHardwareH264(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
+    val sourceTopCrop = TicketScreenConfig.TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS
+      .coerceIn(0, (sourceHeight - 1).coerceAtLeast(0))
+    val visibleSourceHeight = (sourceHeight - sourceTopCrop).coerceAtLeast(1)
+    val width = minOf(sourceWidth, TicketScreenConfig.ROOT_HARDWARE_H264_TARGET_WIDTH).evenAtLeastTwo()
+    val height = ((visibleSourceHeight / sourceWidth.toFloat()) * width).roundToInt().evenAtLeastTwo()
     return TicketStreamSize(
       width = width,
       height = height,
       sourceWidth = sourceWidth,
-      sourceHeight = sourceHeight
+      sourceHeight = sourceHeight,
+      sourceTopCrop = sourceTopCrop
     )
   }
 

@@ -1,0 +1,3 @@
+List of devices attached
+100.76.50.43:5555	device
+

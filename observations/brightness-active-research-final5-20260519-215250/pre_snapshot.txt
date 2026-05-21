@@ -1,0 +1,7 @@
+snapshot_utc=2026-05-19T21:52:51Z
+panel=0
+actual=0
+max=3939
+screen_brightness=0
+screen_brightness_mode=0
+orchestrator_pid=18213

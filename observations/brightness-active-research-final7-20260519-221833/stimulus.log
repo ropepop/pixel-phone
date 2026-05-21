@@ -1,0 +1,6 @@
+# stimulus offset=60 utc=2026-05-19T22:19:34Z
+# rs dummy websocket stimulus 2026-05-20T01:19:35+0300
+handshake HTTP/1.1 101 Switching Protocols
+sent {'type': 'generate_control_code', 'requestId': '[REDACTED]', 'digits': '[REDACTED]', 'app': 'rigas_satiksme', 'flow': 'monthly_ticket'}
+recv {"type": "health"}
+recv {"type": "health"}

@@ -1,6 +1,7 @@
 package lv.jolkins.pixelorchestrator.app.phoneautomation
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -68,7 +69,7 @@ class ScreenBrightnessControlTest {
     )
 
     assertTrue(script.contains("panel_writes=${'$'}(( (1500 + 50 - 1) / 50 ))"))
-    assertTrue(script.contains("if [ \"${'$'}panel_current\" = \"${'$'}panel_target\" ]; then"))
+    assertFalse(script.contains("if [ \"${'$'}panel_current\" = \"${'$'}panel_target\" ]; then"))
     assertTrue(script.contains("while [ \"${'$'}panel_write_index\" -lt \"${'$'}panel_writes\" ]"))
     assertTrue(script.contains("sleep 0.05"))
   }

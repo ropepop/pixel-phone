@@ -1,0 +1,43 @@
+{
+  "commands": {
+    "adb_devices": {
+      "duration_ms": 8,
+      "exit_code": 0,
+      "ok": true,
+      "stderr": "",
+      "stdout": "List of devices attached\n100.76.50.43:5555      device product:tegu model:Pixel_9a device:tegu transport_id:1"
+    },
+    "device_props": {
+      "duration_ms": 269,
+      "exit_code": 0,
+      "ok": true,
+      "stderr": "",
+      "stdout": "Pixel 9a\ngoogle/tegu/tegu:16/BP4A.260205.001/2026021201:user/release-keys\n16\n36"
+    },
+    "initial_brightness": {
+      "duration_ms": 555,
+      "exit_code": 1,
+      "ok": false,
+      "stderr": "",
+      "stdout": "0\n0\n0.0\nPANEL=/sys/class/backlight/panel0-backlight"
+    },
+    "pixel_orchestrator_package": {
+      "duration_ms": 220,
+      "exit_code": 0,
+      "ok": true,
+      "stderr": "",
+      "stdout": "versionCode=1 minSdk=29 targetSdk=35\n    versionName=0.1.0\n    lastUpdateTime=2026-05-20 00:02:04\n      firstInstallTime=2026-05-07 20:21:47"
+    },
+    "root_id": {
+      "duration_ms": 349,
+      "exit_code": 0,
+      "ok": true,
+      "stderr": "",
+      "stdout": "uid=0(root) gid=0(root) groups=0(root) context=u:r:magisk:s0"
+    }
+  },
+  "host": "Darwin 25.4.0",
+  "observer_started_local_epoch_ms": 1779224802819,
+  "observer_started_utc": "2026-05-19T21:06:42.819+00:00",
+  "serial": "100.76.50.43:5555"
+}

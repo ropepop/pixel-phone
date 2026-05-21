@@ -20,6 +20,7 @@ This repository consolidates the production Pixel stack into a single operationa
 - `infra/`: infrastructure-specific files (`pihole/secrets`).
 - `ops/`: archived evidence and reports.
 - `docs/`: canonical runbooks, onboarding docs, architecture and references.
+- `docs/CONTEXT.md`: small-context reading guide for agents and documentation placement.
 - `standards/`: shared schemas and templates.
 - `tools/`: import, observability, and docs utility scripts.
 

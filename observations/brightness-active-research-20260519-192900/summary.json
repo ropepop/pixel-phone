@@ -1,0 +1,179 @@
+{
+  "duration_observed_ms": 5399358,
+  "first_local_epoch_ms": 1779208164349,
+  "high_90pct_segment_count": 5,
+  "high_90pct_segments_preview": [
+    {
+      "duration_ms": 2237,
+      "end_local_epoch_ms": 1779210044503,
+      "max_value": 3628,
+      "samples": 3,
+      "start_local_epoch_ms": 1779210043005
+    },
+    {
+      "duration_ms": 67357,
+      "end_local_epoch_ms": 1779210685556,
+      "max_value": 3628,
+      "samples": 89,
+      "start_local_epoch_ms": 1779210618938
+    },
+    {
+      "duration_ms": 3195,
+      "end_local_epoch_ms": 1779210795841,
+      "max_value": 3628,
+      "samples": 5,
+      "start_local_epoch_ms": 1779210793385
+    },
+    {
+      "duration_ms": 3230,
+      "end_local_epoch_ms": 1779210843915,
+      "max_value": 3628,
+      "samples": 5,
+      "start_local_epoch_ms": 1779210841424
+    },
+    {
+      "duration_ms": 121246,
+      "end_local_epoch_ms": 1779212669203,
+      "max_value": 3628,
+      "samples": 156,
+      "start_local_epoch_ms": 1779212548696
+    }
+  ],
+  "high_90pct_total_ms": 197265,
+  "last_local_epoch_ms": 1779213563707,
+  "max_panel_brightness_capacity": 3939,
+  "max_panel_brightness_seen": 3628,
+  "median_interval_ms": 739,
+  "nonzero_segment_count": 18,
+  "nonzero_segments_preview": [
+    {
+      "duration_ms": 1652,
+      "end_local_epoch_ms": 1779209280170,
+      "max_value": 2668,
+      "samples": 2,
+      "start_local_epoch_ms": 1779209279257
+    },
+    {
+      "duration_ms": 1347,
+      "end_local_epoch_ms": 1779209292824,
+      "max_value": 2336,
+      "samples": 2,
+      "start_local_epoch_ms": 1779209292216
+    },
+    {
+      "duration_ms": 1464,
+      "end_local_epoch_ms": 1779209957833,
+      "max_value": 2518,
+      "samples": 2,
+      "start_local_epoch_ms": 1779209957108
+    },
+    {
+      "duration_ms": 2237,
+      "end_local_epoch_ms": 1779210044503,
+      "max_value": 3628,
+      "samples": 3,
+      "start_local_epoch_ms": 1779210043005
+    },
+    {
+      "duration_ms": 739,
+      "end_local_epoch_ms": 1779210562471,
+      "max_value": 2732,
+      "samples": 1,
+      "start_local_epoch_ms": 1779210562471
+    },
+    {
+      "duration_ms": 121414,
+      "end_local_epoch_ms": 1779210738860,
+      "max_value": 3628,
+      "samples": 167,
+      "start_local_epoch_ms": 1779210618185
+    },
+    {
+      "duration_ms": 1334,
+      "end_local_epoch_ms": 1779210745126,
+      "max_value": 2043,
+      "samples": 2,
+      "start_local_epoch_ms": 1779210744531
+    },
+    {
+      "duration_ms": 124836,
+      "end_local_epoch_ms": 1779210873143,
+      "max_value": 3628,
+      "samples": 174,
+      "start_local_epoch_ms": 1779210749046
+    },
+    {
+      "duration_ms": 1850,
+      "end_local_epoch_ms": 1779210888582,
+      "max_value": 3331,
+      "samples": 3,
+      "start_local_epoch_ms": 1779210887471
+    },
+    {
+      "duration_ms": 1453,
+      "end_local_epoch_ms": 1779210893171,
+      "max_value": 1970,
+      "samples": 2,
+      "start_local_epoch_ms": 1779210892457
+    },
+    {
+      "duration_ms": 1502,
+      "end_local_epoch_ms": 1779210936309,
+      "max_value": 3384,
+      "samples": 2,
+      "start_local_epoch_ms": 1779210935546
+    },
+    {
+      "duration_ms": 1391,
+      "end_local_epoch_ms": 1779211050446,
+      "max_value": 2331,
+      "samples": 2,
+      "start_local_epoch_ms": 1779211049794
+    },
+    {
+      "duration_ms": 1263,
+      "end_local_epoch_ms": 1779211110682,
+      "max_value": 3000,
+      "samples": 2,
+      "start_local_epoch_ms": 1779211110158
+    },
+    {
+      "duration_ms": 2133,
+      "end_local_epoch_ms": 1779211716196,
+      "max_value": 3274,
+      "samples": 3,
+      "start_local_epoch_ms": 1779211714802
+    },
+    {
+      "duration_ms": 121952,
+      "end_local_epoch_ms": 1779212669203,
+      "max_value": 3628,
+      "samples": 157,
+      "start_local_epoch_ms": 1779212547990
+    },
+    {
+      "duration_ms": 1905,
+      "end_local_epoch_ms": 1779212863090,
+      "max_value": 3432,
+      "samples": 3,
+      "start_local_epoch_ms": 1779212861924
+    },
+    {
+      "duration_ms": 1335,
+      "end_local_epoch_ms": 1779212910171,
+      "max_value": 2159,
+      "samples": 2,
+      "start_local_epoch_ms": 1779212909575
+    },
+    {
+      "duration_ms": 1482,
+      "end_local_epoch_ms": 1779213515701,
+      "max_value": 2841,
+      "samples": 2,
+      "start_local_epoch_ms": 1779213514958
+    }
+  ],
+  "nonzero_total_ms": 391289,
+  "observer_finished_utc": "2026-05-19T17:59:24.569+00:00",
+  "sample_count": 7497
+}

@@ -117,8 +117,19 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
   ): List<PhoneAutomationVisibleNode> {
     return withContext(Dispatchers.Main.immediate) {
       val root = rootForPackage(expectedPackageName) ?: return@withContext emptyList()
-      flattenNodes(root)
-        .filter { node -> node.isVisibleToUser }
+      val flattenedNodes = flattenNodes(root).toList()
+      val visibleNodes = flattenedNodes.filter { node -> node.isVisibleToUser }
+      visibleNodes.ifEmpty {
+        // Some secure/Flutter windows can expose useful semantic nodes while
+        // reporting them as not visible to the in-process AccessibilityService.
+        // Keep the snapshot cheap by reusing the current node tree instead of
+        // falling back to the ~2.4s uiautomator shell dump.
+        flattenedNodes.filter { node ->
+          node.textValue().isNotBlank() ||
+            node.contentDescriptionValue().isNotBlank() ||
+            node.resourceIdValue().isNotBlank()
+        }
+      }
         .map { node ->
           val bounds = Rect()
           node.getBoundsInScreen(bounds)
@@ -220,12 +231,23 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
   }
 
   private fun rootForPackage(expectedPackageName: String): AccessibilityNodeInfo? {
-    rootInActiveWindow?.takeIf { root ->
-      root.packageName?.toString().orEmpty() == expectedPackageName
-    }?.let { return it }
+    rootInActiveWindow?.takeIf { root -> rootPackageMatchesExpected(root, expectedPackageName) }
+      ?.let { return it }
     return windows.asSequence()
       .mapNotNull { window -> window.root }
-      .firstOrNull { root -> root.packageName?.toString().orEmpty() == expectedPackageName }
+      .firstOrNull { root -> rootPackageMatchesExpected(root, expectedPackageName) }
+  }
+
+  private fun rootPackageMatchesExpected(root: AccessibilityNodeInfo, expectedPackageName: String): Boolean {
+    val rootPackage = root.packageName?.toString().orEmpty()
+    if (rootPackage == expectedPackageName) {
+      return true
+    }
+    return flattenNodes(root).any { node -> nodePackageMatchesExpected(node, expectedPackageName) }
+  }
+
+  private fun nodePackageMatchesExpected(node: AccessibilityNodeInfo, expectedPackageName: String): Boolean {
+    return node.packageName?.toString().orEmpty() == expectedPackageName
   }
 
   private fun firstEditableNode(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {

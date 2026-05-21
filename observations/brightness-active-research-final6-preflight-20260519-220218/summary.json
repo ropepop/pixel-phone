@@ -1,0 +1,24 @@
+{
+  "duration_observed_ms": 297592,
+  "first_local_epoch_ms": 1779228141727,
+  "high_90pct_segment_count": 0,
+  "high_90pct_segments_preview": [],
+  "high_90pct_total_ms": 0,
+  "last_local_epoch_ms": 1779228439319,
+  "max_panel_brightness_capacity": 3939,
+  "max_panel_brightness_seen": 3083,
+  "median_interval_ms": 675,
+  "nonzero_segment_count": 1,
+  "nonzero_segments_preview": [
+    {
+      "duration_ms": 1701,
+      "end_local_epoch_ms": 1779228172377,
+      "max_value": 3083,
+      "samples": 3,
+      "start_local_epoch_ms": 1779228171351
+    }
+  ],
+  "nonzero_total_ms": 1701,
+  "observer_finished_utc": "2026-05-19T22:07:28.338+00:00",
+  "sample_count": 432
+}

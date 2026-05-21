@@ -67,7 +67,7 @@ internal class AndroidTouchScreenPowerController(
       return
     }
     val lock = manager.newWakeLock(
-      PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+      PowerManager.SCREEN_DIM_WAKE_LOCK,
       "${appContext.packageName}:touch-brightness"
     )
     lock.setReferenceCounted(false)

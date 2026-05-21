@@ -55,7 +55,32 @@ class TicketH264AnnexBParserTest {
     assertArrayEquals(deltaFirstSlice + deltaSecondSlice, frames[1].second)
   }
 
+  @Test
+  fun accessUnitDelimiterFlushesCurrentPictureWithoutForwardingAud() {
+    val frames = mutableListOf<Pair<Boolean, ByteArray>>()
+    val parser = TicketH264AnnexBParser { payload, keyFrame ->
+      frames += keyFrame to payload
+    }
+
+    val sps = nal(0x67, 0x11, 0x22)
+    val pps = nal(0x68, 0x33)
+    val idr = nal(0x65, 0x80, 0x55)
+    val delta = nal(0x41, 0x80, 0x66)
+
+    parser.push(sps + pps + idr + aud())
+    assertEquals(1, frames.size)
+    assertTrue(frames[0].first)
+    assertArrayEquals(sps + pps + idr, frames[0].second)
+
+    parser.push(delta + aud())
+    assertEquals(2, frames.size)
+    assertFalse(frames[1].first)
+    assertArrayEquals(delta, frames[1].second)
+  }
+
   private fun nal(header: Int, vararg payload: Int): ByteArray {
     return byteArrayOf(0, 0, 0, 1, header.toByte()) + payload.map { it.toByte() }.toByteArray()
   }
+
+  private fun aud(): ByteArray = nal(0x09, 0x10)
 }

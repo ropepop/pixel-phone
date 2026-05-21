@@ -1,0 +1,3495 @@
+{
+  "pids": [
+    27227,
+    22569,
+    30396
+  ],
+  "physical_touch_logs": [],
+  "touch_errors": [
+    {
+      "line": 4724,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "touch brightness session failed"
+    },
+    {
+      "line": 4725,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "java.lang.IllegalStateException: Could not reassert panel sleep brightness: Brightness verification failed: mode=0 value=0 display=0.0 panel=3505/3939 path=/sys/class/backlight/panel0-backlight"
+    },
+    {
+      "line": 4726,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.invokeSuspend$reassertPanelSleepBrightness(TouchBrightnessRuntime.kt:892)"
+    },
+    {
+      "line": 4727,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.access$invokeSuspend$reassertPanelSleepBrightness(Unknown Source:0)"
+    },
+    {
+      "line": 4728,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2$reassertPanelSleepBrightness$1.invokeSuspend(Unknown Source:34)"
+    },
+    {
+      "line": 4729,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)"
+    },
+    {
+      "line": 4730,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)"
+    },
+    {
+      "line": 4731,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:584)"
+    },
+    {
+      "line": 4732,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:811)"
+    },
+    {
+      "line": 4733,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:715)"
+    },
+    {
+      "line": 4734,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:702)"
+    },
+    {
+      "line": 4735,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread"
+    },
+    {
+      "line": 4736,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at libcore.io.Linux.readBytes(Native Method)"
+    },
+    {
+      "line": 4737,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at libcore.io.Linux.read(Linux.java:231)"
+    },
+    {
+      "line": 4738,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at libcore.io.ForwardingOs.read(ForwardingOs.java:624)"
+    },
+    {
+      "line": 4739,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)"
+    },
+    {
+      "line": 4740,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at libcore.io.ForwardingOs.read(ForwardingOs.java:624)"
+    },
+    {
+      "line": 4741,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at libcore.io.IoBridge.read(IoBridge.java:621)"
+    },
+    {
+      "line": 4742,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at java.io.FileInputStream.read(FileInputStream.java:353)"
+    },
+    {
+      "line": 4743,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)"
+    },
+    {
+      "line": 4744,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at java.io.BufferedInputStream.read(BufferedInputStream.java:338)"
+    },
+    {
+      "line": 4745,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)"
+    },
+    {
+      "line": 4746,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)"
+    },
+    {
+      "line": 4747,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)"
+    },
+    {
+      "line": 4748,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at java.io.InputStreamReader.read(InputStreamReader.java:177)"
+    },
+    {
+      "line": 4749,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at java.io.BufferedReader.read1(BufferedReader.java:221)"
+    },
+    {
+      "line": 4750,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at java.io.BufferedReader.read(BufferedReader.java:298)"
+    },
+    {
+      "line": 4751,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at java.io.Reader.read(Reader.java:229)"
+    },
+    {
+      "line": 4752,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)"
+    },
+    {
+      "line": 4753,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)"
+    },
+    {
+      "line": 4754,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)"
+    },
+    {
+      "line": 4755,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootPowerKeyMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootPowerKeyMonitor.kt:136)"
+    },
+    {
+      "line": 4756,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)"
+    },
+    {
+      "line": 4757,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)"
+    },
+    {
+      "line": 4758,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:111)"
+    },
+    {
+      "line": 4759,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:99)"
+    },
+    {
+      "line": 4760,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "... 4 more"
+    },
+    {
+      "line": 4761,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread"
+    },
+    {
+      "line": 4762,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at libcore.io.Linux.readBytes(Native Method)"
+    },
+    {
+      "line": 4763,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at libcore.io.Linux.read(Linux.java:231)"
+    },
+    {
+      "line": 4764,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at libcore.io.ForwardingOs.read(ForwardingOs.java:624)"
+    },
+    {
+      "line": 4765,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)"
+    },
+    {
+      "line": 4766,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at libcore.io.ForwardingOs.read(ForwardingOs.java:624)"
+    },
+    {
+      "line": 4767,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at libcore.io.IoBridge.read(IoBridge.java:621)"
+    },
+    {
+      "line": 4768,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at java.io.FileInputStream.read(FileInputStream.java:353)"
+    },
+    {
+      "line": 4769,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)"
+    },
+    {
+      "line": 4770,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at java.io.BufferedInputStream.read(BufferedInputStream.java:338)"
+    },
+    {
+      "line": 4771,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)"
+    },
+    {
+      "line": 4772,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)"
+    },
+    {
+      "line": 4773,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)"
+    },
+    {
+      "line": 4774,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at java.io.InputStreamReader.read(InputStreamReader.java:177)"
+    },
+    {
+      "line": 4775,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at java.io.BufferedReader.read1(BufferedReader.java:221)"
+    },
+    {
+      "line": 4776,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at java.io.BufferedReader.read(BufferedReader.java:298)"
+    },
+    {
+      "line": 4777,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at java.io.Reader.read(Reader.java:229)"
+    },
+    {
+      "line": 4778,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)"
+    },
+    {
+      "line": 4779,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)"
+    },
+    {
+      "line": 4780,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)"
+    },
+    {
+      "line": 4781,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootTouchMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootTouchMonitor.kt:271)"
+    },
+    {
+      "line": 4782,
+      "ms": 1779210749307,
+      "pid": 22569,
+      "tid": 22663,
+      "level": "E",
+      "tag": "TouchBrightness",
+      "msg": "... 8 more"
+    }
+  ],
+  "segments": [
+    {
+      "index": 1,
+      "start": "2026-05-19 19:48:00.170 EEST",
+      "last_nonzero": "2026-05-19 19:48:01.022 EEST",
+      "first_zero": "2026-05-19 19:48:01.794 EEST",
+      "span_ms": 852,
+      "bounded_ms": 1624,
+      "samples": 2,
+      "max": 3628,
+      "actual_max": 2668,
+      "cap": 3939,
+      "ratio": 0.921,
+      "high90": true,
+      "class": "ticket/RS root wake/app-switch brightness race",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 19:48:00.810 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{2debc0f u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{11373314 u0 com.pv.vivi/.MainActivity t2364}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=1 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 19:48:00.810 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{2debc0f u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{11373314 u0 com.pv.vivi/.MainActivity t2364}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=1 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 19:48:00.810 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{2debc0f u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{11373314 u0 com.pv.vivi/.MainActivity t2364}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=1 state=0"
+        }
+      ],
+      "logs": [
+        {
+          "t": "19:47:55.571",
+          "line": 2040,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=control_code_result_image_captured detail=bytes=128039 cropped=false"
+        },
+        {
+          "t": "19:47:55.617",
+          "line": 2041,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=805ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "19:47:55.618",
+          "line": 2042,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_event:ticket:wake_start:session_start_root_hardware_h264_capture touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=806ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots"
+        },
+        {
+          "t": "19:47:55.619",
+          "line": 2043,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "19:47:55.626",
+          "line": 2044,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=rs_monthly_ticket_app_screenshot_ready detail=vehicle=68803 attempt=1 bytes=128039"
+        },
+        {
+          "t": "19:47:55.721",
+          "line": 2046,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=ticket_state_event detail=seq=46 state=generated_result reason=rs_monthly_ticket_control_screen request=<id> epoch=1374319166 frame=1 min=1"
+        },
+        {
+          "t": "19:47:55.721",
+          "line": 2047,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=rs_monthly_ticket_control_screen detail=request=<id> bytes=128039 details="
+        },
+        {
+          "t": "19:47:55.722",
+          "line": 2048,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_websocket_close kind=control clients=2"
+        },
+        {
+          "t": "19:47:55.792",
+          "line": 2049,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "I",
+          "msg": "Displayed com.pv.vivi/.MainActivity for user 0: +763ms"
+        },
+        {
+          "t": "19:47:56.584",
+          "line": 2055,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1639ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "19:47:56.585",
+          "line": 2056,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_event:ticket:wake_command_complete:session_start_root_hardware_h264_capture touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1641ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn"
+        },
+        {
+          "t": "19:47:56.586",
+          "line": 2057,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "19:47:57.297",
+          "line": 2063,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2352ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "19:47:57.297",
+          "line": 2064,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_event:ticket:wake_interactive:session_start_root_hardware_h264_capture touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2352ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=fals"
+        },
+        {
+          "t": "19:47:57.317",
+          "line": 2065,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2372ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "19:47:57.494",
+          "line": 2066,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=active_guard_deferred detail=foreground_guard wake_in_progress=true"
+        },
+        {
+          "t": "19:47:58.173",
+          "line": 2068,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=3228ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "19:47:58.223",
+          "line": 2069,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=rs_monthly_ticket_idle_cleanup_started detail=request=<id> reason=generated delay_ms=2500"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "start": "2026-05-19 19:48:12.216 EEST",
+      "last_nonzero": "2026-05-19 19:48:12.824 EEST",
+      "first_zero": "2026-05-19 19:48:13.452 EEST",
+      "span_ms": 608,
+      "bounded_ms": 1236,
+      "samples": 2,
+      "max": 2461,
+      "actual_max": 2336,
+      "cap": 3939,
+      "ratio": 0.625,
+      "high90": false,
+      "class": "ticket/RS root wake/app-switch brightness race",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 19:48:11.536 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 19:48:11.536 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 19:48:13.685 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        }
+      ],
+      "logs": [
+        {
+          "t": "19:48:08.030",
+          "line": 2177,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_1000ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=7573ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "19:48:09.301",
+          "line": 2180,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_1500ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=8844ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "19:48:10.140",
+          "line": 2183,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_websocket_open kind=control clients=3"
+        },
+        {
+          "t": "19:48:10.142",
+          "line": 2185,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_websocket_close kind=control clients=1"
+        },
+        {
+          "t": "19:48:10.157",
+          "line": 2187,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "W",
+          "msg": "http_request_failed"
+        },
+        {
+          "t": "19:48:10.157",
+          "line": 2188,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "W",
+          "msg": "java.net.SocketException: Socket closed"
+        },
+        {
+          "t": "19:48:10.157",
+          "line": 2189,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "W",
+          "msg": "at java.net.SocketInputStream.socketRead0(Native Method)"
+        },
+        {
+          "t": "19:48:10.157",
+          "line": 2190,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "W",
+          "msg": "at java.net.SocketInputStream.socketRead(SocketInputStream.java:118)"
+        },
+        {
+          "t": "19:48:10.157",
+          "line": 2191,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "W",
+          "msg": "at java.net.SocketInputStream.read(SocketInputStream.java:173)"
+        },
+        {
+          "t": "19:48:10.157",
+          "line": 2192,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "W",
+          "msg": "at java.net.SocketInputStream.read(SocketInputStream.java:143)"
+        },
+        {
+          "t": "19:48:10.157",
+          "line": 2193,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "W",
+          "msg": "at java.io.BufferedInputStream.fill(BufferedInputStream.java:239)"
+        },
+        {
+          "t": "19:48:10.157",
+          "line": 2194,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "W",
+          "msg": "at java.io.BufferedInputStream.read(BufferedInputStream.java:258)"
+        },
+        {
+          "t": "19:48:10.157",
+          "line": 2195,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "W",
+          "msg": "at lv.jolkins.pixelorchestrator.app.ticket.TicketWebSocket.readLoop(TicketWebSocket.kt:31)"
+        },
+        {
+          "t": "19:48:10.157",
+          "line": 2196,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "W",
+          "msg": "at lv.jolkins.pixelorchestrator.app.ticket.TicketStreamService.acceptWebSocket(TicketStreamService.kt:686)"
+        },
+        {
+          "t": "19:48:10.157",
+          "line": 2197,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "W",
+          "msg": "at lv.jolkins.pixelorchestrator.app.ticket.TicketStreamService.handleHttpClient(TicketStreamService.kt:551)"
+        },
+        {
+          "t": "19:48:10.157",
+          "line": 2198,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "W",
+          "msg": "at lv.jolkins.pixelorchestrator.app.ticket.TicketStreamService.access$handleHttpClient(TicketStreamService.kt:66)"
+        },
+        {
+          "t": "19:48:10.157",
+          "line": 2199,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "W",
+          "msg": "at lv.jolkins.pixelorchestrator.app.ticket.TicketStreamService$startServer$1$1$1.invokeSuspend(TicketStreamService.kt:498)"
+        },
+        {
+          "t": "19:48:10.157",
+          "line": 2200,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "W",
+          "msg": "at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)"
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "start": "2026-05-19 19:59:17.108 EEST",
+      "last_nonzero": "2026-05-19 19:59:17.833 EEST",
+      "first_zero": "2026-05-19 19:59:18.590 EEST",
+      "span_ms": 725,
+      "bounded_ms": 1482,
+      "samples": 2,
+      "max": 2240,
+      "actual_max": 2518,
+      "cap": 3939,
+      "ratio": 0.569,
+      "high90": false,
+      "class": "ticket/RS root wake/app-switch brightness race",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 19:59:17.615 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{141f200 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{200405857 u0 com.pv.vivi/.MainActivity t2366}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 19:59:17.615 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{141f200 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{200405857 u0 com.pv.vivi/.MainActivity t2366}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 19:59:17.615 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{141f200 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{200405857 u0 com.pv.vivi/.MainActivity t2366}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ throttled ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        }
+      ],
+      "logs": [
+        {
+          "t": "19:59:12.165",
+          "line": 4133,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2960ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "19:59:12.808",
+          "line": 4134,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "19:59:13.047",
+          "line": 4135,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=input_command detail=wake_recovery_action:open_time_ticket_tab duration_ms=242 ok=true"
+        },
+        {
+          "t": "19:59:13.048",
+          "line": 4136,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_EMPTY action=open_time_ticket_tab ok=true duration_ms=242 reason=rs_monthly_ticket_return:generated"
+        },
+        {
+          "t": "19:59:13.297",
+          "line": 4137,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_250ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=495ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "19:59:13.760",
+          "line": 4139,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=957ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "19:59:13.762",
+          "line": 4140,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_event:ticket:wake_recovery_action:open_time_ticket_tab touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=960ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=fa"
+        },
+        {
+          "t": "19:59:13.764",
+          "line": 4141,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "19:59:14.857",
+          "line": 4142,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1809ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "19:59:14.906",
+          "line": 4143,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1859ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "19:59:14.909",
+          "line": 4144,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_event:ticket:wake_recovery_action:open_time_ticket_tab:complete touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1861ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots"
+        },
+        {
+          "t": "19:59:15.993",
+          "line": 4146,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2945ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "19:59:16.504",
+          "line": 4148,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "19:59:16.721",
+          "line": 4149,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=input_command detail=wake_recovery_action:open_ticket_card duration_ms=220 ok=true"
+        },
+        {
+          "t": "19:59:16.721",
+          "line": 4150,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_WITH_CARD action=open_ticket_card ok=true duration_ms=220 reason=rs_monthly_ticket_return:generated"
+        },
+        {
+          "t": "19:59:17.025",
+          "line": 4151,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_250ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=524ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "19:59:20.083",
+          "line": 4153,
+          "pid": 27227,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_500ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=3581ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "19:59:20.805",
+          "line": 4154,
+          "pid": 27227,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_phase detail=phase=ticket_ready elapsed_ms=15563 duration_ms=12223"
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "start": "2026-05-19 20:00:43.005 EEST",
+      "last_nonzero": "2026-05-19 20:00:44.503 EEST",
+      "first_zero": "2026-05-19 20:00:45.309 EEST",
+      "span_ms": 1498,
+      "bounded_ms": 2304,
+      "samples": 3,
+      "max": 3628,
+      "actual_max": 3628,
+      "cap": 3939,
+      "ratio": 0.921,
+      "high90": true,
+      "class": "unattributed guard-period brightness drift",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 20:00:43.415 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{141f200 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{200405857 u0 com.pv.vivi/.MainActivity t2366}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=1 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 20:00:43.415 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{141f200 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{200405857 u0 com.pv.vivi/.MainActivity t2366}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=1 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 20:00:45.563 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{141f200 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{200405857 u0 com.pv.vivi/.MainActivity t2366}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=1 state=0"
+        }
+      ],
+      "logs": []
+    },
+    {
+      "index": 5,
+      "start": "2026-05-19 20:09:22.471 EEST",
+      "last_nonzero": "2026-05-19 20:09:23.163 EEST",
+      "first_zero": "2026-05-19 20:09:23.932 EEST",
+      "span_ms": 692,
+      "bounded_ms": 1461,
+      "samples": 2,
+      "max": 2922,
+      "actual_max": 2732,
+      "cap": 3939,
+      "ratio": 0.742,
+      "high90": false,
+      "class": "unattributed guard-period brightness drift",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 20:09:22.333 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{141f200 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{200405857 u0 com.pv.vivi/.MainActivity t2366}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ dim ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 20:09:22.333 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{141f200 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{200405857 u0 com.pv.vivi/.MainActivity t2366}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ dim ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 20:09:22.333 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{141f200 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{200405857 u0 com.pv.vivi/.MainActivity t2366}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ dim ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        }
+      ],
+      "logs": []
+    },
+    {
+      "index": 6,
+      "start": "2026-05-19 20:10:18.185 EEST",
+      "last_nonzero": "2026-05-19 20:12:18.860 EEST",
+      "first_zero": "2026-05-19 20:12:19.558 EEST",
+      "span_ms": 120675,
+      "bounded_ms": 121373,
+      "samples": 167,
+      "max": 3628,
+      "actual_max": 3628,
+      "cap": 3939,
+      "ratio": 0.921,
+      "high90": true,
+      "class": "startup/service-start visible-idle with panel still non-zero",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 20:10:17.998 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{141f200 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{200405857 u0 com.pv.vivi/.MainActivity t2366}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=2 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 20:11:17.946 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{141f200 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{200405857 u0 com.pv.vivi/.MainActivity t2366}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 20:12:17.861 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{5296ea2 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{42853632 u0 com.pv.vivi/.MainActivity t2367}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        }
+      ],
+      "logs": [
+        {
+          "t": "20:10:17.747",
+          "line": 4579,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:10:18.678",
+          "line": 4580,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=panel_sleep_timer_started touches=0 source=unknown power_source=unknown last_raw=n/a timer=pending(119068ms) panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:10:18.782",
+          "line": 4581,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=start_visible_idle touches=0 source=unknown power_source=unknown last_raw=n/a timer=pending(118964ms) panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:11:24.547",
+          "line": 4587,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_websocket_open kind=control clients=1"
+        },
+        {
+          "t": "20:11:24.604",
+          "line": 4588,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=inactive_stream_cleanup_deferred detail=health clients=1"
+        },
+        {
+          "t": "20:11:24.653",
+          "line": 4589,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=rs_monthly_ticket_request_started detail=request=<id>"
+        },
+        {
+          "t": "20:11:24.653",
+          "line": 4590,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=control_code_transition detail=rs_monthly_ticket_request"
+        },
+        {
+          "t": "20:11:24.653",
+          "line": 4591,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=inactive_stream_cleanup_deferred detail=health clients=1"
+        },
+        {
+          "t": "20:11:24.856",
+          "line": 4592,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "W",
+          "msg": "Force removing ActivityRecord{200405857 u0 com.pv.vivi/.MainActivity t2366 f}}: app died, no saved state"
+        },
+        {
+          "t": "20:11:24.993",
+          "line": 4593,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "W",
+          "msg": "callingPackage for (uid=0, pid=403) has no WPC"
+        },
+        {
+          "t": "20:11:25.002",
+          "line": 4594,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "I",
+          "msg": "START u0 {flg=0x10000000 xflg=0x4 cmp=com.flutter.rspassenger/.MainActivity} with LAUNCH_SINGLE_TOP from uid 0 (com.android.shell) (BAL_ALLOW_ALLOWLISTED_UID) result code=3"
+        },
+        {
+          "t": "20:11:25.022",
+          "line": 4595,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "I",
+          "msg": "WIN DEATH: Window{141f200 u0 com.pv.vivi/com.pv.vivi.MainActivity}"
+        },
+        {
+          "t": "20:11:25.527",
+          "line": 4596,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "Exception thrown during dispatchAppVisibility Window{141f200 u0 com.pv.vivi/com.pv.vivi.MainActivity EXITING}"
+        },
+        {
+          "t": "20:11:25.527",
+          "line": 4597,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "android.os.DeadObjectException"
+        },
+        {
+          "t": "20:11:25.527",
+          "line": 4598,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at android.os.BinderProxy.transactNative(Native Method)"
+        },
+        {
+          "t": "20:11:25.527",
+          "line": 4599,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at android.os.BinderProxy.transact(BinderProxy.java:626)"
+        },
+        {
+          "t": "20:11:25.527",
+          "line": 4600,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at android.view.IWindow$Stub$Proxy.dispatchAppVisibility(IWindow.java:536)"
+        },
+        {
+          "t": "20:11:25.527",
+          "line": 4601,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at com.android.server.wm.WindowState.sendAppVisibilityToClients(WindowState.java:3276)"
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "start": "2026-05-19 20:12:24.531 EEST",
+      "last_nonzero": "2026-05-19 20:12:25.830 EEST",
+      "first_zero": "2026-05-19 20:12:26.576 EEST",
+      "span_ms": 1299,
+      "bounded_ms": 2045,
+      "samples": 3,
+      "max": 3461,
+      "actual_max": 2043,
+      "cap": 3939,
+      "ratio": 0.879,
+      "high90": false,
+      "class": "reassert failure crash during panel_sleep enforcement",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 20:12:24.278 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{5296ea2 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{42853632 u0 com.pv.vivi/.MainActivity t2367}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 20:12:24.278 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{5296ea2 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{42853632 u0 com.pv.vivi/.MainActivity t2367}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 20:12:26.424 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{5296ea2 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{42853632 u0 com.pv.vivi/.MainActivity t2367}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        }
+      ],
+      "logs": [
+        {
+          "t": "20:12:20.514",
+          "line": 4683,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_event:ticket:wake_recovery_action:open_time_ticket_tab touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=60ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=fal"
+        },
+        {
+          "t": "20:12:20.632",
+          "line": 4684,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=input_command detail=wake_recovery_action:open_time_ticket_tab duration_ms=178 ok=true"
+        },
+        {
+          "t": "20:12:20.632",
+          "line": 4685,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_EMPTY action=open_time_ticket_tab ok=true duration_ms=178 reason=rs_monthly_ticket_return:wrong_code"
+        },
+        {
+          "t": "20:12:20.705",
+          "line": 4686,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_event:ticket:wake_recovery_action:open_time_ticket_tab:complete touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=73ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0"
+        },
+        {
+          "t": "20:12:21.752",
+          "line": 4687,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "I",
+          "msg": "WIN DEATH: Window{de78e1c u0 com.android.gallery3d/com.android.gallery3d.app.GalleryActivity}"
+        },
+        {
+          "t": "20:12:23.722",
+          "line": 4688,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=panel_sleep_timer_fired touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=3089ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:12:24.114",
+          "line": 4689,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:12:24.237",
+          "line": 4690,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=input_command detail=wake_recovery_action:open_ticket_card duration_ms=127 ok=true"
+        },
+        {
+          "t": "20:12:24.238",
+          "line": 4691,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_WITH_CARD action=open_ticket_card ok=true duration_ms=127 reason=rs_monthly_ticket_return:wrong_code"
+        },
+        {
+          "t": "20:12:27.816",
+          "line": 4692,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_phase detail=phase=ticket_ready elapsed_ms=17537 duration_ms=14373"
+        },
+        {
+          "t": "20:12:27.817",
+          "line": 4693,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_finished detail=success=true reason=ticket_ready total_ms=17537 slowest=ticket_ready:14373"
+        },
+        {
+          "t": "20:12:27.817",
+          "line": 4694,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=rs_monthly_ticket_return_ticket detail=reason=wrong_code state=TICKET_DETAIL step=wake_root_ticket_detail success=true"
+        },
+        {
+          "t": "20:12:27.817",
+          "line": 4695,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=ticket_state_over_1s detail=control_transition duration_ms=50756 reason=rs_monthly_ticket_request"
+        },
+        {
+          "t": "20:12:27.818",
+          "line": 4696,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=ticket_state_event detail=seq=1 state=raw_ticket reason=rs_monthly_ticket_return_ticket request= epoch=0 frame=1 min=1"
+        },
+        {
+          "t": "20:12:27.818",
+          "line": 4697,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=clients_closed detail=inactive_stream_health count=1"
+        },
+        {
+          "t": "20:12:27.818",
+          "line": 4698,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_websocket_close kind=control clients=0"
+        },
+        {
+          "t": "20:12:27.832",
+          "line": 4700,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=rs_monthly_ticket_request_started detail=request=<id>"
+        },
+        {
+          "t": "20:12:27.832",
+          "line": 4701,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=control_code_transition detail=rs_monthly_ticket_request"
+        }
+      ]
+    },
+    {
+      "index": 8,
+      "start": "2026-05-19 20:12:29.046 EEST",
+      "last_nonzero": "2026-05-19 20:14:33.143 EEST",
+      "first_zero": "2026-05-19 20:14:34.013 EEST",
+      "span_ms": 124097,
+      "bounded_ms": 124967,
+      "samples": 174,
+      "max": 3628,
+      "actual_max": 3628,
+      "cap": 3939,
+      "ratio": 0.921,
+      "high90": true,
+      "class": "startup/service-start visible-idle with panel still non-zero",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 20:12:28.542 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 20:13:30.691 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 20:14:32.831 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{3067d48 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{254944564 u0 com.pv.vivi/.MainActivity t2370}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        }
+      ],
+      "logs": [
+        {
+          "t": "20:12:24.114",
+          "line": 4689,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:12:24.237",
+          "line": 4690,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=input_command detail=wake_recovery_action:open_ticket_card duration_ms=127 ok=true"
+        },
+        {
+          "t": "20:12:24.238",
+          "line": 4691,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_WITH_CARD action=open_ticket_card ok=true duration_ms=127 reason=rs_monthly_ticket_return:wrong_code"
+        },
+        {
+          "t": "20:12:27.816",
+          "line": 4692,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_phase detail=phase=ticket_ready elapsed_ms=17537 duration_ms=14373"
+        },
+        {
+          "t": "20:12:27.817",
+          "line": 4693,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_finished detail=success=true reason=ticket_ready total_ms=17537 slowest=ticket_ready:14373"
+        },
+        {
+          "t": "20:12:27.817",
+          "line": 4694,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=rs_monthly_ticket_return_ticket detail=reason=wrong_code state=TICKET_DETAIL step=wake_root_ticket_detail success=true"
+        },
+        {
+          "t": "20:12:27.817",
+          "line": 4695,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=ticket_state_over_1s detail=control_transition duration_ms=50756 reason=rs_monthly_ticket_request"
+        },
+        {
+          "t": "20:12:27.818",
+          "line": 4696,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=ticket_state_event detail=seq=1 state=raw_ticket reason=rs_monthly_ticket_return_ticket request= epoch=0 frame=1 min=1"
+        },
+        {
+          "t": "20:12:27.818",
+          "line": 4697,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=clients_closed detail=inactive_stream_health count=1"
+        },
+        {
+          "t": "20:12:27.818",
+          "line": 4698,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_websocket_close kind=control clients=0"
+        },
+        {
+          "t": "20:12:27.832",
+          "line": 4700,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=rs_monthly_ticket_request_started detail=request=<id>"
+        },
+        {
+          "t": "20:12:27.832",
+          "line": 4701,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=control_code_transition detail=rs_monthly_ticket_request"
+        },
+        {
+          "t": "20:12:28.050",
+          "line": 4702,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "W",
+          "msg": "Force removing ActivityRecord{42853632 u0 com.pv.vivi/.MainActivity t2367 f}}: app died, no saved state"
+        },
+        {
+          "t": "20:12:28.169",
+          "line": 4703,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "I",
+          "msg": "WIN DEATH: Window{5296ea2 u0 com.pv.vivi/com.pv.vivi.MainActivity}"
+        },
+        {
+          "t": "20:12:28.172",
+          "line": 4704,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "W",
+          "msg": "callingPackage for (uid=0, pid=9563) has no WPC"
+        },
+        {
+          "t": "20:12:28.180",
+          "line": 4705,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "I",
+          "msg": "START u0 {flg=0x10000000 xflg=0x4 cmp=com.flutter.rspassenger/.MainActivity} with LAUNCH_SINGLE_TOP from uid 0 (com.android.shell) (BAL_ALLOW_ALLOWLISTED_UID) result code=3"
+        },
+        {
+          "t": "20:12:28.444",
+          "line": 4707,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_websocket_open kind=control clients=1"
+        },
+        {
+          "t": "20:12:28.710",
+          "line": 4708,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "Exception thrown during dispatchAppVisibility Window{5296ea2 u0 com.pv.vivi/com.pv.vivi.MainActivity EXITING}"
+        }
+      ]
+    },
+    {
+      "index": 9,
+      "start": "2026-05-19 20:14:47.471 EEST",
+      "last_nonzero": "2026-05-19 20:14:48.582 EEST",
+      "first_zero": "2026-05-19 20:14:49.301 EEST",
+      "span_ms": 1111,
+      "bounded_ms": 1830,
+      "samples": 3,
+      "max": 3093,
+      "actual_max": 3331,
+      "cap": 3939,
+      "ratio": 0.785,
+      "high90": false,
+      "class": "ticket/RS root wake/app-switch brightness race",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 20:14:47.831 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{3067d48 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{254944564 u0 com.pv.vivi/.MainActivity t2370}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 20:14:47.831 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{3067d48 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{254944564 u0 com.pv.vivi/.MainActivity t2370}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 20:14:47.831 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{3067d48 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{254944564 u0 com.pv.vivi/.MainActivity t2370}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        }
+      ],
+      "logs": [
+        {
+          "t": "20:14:42.935",
+          "line": 5026,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2591ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:14:43.673",
+          "line": 5028,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:14:43.870",
+          "line": 5029,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=input_command detail=wake_recovery_action:open_time_ticket_tab duration_ms=199 ok=true"
+        },
+        {
+          "t": "20:14:43.870",
+          "line": 5030,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_EMPTY action=open_time_ticket_tab ok=true duration_ms=199 reason=rs_monthly_ticket_return:wrong_code"
+        },
+        {
+          "t": "20:14:44.065",
+          "line": 5031,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_250ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=395ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:14:44.534",
+          "line": 5032,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=864ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:14:44.534",
+          "line": 5033,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_event:ticket:wake_recovery_action:open_time_ticket_tab touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=864ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=fa"
+        },
+        {
+          "t": "20:14:44.535",
+          "line": 5034,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:14:45.539",
+          "line": 5036,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1669ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:14:45.541",
+          "line": 5037,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_event:ticket:wake_recovery_action:open_time_ticket_tab:complete touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1670ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots"
+        },
+        {
+          "t": "20:14:46.662",
+          "line": 5039,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2792ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:14:47.108",
+          "line": 5040,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:14:47.199",
+          "line": 5041,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=input_command detail=wake_recovery_action:open_ticket_card duration_ms=93 ok=true"
+        },
+        {
+          "t": "20:14:47.199",
+          "line": 5042,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_WITH_CARD action=open_ticket_card ok=true duration_ms=93 reason=rs_monthly_ticket_return:wrong_code"
+        },
+        {
+          "t": "20:14:50.923",
+          "line": 5043,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_phase detail=phase=ticket_ready elapsed_ms=14258 duration_ms=10998"
+        },
+        {
+          "t": "20:14:50.923",
+          "line": 5044,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_finished detail=success=true reason=ticket_ready total_ms=14259 slowest=ticket_ready:10998"
+        },
+        {
+          "t": "20:14:50.923",
+          "line": 5045,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=rs_monthly_ticket_return_ticket detail=reason=wrong_code state=TICKET_DETAIL step=wake_root_ticket_detail success=true"
+        },
+        {
+          "t": "20:14:50.923",
+          "line": 5046,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=ticket_state_over_1s detail=control_transition duration_ms=47646 reason=rs_monthly_ticket_request"
+        }
+      ]
+    },
+    {
+      "index": 10,
+      "start": "2026-05-19 20:14:52.457 EEST",
+      "last_nonzero": "2026-05-19 20:14:53.171 EEST",
+      "first_zero": "2026-05-19 20:14:53.844 EEST",
+      "span_ms": 714,
+      "bounded_ms": 1387,
+      "samples": 2,
+      "max": 2248,
+      "actual_max": 1970,
+      "cap": 3939,
+      "ratio": 0.571,
+      "high90": false,
+      "class": "ticket/RS root wake/app-switch brightness race",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 20:14:52.120 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 20:14:52.120 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 20:14:52.120 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        }
+      ],
+      "logs": [
+        {
+          "t": "20:14:50.923",
+          "line": 5043,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_phase detail=phase=ticket_ready elapsed_ms=14258 duration_ms=10998"
+        },
+        {
+          "t": "20:14:50.923",
+          "line": 5044,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_finished detail=success=true reason=ticket_ready total_ms=14259 slowest=ticket_ready:10998"
+        },
+        {
+          "t": "20:14:50.923",
+          "line": 5045,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=rs_monthly_ticket_return_ticket detail=reason=wrong_code state=TICKET_DETAIL step=wake_root_ticket_detail success=true"
+        },
+        {
+          "t": "20:14:50.923",
+          "line": 5046,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=ticket_state_over_1s detail=control_transition duration_ms=47646 reason=rs_monthly_ticket_request"
+        },
+        {
+          "t": "20:14:50.924",
+          "line": 5047,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=ticket_state_event detail=seq=4 state=raw_ticket reason=rs_monthly_ticket_return_ticket request= epoch=0 frame=1 min=1"
+        },
+        {
+          "t": "20:14:50.924",
+          "line": 5048,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=clients_closed detail=inactive_stream_health count=1"
+        },
+        {
+          "t": "20:14:50.924",
+          "line": 5049,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_websocket_close kind=control clients=0"
+        },
+        {
+          "t": "20:14:50.936",
+          "line": 5051,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=control_code_result_duplicate detail=<id>"
+        },
+        {
+          "t": "20:14:50.936",
+          "line": 5052,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=rs_monthly_ticket_request_started detail=request=<id>"
+        },
+        {
+          "t": "20:14:50.937",
+          "line": 5053,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=control_code_transition detail=rs_monthly_ticket_request"
+        },
+        {
+          "t": "20:14:51.074",
+          "line": 5054,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "W",
+          "msg": "Force removing ActivityRecord{254944564 u0 com.pv.vivi/.MainActivity t2370 f}}: app died, no saved state"
+        },
+        {
+          "t": "20:14:51.201",
+          "line": 5055,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "W",
+          "msg": "callingPackage for (uid=0, pid=22717) has no WPC"
+        },
+        {
+          "t": "20:14:51.209",
+          "line": 5056,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "I",
+          "msg": "START u0 {flg=0x10000000 xflg=0x4 cmp=com.flutter.rspassenger/.MainActivity} with LAUNCH_SINGLE_TOP from uid 0 (com.android.shell) (BAL_ALLOW_ALLOWLISTED_UID) result code=3"
+        },
+        {
+          "t": "20:14:51.251",
+          "line": 5057,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "I",
+          "msg": "WIN DEATH: Window{3067d48 u0 com.pv.vivi/com.pv.vivi.MainActivity}"
+        },
+        {
+          "t": "20:14:51.708",
+          "line": 5058,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "Exception thrown during dispatchAppVisibility Window{3067d48 u0 com.pv.vivi/com.pv.vivi.MainActivity EXITING}"
+        },
+        {
+          "t": "20:14:51.708",
+          "line": 5059,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "android.os.DeadObjectException"
+        },
+        {
+          "t": "20:14:51.708",
+          "line": 5060,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at android.os.BinderProxy.transactNative(Native Method)"
+        },
+        {
+          "t": "20:14:51.708",
+          "line": 5061,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at android.os.BinderProxy.transact(BinderProxy.java:626)"
+        }
+      ]
+    },
+    {
+      "index": 11,
+      "start": "2026-05-19 20:15:35.546 EEST",
+      "last_nonzero": "2026-05-19 20:15:36.309 EEST",
+      "first_zero": "2026-05-19 20:15:36.938 EEST",
+      "span_ms": 763,
+      "bounded_ms": 1392,
+      "samples": 2,
+      "max": 3146,
+      "actual_max": 3384,
+      "cap": 3939,
+      "ratio": 0.799,
+      "high90": false,
+      "class": "ticket/RS root wake/app-switch brightness race",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 20:15:34.757 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{f9ce51e u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{49810759 u0 com.pv.vivi/.MainActivity t2371}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 20:15:36.906 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{f9ce51e u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{49810759 u0 com.pv.vivi/.MainActivity t2371}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=1 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 20:15:36.906 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{f9ce51e u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{49810759 u0 com.pv.vivi/.MainActivity t2371}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=1 state=0"
+        }
+      ],
+      "logs": [
+        {
+          "t": "20:15:30.764",
+          "line": 5176,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2883ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:15:31.311",
+          "line": 5177,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:15:31.467",
+          "line": 5178,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=input_command detail=wake_recovery_action:open_time_ticket_tab duration_ms=157 ok=true"
+        },
+        {
+          "t": "20:15:31.467",
+          "line": 5179,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_EMPTY action=open_time_ticket_tab ok=true duration_ms=157 reason=rs_monthly_ticket_return:wrong_code"
+        },
+        {
+          "t": "20:15:31.714",
+          "line": 5180,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_250ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=404ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:15:32.206",
+          "line": 5182,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=897ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:15:32.217",
+          "line": 5183,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_event:ticket:wake_recovery_action:open_time_ticket_tab touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=908ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=fa"
+        },
+        {
+          "t": "20:15:32.217",
+          "line": 5184,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:15:33.055",
+          "line": 5185,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1588ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:15:33.057",
+          "line": 5186,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_event:ticket:wake_recovery_action:open_time_ticket_tab:complete touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1589ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots"
+        },
+        {
+          "t": "20:15:34.161",
+          "line": 5188,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2693ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:15:34.651",
+          "line": 5189,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:15:34.741",
+          "line": 5190,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=input_command detail=wake_recovery_action:open_ticket_card duration_ms=91 ok=true"
+        },
+        {
+          "t": "20:15:34.741",
+          "line": 5191,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_WITH_CARD action=open_ticket_card ok=true duration_ms=91 reason=rs_monthly_ticket_return:wrong_code"
+        },
+        {
+          "t": "20:15:38.535",
+          "line": 5194,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_phase detail=phase=ticket_ready elapsed_ms=14287 duration_ms=11078"
+        },
+        {
+          "t": "20:15:38.535",
+          "line": 5195,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_finished detail=success=true reason=ticket_ready total_ms=14287 slowest=ticket_ready:11078"
+        },
+        {
+          "t": "20:15:38.535",
+          "line": 5196,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=rs_monthly_ticket_return_ticket detail=reason=wrong_code state=TICKET_DETAIL step=wake_root_ticket_detail success=true"
+        },
+        {
+          "t": "20:15:38.536",
+          "line": 5197,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=ticket_state_over_1s detail=control_transition duration_ms=47599 reason=rs_monthly_ticket_request"
+        }
+      ]
+    },
+    {
+      "index": 12,
+      "start": "2026-05-19 20:17:29.794 EEST",
+      "last_nonzero": "2026-05-19 20:17:30.446 EEST",
+      "first_zero": "2026-05-19 20:17:31.213 EEST",
+      "span_ms": 652,
+      "bounded_ms": 1419,
+      "samples": 2,
+      "max": 2473,
+      "actual_max": 2331,
+      "cap": 3939,
+      "ratio": 0.628,
+      "high90": false,
+      "class": "ticket/RS root wake/app-switch brightness race",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 20:17:30.532 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=1 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 20:17:30.532 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=1 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 20:17:30.532 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=1 state=0"
+        }
+      ],
+      "logs": [
+        {
+          "t": "20:17:28.019",
+          "line": 5284,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_websocket_open kind=control clients=1"
+        },
+        {
+          "t": "20:17:28.070",
+          "line": 5285,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=inactive_stream_cleanup_deferred detail=health clients=1"
+        },
+        {
+          "t": "20:17:28.145",
+          "line": 5286,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=rs_monthly_ticket_request_started detail=request=<id>"
+        },
+        {
+          "t": "20:17:28.145",
+          "line": 5287,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=control_code_transition detail=rs_monthly_ticket_request"
+        },
+        {
+          "t": "20:17:28.146",
+          "line": 5288,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=inactive_stream_cleanup_deferred detail=health clients=1"
+        },
+        {
+          "t": "20:17:28.381",
+          "line": 5289,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "W",
+          "msg": "Force removing ActivityRecord{49810759 u0 com.pv.vivi/.MainActivity t2371 f}}: app died, no saved state"
+        },
+        {
+          "t": "20:17:28.515",
+          "line": 5291,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "I",
+          "msg": "WIN DEATH: Window{f9ce51e u0 com.pv.vivi/com.pv.vivi.MainActivity}"
+        },
+        {
+          "t": "20:17:28.569",
+          "line": 5292,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "W",
+          "msg": "callingPackage for (uid=0, pid=9701) has no WPC"
+        },
+        {
+          "t": "20:17:28.581",
+          "line": 5293,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "I",
+          "msg": "START u0 {flg=0x10000000 xflg=0x4 cmp=com.flutter.rspassenger/.MainActivity} with LAUNCH_SINGLE_TOP from uid 0 (com.android.shell) (BAL_ALLOW_ALLOWLISTED_UID) result code=3"
+        },
+        {
+          "t": "20:17:29.164",
+          "line": 5294,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "Exception thrown during dispatchAppVisibility Window{f9ce51e u0 com.pv.vivi/com.pv.vivi.MainActivity EXITING}"
+        },
+        {
+          "t": "20:17:29.164",
+          "line": 5295,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "android.os.DeadObjectException"
+        },
+        {
+          "t": "20:17:29.164",
+          "line": 5296,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at android.os.BinderProxy.transactNative(Native Method)"
+        },
+        {
+          "t": "20:17:29.164",
+          "line": 5297,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at android.os.BinderProxy.transact(BinderProxy.java:626)"
+        },
+        {
+          "t": "20:17:29.164",
+          "line": 5298,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at android.view.IWindow$Stub$Proxy.dispatchAppVisibility(IWindow.java:536)"
+        },
+        {
+          "t": "20:17:29.164",
+          "line": 5299,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at com.android.server.wm.WindowState.sendAppVisibilityToClients(WindowState.java:3276)"
+        },
+        {
+          "t": "20:17:29.164",
+          "line": 5300,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at com.android.server.wm.WindowContainer.sendAppVisibilityToClients(WindowContainer.java:1218)"
+        },
+        {
+          "t": "20:17:29.164",
+          "line": 5301,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at com.android.server.wm.WindowToken.setClientVisible(WindowToken.java:394)"
+        },
+        {
+          "t": "20:17:29.164",
+          "line": 5302,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at com.android.server.wm.ActivityRecord.commitVisibility(ActivityRecord.java:5645)"
+        }
+      ]
+    },
+    {
+      "index": 13,
+      "start": "2026-05-19 20:18:30.158 EEST",
+      "last_nonzero": "2026-05-19 20:18:30.682 EEST",
+      "first_zero": "2026-05-19 20:18:31.321 EEST",
+      "span_ms": 524,
+      "bounded_ms": 1163,
+      "samples": 2,
+      "max": 2765,
+      "actual_max": 3000,
+      "cap": 3939,
+      "ratio": 0.702,
+      "high90": false,
+      "class": "ticket/RS root wake/app-switch brightness race",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 20:18:30.546 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{307ae22 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{233761097 u0 com.pv.vivi/.MainActivity t2372}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 20:18:30.546 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{307ae22 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{233761097 u0 com.pv.vivi/.MainActivity t2372}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 20:18:30.546 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{307ae22 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{233761097 u0 com.pv.vivi/.MainActivity t2372}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        }
+      ],
+      "logs": [
+        {
+          "t": "20:18:25.753",
+          "line": 5423,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:18:25.882",
+          "line": 5424,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=input_command detail=wake_recovery_action:open_time_ticket_tab duration_ms=133 ok=true"
+        },
+        {
+          "t": "20:18:25.882",
+          "line": 5425,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_EMPTY action=open_time_ticket_tab ok=true duration_ms=133 reason=rs_monthly_ticket_return:generated"
+        },
+        {
+          "t": "20:18:26.132",
+          "line": 5427,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_250ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=384ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:18:26.554",
+          "line": 5428,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=806ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:18:26.554",
+          "line": 5429,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_event:ticket:wake_recovery_action:open_time_ticket_tab touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=806ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=fa"
+        },
+        {
+          "t": "20:18:26.555",
+          "line": 5430,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:18:27.399",
+          "line": 5431,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1517ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:18:27.402",
+          "line": 5432,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_event:ticket:wake_recovery_action:open_time_ticket_tab:complete touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1520ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots"
+        },
+        {
+          "t": "20:18:28.723",
+          "line": 5434,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2841ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:18:29.286",
+          "line": 5436,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:18:29.451",
+          "line": 5437,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=input_command detail=wake_recovery_action:open_ticket_card duration_ms=167 ok=true"
+        },
+        {
+          "t": "20:18:29.452",
+          "line": 5438,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_WITH_CARD action=open_ticket_card ok=true duration_ms=167 reason=rs_monthly_ticket_return:generated"
+        },
+        {
+          "t": "20:18:29.648",
+          "line": 5439,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_250ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=364ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:18:32.603",
+          "line": 5440,
+          "pid": 22569,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_500ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=3319ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:18:33.203",
+          "line": 5441,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_phase detail=phase=ticket_ready elapsed_ms=14455 duration_ms=11207"
+        },
+        {
+          "t": "20:18:33.203",
+          "line": 5442,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_finished detail=success=true reason=ticket_ready total_ms=14455 slowest=ticket_ready:11207"
+        },
+        {
+          "t": "20:18:33.203",
+          "line": 5443,
+          "pid": 22569,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=rs_monthly_ticket_return_ticket detail=reason=generated state=TICKET_DETAIL step=wake_root_ticket_detail success=true"
+        }
+      ]
+    },
+    {
+      "index": 14,
+      "start": "2026-05-19 20:28:34.802 EEST",
+      "last_nonzero": "2026-05-19 20:28:36.196 EEST",
+      "first_zero": "2026-05-19 20:28:36.885 EEST",
+      "span_ms": 1394,
+      "bounded_ms": 2083,
+      "samples": 3,
+      "max": 3469,
+      "actual_max": 3274,
+      "cap": 3939,
+      "ratio": 0.881,
+      "high90": false,
+      "class": "unattributed guard-period brightness drift",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 20:28:35.291 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{307ae22 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{233761097 u0 com.pv.vivi/.MainActivity t2372}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ dim ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 20:28:35.291 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{307ae22 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{233761097 u0 com.pv.vivi/.MainActivity t2372}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ dim ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 20:28:35.291 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{307ae22 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{233761097 u0 com.pv.vivi/.MainActivity t2372}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ dim ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        }
+      ],
+      "logs": []
+    },
+    {
+      "index": 15,
+      "start": "2026-05-19 20:42:27.990 EEST",
+      "last_nonzero": "2026-05-19 20:44:29.203 EEST",
+      "first_zero": "2026-05-19 20:44:30.005 EEST",
+      "span_ms": 121213,
+      "bounded_ms": 122015,
+      "samples": 157,
+      "max": 3628,
+      "actual_max": 3628,
+      "cap": 3939,
+      "ratio": 0.921,
+      "high90": true,
+      "class": "startup/service-start visible-idle with panel still non-zero",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 20:42:27.719 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{307ae22 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{233761097 u0 com.pv.vivi/.MainActivity t2372}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 20:43:27.738 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{307ae22 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{233761097 u0 com.pv.vivi/.MainActivity t2372}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 20:44:29.868 EEST",
+          "screen_brightness": "0",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{307ae22 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{233761097 u0 com.pv.vivi/.MainActivity t2372}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        }
+      ],
+      "logs": [
+        {
+          "t": "20:42:27.565",
+          "line": 6358,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:42:28.614",
+          "line": 6359,
+          "pid": 30396,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=panel_sleep_timer_started touches=0 source=unknown power_source=unknown last_raw=n/a timer=pending(118949ms) panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:42:28.711",
+          "line": 6360,
+          "pid": 30396,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=start_visible_idle touches=0 source=unknown power_source=unknown last_raw=n/a timer=pending(118851ms) panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:44:27.570",
+          "line": 6365,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:44:33.927",
+          "line": 6366,
+          "pid": 30396,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=panel_sleep_timer_fired touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        }
+      ]
+    },
+    {
+      "index": 16,
+      "start": "2026-05-19 20:47:41.924 EEST",
+      "last_nonzero": "2026-05-19 20:47:43.090 EEST",
+      "first_zero": "2026-05-19 20:47:43.830 EEST",
+      "span_ms": 1166,
+      "bounded_ms": 1906,
+      "samples": 3,
+      "max": 3524,
+      "actual_max": 3432,
+      "cap": 3939,
+      "ratio": 0.895,
+      "high90": false,
+      "class": "ticket/RS root wake/app-switch brightness race",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 20:47:42.456 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=1 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 20:47:42.456 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=1 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 20:47:42.456 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{838f10 u0 com.flutter.rspassenger/com.flutter.rspassenger.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{229264722 u0 com.flutter.rspassenger/.MainActivity t2345}",
+          "reason": "mBrightnessReason=manual",
+          "strategy": "Last selected DisplayBrightnessStrategy= FallbackBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=1 state=0"
+        }
+      ],
+      "logs": [
+        {
+          "t": "20:47:40.578",
+          "line": 6485,
+          "pid": 30396,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_websocket_open kind=control clients=1"
+        },
+        {
+          "t": "20:47:40.644",
+          "line": 6486,
+          "pid": 30396,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=inactive_stream_cleanup_deferred detail=health clients=1"
+        },
+        {
+          "t": "20:47:40.718",
+          "line": 6487,
+          "pid": 30396,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=rs_monthly_ticket_request_started detail=request=<id>"
+        },
+        {
+          "t": "20:47:40.718",
+          "line": 6488,
+          "pid": 30396,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=control_code_transition detail=rs_monthly_ticket_request"
+        },
+        {
+          "t": "20:47:40.718",
+          "line": 6489,
+          "pid": 30396,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=inactive_stream_cleanup_deferred detail=health clients=1"
+        },
+        {
+          "t": "20:47:40.980",
+          "line": 6490,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "W",
+          "msg": "Force removing ActivityRecord{233761097 u0 com.pv.vivi/.MainActivity t2372 f}}: app died, no saved state"
+        },
+        {
+          "t": "20:47:41.104",
+          "line": 6491,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "W",
+          "msg": "callingPackage for (uid=0, pid=32653) has no WPC"
+        },
+        {
+          "t": "20:47:41.110",
+          "line": 6492,
+          "pid": 1384,
+          "tag": "ActivityTaskManager",
+          "level": "I",
+          "msg": "START u0 {flg=0x10000000 xflg=0x4 cmp=com.flutter.rspassenger/.MainActivity} with LAUNCH_SINGLE_TOP from uid 0 (com.android.shell) (BAL_ALLOW_ALLOWLISTED_UID) result code=3"
+        },
+        {
+          "t": "20:47:41.199",
+          "line": 6493,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "I",
+          "msg": "WIN DEATH: Window{307ae22 u0 com.pv.vivi/com.pv.vivi.MainActivity}"
+        },
+        {
+          "t": "20:47:41.747",
+          "line": 6495,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "Exception thrown during dispatchAppVisibility Window{307ae22 u0 com.pv.vivi/com.pv.vivi.MainActivity EXITING}"
+        },
+        {
+          "t": "20:47:41.747",
+          "line": 6496,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "android.os.DeadObjectException"
+        },
+        {
+          "t": "20:47:41.747",
+          "line": 6497,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at android.os.BinderProxy.transactNative(Native Method)"
+        },
+        {
+          "t": "20:47:41.747",
+          "line": 6498,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at android.os.BinderProxy.transact(BinderProxy.java:626)"
+        },
+        {
+          "t": "20:47:41.747",
+          "line": 6499,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at android.view.IWindow$Stub$Proxy.dispatchAppVisibility(IWindow.java:536)"
+        },
+        {
+          "t": "20:47:41.747",
+          "line": 6500,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at com.android.server.wm.WindowState.sendAppVisibilityToClients(WindowState.java:3276)"
+        },
+        {
+          "t": "20:47:41.747",
+          "line": 6501,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at com.android.server.wm.WindowContainer.sendAppVisibilityToClients(WindowContainer.java:1218)"
+        },
+        {
+          "t": "20:47:41.747",
+          "line": 6502,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at com.android.server.wm.WindowToken.setClientVisible(WindowToken.java:394)"
+        },
+        {
+          "t": "20:47:41.747",
+          "line": 6503,
+          "pid": 1384,
+          "tag": "WindowManager",
+          "level": "W",
+          "msg": "at com.android.server.wm.ActivityRecord.commitVisibility(ActivityRecord.java:5645)"
+        }
+      ]
+    },
+    {
+      "index": 17,
+      "start": "2026-05-19 20:48:29.575 EEST",
+      "last_nonzero": "2026-05-19 20:48:30.171 EEST",
+      "first_zero": "2026-05-19 20:48:30.987 EEST",
+      "span_ms": 596,
+      "bounded_ms": 1412,
+      "samples": 2,
+      "max": 1933,
+      "actual_max": 2159,
+      "cap": 3939,
+      "ratio": 0.491,
+      "high90": false,
+      "class": "ticket/RS root wake/app-switch brightness race",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 20:48:29.588 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{414c523 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{195844578 u0 com.pv.vivi/.MainActivity t2373}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 20:48:29.588 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{414c523 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{195844578 u0 com.pv.vivi/.MainActivity t2373}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 20:48:29.588 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{414c523 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{195844578 u0 com.pv.vivi/.MainActivity t2373}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity)",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        }
+      ],
+      "logs": [
+        {
+          "t": "20:48:25.244",
+          "line": 6616,
+          "pid": 30396,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2906ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:48:25.524",
+          "line": 6617,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:48:25.640",
+          "line": 6618,
+          "pid": 30396,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=input_command detail=wake_recovery_action:open_time_ticket_tab duration_ms=118 ok=true"
+        },
+        {
+          "t": "20:48:25.641",
+          "line": 6619,
+          "pid": 30396,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_EMPTY action=open_time_ticket_tab ok=true duration_ms=118 reason=rs_monthly_ticket_return:generated"
+        },
+        {
+          "t": "20:48:26.177",
+          "line": 6621,
+          "pid": 30396,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_250ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=654ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:48:26.328",
+          "line": 6622,
+          "pid": 30396,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=806ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:48:26.330",
+          "line": 6623,
+          "pid": 30396,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_event:ticket:wake_recovery_action:open_time_ticket_tab touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=808ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=fa"
+        },
+        {
+          "t": "20:48:26.337",
+          "line": 6624,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:48:27.240",
+          "line": 6625,
+          "pid": 30396,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1600ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:48:27.369",
+          "line": 6626,
+          "pid": 30396,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1729ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:48:27.372",
+          "line": 6627,
+          "pid": 30396,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_event:ticket:wake_recovery_action:open_time_ticket_tab:complete touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1731ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots"
+        },
+        {
+          "t": "20:48:28.489",
+          "line": 6629,
+          "pid": 30396,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2849ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:48:29.099",
+          "line": 6631,
+          "pid": 1384,
+          "tag": "PowerManagerService",
+          "level": "I",
+          "msg": "Allowing device wake-up without android.permission.TURN_SCREEN_ON for lv.jolkins.pixelorchestrator"
+        },
+        {
+          "t": "20:48:29.220",
+          "line": 6632,
+          "pid": 30396,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=input_command detail=wake_recovery_action:open_ticket_card duration_ms=124 ok=true"
+        },
+        {
+          "t": "20:48:29.221",
+          "line": 6633,
+          "pid": 30396,
+          "tag": "TicketStreamService",
+          "level": "I",
+          "msg": "ticket_event event=wake_recovery_action detail=state=TICKET_LIST_WITH_CARD action=open_ticket_card ok=true duration_ms=124 reason=rs_monthly_ticket_return:generated"
+        },
+        {
+          "t": "20:48:29.508",
+          "line": 6634,
+          "pid": 30396,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_250ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=413ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:48:30.540",
+          "line": 6635,
+          "pid": 30396,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_500ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1445ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        },
+        {
+          "t": "20:48:31.957",
+          "line": 6636,
+          "pid": 30396,
+          "tag": "TouchBrightness",
+          "level": "D",
+          "msg": "touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_1000ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=2861ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true"
+        }
+      ]
+    },
+    {
+      "index": 18,
+      "start": "2026-05-19 20:58:34.958 EEST",
+      "last_nonzero": "2026-05-19 20:58:36.471 EEST",
+      "first_zero": "2026-05-19 20:58:37.274 EEST",
+      "span_ms": 1513,
+      "bounded_ms": 2316,
+      "samples": 3,
+      "max": 3078,
+      "actual_max": 2841,
+      "cap": 3939,
+      "ratio": 0.781,
+      "high90": false,
+      "class": "unattributed guard-period brightness drift",
+      "contexts": [
+        {
+          "label": "before",
+          "time": "2026-05-19 20:58:35.561 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{414c523 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{195844578 u0 com.pv.vivi/.MainActivity t2373}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ dim ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "mid",
+          "time": "2026-05-19 20:58:35.561 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{414c523 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{195844578 u0 com.pv.vivi/.MainActivity t2373}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ dim ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        },
+        {
+          "label": "after",
+          "time": "2026-05-19 20:58:35.561 EEST",
+          "screen_brightness": "1",
+          "mode": "0",
+          "pct": "0.0",
+          "wake": "mWakefulness=Awake",
+          "focus": "mCurrentFocus=Window{414c523 u0 com.pv.vivi/com.pv.vivi.MainActivity}",
+          "resumed": "topResumedActivity=ActivityRecord{195844578 u0 com.pv.vivi/.MainActivity t2373}",
+          "reason": "mBrightnessReason=override(com.pv.vivi/com.pv.vivi.MainActivity) [ dim ]",
+          "strategy": "Last selected DisplayBrightnessStrategy= OverrideBrightnessStrategy",
+          "power_state": "UID 1000:   ACTIVE  count=0 state=0"
+        }
+      ],
+      "logs": []
+    }
+  ]
+}

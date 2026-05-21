@@ -1,0 +1,12 @@
+[
+  {
+    "path": "/api/v1/session/start",
+    "status": 200,
+    "body": "{\"ok\":true,\"state\":\"starting\",\"message\":\"Preparing ViVi for secure H.264 capture\"}"
+  },
+  {
+    "path": "/api/v1/health",
+    "status": 200,
+    "body": "{\"ok\":true,\"serverVersion\":\"ticket-stream-2026-05-19-raw-ticket-recovery-v201\",\"phoneUptimeMillis\":1371003738,\"sessionState\":\"live\",\"serverRunning\":true,\"viviInstalled\":true,\"accrescentInstalled\":true,\"installedStorePackages\":[\"app.accrescent.client\",\"app.grapheneos.apps\",\"com.aurora.store\",\"org.fdroid.fdroid\"],\"streamActive\":true,\"streamVerdict\":\"live\",\"clients\":0,\"inactivityActive\":true,\"inactivityTimeoutMillis\":600000,\"inactivityRemainingMillis\":597784,\"autoStartAllowed\":true,\"autoStartBlockedReason\":null,\"serviceReadiness\":{\"enabled\":true,\"state\":\"ready\",\"detail\":\"Local ticket server and tunnel are ready\",\"lastEnsureReason\":\"periodic\",\"lastEnsureAgeMillis\":103740,\"lastEnsureSucceeded\":true,\"lastEnsureResult\":\"Local ticket server and tunnel are ready\",\"localServerReachable\":true,\"tunnelReady\":true,\"componentStatus\":\"running\"},\"inputGate\":{\"tapOnly\":true,\"active\":true,\"allowed\":false,\"reason\":\"no_active_control\",\"lastDecisionAgoMillis\":null,\"lastCommandReason\":\"wake_recovery_action:o"
+  }
+]

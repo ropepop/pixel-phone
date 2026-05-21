@@ -46,7 +46,12 @@ class TicketH264AnnexBParser(
       }
       val next = findStartCode(buffer, first.length)
       if (next == null) {
-        if (!keepTrailing) processNal(buffer)
+        if (keepTrailing && isAccessUnitDelimiter(buffer)) {
+          processNal(buffer)
+          buffer = ByteArray(0)
+        } else if (!keepTrailing) {
+          processNal(buffer)
+        }
         return
       }
       val nal = buffer.copyOfRange(0, next.index)
@@ -74,7 +79,6 @@ class TicketH264AnnexBParser(
 
       NAL_AUD -> {
         flushAccessUnit()
-        pendingAccessUnit += nal
       }
 
       in NAL_NON_IDR..NAL_IDR -> {
@@ -121,6 +125,10 @@ class TicketH264AnnexBParser(
     val start = startCodeLengthAt(nalWithStartCode, 0) ?: return null
     if (nalWithStartCode.size <= start) return null
     return nalWithStartCode[start].toInt() and 0x1f
+  }
+
+  private fun isAccessUnitDelimiter(nalWithStartCode: ByteArray): Boolean {
+    return nalType(nalWithStartCode) == NAL_AUD
   }
 
   private fun sliceStartsPicture(nalWithStartCode: ByteArray, payloadOffset: Int): Boolean {

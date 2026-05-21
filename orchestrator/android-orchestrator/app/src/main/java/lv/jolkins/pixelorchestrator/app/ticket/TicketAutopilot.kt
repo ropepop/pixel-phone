@@ -5,8 +5,6 @@ import android.content.Intent
 import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.delay
-import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationSelector
-import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationServiceBridge
 import lv.jolkins.pixelorchestrator.rootexec.RootResult
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
@@ -34,7 +32,7 @@ internal class TicketAutopilot(
   private val onHardReset: (String) -> Unit = {}
 ) {
   suspend fun observeFastState(reason: String): TicketViviStateMemorySnapshot? {
-    val observation = observeAccessibility(reason) ?: return null
+    val observation = observeState(reason)
     return stateMemory.record(
       state = observation.state,
       ticketId = TicketViviPageEnforcer.ticketIdForHierarchy(observation.xml),
@@ -308,7 +306,6 @@ internal class TicketAutopilot(
   }
 
   private suspend fun observeState(reason: String): TicketAutopilotObservation {
-    observeAccessibility(reason)?.let { return it }
     val dump = dumpHierarchy()
     val xml = if (dump.ok) dump.stdout else ""
     val state = TicketViviPageEnforcer.classifyForRecovery(xml)
@@ -321,41 +318,7 @@ internal class TicketAutopilot(
     return TicketAutopilotObservation(state, xml, "root")
   }
 
-  private suspend fun observeAccessibility(reason: String): TicketAutopilotObservation? {
-    val nodes = PhoneAutomationServiceBridge.snapshotVisibleNodes(TicketScreenConfig.VIVI_PACKAGE)
-    if (nodes.isEmpty()) {
-      return null
-    }
-    val xml = TicketViviPageEnforcer.hierarchyForVisibleNodes(nodes)
-    val state = TicketViviPageEnforcer.classifyForRecovery(xml)
-    if (state == TicketViviRecoveryState.BLANK || state == TicketViviRecoveryState.OUTSIDE_VIVI) {
-      return null
-    }
-    stateMemory.record(
-      state = state,
-      ticketId = TicketViviPageEnforcer.ticketIdForHierarchy(xml),
-      source = "accessibility",
-      reason = reason
-    )
-    return TicketAutopilotObservation(state, xml, "accessibility")
-  }
-
   private suspend fun closePopup(xml: String, reason: String): Boolean {
-    val selectors = listOf(
-      PhoneAutomationSelector(contentDescription = "Aizvērt"),
-      PhoneAutomationSelector(text = "Aizvērt"),
-      PhoneAutomationSelector(contentDescription = "Close"),
-      PhoneAutomationSelector(text = "Close"),
-      PhoneAutomationSelector(contentDescription = "Atcelt"),
-      PhoneAutomationSelector(text = "Atcelt"),
-      PhoneAutomationSelector(contentDescription = "Cancel"),
-      PhoneAutomationSelector(text = "Cancel"),
-      PhoneAutomationSelector(text = "x"),
-      PhoneAutomationSelector(text = "×")
-    )
-    if (PhoneAutomationServiceBridge.clickSelectors(TicketScreenConfig.VIVI_PACKAGE, selectors, ACCESSIBILITY_CLICK_TIMEOUT_MILLIS)) {
-      return true
-    }
     val action = TicketViviPageEnforcer.recoveryActionForHierarchy(xml) ?: return false
     return tap(action.x, action.y, reason)
   }
@@ -365,28 +328,10 @@ internal class TicketAutopilot(
     if (action != null && action.x >= 0 && action.y >= 0) {
       return tap(action.x, action.y, action.reason)
     }
-    val selectors = listOf(
-      PhoneAutomationSelector(contentDescriptionContains = "biļete"),
-      PhoneAutomationSelector(contentDescriptionContains = "biljete"),
-      PhoneAutomationSelector(textContains = "biļete"),
-      PhoneAutomationSelector(textContains = "biljete")
-    )
-    if (PhoneAutomationServiceBridge.clickSelectors(TicketScreenConfig.VIVI_PACKAGE, selectors, ACCESSIBILITY_CLICK_TIMEOUT_MILLIS)) {
-      return true
-    }
     return tapFirstTicketCardFallback()
   }
 
   private suspend fun openTicketsTab(xml: String): Boolean {
-    val selectors = listOf(
-      PhoneAutomationSelector(contentDescriptionContains = "Tickets"),
-      PhoneAutomationSelector(textContains = "Tickets"),
-      PhoneAutomationSelector(contentDescriptionContains = "Biļetes"),
-      PhoneAutomationSelector(textContains = "Biļetes")
-    )
-    if (PhoneAutomationServiceBridge.clickSelectors(TicketScreenConfig.VIVI_PACKAGE, selectors, ACCESSIBILITY_CLICK_TIMEOUT_MILLIS)) {
-      return true
-    }
     val action = TicketViviPageEnforcer.recoveryActionForHierarchy(xml)
     if (action != null && action.x >= 0 && action.y >= 0) {
       return tap(action.x, action.y, action.reason)
@@ -400,15 +345,6 @@ internal class TicketAutopilot(
   }
 
   private suspend fun openTimeTicketTab(xml: String): Boolean {
-    val selectors = listOf(
-      PhoneAutomationSelector(contentDescription = "LAIKA BIĻETES"),
-      PhoneAutomationSelector(text = "LAIKA BIĻETES"),
-      PhoneAutomationSelector(contentDescriptionContains = "LAIKA BIĻETES"),
-      PhoneAutomationSelector(textContains = "LAIKA BIĻETES")
-    )
-    if (PhoneAutomationServiceBridge.clickSelectors(TicketScreenConfig.VIVI_PACKAGE, selectors, ACCESSIBILITY_CLICK_TIMEOUT_MILLIS)) {
-      return true
-    }
     val action = TicketViviPageEnforcer.recoveryActionForHierarchy(xml)
     if (action != null && action.x >= 0 && action.y >= 0) {
       return tap(action.x, action.y, action.reason)
@@ -422,17 +358,6 @@ internal class TicketAutopilot(
   }
 
   private suspend fun leaveCartOrCheckout(xml: String): Boolean {
-    val selectors = listOf(
-      PhoneAutomationSelector(contentDescription = "Atpakaļ"),
-      PhoneAutomationSelector(text = "Atpakaļ"),
-      PhoneAutomationSelector(contentDescription = "Atpakal"),
-      PhoneAutomationSelector(text = "Atpakal"),
-      PhoneAutomationSelector(contentDescription = "Back"),
-      PhoneAutomationSelector(text = "Back")
-    )
-    if (PhoneAutomationServiceBridge.clickSelectors(TicketScreenConfig.VIVI_PACKAGE, selectors, ACCESSIBILITY_CLICK_TIMEOUT_MILLIS)) {
-      return true
-    }
     val action = TicketViviPageEnforcer.recoveryActionForHierarchy(xml)
     if (action != null && action.x >= 0 && action.y >= 0) {
       return tap(action.x, action.y, action.reason)
@@ -450,9 +375,6 @@ internal class TicketAutopilot(
   }
 
   private suspend fun goBack(reason: String): Boolean {
-    if (PhoneAutomationServiceBridge.performBack()) {
-      return true
-    }
     val result = runInput("input keyevent KEYCODE_BACK", "ticket_autopilot:$reason")
     if (!result.ok) {
       Log.w(TAG, "ticket_autopilot_back_failed reason=$reason stderr=${result.stderr}")
@@ -504,7 +426,6 @@ internal class TicketAutopilot(
     private const val OVERALL_TIMEOUT_MILLIS = 7_500L
     private const val MAX_STEPS = 10
     private const val STUCK_ACTION_LIMIT = 3
-    private const val ACCESSIBILITY_CLICK_TIMEOUT_MILLIS = 250L
     private const val AUTOPILOT_ROOT_DUMP_TIMEOUT_MILLIS = 4_500L
     private const val FAST_TICKET_DETAIL_MEMORY_MAX_AGE_MILLIS = 10_000L
     private const val TICKETS_TAB_X_FRACTION = 0.375f
