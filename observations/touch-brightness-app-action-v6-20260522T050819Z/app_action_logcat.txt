@@ -1,0 +1,156 @@
+--------- beginning of main
+05-22 08:08:29.576 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=1
+05-22 08:08:30.532 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=454210ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:08:32.304 I/TicketStreamService(16385): ticket_http_request method=POST path=/api/v1/session/start upgrade=
+05-22 08:08:32.306 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_session:session_start_already_active package=com.pv.vivi duration_ms=0
+05-22 08:08:33.904 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:08:35.593 I/TicketStreamService(16385): ticket_event event=session_start_active_revalidated detail=root:TICKET_DETAIL reason=session_start_already_active
+05-22 08:08:35.595 D/TicketStreamService(16385): ticket_viewer_input reason=session_start_already_active
+05-22 08:08:35.597 I/TicketStreamService(16385): ticket_root_hardware_h264_capture_requested width=720 height=1482 bitrate=1200000 video_clients=1
+05-22 08:08:35.939 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=459617ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:08:36.333 I/SupervisorService(16385): phone_automation_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER decision=STARTED enabled=false setup=unknown runtime=disabled touch_enabled=true touch_runtime=panel_sleep
+05-22 08:08:36.356 I/SupervisorService(16385): cpu_frequency_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER enabled=false suspended=false runtime=disabled
+05-22 08:08:36.420 I/SupervisorService(16385): action=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER command_action=ticket_start_server component= success=true message=Ticket remote server start requested
+05-22 08:08:36.799 W/TicketStreamService(16385): ticket_root_active_check_failed reason=foreground_guard state=UNKNOWN_VIVI error=hierarchy_unavailable
+05-22 08:08:36.800 I/TicketStreamService(16385): ticket_event event=active_guard_failed detail=root:UNKNOWN_VIVI
+05-22 08:08:36.800 I/TicketStreamService(16385): ticket_event event=active_guard_inconclusive detail=hierarchy_unavailable
+05-22 08:08:37.868 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:08:37.868 I/TicketStreamService(16385): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 08:08:40.783 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:08:40.783 I/TicketStreamService(16385): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 08:08:41.394 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=465072ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:08:43.382 D/TicketStreamService(16385): ticket_viewer_input reason=browser_activity
+05-22 08:08:43.751 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:08:43.751 I/TicketStreamService(16385): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 08:08:46.626 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:08:46.626 I/TicketStreamService(16385): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 08:08:47.433 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=471111ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:08:49.611 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:08:49.611 I/TicketStreamService(16385): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 08:08:51.851 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:08:51.852 I/TicketStreamService(16385): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 08:08:53.263 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=476940ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:08:54.815 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:08:54.816 I/TicketStreamService(16385): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 08:08:56.118 I/SupervisorService(16385): ticket_service_ensure reason=periodic enabled=true state=ready local=true tunnel=true component=running detail=Local ticket server and tunnel are ready
+05-22 08:08:57.585 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:08:57.585 I/TicketStreamService(16385): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 08:08:58.466 D/TicketStreamService(16385): ticket_viewer_input reason=browser_activity
+05-22 08:08:58.854 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=482532ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:09:00.469 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:09:00.470 I/TicketStreamService(16385): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 08:09:03.314 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:09:03.314 I/TicketStreamService(16385): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 08:09:04.245 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=487923ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:09:06.116 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:09:09.744 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=493422ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:09:10.523 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:09:13.346 D/TicketStreamService(16385): ticket_viewer_input reason=browser_activity
+05-22 08:09:14.692 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:09:15.559 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=499237ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:09:19.004 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:09:20.980 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=504658ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:09:23.250 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:09:26.572 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=510250ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:09:27.612 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=1
+05-22 08:09:28.342 D/TicketStreamService(16385): ticket_viewer_input reason=browser_activity
+05-22 08:09:31.721 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:09:31.832 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=515510ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:09:35.929 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=1
+05-22 08:09:37.327 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=521005ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:09:39.980 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:09:42.615 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=526292ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:09:43.375 D/TicketStreamService(16385): ticket_viewer_input reason=browser_activity
+05-22 08:09:44.161 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:09:48.414 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=532092ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:09:48.456 I/TicketStreamService(16385): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 08:09:51.081 I/TicketStreamService(16385): ticket_event event=stream_epoch_reset detail=session_stop_browser_stop
+05-22 08:09:51.086 I/TicketStreamService(16385): ticket_websocket_close kind=video clients=1
+05-22 08:09:54.235 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=537913ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:09:56.153 I/TicketStreamService(16385): secure_window_capture_bypass_disabled
+05-22 08:09:56.297 I/TicketStreamService(16385): ticket_notification_lockdown_disabled reason=browser_stop
+05-22 08:09:56.297 I/TicketStreamService(16385): ticket_event event=session_stopped detail=browser_stop
+05-22 08:09:56.311 I/TicketStreamService(16385): ticket_event event=clients_closed detail=inactive_stream_health count=1
+05-22 08:09:56.312 I/TicketStreamService(16385): ticket_websocket_close kind=control clients=0
+05-22 08:09:56.334 I/TicketStreamService(16385): ticket_event event=root_hardware_h264_ready_waiting detail=session_stop_browser_stop
+05-22 08:09:56.403 I/SupervisorService(16385): phone_automation_sync trigger=lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION decision=STARTED enabled=false setup=unknown runtime=disabled touch_enabled=true touch_runtime=panel_sleep
+05-22 08:09:56.424 I/SupervisorService(16385): cpu_frequency_sync trigger=lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION enabled=false suspended=false runtime=disabled
+05-22 08:09:56.430 I/SupervisorService(16385): action=lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION command_action= component= success=true message=Phone automation refreshed
+05-22 08:09:58.849 I/SupervisorService(16385): phone_automation_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER decision=STARTED enabled=false setup=unknown runtime=disabled touch_enabled=true touch_runtime=panel_sleep
+05-22 08:09:58.880 I/SupervisorService(16385): cpu_frequency_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER enabled=false suspended=false runtime=restoring_stock
+05-22 08:09:58.893 I/SupervisorService(16385): action=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER command_action=ticket_start_server component= success=true message=Ticket remote server start requested
+05-22 08:10:00.201 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=543878ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:06.444 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=550122ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:13.315 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=556993ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:14.256 I/TicketStreamService(16385): ticket_http_request method=GET path=/api/v1/health upgrade=
+05-22 08:10:14.675 I/TicketStreamService(16385): ticket_http_request method=POST path=/api/v1/session/start upgrade=
+05-22 08:10:14.680 I/TicketStreamService(16385): ticket_event event=session_start_requested detail=root_hardware_h264_available=true root_hardware_h264_state=idle selected_mode=root_hardware_h264
+05-22 08:10:14.691 D/TicketStreamService(16385): ticket_viewer_input reason=session_start_root_hardware_h264_prepare
+05-22 08:10:14.692 I/TicketStreamService(16385): ticket_event event=session_capture_mode_selected detail=mode=root_hardware_h264 fallback=
+05-22 08:10:14.692 I/TicketStreamService(16385): ticket_event event=session_started detail=mode=root_hardware_h264
+05-22 08:10:14.694 I/TicketStreamService(16385): ticket_event event=wake_started detail=session_start_root_hardware_h264_capture
+05-22 08:10:14.982 I/TicketStreamService(16385): ticket_http_request method=GET path=/api/v1/health upgrade=
+05-22 08:10:15.936 I/TicketStreamService(16385): ticket_event event=session_start_maintenance detail=reason=session_start waited_ms=1239 frame_sequence=0
+05-22 08:10:16.185 I/TicketStreamService(16385): ticket_notification_lockdown_enabled reason=session_start
+05-22 08:10:16.228 I/TicketStreamService(16385): ticket_event event=input_command detail=wake_session_start duration_ms=1490 ok=true
+05-22 08:10:16.231 I/TicketStreamService(16385): ticket_event event=screen_wake detail=session_start_root_hardware_h264_capture ok=true duration_ms=1490
+05-22 08:10:16.231 I/TicketStreamService(16385): ticket_event event=wake_phase detail=phase=wake_command elapsed_ms=1536 duration_ms=1536
+05-22 08:10:16.232 I/TicketStreamService(16385): ticket_event event=wake_phase detail=phase=screen_interactive elapsed_ms=1537 duration_ms=1
+05-22 08:10:16.232 I/TicketStreamService(16385): ticket_event event=wake_recent_ticket_detail_fast_ready_stale detail=reason=session_start_root_hardware_h264_capture age_ms=24560
+05-22 08:10:16.235 I/TicketStreamService(16385): ticket_event event=wake_launch_vivi_root detail=session_start_root_hardware_h264_capture
+05-22 08:10:16.652 I/TicketStreamService(16385): secure_window_capture_bypass_enabled
+05-22 08:10:17.474 I/TicketStreamService(16385): ticket_http_request method=GET path=/api/v1/health upgrade=
+05-22 08:10:17.796 I/SupervisorService(16385): phone_automation_sync trigger=lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION decision=STARTED enabled=false setup=unknown runtime=disabled touch_enabled=true touch_runtime=panel_sleep
+05-22 08:10:17.841 I/SupervisorService(16385): cpu_frequency_sync trigger=lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION enabled=false suspended=false runtime=disabled
+05-22 08:10:17.850 I/SupervisorService(16385): action=lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION command_action= component= success=true message=Phone automation refreshed
+05-22 08:10:18.165 I/TicketStreamService(16385): ticket_event event=input_command detail=wake_launch_vivi:session_start_root_hardware_h264_capture duration_ms=1897 ok=true
+05-22 08:10:18.174 I/TicketStreamService(16385): ticket_event event=wake_launch_vivi_root detail=ok=true duration_ms=1897
+05-22 08:10:18.274 I/TicketStreamService(16385): ticket_event event=wake_recovery_relaunch detail=state=UNKNOWN_VIVI reason=session_start_root_hardware_h264_capture
+05-22 08:10:18.274 I/TicketStreamService(16385): ticket_event event=wake_launch_vivi_root detail=wake_recovery_unknown_vivi:session_start_root_hardware_h264_capture
+05-22 08:10:19.261 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=4566ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:20.022 I/TicketStreamService(16385): ticket_http_request method=GET path=/api/v1/health upgrade=
+05-22 08:10:20.213 I/TicketStreamService(16385): ticket_event event=input_command detail=wake_launch_vivi:wake_recovery_unknown_vivi:session_start_root_hardware_h264_capture duration_ms=1927 ok=true
+05-22 08:10:20.218 I/TicketStreamService(16385): ticket_event event=wake_launch_vivi_root detail=ok=true duration_ms=1927
+05-22 08:10:20.387 D/TouchBrightness(16385): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=5692ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:20.387 D/TouchBrightness(16385): touch_brightness_debug reason=non_touch_input_event:ticket:wake_start:session_start_root_hardware_h264_capture touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=5692ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:21.650 I/SupervisorService(16385): ticket_service_ensure reason=lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION enabled=true state=ready local=true tunnel=true component=running detail=Local ticket server and tunnel are ready
+05-22 08:10:22.635 I/TicketStreamService(16385): ticket_http_request method=GET path=/api/v1/health upgrade=
+05-22 08:10:23.983 I/SupervisorService(16385): phone_automation_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER decision=STARTED enabled=false setup=unknown runtime=disabled touch_enabled=true touch_runtime=panel_sleep
+05-22 08:10:24.008 I/SupervisorService(16385): cpu_frequency_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER enabled=false suspended=false runtime=disabled
+05-22 08:10:24.027 I/SupervisorService(16385): action=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER command_action=ticket_start_server component= success=true message=Ticket remote server start requested
+05-22 08:10:24.787 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=10069ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:25.189 I/TicketStreamService(16385): ticket_http_request method=GET path=/api/v1/health upgrade=
+05-22 08:10:25.252 I/TicketStreamService(16385): ticket_event event=wake_phase detail=phase=vivi_foreground elapsed_ms=10557 duration_ms=9020
+05-22 08:10:25.252 I/TicketStreamService(16385): ticket_event event=wake_phase detail=phase=ticket_ready elapsed_ms=10557 duration_ms=0
+05-22 08:10:25.252 I/TicketStreamService(16385): ticket_event event=root_hardware_h264_vivi_prepare detail=TICKET_DETAIL:wake_root_ticket_detail:success=true
+05-22 08:10:25.252 I/TicketStreamService(16385): ticket_event event=ticket_state_over_1s detail=starting duration_ms=10573 reason=root_hardware_h264_prepare_session_start_root_hardware_h264_capture
+05-22 08:10:25.252 I/TicketStreamService(16385): ticket_event event=wake_finished detail=success=true reason=ticket_ready total_ms=10557 slowest=vivi_foreground:9020
+05-22 08:10:25.252 I/TicketStreamService(16385): ticket_event event=hardware_h264_wake_frames_allowed detail=session_start_root_hardware_h264_capture
+05-22 08:10:25.258 I/TicketStreamService(16385): ticket_event event=ticket_state_event detail=seq=3 state=raw_ticket reason=session_start_raw_ticket_ready request= epoch=0 frame=1 min=1
+05-22 08:10:25.820 D/TouchBrightness(16385): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=11100ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:25.822 D/TouchBrightness(16385): touch_brightness_debug reason=non_touch_input_event:ticket:wake_session_start touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=11103ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:26.315 I/TicketStreamService(16385): ticket_event event=client_detached detail=browser_left_ticket_screen
+05-22 08:10:26.315 I/TicketStreamService(16385): ticket_event event=ticket_state_over_1s detail=starting duration_ms=1057 reason=root_hardware_h264_waiting_first_visible_frame
+05-22 08:10:26.315 I/TicketStreamService(16385): ticket_event event=stream_epoch_reset detail=client_detached_browser_left_ticket_screen
+05-22 08:10:27.726 I/TicketStreamService(16385): ticket_http_request method=GET path=/api/v1/health upgrade=
+05-22 08:10:30.211 I/TicketStreamService(16385): secure_window_capture_bypass_disabled
+05-22 08:10:30.267 I/TicketStreamService(16385): ticket_http_request method=GET path=/api/v1/health upgrade=
+05-22 08:10:30.487 I/TicketStreamService(16385): ticket_notification_lockdown_disabled reason=browser_left_ticket_screen
+05-22 08:10:30.500 I/TicketStreamService(16385): ticket_event event=root_capture_ready_waiting detail=client_detached_browser_left_ticket_screen
+05-22 08:10:30.625 I/SupervisorService(16385): phone_automation_sync trigger=lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION decision=STARTED enabled=false setup=unknown runtime=disabled touch_enabled=true touch_runtime=panel_sleep
+05-22 08:10:30.666 I/SupervisorService(16385): cpu_frequency_sync trigger=lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION enabled=false suspended=false runtime=disabled
+05-22 08:10:30.678 I/SupervisorService(16385): action=lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION command_action= component= success=true message=Phone automation refreshed
+05-22 08:10:30.793 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=16069ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:31.549 D/TouchBrightness(16385): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=16825ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:31.743 D/TouchBrightness(16385): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=17019ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:31.744 D/TouchBrightness(16385): touch_brightness_debug reason=non_touch_input_event:ticket:wake_session_start:active touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=17020ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:32.812 I/TicketStreamService(16385): ticket_http_request method=GET path=/api/v1/health upgrade=
+05-22 08:10:35.335 I/TicketStreamService(16385): ticket_http_request method=GET path=/api/v1/health upgrade=
+05-22 08:10:36.846 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=21868ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:37.234 D/TouchBrightness(16385): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=22256ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:37.236 D/TouchBrightness(16385): touch_brightness_debug reason=non_touch_input_event:ticket:wake_session_start:active touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=22258ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:37.917 I/TicketStreamService(16385): ticket_http_request method=GET path=/api/v1/health upgrade=
+05-22 08:10:40.907 I/TicketStreamService(16385): ticket_http_request method=GET path=/api/v1/health upgrade=
+05-22 08:10:43.022 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=27788ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:43.302 D/TouchBrightness(16385): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=28068ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 08:10:43.304 D/TouchBrightness(16385): touch_brightness_debug reason=non_touch_input_event:ticket:wake_session_start:active touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=28070ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true

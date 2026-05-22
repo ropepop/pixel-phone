@@ -1,0 +1,753 @@
+{
+  "accrescentInstalled": true,
+  "autoStartAllowed": true,
+  "autoStartBlockedReason": null,
+  "automation": {
+    "fallbackPolicy": "fail_fast",
+    "lastRootReadinessAgoMillis": 2753,
+    "lastRootReadinessDurationMillis": 0,
+    "lastRootReadinessResult": "active_guard:foreground_guard:fast_empty:UNKNOWN_VIVI",
+    "nonRootAccessibilityAllowed": false,
+    "ticketAutomationMode": "root_only"
+  },
+  "brightnessGuard": {
+    "active": false,
+    "currentDisplayPercent": null,
+    "currentPanelBrightness": null,
+    "currentPanelMaxBrightness": null,
+    "failures": 0,
+    "lastEnforcedAgoMillis": null,
+    "lastReason": "session_start_already_active",
+    "message": "Ticket brightness guard parked because touch brightness owns panel brightness",
+    "targetPercent": 1
+  },
+  "clients": 2,
+  "controlCodeMode": {
+    "active": false,
+    "enteredAgoMillis": null,
+    "entryId": 0,
+    "transitionGraceActive": false,
+    "transitionGraceRemainingMillis": 0
+  },
+  "controlCodeRequest": {
+    "completedAgoMillis": null,
+    "duplicateResults": 0,
+    "lastDuplicateAgoMillis": null,
+    "lastDuplicateRequestId": null,
+    "phases": {},
+    "reason": null,
+    "requestId": null,
+    "status": "idle",
+    "totalDurationMillis": null,
+    "value": null
+  },
+  "controlCodeSnap": {
+    "lastAccepted": null,
+    "lastCandidateZone": null,
+    "lastCompletedAgoMillis": null,
+    "lastDetectedButtonBounds": null,
+    "lastFinalX": null,
+    "lastFinalY": null,
+    "lastRawX": null,
+    "lastRawY": null,
+    "lastReason": null,
+    "lastSnapTarget": null
+  },
+  "controlExitCleanup": {
+    "lastCloseAction": null,
+    "lastCompletedAgoMillis": null,
+    "lastDetectedState": null,
+    "lastDetectorSource": null,
+    "lastDurationMillis": null,
+    "lastFreshFrameRequested": false,
+    "lastFreshFrameVerified": false,
+    "lastFreshFrameVerifiedAgoMillis": null,
+    "lastReason": null,
+    "lastSucceeded": null,
+    "lastSurfaceProbeResult": null,
+    "lastVerificationResult": null
+  },
+  "ffmpeg": {
+    "active": false,
+    "available": false,
+    "binaryPath": "",
+    "binarySha": null,
+    "bitrate": null,
+    "captureHelperAvailable": false,
+    "captureHelperMessage": "FFmpeg/raw capture has been removed",
+    "captureHelperState": "unavailable",
+    "captureMethod": "removed",
+    "captureProcessCount": 0,
+    "captureSource": "removed",
+    "chrootPath": "",
+    "droppedFrames": 0,
+    "encoderName": null,
+    "estimatedBitrate": 0,
+    "ffmpegProcessCount": 0,
+    "firstVisibleRawFrameAgoMillis": null,
+    "fps": null,
+    "frameFeederActive": false,
+    "frames": 0,
+    "height": null,
+    "keyFrames": 0,
+    "lastCaptureCleanupResult": "not_run",
+    "lastExitAgoMillis": null,
+    "lastExitReason": null,
+    "lastFfmpegWriteDurationMillis": null,
+    "lastFrameAgoMillis": null,
+    "lastFrameBytes": 0,
+    "lastFrameTotalDurationMillis": null,
+    "lastRawFrameVisible": false,
+    "lastRootFrameReadDurationMillis": null,
+    "lastStartAgoMillis": null,
+    "lastSuppressedRawFrameAgoMillis": null,
+    "message": "FFmpeg/raw capture has been removed",
+    "mode": "removed",
+    "restartCount": 0,
+    "staleCaptureProcessCount": 0,
+    "state": "unavailable",
+    "stderrTail": "",
+    "suppressedRawFrames": 0,
+    "version": null,
+    "width": null
+  },
+  "hardwareH264": {
+    "active": true,
+    "available": true,
+    "bitrate": 1200000,
+    "blankFrameFailures": 0,
+    "captureHelperAvailable": true,
+    "captureHelperMessage": "app_process is available; hardware H.264 helper will be verified at stream start",
+    "captureHelperState": "installed",
+    "captureMethod": "app_process_mediacodec_surface_secure_screen_capture",
+    "captureSource": "root_display_capture",
+    "colorCorrection": "red_blue_swap_gpu_paint",
+    "colorStandard": "bt709_limited_sdr",
+    "droppedFrames": 0,
+    "encoderName": "MediaCodec video/avc",
+    "encoderProcessCount": 1,
+    "estimatedBitrate": 11219180,
+    "fps": 4,
+    "frames": 587,
+    "height": 1482,
+    "keyFrames": 74,
+    "lastCaptureCleanupResult": "post_start_sanity_ok:encoder=1 wrappers=2",
+    "lastCaptureDurationMillis": 17,
+    "lastDrawDurationMillis": 0,
+    "lastEncodeDurationMillis": 10,
+    "lastExitAgoMillis": null,
+    "lastExitReason": null,
+    "lastFrameAgoMillis": 67,
+    "lastFrameBytes": 3113,
+    "lastFrameTotalDurationMillis": 82,
+    "lastStartAgoMillis": 143397,
+    "lastVisibilityCheckResult": "visible",
+    "message": "Hardware H.264 capture is active",
+    "protectedContentCaptureEnabled": true,
+    "restartCount": 0,
+    "secureLayerCaptureEnabled": true,
+    "staleCaptureProcessCount": 0,
+    "state": "active",
+    "stderrTail": "tected_content=true method=secure_screen_capture\nMETRIC capture_ms=16 draw_ms=0 encode_ms=2 frame_ms=18 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=14 draw_ms=0 encode_ms=1 frame_ms=15 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=21 draw_ms=0 encode_ms=11 frame_ms=32 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=18 draw_ms=1 encode_ms=6 frame_ms=25 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=11 draw_ms=0 encode_ms=1 frame_ms=12 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=14 draw_ms=1 encode_ms=1 frame_ms=16 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=15 draw_ms=1 encode_ms=1 frame_ms=17 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=14 draw_ms=0 encode_ms=4 frame_ms=18 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=21 draw_ms=1 encode_ms=1 frame_ms=23 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=13 draw_ms=0 encode_ms=6 frame_ms=19 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=27 draw_ms=1 encode_ms=2 frame_ms=30 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=25 draw_ms=1 encode_ms=1 frame_ms=27 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=22 draw_ms=0 encode_ms=1 frame_ms=23 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=20 draw_ms=0 encode_ms=2 frame_ms=22 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=19 draw_ms=0 encode_ms=1 frame_ms=20 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=13 draw_ms=0 encode_ms=1 frame_ms=14 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=15 draw_ms=1 encode_ms=1 frame_ms=17 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=21 draw_ms=1 encode_ms=2 frame_ms=24 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=20 draw_ms=1 encode_ms=1 frame_ms=22 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=13 draw_ms=0 encode_ms=4 frame_ms=17 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=15 draw_ms=1 encode_ms=7 frame_ms=23 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=13 draw_ms=1 encode_ms=1 frame_ms=15 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=12 draw_ms=1 encode_ms=2 frame_ms=15 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=16 draw_ms=2 encode_ms=1 frame_ms=19 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture\nMETRIC capture_ms=17 draw_ms=0 encode_ms=10 frame_ms=27 fps_target=4 visibility=visible secure_layers=true protected_content=true method=secure_screen_capture",
+    "width": 720
+  },
+  "inactivityActive": true,
+  "inactivityRemainingMillis": 596099,
+  "inactivityTimeoutMillis": 600000,
+  "inputGate": {
+    "active": true,
+    "allowed": false,
+    "duplicateInputResults": 0,
+    "lastCommandCompletedAgoMillis": 150105,
+    "lastCommandDurationMillis": 1609,
+    "lastCommandReason": "wake_launch_vivi:wake_recovery_unknown_vivi:session_start_root_hardware_h264_capture",
+    "lastDecisionAgoMillis": null,
+    "lastDuplicateInputAgoMillis": null,
+    "lastDuplicateInputId": null,
+    "lastInputAccepted": null,
+    "lastInputCompletedAgoMillis": null,
+    "lastInputId": null,
+    "lastInputKind": null,
+    "lastInputReason": null,
+    "lastInputTotalDurationMillis": null,
+    "reason": "no_active_control",
+    "tapOnly": true
+  },
+  "installedStorePackages": [
+    "app.accrescent.client",
+    "app.grapheneos.apps",
+    "com.aurora.store",
+    "org.fdroid.fdroid"
+  ],
+  "loading": {
+    "lastCompletedAgoMillis": null,
+    "lastDurationMillis": null,
+    "lastOverBudgetAgoMillis": null,
+    "lastOverBudgetDurationMillis": null,
+    "lastOverBudgetPhase": null,
+    "lastPhase": null
+  },
+  "message": "Ticket session is active through hardware H.264 capture",
+  "notificationLockdown": {
+    "active": true,
+    "lastChangedAgoMillis": 153844,
+    "reason": "active:session_start"
+  },
+  "ok": true,
+  "page": {
+    "cachePolicy": "no-store_html_clear_cache_only",
+    "htmlVersion": "ticket-stream-2026-05-19-raw-ticket-recovery-v201",
+    "lastBootstrapRequestAgoMillis": null,
+    "lastCacheCleanupRequestAgoMillis": null,
+    "lastClientPageVersion": null,
+    "lastClientPageVersionAgoMillis": null,
+    "lastRootHtmlRequestAgoMillis": null
+  },
+  "phoneUptimeMillis": 1587934230,
+  "pixelTicketStateEvent": {
+    "eventSeq": 1,
+    "frameSequence": 1,
+    "lastSentAgoMillis": 143399,
+    "minFrameSequence": 1,
+    "reason": "session_start_raw_ticket_ready",
+    "requestId": "",
+    "streamEpoch": 1587790828,
+    "ticketState": "raw_ticket"
+  },
+  "recentClientTelemetry": [],
+  "recentEvents": [
+    {
+      "atAgoMillis": 120151,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 117290,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 117289,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 114508,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 114508,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 112499,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 112499,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 109533,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 106473,
+      "detail": "root:UNKNOWN_VIVI",
+      "event": "active_guard_failed"
+    },
+    {
+      "atAgoMillis": 106467,
+      "detail": "root hierarchy dump timed out after 3000 ms",
+      "event": "active_guard_inconclusive"
+    },
+    {
+      "atAgoMillis": 105521,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 105520,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 103450,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=1",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 103450,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 100489,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 100489,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 97515,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 97512,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 94720,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 94720,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 91877,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 91877,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 88996,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 88994,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 86121,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 86121,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 83339,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 83339,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 80443,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 80443,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 78443,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 73987,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=4",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 69145,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 64755,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 61941,
+      "detail": "root:UNKNOWN_VIVI",
+      "event": "active_guard_failed"
+    },
+    {
+      "atAgoMillis": 61941,
+      "detail": "hierarchy_unavailable",
+      "event": "active_guard_inconclusive"
+    },
+    {
+      "atAgoMillis": 61032,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=1",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 61032,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 58107,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 58106,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 55054,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 55054,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 53051,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 53051,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 50256,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 50249,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 47345,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 47345,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 44529,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 44529,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 41655,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 41654,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 38813,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 38813,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 35901,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 35901,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 32992,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 28458,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 25663,
+      "detail": "root:UNKNOWN_VIVI",
+      "event": "active_guard_failed"
+    },
+    {
+      "atAgoMillis": 25662,
+      "detail": "hierarchy_unavailable",
+      "event": "active_guard_inconclusive"
+    },
+    {
+      "atAgoMillis": 24656,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=1",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 24655,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 22840,
+      "detail": "reason=active_session:session_start_already_active package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 21791,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 21791,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 19389,
+      "detail": "root:TICKET_DETAIL reason=session_start_already_active",
+      "event": "session_start_active_revalidated"
+    },
+    {
+      "atAgoMillis": 18887,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 18887,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 16121,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 16120,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 13350,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 13349,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 10583,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 10582,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 7654,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 7653,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 4789,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 4788,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    },
+    {
+      "atAgoMillis": 2762,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 2753,
+      "detail": "reason=foreground_guard",
+      "event": "active_guard_inconclusive_backoff"
+    }
+  ],
+  "recovery": {
+    "completedAgoMillis": null,
+    "currentMode": null,
+    "currentReason": null,
+    "lastResult": "none",
+    "lastStep": "idle",
+    "pendingMode": null,
+    "pendingReason": null,
+    "startedAgoMillis": null,
+    "state": "idle"
+  },
+  "serverRunning": true,
+  "serverVersion": "ticket-stream-2026-05-19-raw-ticket-recovery-v201",
+  "serviceReadiness": {
+    "componentStatus": "running",
+    "detail": "Local ticket server and tunnel are ready",
+    "enabled": true,
+    "lastEnsureAgeMillis": 35283,
+    "lastEnsureReason": "lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION",
+    "lastEnsureResult": "Local ticket server and tunnel are ready",
+    "lastEnsureSucceeded": true,
+    "localServerReachable": true,
+    "state": "ready",
+    "tunnelReady": true
+  },
+  "sessionState": "live",
+  "streamActive": true,
+  "streamPipeline": {
+    "captureMode": "root_hardware_h264",
+    "clients": [
+      {
+        "generation": 1,
+        "kind": "control",
+        "pageId": null,
+        "pageVersion": null,
+        "viewerId": null
+      },
+      {
+        "generation": 2,
+        "kind": "video",
+        "pageId": null,
+        "pageVersion": null,
+        "viewerId": null
+      }
+    ],
+    "closedSlowVideoClients": 0,
+    "codec": "avc1.42C028",
+    "colorCorrection": "red_blue_swap_gpu_paint",
+    "colorStandard": "bt709_limited_sdr",
+    "configuredBitrate": 1200000,
+    "configuredHeight": 1482,
+    "configuredSourceHeight": 2424,
+    "configuredSourceWidth": 1080,
+    "configuredWidth": 720,
+    "controlClients": 1,
+    "droppedVideoFrames": 0,
+    "encodedFrames": 587,
+    "encoderRunning": true,
+    "estimatedSendBitrate": 135096,
+    "frameEnvelope": "tsf2",
+    "frameSequence": 587,
+    "freshKeyFrameCacheMaxAgeMillis": 750,
+    "keyFrames": 74,
+    "lastClientGeneration": 2,
+    "lastConfigSentAgoMillis": 143401,
+    "lastEncoderStartAgoMillis": 19384,
+    "lastFrameBytes": 3142,
+    "lastFrameEncodedAgoMillis": 67,
+    "lastFrameSentAgoMillis": 67,
+    "lastKeyFrameBytes": 113296,
+    "lastKeyFrameEncodedAgoMillis": 150,
+    "lastKeyFrameRequestedAgoMillis": 143197,
+    "lastKeyFrameSequence": 585,
+    "lastRootH264BlankProbeAgoMillis": 140646,
+    "lastVideoClientConnectedAgoMillis": 156290,
+    "postCleanupFreshFrameVerificationReason": null,
+    "postCleanupFreshFrameVerifiedAgoMillis": null,
+    "qualityProfile": "hardware_h264_light_marker_low_latency",
+    "replacedClientSockets": 0,
+    "rootH264BlankProbeFailures": 0,
+    "rootH264BlankProbeRecoveries": 0,
+    "rootH264BlankProbeResult": "visible",
+    "secureWindowCaptureBypassActive": true,
+    "secureWindowCaptureBypassMessage": "Secure-window capture bypass is active",
+    "sentFrames": 587,
+    "slowVideoWrites": 0,
+    "sourceTopCrop": 200,
+    "sourceVisibleHeight": 2224,
+    "streamConfigured": true,
+    "streamEpoch": 1587790828,
+    "transport": "hardware-h264-annexb",
+    "videoClients": 1
+  },
+  "streamVerdict": "live",
+  "ticketState": {
+    "hardResetCount": 0,
+    "lastHardResetAgoMillis": null,
+    "lastHardResetReason": null,
+    "lastOverBudgetDurationMillis": 2003,
+    "lastOverBudgetReason": "root_hardware_h264_waiting_first_visible_frame",
+    "lastOverBudgetState": "starting",
+    "lastReason": "session_start_already_active",
+    "state": "live",
+    "stateAgeMillis": 141395
+  },
+  "visibleFrame": {
+    "codec": "avc1.42C028",
+    "lastFrameAgoMillis": 67,
+    "lastKeyFrameAgoMillis": 150,
+    "message": "Frames are being sent to connected viewers"
+  },
+  "viviInstalled": true,
+  "viviState": {
+    "observedAgoMillis": 2762,
+    "reason": "active_guard:foreground_guard",
+    "source": "fast_empty",
+    "state": "UNKNOWN_VIVI",
+    "ticketId": null
+  },
+  "wake": {
+    "budgetMillis": 5000,
+    "lastFailureReason": null,
+    "lastInteractiveMillis": 1739,
+    "lastReason": "session_start_root_hardware_h264_capture",
+    "lastSlowestPhase": "vivi_foreground",
+    "lastSlowestPhaseDurationMillis": 10257,
+    "lastStartedAgoMillis": 155398,
+    "lastSucceeded": true,
+    "lastTicketReadyMillis": 11996,
+    "lastTotalMillis": 11996,
+    "lastViviForegroundMillis": 11996,
+    "lastWakeCommandMillis": 1738
+  }
+}

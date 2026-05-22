@@ -13,6 +13,8 @@ object TicketScreenConfig {
   const val VIVI_LAUNCH_ACTIVITY = "com.pv.vivi/.MainActivity"
   const val RIGAS_SATIKSME_PACKAGE = "com.flutter.rspassenger"
   const val RIGAS_SATIKSME_LAUNCH_ACTIVITY = "com.flutter.rspassenger/.MainActivity"
+  const val TICKET_QR_OWNER_TICKET = "ticket"
+  const val TICKET_QR_OWNER_RIGAS_SATIKSME = "rigassatiksme"
   const val TICKET_QR_APP_VIVI = "vivi"
   const val TICKET_QR_APP_RIGAS_SATIKSME = "rigas_satiksme"
   const val TICKET_QR_FLOW_CONTROL_CODE = "control_code"
@@ -66,6 +68,9 @@ data class TicketStreamHealth(
   val inactivityRemainingMillis: Long,
   val autoStartAllowed: Boolean = true,
   val autoStartBlockedReason: String? = null,
+  val lastSessionReuseReason: String? = null,
+  val lastSessionReuseDurationMillis: Long? = null,
+  val lastSessionReuseAgoMillis: Long? = null,
   val serviceReadiness: TicketServiceReadinessHealth = TicketServiceReadinessHealth(),
   val inputGate: TicketInputGateHealth = TicketInputGateHealth(),
   val controlCodeSnap: TicketControlCodeSnapHealth = TicketControlCodeSnapHealth(),
@@ -376,8 +381,23 @@ data class TicketControlCodeRequestHealth(
   val status: String = "idle",
   val reason: String? = null,
   val value: String? = null,
+  val commandOwner: String? = null,
+  val commandApp: String? = null,
+  val commandFlow: String? = null,
+  val lastRejectedOwner: String? = null,
+  val lastRejectedApp: String? = null,
+  val lastRejectedFlow: String? = null,
+  val lastRejectedReason: String? = null,
+  val lastRejectedAgoMillis: Long? = null,
   val totalDurationMillis: Long? = null,
   val phases: Map<String, Long> = emptyMap(),
+  val rootObservationMillis: Long? = null,
+  val visualMarkerMillis: Long? = null,
+  val resultProofMillis: Long? = null,
+  val browserCaptureAckMillis: Long? = null,
+  val browserCaptureReason: String? = null,
+  val browserCaptureAgoMillis: Long? = null,
+  val resultDeliveryMillis: Long? = null,
   val completedAgoMillis: Long? = null,
   val duplicateResults: Long = 0L,
   val lastDuplicateRequestId: String? = null,

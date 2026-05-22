@@ -43,6 +43,7 @@ public final class TicketRootHardwareH264CaptureMain {
   private static final int CONTROL_CODE_VISUAL_SAMPLE_WIDTH = 48;
   private static final int CONTROL_CODE_VISUAL_SAMPLE_HEIGHT = 72;
   private static final long CONTROL_CODE_VISUAL_PROBE_MILLIS = 2_500L;
+  private static final long CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS = 150L;
   private static final String PNG_BASE64_BEGIN = "PNG_BASE64_BEGIN";
   private static final String PNG_BASE64_END = "PNG_BASE64_END";
 
@@ -79,6 +80,7 @@ public final class TicketRootHardwareH264CaptureMain {
     AtomicBoolean syncFrameRequested = new AtomicBoolean(false);
     AtomicLong burstUntilMillis = new AtomicLong(SystemClock.elapsedRealtime() + burstHoldMillis);
     AtomicLong controlCodeVisualProbeUntilMillis = new AtomicLong(0L);
+    AtomicLong controlCodeVisualProbeLastReportMillis = new AtomicLong(0L);
     AtomicReference<String> controlCodeVisualProbeReason = new AtomicReference<>("idle");
     Thread commandThread = null;
     try {
@@ -103,7 +105,7 @@ public final class TicketRootHardwareH264CaptureMain {
       encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
       inputSurface = encoder.createInputSurface();
       encoder.start();
-      commandThread = startCommandReader(syncFrameRequested, burstUntilMillis, burstHoldMillis, controlCodeVisualProbeUntilMillis, controlCodeVisualProbeReason);
+      commandThread = startCommandReader(syncFrameRequested, burstUntilMillis, burstHoldMillis, controlCodeVisualProbeUntilMillis, controlCodeVisualProbeLastReportMillis, controlCodeVisualProbeReason);
 
       Rect sourceCrop = new Rect(0, cropTopSource, sourceWidth, sourceHeight);
       Rect destination = new Rect(0, 0, width, height);
@@ -152,10 +154,18 @@ public final class TicketRootHardwareH264CaptureMain {
           }
         }
         if (started <= controlCodeVisualProbeUntilMillis.get()) {
-          if (frameLooksLikeControlCodeResult(source.bitmap, sourceCrop)) {
+          String state = classifyControlCodeVisualState(source.bitmap, sourceCrop);
+          if (state.equals("generated")) {
             controlCodeVisualProbeUntilMillis.set(0L);
             System.err.println(
               "CONTROL_CODE_VISUAL result=generated reason=" + safeDiagnosticValue(controlCodeVisualProbeReason.get()) +
+                " method=h264_bitmap_probe"
+            );
+          } else if (started - controlCodeVisualProbeLastReportMillis.get() >= CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS) {
+            controlCodeVisualProbeLastReportMillis.set(started);
+            System.err.println(
+              "CONTROL_CODE_VISUAL result=" + state +
+                " reason=" + safeDiagnosticValue(controlCodeVisualProbeReason.get()) +
                 " method=h264_bitmap_probe"
             );
           }
@@ -220,6 +230,7 @@ public final class TicketRootHardwareH264CaptureMain {
     AtomicLong burstUntilMillis,
     long burstHoldMillis,
     AtomicLong controlCodeVisualProbeUntilMillis,
+    AtomicLong controlCodeVisualProbeLastReportMillis,
     AtomicReference<String> controlCodeVisualProbeReason
   ) {
     Thread thread = new Thread(() -> {
@@ -234,6 +245,7 @@ public final class TicketRootHardwareH264CaptureMain {
             extendBurst(burstUntilMillis, burstHoldMillis);
           } else if (cmd.equals("control_code_visual_probe")) {
             controlCodeVisualProbeReason.set("control_code_after_ok");
+            controlCodeVisualProbeLastReportMillis.set(0L);
             controlCodeVisualProbeUntilMillis.set(SystemClock.elapsedRealtime() + CONTROL_CODE_VISUAL_PROBE_MILLIS);
             extendBurst(burstUntilMillis, burstHoldMillis);
           }
@@ -415,7 +427,7 @@ public final class TicketRootHardwareH264CaptureMain {
     }
   }
 
-  private static boolean frameLooksLikeControlCodeResult(Bitmap source, Rect sourceCrop) {
+  private static String classifyControlCodeVisualState(Bitmap source, Rect sourceCrop) {
     Bitmap readableSource = source;
     boolean copiedSource = false;
     Bitmap probe = Bitmap.createBitmap(CONTROL_CODE_VISUAL_SAMPLE_WIDTH, CONTROL_CODE_VISUAL_SAMPLE_HEIGHT, Bitmap.Config.ARGB_8888);
@@ -431,54 +443,145 @@ public final class TicketRootHardwareH264CaptureMain {
       canvas.drawColor(Color.BLACK);
       canvas.drawBitmap(readableSource, sourceCrop, new Rect(0, 0, CONTROL_CODE_VISUAL_SAMPLE_WIDTH, CONTROL_CODE_VISUAL_SAMPLE_HEIGHT), paint);
 
-      int sampled = 0;
-      int dark = 0;
-      int light = 0;
-      int transitions = 0;
-      int previousClass = -1;
-      int denseRows = 0;
-      for (int y = 6; y < 45; y++) {
-        int rowDark = 0;
-        int rowLight = 0;
-        previousClass = -1;
-        for (int x = 5; x < CONTROL_CODE_VISUAL_SAMPLE_WIDTH - 5; x++) {
-          int luminance = luminance(probe.getPixel(x, y));
-          int cls = luminance <= 85 ? 0 : (luminance >= 170 ? 1 : 2);
-          if (cls == 0) {
-            dark += 1;
-            rowDark += 1;
-          } else if (cls == 1) {
-            light += 1;
-            rowLight += 1;
-          }
-          if ((cls == 0 || cls == 1) && previousClass >= 0 && cls != previousClass) {
-            transitions += 1;
-          }
-          if (cls == 0 || cls == 1) {
-            previousClass = cls;
-          }
-          sampled += 1;
-        }
-        if (rowDark >= 5 && rowLight >= 8) {
-          denseRows += 1;
-        }
+      if (frameHasControlCodeInputPopup(probe)) {
+        return "control_popup";
       }
-      if (sampled == 0) {
-        return false;
+      if (frameHasGeneratedControlCodeResultChip(probe)) {
+        return "generated";
       }
-      double darkRatio = dark / (double) sampled;
-      double lightRatio = light / (double) sampled;
-      double transitionRatio = transitions / (double) sampled;
-      return darkRatio >= 0.05 &&
-        darkRatio <= 0.38 &&
-        lightRatio >= 0.20 &&
-        transitionRatio >= 0.11 &&
-        denseRows >= 14;
+      if (frameHasRawTicketCodeGraphic(probe)) {
+        return "raw_ticket";
+      }
+      return "unknown";
     } finally {
       probe.recycle();
       if (copiedSource && readableSource != null) {
         readableSource.recycle();
       }
+    }
+  }
+
+  private static boolean frameHasControlCodeInputPopup(Bitmap probe) {
+    VisualStats dialog = visualStats(probe, 8, 30, 40, 45);
+    VisualStats inputLine = visualStats(probe, 13, 38, 36, 41);
+    boolean dialogVisible = dialog.mean >= 125.0 &&
+      dialog.lightRatio >= 0.46 &&
+      dialog.darkRatio <= 0.28 &&
+      dialog.contrast <= 95.0;
+    boolean inputLineVisible = inputLine.darkRatio >= 0.08 &&
+      inputLine.contrast >= 22.0;
+    return dialogVisible && (frameHasControlCodePopupOrangeOkButton(probe) || inputLineVisible);
+  }
+
+  private static boolean frameHasControlCodePopupOrangeOkButton(Bitmap probe) {
+    int sampled = 0;
+    int orange = 0;
+    for (int y = 39; y < 44; y++) {
+      for (int x = 31; x < 42; x++) {
+        int pixel = probe.getPixel(x, y);
+        int red = (pixel >> 16) & 0xff;
+        int green = (pixel >> 8) & 0xff;
+        int blue = pixel & 0xff;
+        if (red >= 155 && green >= 80 && green <= 190 && blue <= 95 && red - green >= 20 && green - blue >= 25) {
+          orange += 1;
+        }
+        sampled += 1;
+      }
+    }
+    return sampled > 0 && orange / (double) sampled >= 0.08;
+  }
+
+  private static boolean frameHasGeneratedControlCodeResultChip(Bitmap probe) {
+    int sampled = 0;
+    int dark = 0;
+    int light = 0;
+    long sum = 0L;
+    long sumSquares = 0L;
+    int chipRows = 0;
+    for (int y = 36; y < 40; y++) {
+      int rowDark = 0;
+      for (int x = 7; x < CONTROL_CODE_VISUAL_SAMPLE_WIDTH - 7; x++) {
+        int luminance = luminance(probe.getPixel(x, y));
+        sum += luminance;
+        sumSquares += (long) luminance * luminance;
+        if (luminance <= 80) {
+          dark += 1;
+          rowDark += 1;
+        }
+        if (luminance >= 175) {
+          light += 1;
+        }
+        sampled += 1;
+      }
+      if (rowDark >= 30) {
+        chipRows += 1;
+      }
+    }
+    if (sampled == 0) {
+      return false;
+    }
+    double mean = sum / (double) sampled;
+    double variance = (sumSquares / (double) sampled) - (mean * mean);
+    double contrast = Math.sqrt(Math.max(0.0, variance));
+    double darkRatio = dark / (double) sampled;
+    double lightRatio = light / (double) sampled;
+    return darkRatio >= 0.58 &&
+      lightRatio <= 0.42 &&
+      contrast >= 60.0 &&
+      chipRows >= 3;
+  }
+
+  private static boolean frameHasRawTicketCodeGraphic(Bitmap probe) {
+    VisualStats code = visualStats(probe, 8, 14, 40, 34);
+    return code.darkRatio >= 0.14 &&
+      code.lightRatio >= 0.18 &&
+      code.contrast >= 45.0;
+  }
+
+  private static VisualStats visualStats(Bitmap probe, int left, int top, int right, int bottom) {
+    int sampled = 0;
+    int dark = 0;
+    int light = 0;
+    long sum = 0L;
+    long sumSquares = 0L;
+    for (int y = Math.max(0, top); y < Math.min(CONTROL_CODE_VISUAL_SAMPLE_HEIGHT, bottom); y++) {
+      for (int x = Math.max(0, left); x < Math.min(CONTROL_CODE_VISUAL_SAMPLE_WIDTH, right); x++) {
+        int luminance = luminance(probe.getPixel(x, y));
+        sum += luminance;
+        sumSquares += (long) luminance * luminance;
+        if (luminance <= 80) {
+          dark += 1;
+        }
+        if (luminance >= 175) {
+          light += 1;
+        }
+        sampled += 1;
+      }
+    }
+    if (sampled == 0) {
+      return new VisualStats(0.0, 0.0, 0.0, 0.0);
+    }
+    double mean = sum / (double) sampled;
+    double variance = (sumSquares / (double) sampled) - (mean * mean);
+    return new VisualStats(
+      mean,
+      Math.sqrt(Math.max(0.0, variance)),
+      dark / (double) sampled,
+      light / (double) sampled
+    );
+  }
+
+  private static final class VisualStats {
+    final double mean;
+    final double contrast;
+    final double darkRatio;
+    final double lightRatio;
+
+    VisualStats(double mean, double contrast, double darkRatio, double lightRatio) {
+      this.mean = mean;
+      this.contrast = contrast;
+      this.darkRatio = darkRatio;
+      this.lightRatio = lightRatio;
     }
   }
 

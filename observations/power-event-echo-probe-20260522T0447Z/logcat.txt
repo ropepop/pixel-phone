@@ -1,0 +1,4 @@
+--------- beginning of main
+05-22 07:46:12.206 D/TouchBrightness(16385): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=333892ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:46:12.207 D/TouchBrightness(16385): touch_brightness_debug reason=non_touch_input_event:ticket:wake_launch_vivi:session_start_root_hardware_h264_capture:active touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=333893ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:46:13.849 D/TouchBrightness(16385): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=335283ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true

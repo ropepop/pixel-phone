@@ -705,6 +705,7 @@ internal class TouchBrightnessRuntime(
     var internalMode = InternalTouchBrightnessMode.STARTING
     var idleDeadlineMillis: Long? = null
     var powerReboundDeadlineMillis: Long? = null
+    var powerButtonVisibleIdleActive = false
     var overlayPointerCount = 0
 
     var idleJob: Job? = null
@@ -890,12 +891,13 @@ internal class TouchBrightnessRuntime(
         internalMode == InternalTouchBrightnessMode.SUSPENDED_SCREEN_OFF ||
         (
           internalMode == InternalTouchBrightnessMode.BRIGHT_IDLE &&
-            reason.startsWith("ticket:")
+            !powerButtonVisibleIdleActive
           )
     }
 
     suspend fun reassertPanelSleepBrightness(reason: String) {
       cancelIdleJob()
+      powerButtonVisibleIdleActive = false
       powerController.holdScreen("panel_sleep_reassert:$reason")
       overlayPointerCount = 0
       val overlayHidden = overlayController.hide()
@@ -982,6 +984,7 @@ internal class TouchBrightnessRuntime(
           return@launch
         }
         powerController.holdScreen("panel_sleep_timer_fired")
+        powerButtonVisibleIdleActive = false
         panelSleepGuardFailureCount = 0
         val overlayHidden = overlayController.hide()
         if (!overlayHidden.success) {
@@ -1027,10 +1030,15 @@ internal class TouchBrightnessRuntime(
       }
     }
 
-    suspend fun enterBrightIdle(timerStartUptimeMillis: Long, reason: String) {
+    suspend fun enterBrightIdle(
+      timerStartUptimeMillis: Long,
+      reason: String,
+      powerButtonVisibleIdle: Boolean = false
+    ) {
       cancelIdleJob()
       cancelPanelSleepGuardJob()
       cancelPanelSleepReassertBurstJob()
+      powerButtonVisibleIdleActive = powerButtonVisibleIdle
       powerController.holdScreen(reason)
       val overlayHidden = overlayController.hide()
       if (!overlayHidden.success) {
@@ -1051,6 +1059,7 @@ internal class TouchBrightnessRuntime(
       cancelIdleJob()
       cancelPanelSleepGuardJob()
       cancelPanelSleepReassertBurstJob()
+      powerButtonVisibleIdleActive = false
       powerController.holdScreen("touch_active")
       if (internalMode != InternalTouchBrightnessMode.BRIGHT_TOUCH_ACTIVE) {
         panelSleepGuardFailureCount = 0
@@ -1074,6 +1083,7 @@ internal class TouchBrightnessRuntime(
       cancelPanelSleepGuardJob()
       cancelPanelSleepReassertBurstJob()
       cancelPowerReboundJob()
+      powerButtonVisibleIdleActive = false
       powerController.releaseHold("screen_off")
       overlayPointerCount = 0
       overlayController.hide()
@@ -1189,14 +1199,34 @@ internal class TouchBrightnessRuntime(
             if (!interactive) {
               activeTouchCount = 0
               currentTouchSnapshot = currentTouchSnapshot.copy(activeTouchCount = 0)
-              val shouldRebound = powerReboundDeadlineMillis?.let { uptimeClock() <= it } == true
-              if (shouldRebound) {
+              val now = uptimeClock()
+              val shouldReboundDuringPowerButtonWindow = powerReboundDeadlineMillis?.let { now <= it } == true
+              val shouldReboundPowerButtonVisibleIdle =
+                internalMode == InternalTouchBrightnessMode.BRIGHT_IDLE && powerButtonVisibleIdleActive
+              val shouldTreatPanelSleepScreenOffAsPowerWake = internalMode == InternalTouchBrightnessMode.PANEL_SLEEP
+              if (
+                shouldReboundDuringPowerButtonWindow ||
+                shouldReboundPowerButtonVisibleIdle ||
+                shouldTreatPanelSleepScreenOffAsPowerWake
+              ) {
                 val wake = powerController.forceWakeScreen("panel_sleep_power_rebound_screen_off")
                 if (!wake.success) {
                   Log.w(TAG, "touch_screen_force_wake_failed detail=${wake.detail}")
                 }
                 interactive = true
-                enterBrightIdle(uptimeClock(), "panel_sleep_power_rebound_screen_off")
+                val timerStartUptimeMillis = if (shouldReboundPowerButtonVisibleIdle) {
+                  idleDeadlineMillis?.minus(IDLE_PANEL_SLEEP_DELAY_MILLIS) ?: now
+                } else {
+                  now
+                }
+                if (shouldTreatPanelSleepScreenOffAsPowerWake) {
+                  schedulePowerButtonRebound(timerStartUptimeMillis)
+                }
+                enterBrightIdle(
+                  timerStartUptimeMillis,
+                  "panel_sleep_power_rebound_screen_off",
+                  powerButtonVisibleIdle = true
+                )
               } else {
                 enterSuspendedScreenOff()
               }
@@ -1317,7 +1347,11 @@ internal class TouchBrightnessRuntime(
               activeTouchCount = 0
               overlayPointerCount = 0
               schedulePowerButtonRebound(event.observedAtUptimeMillis)
-              enterBrightIdle(event.observedAtUptimeMillis, "panel_sleep_power_button")
+              enterBrightIdle(
+                event.observedAtUptimeMillis,
+                "panel_sleep_power_button",
+                powerButtonVisibleIdle = true
+              )
             } else {
               publishDebugState()
               logTouchState("power_button_ignored_outside_panel_sleep")
@@ -1386,10 +1420,12 @@ internal class TouchBrightnessRuntime(
       if (restore.success) {
         return restore
       }
-      Log.w(TAG, "saved brightness restore failed during wake; forcing visible brightness: ${restore.detail}")
-      return deviceController.setBrightnessPercent(BRIGHT_PERCENT)
+      runCatching {
+        Log.w(TAG, "saved brightness restore failed during wake; forcing safe visible brightness: ${restore.detail}")
+      }
+      return deviceController.setBrightnessPercent(SAFE_VISIBLE_FALLBACK_PERCENT)
     } else {
-      return deviceController.setBrightnessPercent(BRIGHT_PERCENT)
+      return deviceController.setBrightnessPercent(SAFE_VISIBLE_FALLBACK_PERCENT)
     }
   }
 
@@ -1405,6 +1441,7 @@ internal class TouchBrightnessRuntime(
 
   companion object {
     internal const val BRIGHT_PERCENT = 100
+    internal const val SAFE_VISIBLE_FALLBACK_PERCENT = 20
     internal const val PANEL_SLEEP_PERCENT = 0
     internal const val IDLE_PANEL_SLEEP_DELAY_MILLIS = 120_000L
     internal const val POWER_BUTTON_REBOUND_WINDOW_MILLIS = 2_000L

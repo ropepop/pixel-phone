@@ -247,7 +247,7 @@ class TicketBrowserPageTest {
     assertTrue(page.contains("pattern=\"[0-9]*\""))
     assertTrue(page.contains("function cleanDigits(value)"))
     assertTrue(page.contains("codeRequestTimes.length >= 2"))
-    assertTrue(page.contains("send({type: 'generate_control_code', requestId: currentCodeRequestId, digits, app: 'vivi', flow: 'control_code'})"))
+    assertTrue(page.contains("send({type: 'generate_control_code', requestId: currentCodeRequestId, digits, owner: 'ticket', app: 'vivi', flow: 'control_code'})"))
     assertFalse("ticket.jolkins code entry must not implicitly request the RS monthly-ticket flow", page.contains("requestId: currentCodeRequestId, digits})"))
     assertTrue(page.contains("if (msg.type === 'control_code_result') handleControlCodeResult(msg);"))
     assertTrue(page.contains("const messageRequestId = String(msg.requestId || '')"))

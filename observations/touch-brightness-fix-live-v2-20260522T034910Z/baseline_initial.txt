@@ -1,0 +1,7 @@
+utc=2026-05-22T03:49:10Z
+panel=0
+actual=0
+max=3939
+screen_brightness=0
+mode=0
+pid=2621

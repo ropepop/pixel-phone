@@ -1,0 +1,8 @@
+utc=2026-05-22T03:44:09Z
+panel=actual=max=screen_brightness=0
+mode=0
+pid=2621
+
+STDERR:
+cat: /sys/class/backlight/panel0-backlight/brightness: Permission denied
+cat: /sys/class/backlight/panel0-backlight/max_brightness: Permission denied

@@ -1,0 +1,43 @@
+host_utc=2026-05-22T04:21:54Z
+uptime=1588763
+panel=0
+actual=0
+max=3939
+screen_brightness=0
+screen_brightness_mode=0
+interactive=  mWakefulness=Dozing
+  mHoldingWakeLockSuspendBlocker=false
+  mHoldingDisplaySuspendBlocker=false
+Display Power: com.android.server.power.PowerManagerService$1@56f892e
+mWakefulness=3
+pids=9762
+
+---
+host_utc=2026-05-22T04:21:57Z
+uptime=1588765
+panel=0
+actual=0
+max=3939
+screen_brightness=0
+screen_brightness_mode=0
+interactive=  mWakefulness=Dozing
+  mHoldingWakeLockSuspendBlocker=false
+  mHoldingDisplaySuspendBlocker=false
+Display Power: com.android.server.power.PowerManagerService$1@56f892e
+mWakefulness=3
+pids=9762
+
+---
+host_utc=2026-05-22T04:21:59Z
+uptime=1588767
+panel=0
+actual=0
+max=3939
+screen_brightness=0
+screen_brightness_mode=0
+interactive=  mWakefulness=Dozing
+  mHoldingWakeLockSuspendBlocker=true
+  mHoldingDisplaySuspendBlocker=false
+Display Power: com.android.server.power.PowerManagerService$1@56f892e
+mWakefulness=3
+pids=9762

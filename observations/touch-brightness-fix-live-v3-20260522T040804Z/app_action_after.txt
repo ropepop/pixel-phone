@@ -1,0 +1,9 @@
+utc=2026-05-22T04:09:44Z
+uid=uid=0(root) gid=0(root) groups=0(root) context=u:r:magisk:s0
+panel_dir=/sys/class/backlight/panel0-backlight
+panel=0
+actual=0
+max=3939
+screen_brightness=0
+mode=0
+interactive=pid=9762

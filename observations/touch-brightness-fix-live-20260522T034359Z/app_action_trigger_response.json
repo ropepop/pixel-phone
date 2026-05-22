@@ -1,0 +1,8 @@
+{
+  "response": {
+    "message": "Preparing ViVi for secure H.264 capture",
+    "ok": true,
+    "state": "starting"
+  },
+  "trigger_host_utc": "2026-05-22T03:44:10.632197+00:00"
+}

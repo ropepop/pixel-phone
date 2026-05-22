@@ -1,0 +1,6 @@
+rc=0
+STDOUT:
+Broadcasting: Intent { flg=0x400000 cmp=lv.jolkins.pixelorchestrator/.app.OrchestratorActionReceiver (has extras) }
+Broadcast completed: result=0
+
+STDERR:

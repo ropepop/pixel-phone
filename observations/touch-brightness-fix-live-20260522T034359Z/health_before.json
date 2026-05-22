@@ -1,0 +1,508 @@
+{
+  "accrescentInstalled": true,
+  "autoStartAllowed": true,
+  "autoStartBlockedReason": null,
+  "automation": {
+    "fallbackPolicy": "fail_fast",
+    "lastRootReadinessAgoMillis": 1416,
+    "lastRootReadinessDurationMillis": 2,
+    "lastRootReadinessResult": "active_guard:foreground_guard:fast_empty:UNKNOWN_VIVI",
+    "nonRootAccessibilityAllowed": false,
+    "ticketAutomationMode": "root_only"
+  },
+  "brightnessGuard": {
+    "active": false,
+    "currentDisplayPercent": null,
+    "currentPanelBrightness": null,
+    "currentPanelMaxBrightness": null,
+    "failures": 0,
+    "lastEnforcedAgoMillis": null,
+    "lastReason": "session_start_already_active",
+    "message": "Ticket brightness guard parked because touch brightness owns panel brightness",
+    "targetPercent": 1
+  },
+  "clients": 0,
+  "controlCodeMode": {
+    "active": false,
+    "enteredAgoMillis": null,
+    "entryId": 0,
+    "transitionGraceActive": false,
+    "transitionGraceRemainingMillis": 0
+  },
+  "controlCodeRequest": {
+    "completedAgoMillis": null,
+    "duplicateResults": 0,
+    "lastDuplicateAgoMillis": null,
+    "lastDuplicateRequestId": null,
+    "phases": {},
+    "reason": null,
+    "requestId": null,
+    "status": "idle",
+    "totalDurationMillis": null,
+    "value": null
+  },
+  "controlCodeSnap": {
+    "lastAccepted": null,
+    "lastCandidateZone": null,
+    "lastCompletedAgoMillis": null,
+    "lastDetectedButtonBounds": null,
+    "lastFinalX": null,
+    "lastFinalY": null,
+    "lastRawX": null,
+    "lastRawY": null,
+    "lastReason": null,
+    "lastSnapTarget": null
+  },
+  "controlExitCleanup": {
+    "lastCloseAction": null,
+    "lastCompletedAgoMillis": null,
+    "lastDetectedState": null,
+    "lastDetectorSource": null,
+    "lastDurationMillis": null,
+    "lastFreshFrameRequested": false,
+    "lastFreshFrameVerified": false,
+    "lastFreshFrameVerifiedAgoMillis": null,
+    "lastReason": null,
+    "lastSucceeded": null,
+    "lastSurfaceProbeResult": null,
+    "lastVerificationResult": null
+  },
+  "ffmpeg": {
+    "active": false,
+    "available": false,
+    "binaryPath": "",
+    "binarySha": null,
+    "bitrate": null,
+    "captureHelperAvailable": false,
+    "captureHelperMessage": "FFmpeg/raw capture has been removed",
+    "captureHelperState": "unavailable",
+    "captureMethod": "removed",
+    "captureProcessCount": 0,
+    "captureSource": "removed",
+    "chrootPath": "",
+    "droppedFrames": 0,
+    "encoderName": null,
+    "estimatedBitrate": 0,
+    "ffmpegProcessCount": 0,
+    "firstVisibleRawFrameAgoMillis": null,
+    "fps": null,
+    "frameFeederActive": false,
+    "frames": 0,
+    "height": null,
+    "keyFrames": 0,
+    "lastCaptureCleanupResult": "not_run",
+    "lastExitAgoMillis": null,
+    "lastExitReason": null,
+    "lastFfmpegWriteDurationMillis": null,
+    "lastFrameAgoMillis": null,
+    "lastFrameBytes": 0,
+    "lastFrameTotalDurationMillis": null,
+    "lastRawFrameVisible": false,
+    "lastRootFrameReadDurationMillis": null,
+    "lastStartAgoMillis": null,
+    "lastSuppressedRawFrameAgoMillis": null,
+    "message": "FFmpeg/raw capture has been removed",
+    "mode": "removed",
+    "restartCount": 0,
+    "staleCaptureProcessCount": 0,
+    "state": "unavailable",
+    "stderrTail": "",
+    "suppressedRawFrames": 0,
+    "version": null,
+    "width": null
+  },
+  "hardwareH264": {
+    "active": false,
+    "available": true,
+    "bitrate": null,
+    "blankFrameFailures": 0,
+    "captureHelperAvailable": true,
+    "captureHelperMessage": "app_process is available; hardware H.264 helper will be verified at stream start",
+    "captureHelperState": "installed",
+    "captureMethod": "app_process_mediacodec_surface_secure_screen_capture",
+    "captureSource": "root_display_capture",
+    "colorCorrection": "red_blue_swap_gpu_paint",
+    "colorStandard": "bt709_limited_sdr",
+    "droppedFrames": 0,
+    "encoderName": "MediaCodec video/avc",
+    "encoderProcessCount": 0,
+    "estimatedBitrate": 0,
+    "fps": null,
+    "frames": 0,
+    "height": null,
+    "keyFrames": 0,
+    "lastCaptureCleanupResult": "cleanup_ok:before=encoder=0 wrappers=0 after=encoder=0 wrappers=0",
+    "lastCaptureDurationMillis": null,
+    "lastDrawDurationMillis": null,
+    "lastEncodeDurationMillis": null,
+    "lastExitAgoMillis": null,
+    "lastExitReason": null,
+    "lastFrameAgoMillis": null,
+    "lastFrameBytes": 0,
+    "lastFrameTotalDurationMillis": null,
+    "lastStartAgoMillis": null,
+    "lastVisibilityCheckResult": "not_run",
+    "message": "Hardware H.264 capture is available",
+    "protectedContentCaptureEnabled": true,
+    "restartCount": 0,
+    "secureLayerCaptureEnabled": true,
+    "staleCaptureProcessCount": 0,
+    "state": "idle",
+    "stderrTail": "",
+    "width": null
+  },
+  "inactivityActive": true,
+  "inactivityRemainingMillis": 566862,
+  "inactivityTimeoutMillis": 600000,
+  "inputGate": {
+    "active": true,
+    "allowed": false,
+    "duplicateInputResults": 0,
+    "lastCommandCompletedAgoMillis": 393753,
+    "lastCommandDurationMillis": 1714,
+    "lastCommandReason": "wake_launch_vivi:wake_recovery_unknown_vivi:session_start_root_hardware_h264_capture",
+    "lastDecisionAgoMillis": null,
+    "lastDuplicateInputAgoMillis": null,
+    "lastDuplicateInputId": null,
+    "lastInputAccepted": null,
+    "lastInputCompletedAgoMillis": null,
+    "lastInputId": null,
+    "lastInputKind": null,
+    "lastInputReason": null,
+    "lastInputTotalDurationMillis": null,
+    "reason": "no_active_control",
+    "tapOnly": true
+  },
+  "installedStorePackages": [
+    "app.accrescent.client",
+    "app.grapheneos.apps",
+    "com.aurora.store",
+    "org.fdroid.fdroid"
+  ],
+  "loading": {
+    "lastCompletedAgoMillis": null,
+    "lastDurationMillis": null,
+    "lastOverBudgetAgoMillis": null,
+    "lastOverBudgetDurationMillis": null,
+    "lastOverBudgetPhase": null,
+    "lastPhase": null
+  },
+  "message": "Ticket session is active through hardware H.264 capture",
+  "notificationLockdown": {
+    "active": true,
+    "lastChangedAgoMillis": 396858,
+    "reason": "active:session_start"
+  },
+  "ok": true,
+  "page": {
+    "cachePolicy": "no-store_html_clear_cache_only",
+    "htmlVersion": "ticket-stream-2026-05-19-raw-ticket-recovery-v201",
+    "lastBootstrapRequestAgoMillis": null,
+    "lastCacheCleanupRequestAgoMillis": null,
+    "lastClientPageVersion": null,
+    "lastClientPageVersionAgoMillis": null,
+    "lastRootHtmlRequestAgoMillis": null
+  },
+  "phoneUptimeMillis": 1586488762,
+  "pixelTicketStateEvent": {
+    "eventSeq": 1,
+    "frameSequence": 1,
+    "lastSentAgoMillis": 389179,
+    "minFrameSequence": 1,
+    "reason": "session_start_raw_ticket_ready",
+    "requestId": "",
+    "streamEpoch": 0,
+    "ticketState": "raw_ticket"
+  },
+  "recentClientTelemetry": [],
+  "recentEvents": [
+    {
+      "atAgoMillis": 398374,
+      "detail": "root_hardware_h264_available=true root_hardware_h264_state=idle selected_mode=root_hardware_h264",
+      "event": "session_start_requested"
+    },
+    {
+      "atAgoMillis": 398364,
+      "detail": "mode=root_hardware_h264 fallback=",
+      "event": "session_capture_mode_selected"
+    },
+    {
+      "atAgoMillis": 398364,
+      "detail": "mode=root_hardware_h264",
+      "event": "session_started"
+    },
+    {
+      "atAgoMillis": 398362,
+      "detail": "session_start_root_hardware_h264_capture",
+      "event": "wake_started"
+    },
+    {
+      "atAgoMillis": 397118,
+      "detail": "reason=session_start waited_ms=1232 frame_sequence=0",
+      "event": "session_start_maintenance"
+    },
+    {
+      "atAgoMillis": 396700,
+      "detail": "wake_session_start duration_ms=1604 ok=true",
+      "event": "input_command"
+    },
+    {
+      "atAgoMillis": 396698,
+      "detail": "session_start_root_hardware_h264_capture ok=true duration_ms=1604",
+      "event": "screen_wake"
+    },
+    {
+      "atAgoMillis": 396698,
+      "detail": "phase=wake_command elapsed_ms=1664 duration_ms=1664",
+      "event": "wake_phase"
+    },
+    {
+      "atAgoMillis": 396697,
+      "detail": "phase=screen_interactive elapsed_ms=1665 duration_ms=1",
+      "event": "wake_phase"
+    },
+    {
+      "atAgoMillis": 396696,
+      "detail": "session_start_root_hardware_h264_capture",
+      "event": "wake_launch_vivi_root"
+    },
+    {
+      "atAgoMillis": 395587,
+      "detail": "wake_launch_vivi:session_start_root_hardware_h264_capture duration_ms=1083 ok=true",
+      "event": "input_command"
+    },
+    {
+      "atAgoMillis": 395583,
+      "detail": "ok=true duration_ms=1083",
+      "event": "wake_launch_vivi_root"
+    },
+    {
+      "atAgoMillis": 395490,
+      "detail": "state=UNKNOWN_VIVI reason=session_start_root_hardware_h264_capture",
+      "event": "wake_recovery_relaunch"
+    },
+    {
+      "atAgoMillis": 395490,
+      "detail": "wake_recovery_unknown_vivi:session_start_root_hardware_h264_capture",
+      "event": "wake_launch_vivi_root"
+    },
+    {
+      "atAgoMillis": 393753,
+      "detail": "wake_launch_vivi:wake_recovery_unknown_vivi:session_start_root_hardware_h264_capture duration_ms=1714 ok=true",
+      "event": "input_command"
+    },
+    {
+      "atAgoMillis": 393750,
+      "detail": "ok=true duration_ms=1714",
+      "event": "wake_launch_vivi_root"
+    },
+    {
+      "atAgoMillis": 389179,
+      "detail": "phase=vivi_foreground elapsed_ms=9183 duration_ms=7518",
+      "event": "wake_phase"
+    },
+    {
+      "atAgoMillis": 389179,
+      "detail": "phase=ticket_ready elapsed_ms=9183 duration_ms=0",
+      "event": "wake_phase"
+    },
+    {
+      "atAgoMillis": 389179,
+      "detail": "TICKET_DETAIL:wake_root_ticket_detail:success=true",
+      "event": "root_hardware_h264_vivi_prepare"
+    },
+    {
+      "atAgoMillis": 389179,
+      "detail": "starting duration_ms=9195 reason=root_hardware_h264_prepare_session_start_root_hardware_h264_capture",
+      "event": "ticket_state_over_1s"
+    },
+    {
+      "atAgoMillis": 389179,
+      "detail": "success=true reason=ticket_ready total_ms=9183 slowest=vivi_foreground:7518",
+      "event": "wake_finished"
+    },
+    {
+      "atAgoMillis": 389179,
+      "detail": "session_start_root_hardware_h264_capture",
+      "event": "hardware_h264_wake_frames_allowed"
+    },
+    {
+      "atAgoMillis": 389177,
+      "detail": "seq=1 state=raw_ticket reason=session_start_raw_ticket_ready request= epoch=0 frame=1 min=1",
+      "event": "ticket_state_event"
+    },
+    {
+      "atAgoMillis": 36582,
+      "detail": "reason=active_session:session_start_already_active package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 33138,
+      "detail": "root:TICKET_DETAIL reason=session_start_already_active",
+      "event": "session_start_active_revalidated"
+    },
+    {
+      "atAgoMillis": 33138,
+      "detail": "starting duration_ms=356039 reason=root_hardware_h264_waiting_first_visible_frame",
+      "event": "ticket_state_over_1s"
+    },
+    {
+      "atAgoMillis": 32673,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 28100,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 23505,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=1",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 19147,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 14852,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 10454,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=1",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 5885,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0",
+      "event": "fast_visible_hierarchy_empty"
+    },
+    {
+      "atAgoMillis": 1417,
+      "detail": "reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=1",
+      "event": "fast_visible_hierarchy_empty"
+    }
+  ],
+  "recovery": {
+    "completedAgoMillis": null,
+    "currentMode": null,
+    "currentReason": null,
+    "lastResult": "none",
+    "lastStep": "idle",
+    "pendingMode": null,
+    "pendingReason": null,
+    "startedAgoMillis": null,
+    "state": "idle"
+  },
+  "serverRunning": true,
+  "serverVersion": "ticket-stream-2026-05-19-raw-ticket-recovery-v201",
+  "serviceReadiness": {
+    "componentStatus": "running",
+    "detail": "Local ticket server and tunnel are ready",
+    "enabled": true,
+    "lastEnsureAgeMillis": 45269,
+    "lastEnsureReason": "periodic",
+    "lastEnsureResult": "Local ticket server and tunnel are ready",
+    "lastEnsureSucceeded": true,
+    "localServerReachable": true,
+    "state": "ready",
+    "tunnelReady": true
+  },
+  "sessionState": "live",
+  "streamActive": true,
+  "streamPipeline": {
+    "captureMode": "root_hardware_h264",
+    "clients": [],
+    "closedSlowVideoClients": 0,
+    "codec": "avc1.42C028",
+    "colorCorrection": "red_blue_swap_gpu_paint",
+    "colorStandard": "bt709_limited_sdr",
+    "configuredBitrate": 1200000,
+    "configuredHeight": null,
+    "configuredSourceHeight": null,
+    "configuredSourceWidth": null,
+    "configuredWidth": null,
+    "controlClients": 0,
+    "droppedVideoFrames": 0,
+    "encodedFrames": 0,
+    "encoderRunning": false,
+    "estimatedSendBitrate": 0,
+    "frameEnvelope": "tsf2",
+    "frameSequence": 0,
+    "freshKeyFrameCacheMaxAgeMillis": 750,
+    "keyFrames": 0,
+    "lastClientGeneration": 0,
+    "lastConfigSentAgoMillis": null,
+    "lastEncoderStartAgoMillis": null,
+    "lastFrameBytes": 0,
+    "lastFrameEncodedAgoMillis": null,
+    "lastFrameSentAgoMillis": null,
+    "lastKeyFrameBytes": 0,
+    "lastKeyFrameEncodedAgoMillis": null,
+    "lastKeyFrameRequestedAgoMillis": 389179,
+    "lastKeyFrameSequence": 0,
+    "lastRootH264BlankProbeAgoMillis": null,
+    "lastVideoClientConnectedAgoMillis": null,
+    "postCleanupFreshFrameVerificationReason": null,
+    "postCleanupFreshFrameVerifiedAgoMillis": null,
+    "qualityProfile": "hardware_h264_light_marker_low_latency",
+    "replacedClientSockets": 0,
+    "rootH264BlankProbeFailures": 0,
+    "rootH264BlankProbeRecoveries": 0,
+    "rootH264BlankProbeResult": "not_run",
+    "secureWindowCaptureBypassActive": true,
+    "secureWindowCaptureBypassMessage": "Secure-window capture bypass is active",
+    "sentFrames": 0,
+    "slowVideoWrites": 0,
+    "sourceTopCrop": 200,
+    "sourceVisibleHeight": null,
+    "streamConfigured": false,
+    "streamEpoch": 0,
+    "transport": "hardware-h264-annexb",
+    "videoClients": 0
+  },
+  "streamVerdict": "waiting_keyframe",
+  "ticketState": {
+    "hardResetCount": 0,
+    "lastHardResetAgoMillis": null,
+    "lastHardResetReason": null,
+    "lastOverBudgetDurationMillis": 356039,
+    "lastOverBudgetReason": "root_hardware_h264_waiting_first_visible_frame",
+    "lastOverBudgetState": "starting",
+    "lastReason": "session_start_already_active",
+    "state": "live",
+    "stateAgeMillis": 33138
+  },
+  "visibleFrame": {
+    "codec": "avc1.42C028",
+    "lastFrameAgoMillis": null,
+    "lastKeyFrameAgoMillis": null,
+    "message": "Waiting to send the first visible frame"
+  },
+  "viviInstalled": true,
+  "viviState": {
+    "observedAgoMillis": 1416,
+    "reason": "active_guard:foreground_guard",
+    "source": "fast_empty",
+    "state": "UNKNOWN_VIVI",
+    "ticketId": null
+  },
+  "wake": {
+    "budgetMillis": 5000,
+    "lastFailureReason": null,
+    "lastInteractiveMillis": 1665,
+    "lastReason": "session_start_root_hardware_h264_capture",
+    "lastSlowestPhase": "vivi_foreground",
+    "lastSlowestPhaseDurationMillis": 7518,
+    "lastStartedAgoMillis": 398362,
+    "lastSucceeded": true,
+    "lastTicketReadyMillis": 9183,
+    "lastTotalMillis": 9183,
+    "lastViviForegroundMillis": 9183,
+    "lastWakeCommandMillis": 1664
+  }
+}

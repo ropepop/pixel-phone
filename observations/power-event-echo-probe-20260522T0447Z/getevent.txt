@@ -1,0 +1,4 @@
+[ 1590202.829969] EV_KEY       KEY_POWER            DOWN                
+[ 1590202.829969] EV_SYN       SYN_REPORT           00000000            
+[ 1590203.115777] EV_KEY       KEY_POWER            UP                  
+[ 1590203.115777] EV_SYN       SYN_REPORT           00000000            

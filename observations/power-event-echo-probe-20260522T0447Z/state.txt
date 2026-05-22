@@ -1,0 +1,17 @@
+panel=2455
+actual=2596
+screen_brightness=0
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <long name="updated_at_millis" value="1779425173726" />
+    <boolean name="touch_brightness_enabled" value="true" />
+    <string name="touch_brightness_debug_detail">touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=335159ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true</string>
+    <string name="touch_brightness_detail">Panel brightness is zero; Android is held awake waiting for physical touch or power button (source: synaptics_tcm_touch)</string>
+    <string name="touch_brightness_state">panel_sleep</string>
+    <string name="runtime_detail">Feature is off</string>
+    <long name="protected_handoff_started_at_millis" value="0" />
+    <string name="runtime_state">disabled</string>
+    <long name="touch_brightness_restore_mode" value="0" />
+    <long name="touch_brightness_restore_value" value="1" />
+    <long name="runtime_error_retry_at_millis" value="0" />
+</map>

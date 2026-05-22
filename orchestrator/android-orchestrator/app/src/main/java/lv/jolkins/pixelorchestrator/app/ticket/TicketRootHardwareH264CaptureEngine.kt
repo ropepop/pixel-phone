@@ -232,11 +232,12 @@ class TicketRootHardwareH264CaptureEngine(
 
   fun recentControlCodeVisualProbeAfter(startedAtMillis: Long): TicketControlCodeVisualProbe? {
     val atMillis = lastControlCodeVisualProbeAtMillis
-    if (atMillis < startedAtMillis || lastControlCodeVisualProbeResult != "generated") {
+    val result = lastControlCodeVisualProbeResult
+    if (atMillis < startedAtMillis || result == "not_run" || result == "requested") {
       return null
     }
     return TicketControlCodeVisualProbe(
-      result = lastControlCodeVisualProbeResult,
+      result = result,
       reason = lastControlCodeVisualProbeReason,
       atMillis = atMillis
     )

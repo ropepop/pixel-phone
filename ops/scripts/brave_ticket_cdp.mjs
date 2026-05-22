@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { mkdir, writeFile } from 'node:fs/promises';
 import { Buffer } from 'node:buffer';
+import { pathToFileURL } from 'node:url';
 
 function argValue(name, fallback = '') {
   const index = process.argv.indexOf(name);
@@ -11,8 +12,9 @@ function argValue(name, fallback = '') {
 const url = argValue('--url', `https://ticket.jolkins.id.lv/?v=cdp-${Date.now()}`);
 const outDir = argValue('--out-dir', '/tmp/ticket-cdp');
 const label = argValue('--label', 'ticket');
-const timeoutMs = Number(argValue('--timeout-ms', '25000'));
+const timeoutMs = Number(argValue('--timeout-ms', '15000'));
 const settleMs = Number(argValue('--settle-ms', '0'));
+const pollMs = Number(argValue('--poll-ms', '500'));
 
 async function newPage(targetUrl) {
   const response = await fetch(`http://127.0.0.1:9222/json/new?${encodeURIComponent(targetUrl)}`, { method: 'PUT' });
@@ -113,16 +115,51 @@ async function waitForFrame(page, name) {
     if (last?.canvas?.looksDrawn) {
       return { ok: true, elapsedMs: Date.now() - start, probe: last };
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
   return { ok: false, elapsedMs: Date.now() - start, probe: last, name };
 }
 
-async function saveEvidence(page, name, frameResult) {
-  if (settleMs > 0 && frameResult?.ok) {
+async function waitForPublicTicket(page, name) {
+  const start = Date.now();
+  let lastFrame = null;
+  let lastHealth = null;
+  let lastPublicTicket = null;
+  while (Date.now() - start < timeoutMs) {
+    lastFrame = await evaluate(page, canvasProbeExpression);
+    const frameResult = {
+      ok: lastFrame?.canvas?.looksDrawn === true,
+      elapsedMs: Date.now() - start,
+      probe: lastFrame,
+      name,
+    };
+    lastHealth = await evaluate(page, `fetch('/api/v1/health', { cache: 'no-store' }).then(r => r.json()).catch(error => ({error: String(error)}))`);
+    lastPublicTicket = evaluatePublicViewerTicketHealth(frameResult, lastHealth);
+    if (lastPublicTicket.ok) {
+      return { ok: true, elapsedMs: Date.now() - start, frameResult, health: lastHealth, publicTicket: lastPublicTicket };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  const frameResult = {
+    ok: lastFrame?.canvas?.looksDrawn === true,
+    elapsedMs: Date.now() - start,
+    probe: lastFrame,
+    name,
+  };
+  return {
+    ok: false,
+    elapsedMs: Date.now() - start,
+    frameResult,
+    health: lastHealth,
+    publicTicket: lastPublicTicket || evaluatePublicViewerTicketHealth(frameResult, lastHealth || {}),
+  };
+}
+
+async function saveEvidence(page, name, verificationResult) {
+  if (settleMs > 0 && verificationResult?.ok) {
     await new Promise((resolve) => setTimeout(resolve, settleMs));
   }
-  const pageJson = await evaluate(page, `fetch('/api/v1/health', { cache: 'no-store' }).then(r => r.json()).catch(error => ({error: String(error)}))`);
+  const pageJson = verificationResult?.health || await evaluate(page, `fetch('/api/v1/health', { cache: 'no-store' }).then(r => r.json()).catch(error => ({error: String(error)}))`);
   const browserJson = await evaluate(page, `(async () => ({
     href: location.href,
     title: document.title,
@@ -131,7 +168,8 @@ async function saveEvidence(page, name, frameResult) {
     av1ConfigSupported: window.VideoDecoder ? await VideoDecoder.isConfigSupported({codec: 'av01.0.08M.08', codedWidth: 1080, codedHeight: 2424}).then(r => r.supported).catch(() => false) : false,
     navigation: performance.getEntriesByType('navigation')[0]?.toJSON?.() || null
   }))()`);
-  await writeFile(`${outDir}/${name}-page.json`, JSON.stringify({ frameResult, browser: browserJson, health: pageJson }, null, 2));
+  const publicTicket = verificationResult?.publicTicket || evaluatePublicViewerTicketHealth(verificationResult?.frameResult, pageJson);
+  await writeFile(`${outDir}/${name}-page.json`, JSON.stringify({ verificationResult, publicTicket, browser: browserJson, health: pageJson }, null, 2));
   const screenshot = await page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
   await writeFile(`${outDir}/${name}-page.png`, Buffer.from(screenshot.data, 'base64'));
   const canvasDataUrl = await evaluate(page, `(() => {
@@ -143,14 +181,119 @@ async function saveEvidence(page, name, frameResult) {
   }
 }
 
-await mkdir(outDir, { recursive: true });
-const page = await newPage(url);
-const initial = await waitForFrame(page, `${label}-initial`);
-await saveEvidence(page, `${label}-initial`, initial);
-await page.send('Page.reload', { ignoreCache: true });
-const reload = await waitForFrame(page, `${label}-reload`);
-await saveEvidence(page, `${label}-reload`, reload);
-await writeFile(`${outDir}/${label}-summary.json`, JSON.stringify({ url, initial, reload }, null, 2));
-page.ws.close();
-await fetch(`http://127.0.0.1:9222/json/close/${page.target.id}`).catch(() => {});
-console.log(JSON.stringify({ outDir, initial: initial.elapsedMs, initialOk: initial.ok, reload: reload.elapsedMs, reloadOk: reload.ok }, null, 2));
+function valueAt(obj, path) {
+  return path.split('.').reduce((current, key) => (current && typeof current === 'object' ? current[key] : undefined), obj);
+}
+
+function boolValue(value) {
+  return value === true || value === 'true';
+}
+
+function numberValue(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function failIf(reasons, condition, reason) {
+  if (condition) reasons.push(reason);
+}
+
+function parsePhoneHealthJson(health) {
+  const raw = health?.state?.phone?.healthJson || health?.state?.phone?.HealthJSON || '';
+  if (!raw || typeof raw !== 'string') return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed?.data || parsed || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+export function evaluateRootPublicTicketHealth(health) {
+  const reasons = [];
+  const pixel = health?.phoneFull?.data || health?.phoneFull || health?.data || parsePhoneHealthJson(health) || health || {};
+  const relay = health?.directStream || {};
+  const phone = health?.phone || {};
+  const visibleAgo = numberValue(valueAt(pixel, 'visibleFrame.lastFrameAgoMillis'));
+  const relayFrameAgo = numberValue(relay.lastFrameAgoMillis);
+  const streamEpoch = numberValue(relay.streamEpoch);
+
+  failIf(reasons, pixel.sessionState !== 'live', `pixel.sessionState=${pixel.sessionState ?? 'missing'}`);
+  failIf(reasons, pixel.streamActive !== true, `pixel.streamActive=${pixel.streamActive ?? 'missing'}`);
+  failIf(reasons, pixel.streamVerdict !== 'live', `pixel.streamVerdict=${pixel.streamVerdict ?? 'missing'}`);
+  failIf(reasons, valueAt(pixel, 'ticketState.state') !== 'live', `pixel.ticketState.state=${valueAt(pixel, 'ticketState.state') ?? 'missing'}`);
+  failIf(reasons, valueAt(pixel, 'viviState.state') !== 'TICKET_DETAIL', `pixel.viviState.state=${valueAt(pixel, 'viviState.state') ?? 'missing'}`);
+  failIf(reasons, visibleAgo === null || visibleAgo > 1500, `pixel.visibleFrame.lastFrameAgoMillis=${visibleAgo ?? 'missing'}`);
+  failIf(reasons, valueAt(pixel, 'hardwareH264.active') !== true, `pixel.hardwareH264.active=${valueAt(pixel, 'hardwareH264.active') ?? 'missing'}`);
+  failIf(reasons, valueAt(pixel, 'hardwareH264.state') !== 'active', `pixel.hardwareH264.state=${valueAt(pixel, 'hardwareH264.state') ?? 'missing'}`);
+
+  const phoneConnected = boolValue(phone.connected) || boolValue(phone.Connected) || boolValue(relay.phoneConnected);
+  failIf(reasons, !phoneConnected, `relay.phoneConnected=${relay.phoneConnected ?? phone.connected ?? phone.Connected ?? 'missing'}`);
+  failIf(reasons, numberValue(relay.activeVideoClients) === null || numberValue(relay.activeVideoClients) < 1, `relay.directStream.activeVideoClients=${relay.activeVideoClients ?? 'missing'}`);
+  failIf(reasons, !relay.codec || !relay.transport || streamEpoch === null || streamEpoch <= 0, 'relay.directStream.configured=false');
+  failIf(reasons, relayFrameAgo === null || relayFrameAgo > 1500, `relay.directStream.lastFrameAgoMillis=${relayFrameAgo ?? 'missing'}`);
+
+  return { ok: reasons.length === 0, reasons };
+}
+
+export function evaluatePublicViewerTicketHealth(frameResult, health) {
+  const visualOk = frameResult?.ok === true && frameResult?.probe?.canvas?.looksDrawn === true;
+  const root = evaluateRootPublicTicketHealth(health);
+  let failure = '';
+  if (!visualOk && !root.ok) {
+    failure = 'public_ticket_unavailable';
+  } else if (!visualOk) {
+    failure = 'public_ticket_visual_missing';
+  } else if (!root.ok) {
+    failure = 'public_ticket_split_brain';
+  }
+  return {
+    scope: 'public_viewer_ticket_health',
+    ok: visualOk && root.ok,
+    visualOk,
+    rootHealthOk: root.ok,
+    failure,
+    reasons: root.reasons,
+  };
+}
+
+export function evaluatePublicTicketHealth(frameResult, health) {
+  return evaluatePublicViewerTicketHealth(frameResult, health);
+}
+
+async function run() {
+  await mkdir(outDir, { recursive: true });
+  const page = await newPage(url);
+  const initial = await waitForPublicTicket(page, `${label}-initial`);
+  await saveEvidence(page, `${label}-initial`, initial);
+  await page.send('Page.reload', { ignoreCache: true });
+  const reload = await waitForPublicTicket(page, `${label}-reload`);
+  await saveEvidence(page, `${label}-reload`, reload);
+  const initialPublicTicket = initial.publicTicket;
+  const reloadPublicTicket = reload.publicTicket;
+  const summary = { url, initial, reload, initialPublicTicket, reloadPublicTicket };
+  await writeFile(`${outDir}/${label}-summary.json`, JSON.stringify(summary, null, 2));
+  page.ws.close();
+  await fetch(`http://127.0.0.1:9222/json/close/${page.target.id}`).catch(() => {});
+  console.log(JSON.stringify({
+    outDir,
+    initial: initial.elapsedMs,
+    initialOk: initialPublicTicket.ok,
+    reload: reload.elapsedMs,
+    reloadOk: reloadPublicTicket.ok,
+    initialFailure: initialPublicTicket.failure,
+    reloadFailure: reloadPublicTicket.failure,
+    initialReasons: initialPublicTicket.reasons,
+    reloadReasons: reloadPublicTicket.reasons,
+  }, null, 2));
+  if (!initialPublicTicket.ok || !reloadPublicTicket.ok) {
+    process.exitCode = 1;
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  run().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}

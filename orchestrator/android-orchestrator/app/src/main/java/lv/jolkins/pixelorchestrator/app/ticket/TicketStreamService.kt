@@ -57,6 +57,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
 import java.nio.ByteBuffer
+import java.time.Instant
 import java.util.ArrayDeque
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
@@ -96,7 +97,18 @@ class TicketStreamService : Service() {
     val value: String,
     val hierarchy: String,
     val streamEpoch: Long = 0L,
-    val minFrameSequence: Long = 0L
+    val minFrameSequence: Long = 0L,
+    val resultProof: String = "",
+    val resultProofAtMillis: Long = 0L
+  )
+
+  private data class ControlCodeBrowserCaptureAck(
+    val requestId: String,
+    val ok: Boolean,
+    val reason: String,
+    val frameEpoch: Long,
+    val frameSequence: Long,
+    val receivedAtMillis: Long
   )
 
   private data class FastControlCodePopupTransaction(
@@ -116,14 +128,9 @@ class TicketStreamService : Service() {
     val generatedHierarchy: String = "",
     val streamEpoch: Long = 0L,
     val minFrameSequence: Long = 0L,
+    val resultProof: String = "",
+    val resultProofAtMillis: Long = 0L,
     val cleanupRequired: Boolean = true
-  )
-
-  private data class RigasSatiksmeMonthlyTicketFlowResult(
-    val ok: Boolean,
-    val reason: String,
-    val hierarchy: String = "",
-    val details: String = ""
   )
 
   private data class FastControlCodeCleanupStart(
@@ -180,6 +187,7 @@ class TicketStreamService : Service() {
   private val encoderLock = Any()
   private val sessionMutex = Mutex()
   private val controlCodeRequestMutex = Mutex()
+  private val controlCodeBrowserCaptureLock = Object()
   private val running = AtomicBoolean(false)
   private val rootHardwareH264CaptureEngine = TicketRootHardwareH264CaptureEngine(
     scope = serviceScope,
@@ -311,6 +319,9 @@ class TicketStreamService : Service() {
   @Volatile private var estimatedSendBitrate: Long = 0L
   @Volatile private var sendBitrateWindowStartedAtMillis: Long = 0L
   @Volatile private var sendBitrateWindowBytes: Long = 0L
+  @Volatile private var lastSessionReuseReason: String? = null
+  @Volatile private var lastSessionReuseDurationMillis: Long? = null
+  @Volatile private var lastSessionReuseCompletedAtMillis: Long = 0L
   @Volatile private var lastInputCommandReason: String? = null
   @Volatile private var lastInputCommandDurationMillis: Long? = null
   @Volatile private var lastInputCommandCompletedAtMillis: Long = 0L
@@ -332,6 +343,18 @@ class TicketStreamService : Service() {
   @Volatile private var lastControlCodeRequestDurationMillis: Long? = null
   @Volatile private var lastControlCodeRequestPhases: Map<String, Long> = emptyMap()
   @Volatile private var lastControlCodeRequestCompletedAtMillis: Long = 0L
+  @Volatile private var lastControlCodeCommandOwner: String? = null
+  @Volatile private var lastControlCodeCommandApp: String? = null
+  @Volatile private var lastControlCodeCommandFlow: String? = null
+  @Volatile private var lastRejectedControlCodeCommandOwner: String? = null
+  @Volatile private var lastRejectedControlCodeCommandApp: String? = null
+  @Volatile private var lastRejectedControlCodeCommandFlow: String? = null
+  @Volatile private var lastRejectedControlCodeCommandReason: String? = null
+  @Volatile private var lastRejectedControlCodeCommandAtMillis: Long = 0L
+  @Volatile private var pendingControlCodeBrowserCaptureRequestId: String? = null
+  @Volatile private var pendingControlCodeBrowserCaptureAck: ControlCodeBrowserCaptureAck? = null
+  @Volatile private var lastControlCodeBrowserCaptureReason: String? = null
+  @Volatile private var lastControlCodeBrowserCaptureCompletedAtMillis: Long = 0L
   @Volatile private var lastPixelTicketEventSeq: Long = 0L
   @Volatile private var lastPixelTicketState: String = ""
   @Volatile private var lastPixelTicketEventReason: String = ""
@@ -745,14 +768,40 @@ class TicketStreamService : Service() {
       "generate_control_code" -> {
         val requestId = element["requestId"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val digits = element["digits"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val owner = element["owner"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val app = element["app"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val flow = element["flow"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val resultImage = element["resultImage"]?.jsonPrimitive?.booleanOrNull == true
-        handleGenerateControlCode(client, requestId, digits, app, flow, resultImage)
+        serviceScope.launch {
+          handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage)
+        }
       }
       "prepare_control_code" -> {
+        val owner = element["owner"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val app = element["app"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val flow = element["flow"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        if (!controlCodeCommandEnvelopeMatches(owner, app, flow, TicketScreenConfig.TICKET_QR_OWNER_TICKET, TicketScreenConfig.TICKET_QR_APP_VIVI, TicketScreenConfig.TICKET_QR_FLOW_CONTROL_CODE)) {
+          recordRejectedControlCodeCommand("", owner, app, flow, "wrong_command_owner")
+          return
+        }
         val reason = element["reason"]?.jsonPrimitive?.contentOrNull ?: "dialog_open"
         handlePrepareControlCode(reason)
+      }
+      "control_code_browser_capture" -> {
+        val requestId = element["requestId"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val owner = element["owner"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val app = element["app"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val flow = element["flow"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        if (!controlCodeCommandEnvelopeMatches(owner, app, flow, TicketScreenConfig.TICKET_QR_OWNER_TICKET, TicketScreenConfig.TICKET_QR_APP_VIVI, TicketScreenConfig.TICKET_QR_FLOW_CONTROL_CODE)) {
+          recordRejectedControlCodeCommand(requestId, owner, app, flow, "wrong_command_owner")
+          return
+        }
+        val ok = element["ok"]?.jsonPrimitive?.booleanOrNull == true ||
+          element["accepted"]?.jsonPrimitive?.booleanOrNull == true
+        val reason = element["reason"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val frameEpoch = element["candidateFrameEpoch"]?.jsonPrimitive?.longOrNull ?: 0L
+        val frameSequence = element["candidateFrameSequence"]?.jsonPrimitive?.longOrNull ?: 0L
+        handleControlCodeBrowserCapture(requestId, ok, reason, frameEpoch, frameSequence)
       }
       "keyframe" -> requestKeyFrame(element["reason"]?.jsonPrimitive?.contentOrNull ?: "browser_request")
       "restart_stream" -> {
@@ -814,6 +863,47 @@ class TicketStreamService : Service() {
       )
     }
     if (streamActive) {
+      if (activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264 && !hardwareCaptureVerified) {
+        recordTicketEvent(
+          "session_start_already_preparing",
+          "state=$ticketSessionState frame_sequence=$frameSequence reason=$ticketSessionStateReason"
+        )
+        lastSessionStopReason = null
+        markViewerInput("session_start_already_preparing")
+        lastMessage = "Preparing ViVi for secure H.264 capture"
+        scheduleTicketBrightnessGuard("session_start_already_preparing")
+        startForegroundGuard()
+        broadcastStatus()
+        persistRuntimeState("session_start_already_preparing")
+        return TicketSessionResponse(ok = true, state = "starting", message = lastMessage)
+      }
+      if (canReuseActiveHardwareStreamWithoutRootRevalidation("session_start_already_active")) {
+        updateTicketSessionState(TICKET_SESSION_LIVE, "session_start_already_active")
+        lastSessionStopReason = null
+        markViewerInput("session_start_already_active")
+        lastMessage = activeCaptureModeMessage()
+        scheduleTicketBrightnessGuard("session_start_already_active")
+        startForegroundGuard()
+        ensureEncoderIfPossible()
+        broadcastStatus()
+        persistRuntimeState("session_start_already_active")
+        return TicketSessionResponse(ok = true, state = "active", message = lastMessage)
+      }
+      if (!validateActiveTicketSessionBeforeReuse("session_start_already_active")) {
+        recordTicketEvent(
+          "session_start_already_active_revalidate",
+          "state=$ticketSessionState frame_sequence=$frameSequence reason=$ticketSessionStateReason"
+        )
+        lastSessionStopReason = null
+        markViewerInput("session_start_already_active_revalidate")
+        lastMessage = "Verifying ViVi ticket page before reusing the active H.264 stream"
+        scheduleTicketBrightnessGuard("session_start_already_active_revalidate")
+        startForegroundGuard()
+        ensureEncoderIfPossible()
+        scheduleTicketRecovery("session_start_already_active_revalidate", TicketRecoveryMode.ACTIVE_SOFT)
+        persistRuntimeState("session_start_already_active_revalidate")
+        return TicketSessionResponse(ok = true, state = "starting", message = lastMessage)
+      }
       updateTicketSessionState(TICKET_SESSION_LIVE, "session_start_already_active")
       lastSessionStopReason = null
       markViewerInput("session_start_already_active")
@@ -879,6 +969,71 @@ class TicketStreamService : Service() {
     broadcastStatus()
     persistRuntimeState("session_start_${modeLabel}_prepare")
     return TicketSessionResponse(ok = true, state = "starting", message = lastMessage)
+  }
+
+  private fun canReuseActiveHardwareStreamWithoutRootRevalidation(reason: String): Boolean {
+    if (!streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264 || !hardwareCaptureVerified) {
+      return false
+    }
+    val nowMillis = SystemClock.elapsedRealtime()
+    val frameAgeMillis = ageMillis(lastFrameSentAtMillis, nowMillis) ?: return false
+    if (frameAgeMillis > LIVE_FRAME_MAX_AGE_MILLIS) {
+      return false
+    }
+    val current = viviStateMemory.current()
+    val currentAgeMillis = ageMillis(current.observedAtMillis, nowMillis)
+    if (
+      current.state == TicketViviRecoveryState.TICKET_DETAIL &&
+      currentAgeMillis != null &&
+      currentAgeMillis in 0..ACTIVE_STREAM_REUSE_TICKET_DETAIL_MAX_AGE_MILLIS
+    ) {
+      recordTicketEvent(
+        "session_start_active_reuse_fast",
+        "reason=$reason proof=current_ticket_detail frame_age_ms=$frameAgeMillis proof_age_ms=$currentAgeMillis"
+      )
+      recordActiveSessionReuseTiming(reason, nowMillis)
+      return true
+    }
+    val recent = viviStateMemory.recentTicketDetailWithin(ACTIVE_STREAM_REUSE_TICKET_DETAIL_MAX_AGE_MILLIS)
+    if (
+      recent != null &&
+      current.state in setOf(TicketViviRecoveryState.UNKNOWN_VIVI, TicketViviRecoveryState.BLANK) &&
+      current.source in setOf("fast_empty", "root_empty")
+    ) {
+      val proofAgeMillis = ageMillis(recent.observedAtMillis, nowMillis) ?: 0L
+      recordTicketEvent(
+        "session_start_active_reuse_fast",
+        "reason=$reason proof=recent_ticket_detail_after_inconclusive frame_age_ms=$frameAgeMillis proof_age_ms=$proofAgeMillis current=${current.state.name}:${current.source}"
+      )
+      recordActiveSessionReuseTiming(reason, nowMillis)
+      return true
+    }
+    return false
+  }
+
+  private fun recordActiveSessionReuseTiming(reason: String, startedAtMillis: Long) {
+    val completedAtMillis = SystemClock.elapsedRealtime()
+    lastSessionReuseReason = reason
+    lastSessionReuseDurationMillis = (completedAtMillis - startedAtMillis).coerceAtLeast(0L)
+    lastSessionReuseCompletedAtMillis = completedAtMillis
+  }
+
+  private suspend fun validateActiveTicketSessionBeforeReuse(reason: String): Boolean {
+    val fast = observeFastViviState("active_session:$reason")
+    if (fast?.state == TicketViviRecoveryState.TICKET_DETAIL) {
+      recordTicketEvent("session_start_active_revalidated", "fast:${fast.state.name} reason=$reason")
+      return true
+    }
+    val result = fast ?: observeRootViviState("active_session:$reason")
+    if (result.state == TicketViviRecoveryState.TICKET_DETAIL) {
+      recordTicketEvent("session_start_active_revalidated", "root:${result.state.name} reason=$reason")
+      return true
+    }
+    recordTicketEvent(
+      "session_start_already_active_revalidate",
+      "reason=$reason state=${result.state.name} error=${result.error.takeLast(160)}"
+    )
+    return false
   }
 
   private fun scheduleDeferredSessionStartMaintenance(reason: String) {
@@ -1434,28 +1589,24 @@ class TicketStreamService : Service() {
     if (now - lastViviPageEnforceAtMillis < VIVI_PAGE_ENFORCE_INTERVAL_MILLIS) {
       return
     }
-    if (recentForegroundGuardTicketDetailStillFresh(now)) {
-      lastViviPageEnforceAtMillis = now
+    lastViviPageEnforceAtMillis = now
+    var result = observeFastViviState("active_guard:$reason")
+    if (result?.state == TicketViviRecoveryState.TICKET_DETAIL && recentForegroundGuardTicketDetailStillFresh(now)) {
       resetForegroundViolationConfirmation()
       if (shouldLogForegroundGuardRecentTicketDetailSkip(now)) {
         recordTicketEvent("active_guard_recent_ticket_detail", "reason=$reason")
       }
       return
     }
-    if (foregroundGuardInconclusiveBackoffActive(now)) {
-      lastViviPageEnforceAtMillis = now
+    if (result == null && foregroundGuardInconclusiveBackoffActive(now)) {
       recordTicketEvent("active_guard_inconclusive_backoff", "reason=$reason")
       return
     }
-    lastViviPageEnforceAtMillis = now
-    var result = observeFastViviState("active_guard:$reason")
-    if (result == null && foregroundGuardCanTrustLiveTicketDetailWithoutRoot(now)) {
-      lastForegroundGuardInconclusiveAtMillis = now
-      recordTicketEvent("active_guard_fast_hierarchy_empty_live", "reason=$reason")
-      return
-    }
     if (result == null) {
-      result = observeRootViviState("active_guard:$reason")
+      result = observeRootViviState(
+        reason = "active_guard:$reason",
+        timeoutMillis = TICKET_ROOT_HIERARCHY_DUMP_TIMEOUT_MILLIS
+      )
     }
     if (controlSensitiveWindowActive()) {
       recordTicketEvent("active_guard_deferred_after_observe", "$reason state=${result.state.name} control_sensitive=true")
@@ -1554,7 +1705,12 @@ class TicketStreamService : Service() {
       return false
     }
     val current = viviStateMemory.current()
-    if (current.state != TicketViviRecoveryState.TICKET_DETAIL) {
+    if (
+      current.observedAtMillis > 0L &&
+      current.state != TicketViviRecoveryState.TICKET_DETAIL &&
+      current.state != TicketViviRecoveryState.UNKNOWN_VIVI &&
+      current.state != TicketViviRecoveryState.BLANK
+    ) {
       return false
     }
     val ageMillis = nowMillis - lastForegroundGuardInconclusiveAtMillis
@@ -1612,6 +1768,13 @@ class TicketStreamService : Service() {
     val hierarchy = fastVisibleHierarchy(TicketScreenConfig.VIVI_PACKAGE, reason)
     val durationMillis = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
     if (hierarchy.isBlank()) {
+      viviStateMemory.record(
+        state = TicketViviRecoveryState.UNKNOWN_VIVI,
+        ticketId = null,
+        source = "fast_empty",
+        reason = reason
+      )
+      recordRootReadiness("$reason:fast_empty:UNKNOWN_VIVI", durationMillis)
       return null
     }
     val state = TicketViviPageEnforcer.classifyForRecovery(hierarchy)
@@ -1635,6 +1798,12 @@ class TicketStreamService : Service() {
     val hierarchy = dump.stdout.takeIf { dump.ok && it.isNotBlank() }
     if (hierarchy.isNullOrBlank()) {
       val error = dump.stderr.takeLast(160).ifBlank { "hierarchy_unavailable" }
+      viviStateMemory.record(
+        state = TicketViviRecoveryState.UNKNOWN_VIVI,
+        ticketId = null,
+        source = "root_empty",
+        reason = reason
+      )
       recordRootReadiness("$reason:UNKNOWN_VIVI", durationMillis)
       return RootViviObservation(TicketViviRecoveryState.UNKNOWN_VIVI, null, durationMillis, error)
     }
@@ -2796,7 +2965,8 @@ class TicketStreamService : Service() {
       else -> ""
     }
     val recoverySnapshot = ticketRecoveryCoordinator.snapshot(nowMillis)
-    val viviHealth = viviStateMemory.health(nowMillis)
+    val rawViviHealth = viviStateMemory.health(nowMillis)
+    val viviHealth = effectiveViviHealthForPublicStream(rawViviHealth, nowMillis, hardwareCapture)
     val effectiveSessionState = if (
       streamActive &&
       ticketSessionState in setOf(TICKET_SESSION_SOFT_RECOVERY, TICKET_SESSION_NEEDS_ATTENTION) &&
@@ -2826,6 +2996,9 @@ class TicketStreamService : Service() {
       autoStartBlockedReason = lastSessionStopReason?.takeUnless {
         TicketSessionStopPolicy.browserAutoStartAllowedAfterStop(it)
       },
+      lastSessionReuseReason = lastSessionReuseReason,
+      lastSessionReuseDurationMillis = lastSessionReuseDurationMillis,
+      lastSessionReuseAgoMillis = ageMillis(lastSessionReuseCompletedAtMillis, nowMillis),
       serviceReadiness = serviceReadinessSnapshot(),
       inputGate = TicketInputGateHealth(
         tapOnly = true,
@@ -2870,8 +3043,23 @@ class TicketStreamService : Service() {
         status = lastControlCodeRequestStatus,
         reason = lastControlCodeRequestReason,
         value = null,
+        commandOwner = lastControlCodeCommandOwner,
+        commandApp = lastControlCodeCommandApp,
+        commandFlow = lastControlCodeCommandFlow,
+        lastRejectedOwner = lastRejectedControlCodeCommandOwner,
+        lastRejectedApp = lastRejectedControlCodeCommandApp,
+        lastRejectedFlow = lastRejectedControlCodeCommandFlow,
+        lastRejectedReason = lastRejectedControlCodeCommandReason,
+        lastRejectedAgoMillis = ageMillis(lastRejectedControlCodeCommandAtMillis, nowMillis),
         totalDurationMillis = lastControlCodeRequestDurationMillis,
         phases = lastControlCodeRequestPhases,
+        rootObservationMillis = controlCodeRootObservationMillis(lastControlCodeRequestPhases),
+        visualMarkerMillis = controlCodeVisualMarkerMillis(lastControlCodeRequestPhases),
+        resultProofMillis = controlCodeResultProofMillis(lastControlCodeRequestPhases),
+        browserCaptureAckMillis = lastControlCodeRequestPhases["browser_capture_ack_wait"],
+        browserCaptureReason = lastControlCodeBrowserCaptureReason,
+        browserCaptureAgoMillis = ageMillis(lastControlCodeBrowserCaptureCompletedAtMillis, nowMillis),
+        resultDeliveryMillis = controlCodeResultDeliveryMillis(lastControlCodeRequestPhases),
         completedAgoMillis = ageMillis(lastControlCodeRequestCompletedAtMillis, nowMillis),
         duplicateResults = duplicateControlCodeResultCount,
         lastDuplicateRequestId = lastDuplicateControlCodeRequestId,
@@ -2994,13 +3182,119 @@ class TicketStreamService : Service() {
     )
   }
 
+  private fun effectiveViviHealthForPublicStream(
+    rawViviHealth: TicketViviStateHealth,
+    nowMillis: Long,
+    hardwareCapture: TicketHardwareH264Health
+  ): TicketViviStateHealth {
+    if (
+      rawViviHealth.state != TicketViviRecoveryState.UNKNOWN_VIVI.name &&
+      rawViviHealth.state != TicketViviRecoveryState.BLANK.name
+    ) {
+      return rawViviHealth
+    }
+    if (
+      !streamActive ||
+      activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264 ||
+      !hardwareCaptureVerified ||
+      !hardwareCapture.active ||
+      ticketSessionState != TICKET_SESSION_LIVE ||
+      lastPixelTicketState != TICKET_PIXEL_STATE_RAW_TICKET
+    ) {
+      return rawViviHealth
+    }
+    val frameAgeMillis = ageMillis(lastFrameSentAtMillis, nowMillis) ?: return rawViviHealth
+    if (frameAgeMillis > LIVE_FRAME_MAX_AGE_MILLIS) {
+      return rawViviHealth
+    }
+    val ticketEventAgeMillis = ageMillis(lastPixelTicketEventSentAtMillis, nowMillis) ?: return rawViviHealth
+    if (ticketEventAgeMillis > ACTIVE_STREAM_REUSE_TICKET_DETAIL_MAX_AGE_MILLIS) {
+      return rawViviHealth
+    }
+    val recent = viviStateMemory.recentTicketDetailWithin(ACTIVE_STREAM_REUSE_TICKET_DETAIL_MAX_AGE_MILLIS)
+      ?: return rawViviHealth
+    return TicketViviStateHealth(
+      state = TicketViviRecoveryState.TICKET_DETAIL.name,
+      ticketId = recent.ticketId,
+      observedAgoMillis = (nowMillis - recent.observedAtMillis).coerceAtLeast(0L),
+      source = "effective_stream_recent_ticket_detail",
+      reason = "raw_ticket_stream_live_after_${rawViviHealth.source}"
+    )
+  }
+
+  private fun currentViviStateIsInconclusiveFastObservation(
+    current: TicketViviStateMemorySnapshot
+  ): Boolean {
+    return current.state in setOf(TicketViviRecoveryState.UNKNOWN_VIVI, TicketViviRecoveryState.BLANK) &&
+      current.source in setOf("fast_empty", "root_empty")
+  }
+
+  private fun recentLiveRawTicketProofForControlCode(
+    nowMillis: Long,
+    maxAgeMillis: Long
+  ): TicketViviStateMemorySnapshot? {
+    if (
+      !streamActive ||
+      activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264 ||
+      !hardwareCaptureVerified ||
+      ticketSessionState != TICKET_SESSION_LIVE ||
+      lastPixelTicketState != TICKET_PIXEL_STATE_RAW_TICKET
+    ) {
+      return null
+    }
+    val frameAgeMillis = ageMillis(lastFrameSentAtMillis, nowMillis) ?: return null
+    if (frameAgeMillis > LIVE_FRAME_MAX_AGE_MILLIS) {
+      return null
+    }
+    val ticketEventAgeMillis = ageMillis(lastPixelTicketEventSentAtMillis, nowMillis) ?: return null
+    if (ticketEventAgeMillis > maxAgeMillis) {
+      return null
+    }
+    return viviStateMemory.recentTicketDetailWithin(maxAgeMillis)
+  }
+
+  private fun controlCodeRootObservationMillis(phases: Map<String, Long>): Long? {
+    val total = phases
+      .filterKeys { key -> key.contains("root", ignoreCase = true) || key.contains("hierarchy", ignoreCase = true) }
+      .values
+      .sum()
+    return total.takeIf { it > 0L }
+  }
+
+  private fun controlCodeVisualMarkerMillis(phases: Map<String, Long>): Long? {
+    return phases["wait_result_visual_fast_path"]
+      ?: phases["wait_result_visual_after_root"]
+      ?: phases["wait_result_root_proof"]
+      ?: phases["result_first_visible"]
+  }
+
+  private fun controlCodeResultProofMillis(phases: Map<String, Long>): Long? {
+    return phases["wait_result_root_proof"]
+      ?: phases["result_first_visible"]
+  }
+
+  private fun controlCodeResultDeliveryMillis(phases: Map<String, Long>): Long? {
+    return phases["result_marker_requested"]
+      ?: phases["result_marker_frame_ready"]
+      ?: phases["result_first_visible"]
+  }
+
+  private fun markTicketNonTouchAction(reason: String) {
+    PhoneAutomationServiceBridge.markNonTouchInput("ticket:$reason")
+  }
+
   private fun launchVivi() {
     val launchIntent = packageManager.getLaunchIntentForPackage(TicketScreenConfig.VIVI_PACKAGE)
     if (launchIntent == null) {
       lastMessage = "ViVi launch intent is unavailable"
       return
     }
-    startActivity(launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    markTicketNonTouchAction("vivi_launch")
+    try {
+      startActivity(launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    } finally {
+      markTicketNonTouchAction("vivi_launch:complete")
+    }
     scheduleTicketBrightnessGuard("vivi_launch")
   }
 
@@ -3030,6 +3324,15 @@ class TicketStreamService : Service() {
     reason: String,
     wakeStartedAtMillis: Long
   ): TicketAutopilotResult? {
+    val current = viviStateMemory.current()
+    if (current.observedAtMillis > 0L && current.state != TicketViviRecoveryState.TICKET_DETAIL) {
+      val currentAgeMillis = (SystemClock.elapsedRealtime() - current.observedAtMillis).coerceAtLeast(0L)
+      recordTicketEvent(
+        "wake_recent_ticket_detail_fast_ready_current_non_detail",
+        "reason=$reason current=${current.state.name} age_ms=$currentAgeMillis"
+      )
+      return null
+    }
     val recent = viviStateMemory.recentTicketDetailWithin(TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS) ?: return null
     val ageMillis = (SystemClock.elapsedRealtime() - recent.observedAtMillis).coerceAtLeast(0L)
     if (ageMillis !in 0..TICKET_WAKE_RECENT_DETAIL_FAST_READY_MAX_AGE_MILLIS) {
@@ -3097,6 +3400,12 @@ class TicketStreamService : Service() {
     val hierarchy = dump.stdout.takeIf { dump.ok && it.isNotBlank() }
     if (hierarchy.isNullOrBlank()) {
       val error = dump.stderr.takeLast(160).ifBlank { "hierarchy_unavailable" }
+      viviStateMemory.record(
+        state = TicketViviRecoveryState.UNKNOWN_VIVI,
+        ticketId = null,
+        source = "root_empty",
+        reason = reason
+      )
       recordRootReadiness("$reason:UNKNOWN_VIVI", durationMillis)
       return RootViviObservation(TicketViviRecoveryState.UNKNOWN_VIVI, null, durationMillis, error)
     }
@@ -3263,9 +3572,14 @@ class TicketStreamService : Service() {
 
   private suspend fun prepareViviForRootHardwareH264Capture(
     reason: String,
-    wakeStartedAtMillis: Long
+    wakeStartedAtMillis: Long,
+    budgetMillis: Long = TICKET_WAKE_BUDGET_MILLIS
   ): TicketAutopilotResult {
-    val result = observeTicketDetailForWakeWithRoot(reason, wakeStartedAtMillis)
+    val result = observeTicketDetailForWakeWithRoot(
+      reason = reason,
+      wakeStartedAtMillis = wakeStartedAtMillis,
+      budgetMillis = budgetMillis
+    )
     markWakeReadyIfNeeded(wakeStartedAtMillis, result)
     recordTicketEvent("root_hardware_h264_vivi_prepare", "${result.state}:${result.step}:success=${result.success}")
     if (result.success) {
@@ -3287,10 +3601,20 @@ class TicketStreamService : Service() {
       val wakeStartedAtMillis = beginTicketWake(reason)
       wakeTicketScreenForSessionStart(reason, wakeStartedAtMillis)
       val fastWakeReady = fastWakeReadyFromRecentTicketDetail(reason, wakeStartedAtMillis)
-      if (fastWakeReady == null) {
+      val launchedViviForWake = fastWakeReady == null
+      if (launchedViviForWake) {
         launchViviForWake(reason)
       }
-      val prepareResult = fastWakeReady ?: prepareViviForRootHardwareH264Capture(reason, wakeStartedAtMillis)
+      val wakeProofBudgetMillis = if (launchedViviForWake) {
+        TICKET_WAKE_RECOVERY_BUDGET_MILLIS
+      } else {
+        TICKET_WAKE_BUDGET_MILLIS
+      }
+      val prepareResult = fastWakeReady ?: prepareViviForRootHardwareH264Capture(
+        reason,
+        wakeStartedAtMillis,
+        budgetMillis = wakeProofBudgetMillis
+      )
       if (fastWakeReady != null) {
         updateTicketSessionState(TICKET_SESSION_LIVE, "root_hardware_h264_vivi_ready_fast_$reason")
         finishTicketWake(wakeStartedAtMillis, succeeded = true, reason = fastWakeReady.step)
@@ -3446,14 +3770,23 @@ class TicketStreamService : Service() {
 
   private suspend fun returnToOrchestrator() {
     val component = "$packageName/.app.MainActivity"
-    val result = rootExecutor.run("am start -n $component")
+    val result = runFastNonTouchScript(
+      "am start -n $component",
+      "return_orchestrator",
+      NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS.milliseconds
+    )
     if (result.ok) {
       return
     }
     Log.w(TAG, "ticket_return_orchestrator_root_launch_failed stderr=${result.stderr}")
     val intent = Intent(this, MainActivity::class.java)
       .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-    startActivity(intent)
+    markTicketNonTouchAction("return_orchestrator:fallback")
+    try {
+      startActivity(intent)
+    } finally {
+      markTicketNonTouchAction("return_orchestrator:fallback_complete")
+    }
   }
 
   private suspend fun rememberTicketBrightnessState() {
@@ -4863,6 +5196,135 @@ class TicketStreamService : Service() {
     broadcastStatus()
   }
 
+  private fun recordControlCodeCommandEnvelope(owner: String, app: String, flow: String) {
+    lastControlCodeCommandOwner = owner.trim().takeIf { it.isNotBlank() }
+    lastControlCodeCommandApp = app.trim().takeIf { it.isNotBlank() }
+    lastControlCodeCommandFlow = flow.trim().takeIf { it.isNotBlank() }
+  }
+
+  private fun controlCodeCommandEnvelopeMatches(
+    owner: String,
+    app: String,
+    flow: String,
+    expectedOwner: String,
+    expectedApp: String,
+    expectedFlow: String
+  ): Boolean {
+    val cleanOwner = owner.trim()
+    val cleanApp = app.trim()
+    val cleanFlow = flow.trim()
+    return cleanOwner == expectedOwner && cleanApp == expectedApp && cleanFlow == expectedFlow
+  }
+
+  private fun recordRejectedControlCodeCommand(
+    requestId: String,
+    owner: String,
+    app: String,
+    flow: String,
+    reason: String
+  ) {
+    recordControlCodeCommandEnvelope(owner, app, flow)
+    val cleanReason = reason.trim().ifBlank { "wrong_command_owner" }
+    val nowMillis = SystemClock.elapsedRealtime()
+    lastRejectedControlCodeCommandOwner = owner.trim().takeIf { it.isNotBlank() }
+    lastRejectedControlCodeCommandApp = app.trim().takeIf { it.isNotBlank() }
+    lastRejectedControlCodeCommandFlow = flow.trim().takeIf { it.isNotBlank() }
+    lastRejectedControlCodeCommandReason = cleanReason
+    lastRejectedControlCodeCommandAtMillis = nowMillis
+    if (requestId.isNotBlank()) {
+      lastControlCodeRequestId = requestId.trim()
+      lastControlCodeRequestStatus = "failed"
+      lastControlCodeRequestReason = cleanReason
+      lastControlCodeRequestDurationMillis = 0L
+      lastControlCodeRequestPhases = emptyMap()
+      lastControlCodeRequestCompletedAtMillis = nowMillis
+    }
+    recordTicketEvent(
+      "control_code_command_rejected",
+      "request=${requestId.trim().ifBlank { "missing" }} owner=${owner.trim().ifBlank { "missing" }} app=${app.trim().ifBlank { "missing" }} flow=${flow.trim().ifBlank { "missing" }} reason=$cleanReason"
+    )
+    broadcastStatus()
+  }
+
+  private fun beginControlCodeBrowserCaptureWait(requestId: String) {
+    synchronized(controlCodeBrowserCaptureLock) {
+      pendingControlCodeBrowserCaptureRequestId = requestId.takeIf { it.isNotBlank() }
+      pendingControlCodeBrowserCaptureAck = null
+    }
+    lastControlCodeBrowserCaptureReason = "waiting"
+    lastControlCodeBrowserCaptureCompletedAtMillis = 0L
+    recordTicketEvent("control_code_browser_capture_wait_started", "request=$requestId")
+    broadcastStatus()
+  }
+
+  private fun clearControlCodeBrowserCaptureWait(requestId: String) {
+    synchronized(controlCodeBrowserCaptureLock) {
+      if (pendingControlCodeBrowserCaptureRequestId == requestId) {
+        pendingControlCodeBrowserCaptureRequestId = null
+        pendingControlCodeBrowserCaptureAck = null
+      }
+    }
+  }
+
+  private fun handleControlCodeBrowserCapture(
+    requestId: String,
+    ok: Boolean,
+    reason: String,
+    frameEpoch: Long,
+    frameSequence: Long
+  ) {
+    val cleanRequestId = requestId.trim()
+    if (cleanRequestId.isBlank()) {
+      return
+    }
+    val ack = ControlCodeBrowserCaptureAck(
+      requestId = cleanRequestId,
+      ok = ok,
+      reason = reason.trim().ifBlank { if (ok) "browser_capture_confirmed" else "browser_capture_failed" },
+      frameEpoch = frameEpoch,
+      frameSequence = frameSequence,
+      receivedAtMillis = SystemClock.elapsedRealtime()
+    )
+    var accepted = false
+    synchronized(controlCodeBrowserCaptureLock) {
+      if (pendingControlCodeBrowserCaptureRequestId == cleanRequestId) {
+        pendingControlCodeBrowserCaptureAck = ack
+        accepted = true
+      }
+    }
+    lastControlCodeBrowserCaptureReason = ack.reason
+    lastControlCodeBrowserCaptureCompletedAtMillis = ack.receivedAtMillis
+    recordTicketEvent(
+      if (accepted) "control_code_browser_capture_received" else "control_code_browser_capture_ignored",
+      "request=$cleanRequestId ok=$ok reason=${ack.reason} epoch=$frameEpoch sequence=$frameSequence"
+    )
+    broadcastStatus()
+  }
+
+	  private suspend fun waitForControlCodeBrowserCapture(
+	    requestId: String,
+	    phases: MutableMap<String, Long>,
+	    requestStartedAtMillis: Long
+	  ): ControlCodeBrowserCaptureAck {
+	    val startedAtMillis = SystemClock.elapsedRealtime()
+	    markControlCodeRequestPhase(phases, "browser_capture_wait_started", requestStartedAtMillis)
+	    while (true) {
+	      val ack = synchronized(controlCodeBrowserCaptureLock) {
+	        pendingControlCodeBrowserCaptureAck?.takeIf { it.requestId == requestId }
+	      }
+	      if (ack != null) {
+	        phases["browser_capture_ack_wait"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+        markControlCodeRequestPhase(phases, "browser_capture_ack_received", requestStartedAtMillis)
+        recordTicketEvent(
+          "control_code_browser_capture_accepted",
+          "request=$requestId ok=${ack.ok} reason=${ack.reason} epoch=${ack.frameEpoch} sequence=${ack.frameSequence}"
+        )
+	        return ack
+	      }
+	      delay(CONTROL_CODE_BROWSER_CAPTURE_ACK_POLL_MILLIS)
+	    }
+	  }
+
   private fun recentControlCodePrepareTicketReady(reason: String): Boolean {
     if (!streamActive || !hardwareCaptureVerified || ticketSessionState != TICKET_SESSION_LIVE) {
       return false
@@ -4979,15 +5441,19 @@ class TicketStreamService : Service() {
     replyClient: TicketWebSocket,
     requestId: String,
     digits: String,
+    owner: String,
     app: String,
     flow: String,
     resultImage: Boolean
   ) {
     val cleanRequestId = requestId.trim()
     val cleanDigits = digits.trim()
-    val requestedApp = app.trim().ifBlank { TicketScreenConfig.TICKET_QR_APP_VIVI }
+    val requestedOwner = owner.trim()
+    val requestedApp = app.trim()
     val requestedFlow = flow.trim()
+    recordControlCodeCommandEnvelope(requestedOwner, requestedApp, requestedFlow)
     if (cleanRequestId.isBlank()) {
+      recordRejectedControlCodeCommand(cleanRequestId, requestedOwner, requestedApp, requestedFlow, "missing_request_id")
       sendControlCodeResult("", false, "missing_request_id", "", 0L, emptyMap(), cleanupPending = false)
       return
     }
@@ -4995,18 +5461,35 @@ class TicketStreamService : Service() {
       sendControlCodeResult(cleanRequestId, false, "invalid_code", "", 0L, emptyMap(), cleanupPending = false)
       return
     }
+    if (requestedOwner.isBlank() || requestedApp.isBlank() || requestedFlow.isBlank()) {
+      recordRejectedControlCodeCommand(cleanRequestId, requestedOwner, requestedApp, requestedFlow, "command_owner_flow_required")
+      sendControlCodeResult(cleanRequestId, false, "command_owner_flow_required", "", 0L, emptyMap(), cleanupPending = false)
+      return
+    }
     if (requestedApp == TicketScreenConfig.TICKET_QR_APP_RIGAS_SATIKSME &&
       requestedFlow == TicketScreenConfig.TICKET_QR_FLOW_MONTHLY_TICKET
     ) {
+      if (requestedOwner != TicketScreenConfig.TICKET_QR_OWNER_RIGAS_SATIKSME) {
+        recordRejectedControlCodeCommand(cleanRequestId, requestedOwner, requestedApp, requestedFlow, "wrong_command_owner")
+        sendControlCodeResult(cleanRequestId, false, "wrong_command_owner", "", 0L, emptyMap(), cleanupPending = false)
+        return
+      }
       handleGenerateRigasSatiksmeMonthlyTicketQr(replyClient, cleanRequestId, cleanDigits)
       return
     }
     if (requestedApp != TicketScreenConfig.TICKET_QR_APP_VIVI) {
+      recordRejectedControlCodeCommand(cleanRequestId, requestedOwner, requestedApp, requestedFlow, "unsupported_qr_source")
       sendControlCodeResult(cleanRequestId, false, "unsupported_qr_source", "", 0L, emptyMap(), cleanupPending = false)
       return
     }
-    if (requestedFlow.isNotBlank() && requestedFlow != TicketScreenConfig.TICKET_QR_FLOW_CONTROL_CODE) {
+    if (requestedFlow != TicketScreenConfig.TICKET_QR_FLOW_CONTROL_CODE) {
+      recordRejectedControlCodeCommand(cleanRequestId, requestedOwner, requestedApp, requestedFlow, "unsupported_qr_flow")
       sendControlCodeResult(cleanRequestId, false, "unsupported_qr_flow", "", 0L, emptyMap(), cleanupPending = false)
+      return
+    }
+    if (requestedOwner != TicketScreenConfig.TICKET_QR_OWNER_TICKET) {
+      recordRejectedControlCodeCommand(cleanRequestId, requestedOwner, requestedApp, requestedFlow, "wrong_command_owner")
+      sendControlCodeResult(cleanRequestId, false, "wrong_command_owner", "", 0L, emptyMap(), cleanupPending = false)
       return
     }
     if (resultImage) {
@@ -5058,6 +5541,7 @@ class TicketStreamService : Service() {
               lastControlCodeRequestPhases = phases.toMap()
               lastControlCodeRequestCompletedAtMillis = SystemClock.elapsedRealtime()
               val totalDurationMillis = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+              beginControlCodeBrowserCaptureWait(cleanRequestId)
               sendTicketStateEvent(
                 ticketState = TICKET_PIXEL_STATE_GENERATED_RESULT,
                 reason = "generated",
@@ -5066,14 +5550,26 @@ class TicketStreamService : Service() {
                 eventStreamEpoch = delivery.streamEpoch,
                 eventFrameSequence = delivery.minFrameSequence,
                 minFrameSequence = delivery.minFrameSequence,
+                resultProof = delivery.resultProof,
+                resultFrameEpoch = delivery.streamEpoch,
+                resultMinFrameSequence = delivery.minFrameSequence,
+                resultProofAtMillis = delivery.resultProofAtMillis,
                 totalDurationMillis = totalDurationMillis,
                 phases = phases
               )
               resultSent = true
               recordTicketEvent("control_code_marker_delivered", "request=$cleanRequestId epoch=${delivery.streamEpoch} min_sequence=${delivery.minFrameSequence}")
+              val browserCapture = waitForControlCodeBrowserCapture(
+                requestId = cleanRequestId,
+                phases = phases,
+                requestStartedAtMillis = startedAtMillis
+              )
+              lastControlCodeRequestDurationMillis = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+              lastControlCodeRequestPhases = phases.toMap()
+              clearControlCodeBrowserCaptureWait(cleanRequestId)
               val cleanupSucceeded = returnControlCodeSurfaceToRawTicket(
                 generatedHierarchy = delivery.generatedHierarchy,
-                reason = "control_code_marker_delivered",
+                reason = if (browserCapture.ok) "browser_capture_confirmed" else browserCapture.reason,
                 phases = phases,
                 requestStartedAtMillis = startedAtMillis
               )
@@ -5184,32 +5680,38 @@ class TicketStreamService : Service() {
         phases["phone_command_received"] = 0L
         recordTicketEvent("rs_monthly_ticket_request_started", "request=$cleanRequestId")
         markControlCodeTransition("rs_monthly_ticket_request")
-        val flow = runRigasSatiksmeMonthlyTicketFlow(
-          cleanDigits,
-          phases,
-          startedAtMillis,
+        val outcome = RigasSatiksmeMonthlyTicketOperation(
+          sourceApp = TicketScreenConfig.TICKET_QR_RESULT_SOURCE_APP_RIGAS_SATIKSME,
+          ticketFlow = TicketScreenConfig.TICKET_QR_RESULT_FLOW_RIGAS_SATIKSME_ANDROID_MONTHLY,
+          runFlow = ::runRigasSatiksmeMonthlyTicketFlow,
+          captureImage = ::captureRigasSatiksmeMonthlyTicketImageBytes,
+          markPhase = ::markControlCodeRequestPhase
+        ).run(
+          cleanDigits = cleanDigits,
+          phases = phases,
+          requestStartedAtMillis = startedAtMillis,
           reusePreviousRigasSatiksmeQr = reusePreviousRigasSatiksmeQr
         )
-        val totalDurationMillis = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
-        if (!flow.ok) {
+        if (!outcome.ok) {
+          val totalDurationMillis = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
           lastControlCodeRequestStatus = "failed"
-          lastControlCodeRequestReason = flow.reason
+          lastControlCodeRequestReason = outcome.reason
           lastControlCodeRequestDurationMillis = totalDurationMillis
-          lastControlCodeRequestPhases = phases.toMap()
+          lastControlCodeRequestPhases = outcome.phases
           lastControlCodeRequestCompletedAtMillis = SystemClock.elapsedRealtime()
           sendControlCodeResult(
             requestId = cleanRequestId,
             ok = false,
-            reason = flow.reason,
+            reason = outcome.reason,
             value = "",
             startedAtMillis = startedAtMillis,
-            phases = phases,
-            cleanupPending = true
+            phases = outcome.phases,
+            cleanupPending = outcome.cleanupRequired
           )
           val cleanupSucceeded = returnRigasSatiksmeMonthlyTicketFlowToViviTicket(
             phases = phases,
             requestStartedAtMillis = startedAtMillis,
-            reason = flow.reason
+            reason = outcome.reason
           )
           sendControlCodeCleanup(
             requestId = cleanRequestId,
@@ -5220,58 +5722,23 @@ class TicketStreamService : Service() {
           return
         }
 
-        val imageBytes = captureRigasSatiksmeMonthlyTicketImageBytes(
-          cleanDigits = cleanDigits,
-          hierarchy = flow.hierarchy,
-          phases = phases,
-          requestStartedAtMillis = startedAtMillis
-        )
-        if (imageBytes == null || imageBytes.isEmpty()) {
-          lastControlCodeRequestStatus = "failed"
-          lastControlCodeRequestReason = "rs_monthly_ticket_image_capture_failed"
-          lastControlCodeRequestDurationMillis = totalDurationMillis
-          lastControlCodeRequestPhases = phases.toMap()
-          lastControlCodeRequestCompletedAtMillis = SystemClock.elapsedRealtime()
-          sendControlCodeResult(
-            requestId = cleanRequestId,
-            ok = false,
-            reason = "rs_monthly_ticket_image_capture_failed",
-            value = "",
-            startedAtMillis = startedAtMillis,
-            phases = phases,
-            cleanupPending = true
-          )
-          val cleanupSucceeded = returnRigasSatiksmeMonthlyTicketFlowToViviTicket(
-            phases = phases,
-            requestStartedAtMillis = startedAtMillis,
-            reason = "rs_monthly_ticket_image_capture_failed"
-          )
-          sendControlCodeCleanup(
-            requestId = cleanRequestId,
-            ok = cleanupSucceeded,
-            reason = if (cleanupSucceeded) "ticket_detail" else "rs_monthly_ticket_cleanup_attention_needed",
-            startedAtMillis = startedAtMillis
-          )
-          return
-        }
-
-        markControlCodeRequestPhase(phases, "rs_monthly_ticket_image_captured", startedAtMillis)
+        val imageBytes = outcome.imageBytes ?: ByteArray(0)
         val watermark = requestFreshTicketStateFrameWatermark("rs_monthly_ticket_control_screen")
         lastControlCodeRequestStatus = "succeeded"
-        lastControlCodeRequestReason = "generated"
+        lastControlCodeRequestReason = outcome.reason
         lastControlCodeRequestValue = null
         lastControlCodeRequestDurationMillis = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
-        lastControlCodeRequestPhases = phases.toMap()
+        lastControlCodeRequestPhases = outcome.phases
         lastControlCodeRequestCompletedAtMillis = SystemClock.elapsedRealtime()
         sendRigassatiksmeQrResult(
           requestId = cleanRequestId,
           ok = true,
-          reason = "generated",
+          reason = outcome.reason,
           imageBytes = imageBytes,
           startedAtMillis = startedAtMillis,
-          phases = phases,
-          sourceApp = TicketScreenConfig.TICKET_QR_RESULT_SOURCE_APP_RIGAS_SATIKSME,
-          ticketFlow = TicketScreenConfig.TICKET_QR_RESULT_FLOW_RIGAS_SATIKSME_ANDROID_MONTHLY
+          phases = outcome.phases,
+          sourceApp = outcome.sourceApp,
+          ticketFlow = outcome.ticketFlow
         )
         sendTicketStateEvent(
           ticketState = TICKET_PIXEL_STATE_GENERATED_RESULT,
@@ -5286,12 +5753,12 @@ class TicketStreamService : Service() {
         )
         recordTicketEvent(
           "rs_monthly_ticket_control_screen",
-          "request=$cleanRequestId bytes=${imageBytes.size} details=${flow.details.take(120)}"
+          "request=$cleanRequestId bytes=${imageBytes.size}"
         )
         scheduleRigasSatiksmeReturnCleanupAfterIdle(
           requestId = cleanRequestId,
           startedAtMillis = startedAtMillis,
-          reason = "generated"
+          reason = outcome.reason
         )
       }
     } finally {
@@ -5491,11 +5958,12 @@ class TicketStreamService : Service() {
       }
 
       # Measured fast path on the production Pixel: RS launch -> REGISTER A TRIP
-      # center -> manual-code form -> TICKET FOR CONTROL QR. This coordinate-first
-      # path is only a latency optimization; final root semantic verification still
-      # proves the RS monthly control screen and requested digits before capture.
+      # center -> scan/manual-code screen -> monthly-ticket QR. This coordinate-
+      # first path is only a latency optimization; final root semantic
+      # verification still proves the monthly control screen and requested
+      # digits before capture.
       # Slow-path terminal UI labels remain part of the contract:
-      # REGISTER A TRIP, Trip is registered.
+      # REGISTER A TRIP, ENTER THE CODE MANUALLY, TICKET FOR CONTROL.
       if [ "${'$'}reuse_previous_rs_qr" = "true" ]; then
         # The Android service only sets reuse_previous_rs_qr when it canceled the
         # post-result idle delay before ViVi cleanup started, so RS should still
@@ -5511,9 +5979,9 @@ class TicketStreamService : Service() {
         sleep 0.18
       else
         # Coordinate-first default path: RS Passenger 2.1.0 home has REGISTER A
-        # TRIP centered near 540,555. If launch state differs, semantic validation
-        # and bounded recovery below keep correctness without spending a pre-entry
-        # root hierarchy dump on the common path.
+        # TRIP centered near 540,555 in the current root-proved screenshot. If
+        # launch state differs, the single root proof below fails the request
+        # with a clear reason.
         sleep 0.55
         input tap 540 555 >/dev/null 2>&1 || true
         sleep 0.18
@@ -5551,40 +6019,20 @@ class TicketStreamService : Service() {
     )
     markControlCodeRequestPhase(phases, "rs_monthly_ticket_flow_finished", requestStartedAtMillis)
     val stdout = result.stdout
-    val hierarchyWaitStartedAt = SystemClock.elapsedRealtime()
-    var hierarchy = fastVisibleHierarchy(TicketScreenConfig.RIGAS_SATIKSME_PACKAGE, "rs_monthly_ticket_flow")
-    var statusFromHierarchy = classifyRigasSatiksmeMonthlyTicketHierarchy(hierarchy, cleanDigits)
-    recordTicketEvent(
-      "rs_monthly_ticket_fast_hierarchy_wait_finished",
-      "status=${statusFromHierarchy.ifBlank { "missing" }} duration_ms=${SystemClock.elapsedRealtime() - hierarchyWaitStartedAt} hierarchy_len=${hierarchy.length}"
+    markControlCodeRequestPhase(phases, "rs_monthly_ticket_proof_started", requestStartedAtMillis)
+    val proofStartedAt = SystemClock.elapsedRealtime()
+    val hierarchy = dumpVisibleHierarchyWithRoot(
+      path = "/data/local/tmp/pixel-rs-ticket-window.xml",
+      reason = "rs_monthly_ticket_single_root_proof"
     )
-    if (statusFromHierarchy != "rs_monthly_ticket_control_screen" && statusFromHierarchy != "wrong_code") {
-      val rootHierarchy = dumpVisibleHierarchyWithRootRetry(
-        path = "/data/local/tmp/pixel-rs-ticket-window.xml",
-        reason = "rs_monthly_ticket_flow_fallback"
-      )
-      val rootStatus = classifyRigasSatiksmeMonthlyTicketHierarchy(rootHierarchy, cleanDigits)
-      if (rootStatus.isNotBlank() || rootHierarchy.isNotBlank()) {
-        statusFromHierarchy = rootStatus
-        hierarchy = rootHierarchy
-      }
-    }
-    if (statusFromHierarchy != "rs_monthly_ticket_control_screen" && statusFromHierarchy != "wrong_code") {
-      val recovered = recoverRigasSatiksmeMonthlyTicketFlowBeforeFailure(
-        cleanDigits = cleanDigits,
-        initialStatus = statusFromHierarchy,
-        phases = phases,
-        requestStartedAtMillis = requestStartedAtMillis
-      )
-      if (recovered.first.isNotBlank()) {
-        statusFromHierarchy = recovered.first
-        if (recovered.second.isNotBlank()) {
-          hierarchy = recovered.second
-        }
-      }
-    }
+    val proofStatus = classifyRigasSatiksmeMonthlyTicketHierarchy(hierarchy, cleanDigits)
+    markControlCodeRequestPhase(phases, "rs_monthly_ticket_proof_finished", requestStartedAtMillis)
+    recordTicketEvent(
+      "rs_monthly_ticket_single_root_proof_finished",
+      "status=${proofStatus.ifBlank { "missing" }} duration_ms=${SystemClock.elapsedRealtime() - proofStartedAt} hierarchy_len=${hierarchy.length}"
+    )
     val statusFromStdout = Regex("RS_FLOW_STATUS ([a-z_]+)").find(stdout)?.groupValues?.getOrNull(1).orEmpty()
-    val status = statusFromHierarchy.ifBlank {
+    val status = proofStatus.ifBlank {
       statusFromStdout.takeIf { it == "launch_failed" } ?: when (result.exitCode) {
         20 -> "launch_failed"
         124 -> "flow_timeout"
@@ -5625,38 +6073,28 @@ class TicketStreamService : Service() {
     phases: MutableMap<String, Long>,
     requestStartedAtMillis: Long
   ): ByteArray? {
-    var lastBlankBytes = 0
-    repeat(4) { attempt ->
-      if (attempt > 0) {
-        delay(750)
-      }
-      val captured = captureGeneratedControlCodeImageBytes(
-        hierarchy = hierarchy,
-        phases = phases,
-        requestStartedAtMillis = requestStartedAtMillis,
-        cropToControlCodeGraphic = false
-      )
-      if (captured == null || captured.isEmpty()) {
-        return@repeat
-      }
-      if (isMostlyBlankPng(captured)) {
-        lastBlankBytes = captured.size
-        recordTicketEvent(
-          "rs_monthly_ticket_secure_capture_blocked",
-          "attempt=${attempt + 1} bytes=${captured.size} code=[REDACTED]"
-        )
-        return@repeat
-      }
+    val captured = captureGeneratedControlCodeImageBytes(
+      hierarchy = hierarchy,
+      phases = phases,
+      requestStartedAtMillis = requestStartedAtMillis,
+      cropToControlCodeGraphic = false
+    )
+    if (captured == null || captured.isEmpty()) {
+      recordTicketEvent("rs_monthly_ticket_app_screenshot_missing", "code=[REDACTED]")
+      return null
+    }
+    if (isMostlyBlankPng(captured)) {
       recordTicketEvent(
-        "rs_monthly_ticket_app_screenshot_ready",
-        "attempt=${attempt + 1} bytes=${captured.size} code=[REDACTED]"
+        "rs_monthly_ticket_secure_capture_blocked",
+        "bytes=${captured.size} code=[REDACTED]"
       )
-      return captured
+      return null
     }
-    if (lastBlankBytes > 0) {
-      recordTicketEvent("rs_monthly_ticket_secure_capture_exhausted", "bytes=$lastBlankBytes code=[REDACTED]")
-    }
-    return null
+    recordTicketEvent(
+      "rs_monthly_ticket_app_screenshot_ready",
+      "bytes=${captured.size} code=[REDACTED]"
+    )
+    return captured
   }
 
   private suspend fun fastVisibleHierarchy(expectedPackageName: String, reason: String): String {
@@ -5690,23 +6128,6 @@ class TicketStreamService : Service() {
       "reason=$reason package=$expectedPackageName nodes=${nodes.size} duration_ms=$durationMs hierarchy_len=${hierarchy.length}"
     )
     return hierarchy
-  }
-
-  private suspend fun dumpVisibleHierarchyWithRootRetry(path: String, reason: String): String {
-    repeat(RS_SEMANTIC_ROOT_DUMP_ATTEMPTS) { attempt ->
-      val hierarchy = dumpVisibleHierarchyWithRoot(path, reason)
-      if (hierarchy.isNotBlank()) {
-        return hierarchy
-      }
-      if (attempt < RS_SEMANTIC_ROOT_DUMP_ATTEMPTS - 1) {
-        recordTicketEvent(
-          "root_visible_hierarchy_retry",
-          "reason=$reason attempt=${attempt + 1} delay_ms=$RS_SEMANTIC_ROOT_DUMP_RETRY_DELAY_MILLIS"
-        )
-        delay(RS_SEMANTIC_ROOT_DUMP_RETRY_DELAY_MILLIS)
-      }
-    }
-    return ""
   }
 
   private suspend fun dumpVisibleHierarchyWithRoot(path: String, reason: String): String {
@@ -5750,102 +6171,28 @@ class TicketStreamService : Service() {
     return hierarchy.trim()
   }
 
-  private suspend fun recoverRigasSatiksmeMonthlyTicketFlowBeforeFailure(
-    cleanDigits: String,
-    initialStatus: String,
-    phases: MutableMap<String, Long>,
-    requestStartedAtMillis: Long
-  ): Pair<String, String> {
-    val cleanInitialStatus = initialStatus.ifBlank { "missing" }
-    markControlCodeRequestPhase(phases, "rs_monthly_ticket_recovery_started", requestStartedAtMillis)
-    recordTicketEvent("rs_monthly_ticket_recovery_started", "initial_status=$cleanInitialStatus")
-    val result = runFastNonTouchWakeScript(
-      """
-      set -u
-      ${TicketUiautomatorDump.functionDefinition(1_200)}
-      tap_rs_desc_center() {
-        desc="${'$'}1"
-        file="${'$'}2"
-        node="${'$'}(grep -o "<node[^>]*content-desc=\"${'$'}desc\"[^>]*>" "${'$'}file" 2>/dev/null | head -n 1 || true)"
-        bounds="${'$'}(printf '%s\n' "${'$'}node" | grep -o 'bounds="\[[0-9][0-9]*,[0-9][0-9]*\]\[[0-9][0-9]*,[0-9][0-9]*\]"' | head -n 1 || true)"
-        coords="${'$'}(printf '%s\n' "${'$'}bounds" | sed -E 's/.*\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\].*/\1 \2 \3 \4/')"
-        set -- ${'$'}coords
-        [ "${'$'}#" -eq 4 ] || return 1
-        x=${'$'}(( (${'$'}1 + ${'$'}3) / 2 ))
-        y=${'$'}(( (${'$'}2 + ${'$'}4) / 2 ))
-        input tap "${'$'}x" "${'$'}y" >/dev/null 2>&1 || return 1
-      }
-      initial_status="$cleanInitialStatus"
-      if [ "${'$'}initial_status" = "stale_control_ticket" ]; then
-        # The caller already proved that the visible RS QR is stale. Do not spend
-        # the first recovery step on another slow/fragile in-script hierarchy
-        # probe; back out and start a fresh registration from the RS home screen.
-        input keyevent KEYCODE_BACK >/dev/null 2>&1 || true
-        sleep 0.35
-        input tap 540 555 >/dev/null 2>&1 || true
-      else
-        ticket_safe_uiautomator_dump /data/local/tmp/pixel-rs-recovery-start-window.xml nocat || true
-        if grep -Fq "qr code" /data/local/tmp/pixel-rs-recovery-start-window.xml 2>/dev/null; then
-          input keyevent KEYCODE_BACK >/dev/null 2>&1 || true
-          sleep 0.18
-          ticket_safe_uiautomator_dump /data/local/tmp/pixel-rs-recovery-start-window.xml nocat || true
-        fi
-        if grep -Fq 'content-desc="REGISTER A TRIP"' /data/local/tmp/pixel-rs-recovery-start-window.xml 2>/dev/null; then
-          tap_rs_desc_center "REGISTER A TRIP" /data/local/tmp/pixel-rs-recovery-start-window.xml || input tap 540 555 >/dev/null 2>&1 || true
-        else
-          tap_rs_desc_center "TICKET FOR CONTROL" /data/local/tmp/pixel-rs-recovery-start-window.xml || input tap 540 620 >/dev/null 2>&1 || true
-        fi
-      fi
-      sleep 0.45
-      input tap 540 2228 >/dev/null 2>&1 || true
-      sleep 0.35
-      input tap 540 1150 >/dev/null 2>&1 || true
-      sleep 0.08
-      input keyevent KEYCODE_MOVE_END >/dev/null 2>&1 || true
-      for i in 1 2 3 4 5 6; do input keyevent KEYCODE_DEL >/dev/null 2>&1 || true; done
-      input text $cleanDigits >/dev/null 2>&1 || true
-      sleep 0.12
-      input keyevent KEYCODE_ENTER >/dev/null 2>&1 || true
-      sleep 0.18
-      input tap 540 1540 >/dev/null 2>&1 || true
-      sleep 0.25
-      input tap 540 1347 >/dev/null 2>&1 || true
-      sleep 0.25
-      input tap 540 735 >/dev/null 2>&1 || true
-      sleep 0.5
-      echo "RS_RECOVERY_STATUS tapped"
-      """.trimIndent(),
-      "rs_monthly_ticket_recovery",
-      TICKET_RS_MONTHLY_IN_APP_RECOVERY_TIMEOUT_MILLIS.milliseconds
-    )
-    val waitStartedAt = SystemClock.elapsedRealtime()
-    var hierarchy = fastVisibleHierarchy(TicketScreenConfig.RIGAS_SATIKSME_PACKAGE, "rs_monthly_ticket_recovery")
-    var status = classifyRigasSatiksmeMonthlyTicketHierarchy(hierarchy, cleanDigits)
-    if (status != "rs_monthly_ticket_control_screen" && status != "wrong_code") {
-      val rootHierarchy = dumpVisibleHierarchyWithRootRetry(
-        path = "/data/local/tmp/pixel-rs-ticket-recovery-window.xml",
-        reason = "rs_monthly_ticket_recovery_fallback"
-      )
-      val rootStatus = classifyRigasSatiksmeMonthlyTicketHierarchy(rootHierarchy, cleanDigits)
-      if (rootStatus.isNotBlank() || rootHierarchy.isNotBlank()) {
-        status = rootStatus
-        hierarchy = rootHierarchy
-      }
-    }
-    markControlCodeRequestPhase(phases, "rs_monthly_ticket_recovery_finished", requestStartedAtMillis)
-    recordTicketEvent(
-      "rs_monthly_ticket_recovery_finished",
-      "initial_status=$cleanInitialStatus status=${status.ifBlank { "missing" }} run_ok=${result.ok} duration_ms=${result.durationMs} wait_ms=${SystemClock.elapsedRealtime() - waitStartedAt} hierarchy_len=${hierarchy.length} stdout_tail=${result.stdout.takeLast(80).replace('\n', ' ').replace('\r', ' ')} stderr_tail=${result.stderr.takeLast(120).replace('\n', ' ').replace('\r', ' ')}"
-    )
-    return status to hierarchy
-  }
-
   private fun classifyRigasSatiksmeMonthlyTicketHierarchy(hierarchy: String, cleanDigits: String): String {
     if (hierarchy.isBlank()) {
       return ""
     }
     fun has(value: String) = hierarchy.contains(value, ignoreCase = true)
     if (has("Wrong code")) {
+      return "wrong_code"
+    }
+    val hasViviMonthlyControlScreen =
+      has("KONTROLES KODS") &&
+        has("Aizvērt") &&
+        hasRigasSatiksmeMonthlyTicketMarker(hierarchy)
+    if (hasViviMonthlyControlScreen && has(cleanDigits)) {
+      return "rs_monthly_ticket_control_screen"
+    }
+    if (hasViviMonthlyControlScreen) {
+      return "stale_control_ticket"
+    }
+    if (
+      has("Ievadi kontroles kodu") ||
+        has("kontroles kods") && has("OK") && has("Atcelt")
+    ) {
       return "wrong_code"
     }
     val hasControlScreen =
@@ -5903,48 +6250,19 @@ class TicketStreamService : Service() {
       reason = inputGateReason.ifBlank { "control_code_popup_timeout" },
       cleanupRequired = true
     )
-    if (!enterControlCodeDigitsFastForRequest(cleanDigits, transaction, phases, requestStartedAtMillis)) {
+    if (!enterAndSubmitControlCodeDigitsFastForRequest(cleanDigits, transaction, phases, requestStartedAtMillis)) {
       return FastControlCodeDelivery(
         ok = false,
-        reason = inputGateReason.ifBlank { "control_code_input_set_failed" }
+        reason = inputGateReason.ifBlank { "control_code_input_submit_failed" }
       )
     }
-    val submitAttempted = tapControlCodeSubmitFastForRequest(transaction, cleanDigits, phases, requestStartedAtMillis)
-    if (!submitAttempted) {
-      return FastControlCodeDelivery(
-        ok = false,
-        reason = inputGateReason.ifBlank { "control_code_submit_missing" }
-      )
-    }
-    var waitOutcome = waitForGeneratedControlCodeResultAfterSubmit(
+    val waitOutcome = waitForGeneratedControlCodeResultAfterSubmit(
       phases = phases,
       requestStartedAtMillis = requestStartedAtMillis,
       submittedDigits = cleanDigits,
       timeoutMillis = CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS,
       rootDumpTimeoutMillis = CONTROL_CODE_FAST_RESULT_ROOT_DUMP_TIMEOUT_MILLIS
     )
-    if (waitOutcome.generated == null && waitOutcome.failureReason == "control_code_popup_still_open_after_submit") {
-      recordTicketEvent("control_code_submit_retry", "popup_still_open_after_first_submit")
-      phases["submit_retry_attempted"] = 1L
-      markControlCodeRequestPhase(phases, "submit_retry_started", requestStartedAtMillis)
-      val digitsReadyForRetry = enterControlCodeDigitsFastForRequest(cleanDigits, transaction, phases, requestStartedAtMillis)
-      if (digitsReadyForRetry) {
-        markControlCodeRequestPhase(phases, "submit_retry_digits_retyped", requestStartedAtMillis)
-      }
-      val retrySubmitted = digitsReadyForRetry && tapControlCodeSubmitFastForRequest(transaction, cleanDigits, phases, requestStartedAtMillis)
-      waitOutcome = if (retrySubmitted) {
-        markControlCodeRequestPhase(phases, "submit_retry_tapped", requestStartedAtMillis)
-        waitForGeneratedControlCodeResultAfterSubmit(
-          phases = phases,
-          requestStartedAtMillis = requestStartedAtMillis,
-          submittedDigits = cleanDigits,
-          timeoutMillis = CONTROL_CODE_GENERATED_RESULT_HARD_TIMEOUT_MILLIS,
-          rootDumpTimeoutMillis = CONTROL_CODE_GENERATED_RESULT_HARD_ROOT_DUMP_TIMEOUT_MILLIS
-        )
-      } else {
-        ControlCodeResultWaitOutcome(failureReason = inputGateReason.ifBlank { "control_code_submit_missing" })
-      }
-    }
     val generated = waitOutcome.generated ?: return FastControlCodeDelivery(
       ok = false,
       reason = waitOutcome.failureReason
@@ -5956,7 +6274,7 @@ class TicketStreamService : Service() {
       )
       generated.streamEpoch to generated.minFrameSequence
     } else {
-      waitForFreshControlCodeFrameWatermarkForBrowser(
+      markerFirstControlCodeFrameWatermarkForBrowser(
         reason = "control_code_marker_ready",
         phases = phases,
         requestStartedAtMillis = requestStartedAtMillis
@@ -5970,7 +6288,9 @@ class TicketStreamService : Service() {
       value = generated.value,
       generatedHierarchy = generated.hierarchy,
       streamEpoch = watermark.first,
-      minFrameSequence = watermark.second
+      minFrameSequence = watermark.second,
+      resultProof = generated.resultProof,
+      resultProofAtMillis = generated.resultProofAtMillis
     )
   }
 
@@ -6344,6 +6664,42 @@ class TicketStreamService : Service() {
     return null
   }
 
+  private suspend fun enterAndSubmitControlCodeDigitsFastForRequest(
+    digits: String,
+    transaction: FastControlCodePopupTransaction,
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long
+  ): Boolean {
+    val submit = resolveControlCodeSubmitAfterDigitsFastForRequest(transaction, phases)
+    phases["ok_tap_target_source_popup_transaction"] = 1L
+    recordTicketEvent("control_code_submit_current_keyboard_target", submit.reason)
+    recordTicketEvent("control_code_submit_target", submit.reason)
+    val command = """
+      input tap ${transaction.input.x} ${transaction.input.y}
+      sleep 0.08
+      input keyevent KEYCODE_MOVE_END
+      for i in 1 2 3 4 5 6; do input keyevent KEYCODE_DEL; done
+      input text $digits
+      sleep 0.04
+      input tap ${submit.x} ${submit.y}
+      sleep 0.12
+      input tap ${submit.x} ${submit.y}
+    """.trimIndent()
+    val submitted = measureInputPhase(phases, "type_and_submit_fast") {
+      runFastNonTouchInput(command, "control_code_request_type_and_submit_fast")
+    }
+    if (!submitted.ok) {
+      recordInputGateDecision(allowed = false, reason = "control_code_input_submit_failed")
+      return false
+    }
+    markControlCodeRequestPhase(phases, "digits_typed", requestStartedAtMillis)
+    markControlCodeRequestPhase(phases, "ok_tapped", requestStartedAtMillis)
+    phases["control_code_submit_attempted"] = 1L
+    recordTicketEvent("control_code_input_typed_submit_now", "combined_shell_text_ok")
+    recordTicketEvent("control_code_submit_attempted", "coordinate_ok_combined digits=${digits.length}")
+    return true
+  }
+
   private suspend fun enterControlCodeDigitsFastForRequest(
     digits: String,
     transaction: FastControlCodePopupTransaction,
@@ -6404,33 +6760,10 @@ class TicketStreamService : Service() {
     return submitAttempted
   }
 
-  private suspend fun resolveControlCodeSubmitAfterDigitsFastForRequest(
+  private fun resolveControlCodeSubmitAfterDigitsFastForRequest(
     transaction: FastControlCodePopupTransaction,
     phases: MutableMap<String, Long>
   ): TicketViviPageAction {
-    val hierarchy = controlCodeRequestRootHierarchy(
-      phases = phases,
-      phase = "find_submit_after_digits_fast",
-      timeoutMillis = CONTROL_CODE_CURRENT_SUBMIT_ROOT_DUMP_TIMEOUT_MILLIS
-    )
-    if (!hierarchy.isNullOrBlank()) {
-      TicketViviPageEnforcer.controlCodePopupSurfaceForHierarchy(hierarchy)?.let { surface ->
-        rememberControlCodePopupSurface(surface)
-        phases["ok_tap_target_source_current_root"] = 1L
-        val action = surface.submit.copy(reason = "${surface.submit.reason}:current_root")
-        recordTicketEvent("control_code_submit_target_source", "current_root_surface")
-        return action
-      }
-      TicketViviPageEnforcer.controlCodeSubmitActionLooseForHierarchy(hierarchy)?.let { action ->
-        phases["ok_tap_target_source_current_root"] = 1L
-        recordTicketEvent("control_code_submit_target_source", "current_root_loose")
-        return action.copy(reason = "${action.reason}:current_root")
-      }
-      recordTicketEvent(
-        "control_code_submit_target_source",
-        "current_root_no_submit state=${TicketViviPageEnforcer.classifyForRecovery(hierarchy).name}"
-      )
-    }
     phases["ok_tap_target_source_keyboard_geometry"] = 1L
     recordTicketEvent(
       "control_code_submit_target_source",
@@ -6447,186 +6780,75 @@ class TicketStreamService : Service() {
     rootDumpTimeoutMillis: Long
   ): ControlCodeResultWaitOutcome {
     val startedAtMillis = SystemClock.elapsedRealtime()
-    recordTicketEvent("control_code_waiting_result_marker", "await_generated_result")
+    recordTicketEvent("control_code_waiting_result_marker", "await_phone_visual_generated_state_after_submit")
     rootHardwareH264CaptureEngine.requestBurst("control_code_after_ok")
     recordTicketEvent(
       "control_code_after_ok_marker_settle",
       "settle_ms=$CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS"
     )
     delay(CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS)
-    val postOkVisualProbeStartedAtMillis = SystemClock.elapsedRealtime()
-    rootHardwareH264CaptureEngine.requestControlCodeVisualProbe("control_code_after_ok_fast_path")
-    val postOkVisualProbeDeadlineMillis =
-      postOkVisualProbeStartedAtMillis + CONTROL_CODE_POST_OK_VISUAL_FAST_PATH_TIMEOUT_MILLIS
-    val deadline = startedAtMillis + timeoutMillis
-    var consecutiveTicketDetail = 0
-    var sawPopup = true
-    var lastState = TicketViviRecoveryState.UNKNOWN_VIVI
-    var nextRootCheckAtMillis = postOkVisualProbeDeadlineMillis
-    while (SystemClock.elapsedRealtime() <= deadline) {
-      val nowMillis = SystemClock.elapsedRealtime()
-      val postOkProbe = rootHardwareH264CaptureEngine.recentControlCodeVisualProbeAfter(postOkVisualProbeStartedAtMillis)
-      if (postOkProbe != null) {
-        return ControlCodeResultWaitOutcome(
-          generated = confirmPostOkVisualGeneratedControlCodeResultForBrowser(
-            value = submittedDigits,
-            phases = phases,
-            requestStartedAtMillis = requestStartedAtMillis,
-            waitStartedAtMillis = startedAtMillis,
-            probe = postOkProbe
-          ),
-          failureReason = ""
-        )
-      }
-      if (nowMillis >= nextRootCheckAtMillis) {
-        val hierarchy = controlCodeRequestRootHierarchy(
-          phases = phases,
-          phase = "wait_generated_result_fast",
-          timeoutMillis = rootDumpTimeoutMillis
-        )
-        if (!hierarchy.isNullOrBlank()) {
-          val state = TicketViviPageEnforcer.classifyForRecovery(hierarchy)
-          lastState = state
-          viviStateMemory.record(
-            state = state,
-            ticketId = TicketViviPageEnforcer.ticketIdForHierarchy(hierarchy),
-            source = "control_code_request",
-            reason = "control_code_request_wait_after_submit"
-          )
-          when (state) {
-            TicketViviRecoveryState.CONTROL_CODE_RESULT -> {
-              val value = TicketViviPageEnforcer.controlCodeResultValueForHierarchy(hierarchy).orEmpty()
-              return ControlCodeResultWaitOutcome(
-                generated = confirmGeneratedControlCodeResultForBrowser(
-                  value = value,
-                  hierarchy = hierarchy,
-                  phases = phases,
-                  requestStartedAtMillis = requestStartedAtMillis,
-                  waitStartedAtMillis = startedAtMillis,
-                  phase = "wait_result_fast",
-                  modeReason = "control_code_request_result_detected_after_submit",
-                  eventValue = value.ifBlank { "marker" }
-                ),
-                failureReason = ""
+    val deadlineAtMillis = startedAtMillis + timeoutMillis
+    var popupRejectCount = 0L
+    var lastObservedState = "not_run"
+    while (SystemClock.elapsedRealtime() < deadlineAtMillis) {
+      val visualProbeStartedAtMillis = SystemClock.elapsedRealtime()
+      rootHardwareH264CaptureEngine.requestControlCodeVisualProbe("control_code_after_ok_visual_state")
+      val visualProbe = waitForFreshControlCodeVisualProbe(visualProbeStartedAtMillis, CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS)
+      if (visualProbe != null) {
+        lastObservedState = visualProbe.result
+        when {
+          visualProbe.result == "generated" -> {
+            val visualMarker = confirmGeneratedControlCodeResultForBrowser(
+              value = "",
+              hierarchy = CONTROL_CODE_MARKER_RESULT_HIERARCHY,
+              phases = phases,
+              requestStartedAtMillis = requestStartedAtMillis,
+              waitStartedAtMillis = startedAtMillis,
+              phase = "wait_result_phone_visual_generated_state",
+              modeReason = "control_code_request_phone_visual_generated_after_submit",
+              eventValue = "phone_visual_generated_after_submit",
+              resultProof = "phone_visual"
+            )
+            phases["control_code_visual_popup_reject_count"] = popupRejectCount
+            return ControlCodeResultWaitOutcome(generated = visualMarker, failureReason = "")
+          }
+          visualProbe.result == "control_popup" -> {
+            popupRejectCount += 1L
+            phases["control_code_visual_popup_still_open"] = popupRejectCount
+            if (popupRejectCount <= 3L || popupRejectCount % 10L == 0L) {
+              recordTicketEvent(
+                "control_code_visual_popup_still_open",
+                "count=$popupRejectCount reason=${visualProbe.reason}"
               )
             }
-
-            TicketViviRecoveryState.CONTROL_CODE_POPUP -> {
-              sawPopup = true
-              consecutiveTicketDetail = 0
-              rememberControlCodeSurface(TicketViviRecoveryState.CONTROL_CODE_POPUP)
-            }
-
-            TicketViviRecoveryState.TICKET_DETAIL -> {
-              consecutiveTicketDetail += 1
-              if (
-                consecutiveTicketDetail >= CONTROL_CODE_REQUEST_NO_RESULT_TICKET_DETAIL_COUNT &&
-                SystemClock.elapsedRealtime() - startedAtMillis >= CONTROL_CODE_REQUEST_NO_RESULT_GRACE_MILLIS
-              ) {
-                phases["wait_result_fast"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
-                recordTicketEvent("control_code_request_not_generated", "ticket_detail_after_submit")
-                return ControlCodeResultWaitOutcome(failureReason = "control_code_not_generated")
-              }
-            }
-
-            else -> {
-              consecutiveTicketDetail = 0
-            }
           }
-          val value = TicketViviPageEnforcer.strictControlCodeResultValueForHierarchy(hierarchy)
-          if (!value.isNullOrBlank()) {
-            return ControlCodeResultWaitOutcome(
-              generated = confirmGeneratedControlCodeResultForBrowser(
-                value = value,
-                hierarchy = hierarchy,
-                phases = phases,
-                requestStartedAtMillis = requestStartedAtMillis,
-                waitStartedAtMillis = startedAtMillis,
-                phase = "wait_result_fast",
-                modeReason = "control_code_request_result_detected_after_submit",
-                eventValue = value
-              ),
-              failureReason = ""
-            )
+          else -> {
+            phases["control_code_visual_non_generated_state"] = SystemClock.elapsedRealtime() - startedAtMillis
           }
         }
-        nextRootCheckAtMillis = SystemClock.elapsedRealtime() + CONTROL_CODE_GENERATED_RESULT_ROOT_CHECK_INTERVAL_MILLIS
       }
-      delay(CONTROL_CODE_FAST_POLL_MILLIS)
+      rootHardwareH264CaptureEngine.requestBurst("control_code_wait_generated_visual")
+      delay(CONTROL_CODE_VISUAL_STATE_RETRY_MILLIS)
     }
-    val finalObservation = measureInputPhase(phases, "wait_generated_result_final_root") {
-      observeRootViviState(
-        reason = "control_code_request_wait_final_root",
-        timeoutMillis = rootDumpTimeoutMillis.coerceAtLeast(CONTROL_CODE_FAST_RESULT_FINAL_ROOT_DUMP_TIMEOUT_MILLIS)
-      )
-    }
-    val finalHierarchy = finalObservation.hierarchy
-    if (!finalHierarchy.isNullOrBlank()) {
-      val finalState = TicketViviPageEnforcer.classifyForRecovery(finalHierarchy)
-      lastState = finalState
-      viviStateMemory.record(
-        state = finalState,
-        ticketId = TicketViviPageEnforcer.ticketIdForHierarchy(finalHierarchy),
-        source = "control_code_request",
-        reason = "control_code_request_wait_final_root"
-      )
-      if (finalState == TicketViviRecoveryState.CONTROL_CODE_RESULT) {
-        val value = TicketViviPageEnforcer.controlCodeResultValueForHierarchy(finalHierarchy).orEmpty()
-        return ControlCodeResultWaitOutcome(
-          generated = confirmGeneratedControlCodeResultForBrowser(
-            value = value,
-            hierarchy = finalHierarchy,
-            phases = phases,
-            requestStartedAtMillis = requestStartedAtMillis,
-            waitStartedAtMillis = startedAtMillis,
-            phase = "wait_result_final_root",
-            modeReason = "control_code_request_result_detected_by_final_root",
-            eventValue = value.ifBlank { "marker_final_root" }
-          ),
-          failureReason = ""
-        )
-      }
-    }
-    phases["wait_result_fast"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
-    val reason = when {
-      sawPopup -> "control_code_popup_still_open_after_submit"
-      lastState == TicketViviRecoveryState.TICKET_DETAIL -> "control_code_not_generated"
-      else -> "control_code_result_timeout"
-    }
-    recordTicketEvent("control_code_request_result_wait_failed", "state=${lastState.name} reason=$reason")
-    return ControlCodeResultWaitOutcome(failureReason = reason)
+    phases["wait_result_phone_visual_generated_state"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+    phases["control_code_visual_popup_reject_count"] = popupRejectCount
+    recordTicketEvent(
+      "control_code_generated_state_timeout",
+      "last_state=$lastObservedState popup_rejects=$popupRejectCount digits=${submittedDigits.length} root_dump_timeout_ms=$rootDumpTimeoutMillis"
+    )
+    return ControlCodeResultWaitOutcome(failureReason = "control_code_generated_state_timeout")
   }
 
-  private suspend fun confirmPostOkVisualGeneratedControlCodeResultForBrowser(
-    value: String,
-    phases: MutableMap<String, Long>,
-    requestStartedAtMillis: Long,
-    waitStartedAtMillis: Long,
-    probe: TicketControlCodeVisualProbe
-  ): GeneratedControlCodeResult {
-    phases["wait_result_fast"] = (SystemClock.elapsedRealtime() - waitStartedAtMillis).coerceAtLeast(0L)
-    phases["wait_result_visual_fast_path"] = (probe.atMillis - waitStartedAtMillis).coerceAtLeast(0L)
-    markControlCodeRequestPhase(phases, "result_first_visible", requestStartedAtMillis)
-    markControlCodeModeEntered("control_code_request_result_detected_by_post_ok_visual")
-    rememberControlCodeSurface(TicketViviRecoveryState.CONTROL_CODE_RESULT)
-    val cleanValue = value.ifBlank { "visual_marker" }
-    recordTicketEvent("control_code_request_result_detected", cleanValue)
-    recordTicketEvent(
-      "control_code_request_result_visual_confirmed_after_post_ok",
-      probe.reason.ifBlank { probe.result }
-    )
-    val watermark = waitForFreshControlCodeFrameWatermarkForBrowser(
-      reason = "control_code_after_ok_fast_path",
-      phases = phases,
-      requestStartedAtMillis = requestStartedAtMillis,
-      visualProbeStartedAtMillis = null
-    )
-    return GeneratedControlCodeResult(
-      value = cleanValue,
-      hierarchy = CONTROL_CODE_MARKER_RESULT_HIERARCHY,
-      streamEpoch = watermark.first,
-      minFrameSequence = watermark.second
-    )
+  private suspend fun waitForFreshControlCodeVisualProbe(
+    visualProbeStartedAtMillis: Long,
+    timeoutMillis: Long
+  ): TicketControlCodeVisualProbe? {
+    val deadlineAtMillis = SystemClock.elapsedRealtime() + timeoutMillis
+    while (SystemClock.elapsedRealtime() < deadlineAtMillis) {
+      rootHardwareH264CaptureEngine.recentControlCodeVisualProbeAfter(visualProbeStartedAtMillis)?.let { return it }
+      delay(CONTROL_CODE_VISUAL_STATE_POLL_MILLIS)
+    }
+    return rootHardwareH264CaptureEngine.recentControlCodeVisualProbeAfter(visualProbeStartedAtMillis)
   }
 
   private suspend fun confirmGeneratedControlCodeResultForBrowser(
@@ -6637,81 +6859,43 @@ class TicketStreamService : Service() {
     waitStartedAtMillis: Long,
     phase: String,
     modeReason: String,
-    eventValue: String
+    eventValue: String,
+    resultProof: String = "phone_visual"
   ): GeneratedControlCodeResult {
     phases[phase] = (SystemClock.elapsedRealtime() - waitStartedAtMillis).coerceAtLeast(0L)
     markControlCodeRequestPhase(phases, "result_first_visible", requestStartedAtMillis)
     markControlCodeModeEntered(modeReason)
     rememberControlCodeSurface(TicketViviRecoveryState.CONTROL_CODE_RESULT)
     recordTicketEvent("control_code_request_result_detected", eventValue)
-    val visualProbeStartedAtMillis = SystemClock.elapsedRealtime()
-    rootHardwareH264CaptureEngine.requestControlCodeVisualProbe("control_code_result_after_root")
-    val watermark = waitForFreshControlCodeFrameWatermarkForBrowser(
-      reason = "control_code_result_after_root",
+    val watermark = markerFirstControlCodeFrameWatermarkForBrowser(
+      reason = "control_code_result_after_phone_visual_proof",
       phases = phases,
-      requestStartedAtMillis = requestStartedAtMillis,
-      visualProbeStartedAtMillis = visualProbeStartedAtMillis
+      requestStartedAtMillis = requestStartedAtMillis
     )
     return GeneratedControlCodeResult(
       value = value,
       hierarchy = hierarchy,
       streamEpoch = watermark.first,
-      minFrameSequence = watermark.second
+      minFrameSequence = watermark.second,
+      resultProof = resultProof,
+      resultProofAtMillis = System.currentTimeMillis()
     )
   }
 
-  private suspend fun waitForFreshControlCodeFrameWatermarkForBrowser(
+  private fun markerFirstControlCodeFrameWatermarkForBrowser(
     reason: String,
     phases: MutableMap<String, Long>,
-    requestStartedAtMillis: Long,
-    visualProbeStartedAtMillis: Long? = null
+    requestStartedAtMillis: Long
   ): Pair<Long, Long> {
-    val startedAtMillis = SystemClock.elapsedRealtime()
-    val deadline = startedAtMillis + CONTROL_CODE_RESULT_BROWSER_FRAME_TIMEOUT_MILLIS
-    var visualConfirmed = visualProbeStartedAtMillis == null
-    var watermark: Pair<Long, Long>? = if (visualConfirmed) {
-      requestFreshControlCodeFrameWatermark(reason).also {
-        markControlCodeRequestPhase(phases, "result_marker_frame_requested", requestStartedAtMillis)
-      }
-    } else {
-      null
-    }
-    while (SystemClock.elapsedRealtime() <= deadline) {
-      if (!visualConfirmed && visualProbeStartedAtMillis != null) {
-        val probe = rootHardwareH264CaptureEngine.recentControlCodeVisualProbeAfter(visualProbeStartedAtMillis)
-        if (probe != null) {
-          visualConfirmed = true
-          phases["wait_result_visual_after_root"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
-          markControlCodeRequestPhase(phases, "result_visual_visible", requestStartedAtMillis)
-          recordTicketEvent("control_code_request_result_visual_confirmed_after_root", probe.reason.ifBlank { probe.result })
-          watermark = requestFreshControlCodeFrameWatermark(reason).also {
-            markControlCodeRequestPhase(phases, "result_marker_frame_requested", requestStartedAtMillis)
-          }
-        }
-      }
-      val currentWatermark = watermark
-      if (currentWatermark != null) {
-        val currentEpoch = streamEpoch
-        val currentSequence = frameSequence
-        if (currentWatermark.first > 0L && currentEpoch == currentWatermark.first && currentSequence >= currentWatermark.second) {
-          phases["wait_result_browser_frame"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
-          markControlCodeRequestPhase(phases, "result_marker_frame_ready", requestStartedAtMillis)
-          recordTicketEvent(
-            "control_code_request_result_browser_frame_ready",
-            "epoch=${currentWatermark.first} min_sequence=${currentWatermark.second} visual=$visualConfirmed"
-          )
-          return currentWatermark
-        }
-      }
-      delay(CONTROL_CODE_VISUAL_RESULT_POLL_MILLIS)
-    }
-    val fallbackWatermark = watermark ?: requestFreshControlCodeFrameWatermark("${reason}_timeout")
-    phases["wait_result_browser_frame"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+    val watermark = requestFreshControlCodeFrameWatermark(reason)
+    phases["wait_result_browser_frame"] = 0L
+    markControlCodeRequestPhase(phases, "result_marker_frame_requested", requestStartedAtMillis)
+    markControlCodeRequestPhase(phases, "result_marker_frame_ready", requestStartedAtMillis)
     recordTicketEvent(
-      "control_code_request_result_browser_frame_timeout",
-      "target_epoch=${fallbackWatermark.first} target_sequence=${fallbackWatermark.second} current_epoch=$streamEpoch current_sequence=$frameSequence visual=$visualConfirmed"
+      "control_code_request_result_marker_ready",
+      "epoch=${watermark.first} min_sequence=${watermark.second} reason=$reason"
     )
-    return fallbackWatermark
+    return watermark
   }
 
   private suspend fun captureGeneratedControlCodeImageBytes(
@@ -6977,6 +7161,15 @@ class TicketStreamService : Service() {
     val nowMillis = SystemClock.elapsedRealtime()
     val current = viviStateMemory.current()
     val currentAge = ageMillis(current.observedAtMillis, nowMillis)
+    if (
+      currentViviStateIsInconclusiveFastObservation(current) &&
+      recentLiveRawTicketProofForControlCode(
+        nowMillis,
+        CONTROL_CODE_IMMEDIATE_TICKET_DETAIL_MEMORY_MAX_AGE_MILLIS
+      ) != null
+    ) {
+      return ControlCodeImmediateStartDecision(true, "control_code_button_immediate_live_stream_recent_ticket_detail")
+    }
     if (
       currentAge != null &&
       currentAge <= CONTROL_CODE_SNAP_UNSAFE_STATE_MEMORY_MAX_AGE_MILLIS &&
@@ -8192,6 +8385,10 @@ class TicketStreamService : Service() {
     eventStreamEpoch: Long = streamEpoch,
     eventFrameSequence: Long = frameSequence,
     minFrameSequence: Long = 0L,
+    resultProof: String = "",
+    resultFrameEpoch: Long = 0L,
+    resultMinFrameSequence: Long = 0L,
+    resultProofAtMillis: Long = 0L,
     totalDurationMillis: Long = 0L,
     phases: Map<String, Long> = emptyMap()
   ) {
@@ -8218,6 +8415,14 @@ class TicketStreamService : Service() {
       put("streamEpoch", eventStreamEpoch)
       put("frameSequence", eventFrameSequence)
       put("minFrameSequence", minFrameSequence)
+      if (resultProof.isNotBlank()) {
+        put("resultProof", resultProof)
+        put("resultFrameEpoch", resultFrameEpoch)
+        put("resultMinFrameSequence", resultMinFrameSequence)
+        if (resultProofAtMillis > 0L) {
+          put("resultProofAt", Instant.ofEpochMilli(resultProofAtMillis).toString())
+        }
+      }
       put("phoneUptimeMillis", nowMillis)
       put("totalDurationMillis", totalDurationMillis)
       put("phases", phaseJson)
@@ -8627,12 +8832,6 @@ class TicketStreamService : Service() {
       ticket_panel_stop_clamps() {
         touch "${'$'}ticket_clamp_stop" >/dev/null 2>&1 || true
         if [ -n "${'$'}ticket_sysfs_clamp_pid" ]; then
-          kill "${'$'}ticket_sysfs_clamp_pid" >/dev/null 2>&1 || true
-        fi
-        if [ -n "${'$'}ticket_display_clamp_pid" ]; then
-          kill "${'$'}ticket_display_clamp_pid" >/dev/null 2>&1 || true
-        fi
-        if [ -n "${'$'}ticket_sysfs_clamp_pid" ]; then
           wait "${'$'}ticket_sysfs_clamp_pid" >/dev/null 2>&1 || true
         fi
         if [ -n "${'$'}ticket_display_clamp_pid" ]; then
@@ -8882,7 +9081,7 @@ class TicketStreamService : Service() {
     private const val RECENT_TICKET_EVENT_LIMIT = 80
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
     private const val SESSION_START_TIMEOUT_MILLIS = 12_000L
-    const val SERVER_VERSION = "ticket-stream-2026-05-19-raw-ticket-recovery-v201"
+    const val SERVER_VERSION = "ticket-stream-2026-05-22-browser-proof-v219"
     private const val CONTROL_CODE_MARKER_RESULT_HIERARCHY = "__marker_control_code_result__"
     private const val FRAME_ENVELOPE_VERSION = "tsf2"
     private const val FRAME_ENVELOPE_MAGIC = 0x54534632
@@ -8909,6 +9108,7 @@ class TicketStreamService : Service() {
     private const val TICKET_PIXEL_STATE_ATTENTION_NEEDED = "attention_needed"
     private const val ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS = 750L
     private const val LIVE_FRAME_MAX_AGE_MILLIS = 2_000L
+    private const val ACTIVE_STREAM_REUSE_TICKET_DETAIL_MAX_AGE_MILLIS = 30_000L
     private const val STREAM_STALE_ENGINE_RESTART_MILLIS = 4_000L
     private const val HARDWARE_RELIABILITY_FAILURE_THRESHOLD = 3
     private const val STARTUP_MAINTENANCE_DEFER_MILLIS = 1_200L
@@ -8927,16 +9127,13 @@ class TicketStreamService : Service() {
     private const val VIDEO_CLIENT_PENDING_MAX_AGE_MILLIS = 150L
     private const val VIDEO_CLIENT_SLOW_CLOSE_MILLIS = 250L
     private const val TICKET_WAKE_BUDGET_MILLIS = 5_000L
-    private const val TICKET_WAKE_RECOVERY_BUDGET_MILLIS = 24_000L
+    private const val TICKET_WAKE_RECOVERY_BUDGET_MILLIS = 60_000L
     private const val TICKET_WAKE_RECOVERY_MAX_ACTIONS = 4
     private const val TICKET_RS_MONTHLY_RETURN_BUDGET_MILLIS = 45_000L
     private const val TICKET_RS_MONTHLY_RETURN_MAX_RECOVERY_ACTIONS = 6
     private const val TICKET_RS_MONTHLY_IDLE_CLEANUP_DELAY_MILLIS = 2_500L
     private const val TICKET_RS_MONTHLY_FAST_RETURN_TIMEOUT_MILLIS = 8_000L
-    private const val TICKET_RS_MONTHLY_IN_APP_RECOVERY_TIMEOUT_MILLIS = 8_000L
     private const val TICKET_ROOT_HIERARCHY_DUMP_TIMEOUT_MILLIS = 8_000L
-    private const val RS_SEMANTIC_ROOT_DUMP_ATTEMPTS = 3
-    private const val RS_SEMANTIC_ROOT_DUMP_RETRY_DELAY_MILLIS = 250L
     private const val TICKET_WAKE_COMMAND_TIMEOUT_MILLIS = 3_000L
     private const val TICKET_WAKE_INTERACTIVE_TIMEOUT_MILLIS = 900L
     private const val TICKET_WAKE_LAUNCH_TIMEOUT_MILLIS = 3_000L
@@ -8971,24 +9168,18 @@ class TicketStreamService : Service() {
     private const val CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS = 80L
     private const val CONTROL_CODE_POPUP_READY_CACHE_MILLIS = 2_000L
     private const val CONTROL_CODE_FAST_ROOT_DUMP_TIMEOUT_MILLIS = 900L
-    private const val CONTROL_CODE_FAST_RESULT_ROOT_DUMP_TIMEOUT_MILLIS = 700L
+    private const val CONTROL_CODE_FAST_RESULT_ROOT_DUMP_TIMEOUT_MILLIS = 2_500L
     private const val CONTROL_CODE_FAST_RESULT_FINAL_ROOT_DUMP_TIMEOUT_MILLIS = 1_500L
     private const val CONTROL_CODE_GENERATED_RESULT_HARD_ROOT_DUMP_TIMEOUT_MILLIS = 3_000L
     private const val CONTROL_CODE_FAST_ROOT_RETRY_COUNT = 1
     private const val CONTROL_CODE_PREPARE_ROOT_DUMP_TIMEOUT_MILLIS = 700L
     private const val CONTROL_CODE_FAST_POPUP_TIMEOUT_MILLIS = 2_400L
-    private const val CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS = 2_200L
-    private const val CONTROL_CODE_CURRENT_SUBMIT_ROOT_DUMP_TIMEOUT_MILLIS = 450L
-    private const val CONTROL_CODE_GENERATED_RESULT_HARD_TIMEOUT_MILLIS = 22_000L
-    private const val CONTROL_CODE_GENERATED_RESULT_FAST_PROBE_MAX_ATTEMPTS = 40
-    private const val CONTROL_CODE_GENERATED_RESULT_FAST_PROBE_INTERVAL_MILLIS = 220L
-    private const val CONTROL_CODE_GENERATED_RESULT_ROOT_CHECK_INITIAL_DELAY_MILLIS = 900L
-    private const val CONTROL_CODE_GENERATED_RESULT_ROOT_CHECK_INTERVAL_MILLIS = 1_200L
-    private const val CONTROL_CODE_VISUAL_RESULT_TIMEOUT_MILLIS = 1_100L
-    private const val CONTROL_CODE_VISUAL_RESULT_POLL_MILLIS = 40L
-    private const val CONTROL_CODE_RESULT_BROWSER_FRAME_TIMEOUT_MILLIS = 1_600L
-    private const val CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 750L
-    private const val CONTROL_CODE_POST_OK_VISUAL_FAST_PATH_TIMEOUT_MILLIS = 1_250L
+    private const val CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS = 18_000L
+    private const val CONTROL_CODE_BROWSER_CAPTURE_ACK_POLL_MILLIS = 40L
+    private const val CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 450L
+    private const val CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS = 420L
+    private const val CONTROL_CODE_VISUAL_STATE_POLL_MILLIS = 40L
+    private const val CONTROL_CODE_VISUAL_STATE_RETRY_MILLIS = 80L
     private const val CONTROL_CODE_DIGITS_TYPED_SUBMIT_SETTLE_MILLIS = 40L
     private const val CONTROL_CODE_FAST_POLL_MILLIS = 90L
     private const val CONTROL_CODE_FAST_BUTTON_X_FRACTION = 0.23f
@@ -9023,7 +9214,7 @@ class TicketStreamService : Service() {
     private const val PNG_BASE64_BEGIN = "PNG_BASE64_BEGIN"
     private const val PNG_BASE64_END = "PNG_BASE64_END"
     private const val SNAP_TARGET_CONTROL_CODE_BUTTON = "control_code_button"
-    private val CONTROL_CODE_REQUEST_DIGITS_REGEX = Regex("""^[0-9]{2,9}$""")
+    private val CONTROL_CODE_REQUEST_DIGITS_REGEX = Regex("""^[0-9]{2,8}$""")
     private const val CONTROL_CODE_SOFT_CHECK_DELAY_MILLIS = 200L
     private const val CONTROL_CODE_SOFT_CHECK_TIMEOUT_MILLIS = 10_000L
     private const val CONTROL_CODE_SOFT_CHECK_MAX_STEPS = 2
@@ -9624,10 +9815,10 @@ internal fun browserPage(): String {
       event.preventDefault();
       const digits = cleanDigits(codeDigits.value);
       codeDigits.value = digits;
-      if (digits.length < 2 || digits.length > 9) {
-        showCodeResult('Enter 2-9 digits');
-        return;
-      }
+	      if (digits.length < 2 || digits.length > 8) {
+	        showCodeResult('Enter 2-8 digits');
+	        return;
+	      }
       if (!noteCodeRequestWindow()) {
         showCodeResult('Two requests per minute');
         return;
@@ -9636,7 +9827,7 @@ internal fun browserPage(): String {
       currentCodeRequestId = randomId();
       codeSubmit.disabled = true;
       showCodeResult('Request queued');
-      send({type: 'generate_control_code', requestId: currentCodeRequestId, digits, app: 'vivi', flow: 'control_code'});
+      send({type: 'generate_control_code', requestId: currentCodeRequestId, digits, owner: 'ticket', app: 'vivi', flow: 'control_code'});
     });
     codeClose.addEventListener('click', hideCodeResult);
     function noteActivity(force = false) {

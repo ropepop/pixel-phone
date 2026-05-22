@@ -1,0 +1,210 @@
+--------- beginning of main
+05-22 07:24:58.815 D/TicketStreamService( 9762): ticket_viewer_input reason=browser_activity
+05-22 07:24:59.283 I/TicketStreamService( 9762): ticket_event event=foreground_screen_wake detail=screen_not_interactive
+05-22 07:24:59.636 D/TouchBrightness( 9762): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=44250ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:00.057 I/TicketStreamService( 9762): ticket_event event=foreground_screen_wake detail=screen_not_interactive
+05-22 07:25:00.893 I/TicketStreamService( 9762): ticket_event event=input_command detail=wake_request duration_ms=1584 ok=true
+05-22 07:25:00.897 I/TicketStreamService( 9762): ticket_event event=screen_wake detail=foreground_check ok=true duration_ms=1584
+05-22 07:25:01.017 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:01.237 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_retrying touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=45851ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:01.238 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_event:ticket:wake_launch_vivi:session_start_root_hardware_h264_capture:active touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=45852ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:05.525 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:05.686 D/TouchBrightness( 9762): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=50047ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:06.942 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=51304ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:06.944 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_event:ticket:wake_launch_vivi:session_start_root_hardware_h264_capture:active touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=51306ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:10.073 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:11.407 D/TouchBrightness( 9762): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=55516ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:12.249 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=56358ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:12.283 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=56392ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:12.284 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_event:ticket:wake_launch_vivi:session_start_root_hardware_h264_capture:active touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=56393ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:13.660 D/TicketStreamService( 9762): ticket_viewer_input reason=browser_activity
+05-22 07:25:14.798 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:17.079 D/TouchBrightness( 9762): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=60999ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:17.694 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=61614ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:17.696 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_event:ticket:wake_launch_vivi:session_start_root_hardware_h264_capture:complete touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=61616ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:17.748 W/TicketStreamService( 9762): ticket_root_active_check_failed reason=foreground_guard state=UNKNOWN_VIVI error=hierarchy_unavailable
+05-22 07:25:17.748 I/TicketStreamService( 9762): ticket_event event=active_guard_failed detail=root:UNKNOWN_VIVI
+05-22 07:25:17.748 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive detail=hierarchy_unavailable
+05-22 07:25:18.686 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:18.686 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:25:21.590 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:21.590 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:25:23.206 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=67010ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:23.207 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_event:ticket:wake_launch_vivi:wake_recovery_unknown_vivi:session_start_root_hardware_h264_capture touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=67011ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:23.477 D/TouchBrightness( 9762): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=67243ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:24.516 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:24.516 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:25:27.413 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:27.414 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:25:28.917 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=72683ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:28.918 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_event:ticket:wake_launch_vivi:wake_recovery_unknown_vivi:session_start_root_hardware_h264_capture:active touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=72684ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:28.988 D/TicketStreamService( 9762): ticket_viewer_input reason=browser_activity
+05-22 07:25:29.683 D/TouchBrightness( 9762): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=73195ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:30.365 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:30.365 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:25:33.262 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:33.262 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:25:34.244 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=77756ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:34.246 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_event:ticket:wake_launch_vivi:wake_recovery_unknown_vivi:session_start_root_hardware_h264_capture:active touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=77758ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:35.732 D/TouchBrightness( 9762): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=78990ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:36.198 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:36.199 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:25:39.051 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:39.051 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:25:39.686 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=82944ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:39.687 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_event:ticket:wake_launch_vivi:wake_recovery_unknown_vivi:session_start_root_hardware_h264_capture:active touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=82945ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:42.009 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:42.010 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:25:42.146 D/TouchBrightness( 9762): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=85152ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:43.640 D/TicketStreamService( 9762): ticket_viewer_input reason=browser_activity
+05-22 07:25:44.963 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:45.454 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=88460ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:45.650 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=88656ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:45.651 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_event:ticket:wake_launch_vivi:wake_recovery_unknown_vivi:session_start_root_hardware_h264_capture:active touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=88657ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:47.996 W/TicketStreamService( 9762): ticket_root_active_check_failed reason=foreground_guard state=UNKNOWN_VIVI error=root hierarchy dump timed out after 3000 ms
+05-22 07:25:47.996 I/TicketStreamService( 9762): ticket_event event=active_guard_failed detail=root:UNKNOWN_VIVI
+05-22 07:25:47.996 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive detail=root hierarchy dump timed out after 3000 ms
+05-22 07:25:48.345 D/TouchBrightness( 9762): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=91093ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:48.906 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=1
+05-22 07:25:48.906 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:25:51.693 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted_burst_100ms touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=94441ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:51.723 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=94471ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:51.724 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_event:ticket:wake_launch_vivi:wake_recovery_unknown_vivi:session_start_root_hardware_h264_capture:active touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=94472ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:51.763 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:51.763 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:25:54.462 D/TouchBrightness( 9762): touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=97059ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:54.600 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:54.601 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:25:57.185 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_panel_sleep_reasserted touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=99782ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:57.187 D/TouchBrightness( 9762): touch_brightness_debug reason=non_touch_input_event:ticket:wake_launch_vivi:wake_recovery_unknown_vivi:session_start_root_hardware_h264_capture:complete touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=99784ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+05-22 07:25:57.540 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:25:57.540 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:25:58.656 D/TicketStreamService( 9762): ticket_viewer_input reason=browser_activity
+05-22 07:26:00.387 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:00.388 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:26:00.987 W/TouchBrightness( 9762): saved brightness restore failed during wake; forcing visible brightness: Brightness restore verification failed: mode=0 value=0 display=0.0 panel=0/3939 path=/sys/class/backlight/panel0-backlight
+05-22 07:26:03.267 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:03.268 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:26:03.511 E/TouchBrightness( 9762): touch brightness session failed
+05-22 07:26:03.511 E/TouchBrightness( 9762): java.lang.IllegalStateException: Could not set bright mode: Brightness verification failed: mode=0 value=0 display=0.0 panel=0/3939 path=/sys/class/backlight/panel0-backlight
+05-22 07:26:03.511 E/TouchBrightness( 9762): 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.invokeSuspend$enterBrightIdle(TouchBrightnessRuntime.kt:1050)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.access$invokeSuspend$enterBrightIdle(Unknown Source:0)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2$enterBrightIdle$1.invokeSuspend(Unknown Source:44)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:584)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:811)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:715)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:702)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 	Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at libcore.io.Linux.readBytes(Native Method)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at libcore.io.Linux.read(Linux.java:231)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at libcore.io.IoBridge.read(IoBridge.java:621)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at java.io.FileInputStream.read(FileInputStream.java:353)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at java.io.InputStreamReader.read(InputStreamReader.java:177)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at java.io.BufferedReader.read1(BufferedReader.java:221)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at java.io.BufferedReader.read(BufferedReader.java:298)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at java.io.Reader.read(Reader.java:229)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootPowerKeyMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootPowerKeyMonitor.kt:136)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:111)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:99)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		... 4 more
+05-22 07:26:03.511 E/TouchBrightness( 9762): 		Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at libcore.io.Linux.readBytes(Native Method)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at libcore.io.Linux.read(Linux.java:231)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at libcore.io.IoBridge.read(IoBridge.java:621)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at java.io.FileInputStream.read(FileInputStream.java:353)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at java.io.InputStreamReader.read(InputStreamReader.java:177)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at java.io.BufferedReader.read1(BufferedReader.java:221)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at java.io.BufferedReader.read(BufferedReader.java:298)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at java.io.Reader.read(Reader.java:229)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootTouchMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootTouchMonitor.kt:271)
+05-22 07:26:03.511 E/TouchBrightness( 9762): 			... 8 more
+05-22 07:26:06.099 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:06.100 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:26:08.966 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:08.966 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:26:11.854 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:11.855 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:26:13.641 D/TicketStreamService( 9762): ticket_viewer_input reason=browser_activity
+05-22 07:26:14.667 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:14.668 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:26:17.526 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:21.909 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:23.142 W/TouchBrightness( 9762): saved brightness restore failed during wake; forcing visible brightness: Brightness restore verification failed: mode=0 value=0 display=0.0 panel=0/3939 path=/sys/class/backlight/panel0-backlight
+05-22 07:26:25.365 E/TouchBrightness( 9762): touch brightness session failed
+05-22 07:26:25.365 E/TouchBrightness( 9762): java.lang.IllegalStateException: Could not set bright mode: Brightness verification failed: mode=0 value=0 display=0.0 panel=0/3939 path=/sys/class/backlight/panel0-backlight
+05-22 07:26:25.365 E/TouchBrightness( 9762): 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.invokeSuspend$enterBrightIdle(TouchBrightnessRuntime.kt:1050)
+05-22 07:26:25.365 E/TouchBrightness( 9762): 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.access$invokeSuspend$enterBrightIdle(Unknown Source:0)
+05-22 07:26:25.365 E/TouchBrightness( 9762): 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2$enterBrightIdle$1.invokeSuspend(Unknown Source:44)
+05-22 07:26:25.365 E/TouchBrightness( 9762): 	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+05-22 07:26:25.365 E/TouchBrightness( 9762): 	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+05-22 07:26:25.365 E/TouchBrightness( 9762): 	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:584)
+05-22 07:26:25.365 E/TouchBrightness( 9762): 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:811)
+05-22 07:26:25.365 E/TouchBrightness( 9762): 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:715)
+05-22 07:26:25.365 E/TouchBrightness( 9762): 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:702)
+05-22 07:26:26.171 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:28.660 D/TicketStreamService( 9762): ticket_viewer_input reason=browser_activity
+05-22 07:26:30.438 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:33.206 W/TicketStreamService( 9762): ticket_root_active_check_failed reason=foreground_guard state=UNKNOWN_VIVI error=hierarchy_unavailable
+05-22 07:26:33.206 I/TicketStreamService( 9762): ticket_event event=active_guard_failed detail=root:UNKNOWN_VIVI
+05-22 07:26:33.207 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive detail=hierarchy_unavailable
+05-22 07:26:34.137 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:34.137 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:26:36.897 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:36.897 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:26:39.782 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:39.783 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:26:41.662 I/SupervisorService( 9762): phone_automation_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER decision=STARTED enabled=false setup=unknown runtime=disabled touch_enabled=true touch_runtime=starting
+05-22 07:26:41.716 I/SupervisorService( 9762): cpu_frequency_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER enabled=false suspended=false runtime=disabled
+05-22 07:26:41.743 I/SupervisorService( 9762): action=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER command_action=ticket_start_server component= success=true message=Ticket remote server start requested
+05-22 07:26:42.571 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:42.571 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:26:43.629 D/TicketStreamService( 9762): ticket_viewer_input reason=browser_activity
+05-22 07:26:44.616 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:44.616 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:26:45.458 W/TouchBrightness( 9762): saved brightness restore failed during wake; forcing visible brightness: Brightness restore verification failed: mode=0 value=0 display=0.0 panel=0/3939 path=/sys/class/backlight/panel0-backlight
+05-22 07:26:47.532 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:47.532 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:26:47.610 E/TouchBrightness( 9762): touch brightness session failed
+05-22 07:26:47.610 E/TouchBrightness( 9762): java.lang.IllegalStateException: Could not set bright mode: Brightness verification failed: mode=0 value=0 display=0.0 panel=0/3939 path=/sys/class/backlight/panel0-backlight
+05-22 07:26:47.610 E/TouchBrightness( 9762): 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.invokeSuspend$enterBrightIdle(TouchBrightnessRuntime.kt:1050)
+05-22 07:26:47.610 E/TouchBrightness( 9762): 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.access$invokeSuspend$enterBrightIdle(Unknown Source:0)
+05-22 07:26:47.610 E/TouchBrightness( 9762): 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2$enterBrightIdle$1.invokeSuspend(Unknown Source:44)
+05-22 07:26:47.610 E/TouchBrightness( 9762): 	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+05-22 07:26:47.610 E/TouchBrightness( 9762): 	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+05-22 07:26:47.610 E/TouchBrightness( 9762): 	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:584)
+05-22 07:26:47.610 E/TouchBrightness( 9762): 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:811)
+05-22 07:26:47.610 E/TouchBrightness( 9762): 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:715)
+05-22 07:26:47.610 E/TouchBrightness( 9762): 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:702)
+05-22 07:26:50.324 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:50.325 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:26:53.267 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:53.267 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:26:56.168 I/TicketStreamService( 9762): ticket_event event=fast_visible_hierarchy_empty detail=reason=active_guard:foreground_guard package=com.pv.vivi duration_ms=0
+05-22 07:26:56.168 I/TicketStreamService( 9762): ticket_event event=active_guard_inconclusive_backoff detail=reason=foreground_guard
+05-22 07:26:58.660 D/TicketStreamService( 9762): ticket_viewer_input reason=browser_activity

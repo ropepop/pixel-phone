@@ -1,0 +1,10 @@
+utc=2026-05-22T05:04:03Z
+panel=0
+actual=0
+max=3939
+screen_brightness=0
+mode=0
+pid=16385
+prefs_state=    <string name="touch_brightness_state">panel_sleep</string>
+prefs_detail=    <string name="touch_brightness_detail">Panel brightness is zero; Android is held awake waiting for physical touch or power button (source: synaptics_tcm_touch)</string>
+prefs_debug=    <string name="touch_brightness_debug_detail">touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=187926ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true</string>

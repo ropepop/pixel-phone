@@ -101,6 +101,31 @@ class TicketViviPageEnforcerTest {
   }
 
   @Test
+  fun routeHomeAnnouncementDoesNotLookLikeDismissibleBlockerOrCart() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="0" clickable="true" bounds="[941,169][1064,292]" />
+        <node package="com.pv.vivi" content-desc="Pasažieriem jāņem vērā aktuālie vilcienu kustības saraksti" bounds="[0,577][1080,703]" />
+        <node package="com.pv.vivi" content-desc="Maršruta plānošana" bounds="[228,955][852,1052]" />
+        <node package="com.pv.vivi" content-desc="MEKLĒT" clickable="true" bounds="[79,2040][1001,2197]" />
+        <node package="com.pv.vivi" content-desc="home&#10;1. cilne no 4" clickable="true" selected="true" bounds="[0,2209][270,2361]" />
+        <node package="com.pv.vivi" content-desc="Tickets&#10;2. cilne no 4" clickable="true" selected="false" bounds="[270,2209][540,2361]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val recoveryAction = TicketViviPageEnforcer.recoveryActionForHierarchy(xml)
+    val genericAction = TicketViviPageEnforcer.actionForHierarchy(xml)
+
+    assertEquals(TicketViviRecoveryState.OTHER_VIVI_TAB, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("open_tickets_tab", recoveryAction?.reason)
+    assertEquals(405, recoveryAction?.x)
+    assertEquals(2285, recoveryAction?.y)
+    assertEquals("open_tickets_tab", genericAction?.reason)
+    assertEquals(405, genericAction?.x)
+    assertEquals(2285, genericAction?.y)
+  }
+
+  @Test
   fun recoversRouteHomeEvenWhenTicketsTabHasNoAccessibleLabel() {
     val xml = """
       <hierarchy>

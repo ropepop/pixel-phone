@@ -1,0 +1,30 @@
+{
+  "actual_max": 0,
+  "actual_min": 0,
+  "after_trigger_nonzero_panel_samples": 0,
+  "after_trigger_panel_max": 0,
+  "before_trigger_panel_max": 0,
+  "file": "app_action_panel.tsv",
+  "first_nonzero_seq": null,
+  "last_nonzero_seq": null,
+  "nonzero_panel_samples": 0,
+  "panel_max": 0,
+  "panel_min": 0,
+  "samples": 220,
+  "tail_all_zero": true,
+  "tail_panel_values": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "trigger_seq": 10
+}

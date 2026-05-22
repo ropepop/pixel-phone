@@ -1,0 +1,32 @@
+utc=2026-05-22T04:52:22Z
+panel=0
+actual=0
+max=3939
+screen_brightness=0
+mode=0
+pid=16385
+wakefulness=  mWakefulness=Awake
+getevent_processes= 4275   807 root         getevent -lt /dev/input/event2;11418   807 root         getevent -lt /dev/input/event2;12170   807 root         getevent -lt /dev/input/event2;14630   807 root         getevent -lt /dev/input/event2;19188   807 root         getevent -lt /dev/input/event2;21903   807 root         getevent -lt /dev/input/event2;22850 16385 u0_a205      su -c exec getevent -lt '/dev/input/event2';22852 16385 u0_a205      su -c exec getevent -lt '/dev/input/event0';22857   807 root         getevent -lt /dev/input/event2;22862   807 root         getevent -lt /dev/input/event0;24763   807 root         getevent -lt /dev/input/event2;24951   807 root         getevent -lt /dev/input/event0;31399   807 root         getevent -lt /dev/input/event2;31907   807 root         getevent -lt /dev/input/event2;
+prefs_state=    <string name="touch_brightness_state">panel_sleep</string>
+prefs_detail=    <string name="touch_brightness_detail">Panel brightness is zero; Android is held awake waiting for physical touch or power button (source: synaptics_tcm_touch)</string>
+prefs_debug=    <string name="touch_brightness_debug_detail">touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true</string>
+
+STDERR:
+Failed to write while dumping service power: Broken pipe
+
+---
+utc=2026-05-22T04:52:25Z
+panel=0
+actual=0
+max=3939
+screen_brightness=0
+mode=0
+pid=16385
+wakefulness=  mWakefulness=Awake
+getevent_processes= 4275   807 root         getevent -lt /dev/input/event2;11418   807 root         getevent -lt /dev/input/event2;12170   807 root         getevent -lt /dev/input/event2;14630   807 root         getevent -lt /dev/input/event2;19188   807 root         getevent -lt /dev/input/event2;21903   807 root         getevent -lt /dev/input/event2;22850 16385 u0_a205      su -c exec getevent -lt '/dev/input/event2';22852 16385 u0_a205      su -c exec getevent -lt '/dev/input/event0';22857   807 root         getevent -lt /dev/input/event2;22862   807 root         getevent -lt /dev/input/event0;24763   807 root         getevent -lt /dev/input/event2;24951   807 root         getevent -lt /dev/input/event0;31399   807 root         getevent -lt /dev/input/event2;31907   807 root         getevent -lt /dev/input/event2;
+prefs_state=    <string name="touch_brightness_state">panel_sleep</string>
+prefs_detail=    <string name="touch_brightness_detail">Panel brightness is zero; Android is held awake waiting for physical touch or power button (source: synaptics_tcm_touch)</string>
+prefs_debug=    <string name="touch_brightness_debug_detail">touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true</string>
+
+STDERR:
+Failed to write while dumping service power: Broken pipe

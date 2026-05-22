@@ -1,0 +1,9 @@
+{
+  "host_utc": "2026-05-22T03:49:18.897841+00:00",
+  "kind": "POST /api/v1/session/start",
+  "response": {
+    "message": "Preparing ViVi for secure H.264 capture",
+    "ok": true,
+    "state": "starting"
+  }
+}

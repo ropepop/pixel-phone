@@ -1,0 +1,6 @@
+{
+  "trigger_stdout": "sent\n",
+  "trigger_stderr": "",
+  "trigger_rc": 0,
+  "getevent_rc": 124
+}

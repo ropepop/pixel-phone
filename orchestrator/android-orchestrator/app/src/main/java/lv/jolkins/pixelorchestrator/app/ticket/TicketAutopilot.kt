@@ -255,7 +255,7 @@ internal class TicketAutopilot(
     if (
       current.observedAtMillis > 0L &&
       currentAgeMillis in 0..FAST_TICKET_DETAIL_MEMORY_MAX_AGE_MILLIS &&
-      current.state != TicketViviRecoveryState.UNKNOWN_VIVI
+      current.state != TicketViviRecoveryState.TICKET_DETAIL
     ) {
       return null
     }

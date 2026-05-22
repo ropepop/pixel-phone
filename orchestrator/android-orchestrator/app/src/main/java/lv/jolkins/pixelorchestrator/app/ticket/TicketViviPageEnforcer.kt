@@ -240,6 +240,9 @@ internal object TicketViviPageEnforcer {
     if (isControlCodeResult(xml)) {
       return controlCodeExitCloseActionForHierarchy(xml)
     }
+    routeHomeOpenTicketsAction(xml)?.let { action ->
+      return action
+    }
     dismissibleBlockerActionForHierarchy(xml)?.let { action ->
       return action
     }
@@ -273,6 +276,13 @@ internal object TicketViviPageEnforcer {
     }
     if (isTicketDetail(xml)) {
       return TicketViviRecoveryState.TICKET_DETAIL
+    }
+    if (looksLikeRouteHomePage(xml)) {
+      return if (ticketsTabBounds(xml) != null) {
+        TicketViviRecoveryState.OTHER_VIVI_TAB
+      } else {
+        TicketViviRecoveryState.UNKNOWN_VIVI
+      }
     }
     if (dismissibleBlockerActionForHierarchy(xml) != null) {
       return TicketViviRecoveryState.DISMISSIBLE_BLOCKER
@@ -323,6 +333,9 @@ internal object TicketViviPageEnforcer {
     }
     if (isControlCodeResult(xml)) {
       return controlCodeExitCloseActionForHierarchy(xml)
+    }
+    routeHomeOpenTicketsAction(xml)?.let { action ->
+      return action
     }
     dismissibleBlockerActionForHierarchy(xml)?.let { action ->
       return action
@@ -805,6 +818,14 @@ internal object TicketViviPageEnforcer {
       y = ROUTE_HOME_TICKETS_TAB_FALLBACK_Y,
       reason = "open_tickets_tab_route_fallback"
     )
+  }
+
+  private fun routeHomeOpenTicketsAction(xml: String): TicketViviPageAction? {
+    if (!hasViviPackage(xml) || !looksLikeRouteHomePage(xml)) {
+      return null
+    }
+    return ticketsTabBounds(xml)?.action("open_tickets_tab")
+      ?: routeHomeTicketsFallbackAction(xml)
   }
 
   private fun cartTopRightCloseFallbackAction(xml: String): TicketViviPageAction? {

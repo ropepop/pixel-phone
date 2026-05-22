@@ -1,0 +1,5 @@
+stop ticket server via SupervisorService ACTION_TICKET_STOP_SERVER
+wait for panel=0 actual=0
+clear logcat
+Popen adb shell su -c sampler loop, 145 samples x 1s
+sendevent /dev/input/event0 EV_KEY KEY_POWER down/up

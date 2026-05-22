@@ -1,0 +1,8 @@
+{
+  "host_utc": "2026-05-22T04:09:51.668060+00:00",
+  "kind": "sendevent EV_KEY KEY_POWER on gpio_keys /dev/input/event0",
+  "pre_power_zero": true,
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "sent_power_key_event\n"
+}
