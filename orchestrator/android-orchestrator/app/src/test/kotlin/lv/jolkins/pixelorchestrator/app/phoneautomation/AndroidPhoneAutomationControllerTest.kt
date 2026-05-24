@@ -616,6 +616,12 @@ private class ScriptedAccessibilityHost : PhoneAutomationAccessibilityHost {
     return onClick(expectedPackageName, selectors)
   }
 
+  override suspend fun tapFirstMatchingCenter(
+    expectedPackageName: String,
+    selectors: List<PhoneAutomationSelector>,
+    timeoutMillis: Long
+  ): Boolean = false
+
   override suspend fun isAnySelectorPresent(
     expectedPackageName: String,
     selectors: List<PhoneAutomationSelector>

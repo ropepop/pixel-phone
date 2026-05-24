@@ -29,6 +29,7 @@ internal class TicketAutopilot(
   private val collapseSystemUi: suspend (String) -> Unit,
   private val scheduleBrightnessGuard: (String) -> Unit,
   private val stateMemory: TicketViviStateMemory,
+  private val loginIfNeeded: suspend (String, String) -> Boolean = { _, _ -> false },
   private val onHardReset: (String) -> Unit = {}
 ) {
   suspend fun observeFastState(reason: String): TicketViviStateMemorySnapshot? {
@@ -127,6 +128,16 @@ internal class TicketAutopilot(
         TicketViviRecoveryState.CART_OR_CHECKOUT -> {
           firstActionState = firstActionState ?: state
           stuckActions += if (leaveCartOrCheckout(observation.xml)) 0 else 1
+        }
+
+        TicketViviRecoveryState.LOGIN_REQUIRED -> {
+          firstActionState = firstActionState ?: state
+          stuckActions += if (loginIfNeeded(observation.xml, "ticket_autopilot:$reason")) 0 else 1
+        }
+
+        TicketViviRecoveryState.AUTH_ATTENTION_REQUIRED -> {
+          firstActionState = firstActionState ?: state
+          stuckActions += 1
         }
 
         TicketViviRecoveryState.TICKET_LIST_WITH_CARD -> {

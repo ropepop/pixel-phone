@@ -99,6 +99,12 @@ internal interface PhoneAutomationAccessibilityHost {
     timeoutMillis: Long
   ): Boolean
 
+  suspend fun tapFirstMatchingCenter(
+    expectedPackageName: String,
+    selectors: List<PhoneAutomationSelector>,
+    timeoutMillis: Long
+  ): Boolean
+
   suspend fun isAnySelectorPresent(
     expectedPackageName: String,
     selectors: List<PhoneAutomationSelector>
@@ -393,6 +399,19 @@ object PhoneAutomationServiceBridge {
   ): Boolean {
     val service = accessibilityService.value ?: return false
     return service.clickFirstMatching(
+      expectedPackageName = expectedPackageName,
+      selectors = selectors,
+      timeoutMillis = timeoutMillis
+    )
+  }
+
+  suspend fun tapSelectorCenter(
+    expectedPackageName: String,
+    selectors: List<PhoneAutomationSelector>,
+    timeoutMillis: Long
+  ): Boolean {
+    val service = accessibilityService.value ?: return false
+    return service.tapFirstMatchingCenter(
       expectedPackageName = expectedPackageName,
       selectors = selectors,
       timeoutMillis = timeoutMillis

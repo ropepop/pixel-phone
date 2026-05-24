@@ -6,6 +6,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
 
 class TicketViviPageEnforcerTest {
   @Test
@@ -52,16 +53,132 @@ class TicketViviPageEnforcerTest {
     val xml = """
       <hierarchy>
         <node package="com.pv.vivi" content-desc="Manas biļetes" bounds="[288,158][792,270]" />
-        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;23.04.2026 - 22.05.2026&#10;B&#10;A" clickable="true" bounds="[0,536][1080,1011]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;24.05.2026 - 22.06.2026&#10;B&#10;A" clickable="true" bounds="[0,536][1080,1011]" />
         <node package="com.pv.vivi" content-desc="Tickets&#10;2. cilne no 4" clickable="true" selected="true" bounds="[270,2209][540,2361]" />
       </hierarchy>
     """.trimIndent()
 
     val action = TicketViviPageEnforcer.actionForHierarchy(xml)
 
-    assertEquals("open_ticket_card", action?.reason)
+    assertEquals("open_fresh_time_ticket_card", action?.reason)
     assertEquals(540, action?.x)
     assertEquals(773, action?.y)
+  }
+
+  @Test
+  fun detectsViviLoginScreenAndTargetsLoginControls() {
+    val xml = loginScreenXml()
+
+    val surface = TicketViviPageEnforcer.loginSurfaceForHierarchy(xml)
+
+    assertEquals(TicketViviRecoveryState.LOGIN_REQUIRED, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("user@example.test", surface?.visibleEmail)
+    assertEquals("focus_vivi_login_email", surface?.email?.reason)
+    assertEquals(612, surface?.email?.x)
+    assertEquals(916, surface?.email?.y)
+    assertEquals("focus_vivi_login_password", surface?.password?.reason)
+    assertEquals(548, surface?.password?.x)
+    assertEquals(1108, surface?.password?.y)
+    assertEquals("submit_vivi_login", surface?.submit?.reason)
+    assertEquals(540, surface?.submit?.x)
+    assertEquals(1310, surface?.submit?.y)
+  }
+
+  @Test
+  fun loginScreenDoesNotUseGenericRecoveryTap() {
+    val xml = loginScreenXml()
+
+    assertEquals(TicketViviRecoveryState.LOGIN_REQUIRED, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertNull(TicketViviPageEnforcer.actionForHierarchy(xml))
+    assertNull(TicketViviPageEnforcer.recoveryActionForHierarchy(xml))
+  }
+
+  @Test
+  fun detectsKeyboardShiftedLoginScreenAndTargetsShiftedSubmit() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.widget.EditText" text="user@example.test" clickable="true" editable="true" focusable="true" focused="false" bounds="[223,524][1001,603]" />
+        <node package="com.pv.vivi" class="android.widget.EditText" text="" hint="Parole" clickable="true" editable="true" password="true" focusable="true" focused="true" bounds="[223,716][873,794]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="IEIET" clickable="false" enabled="false" bounds="[79,849][1001,1065]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="Aizmirsu paroli" clickable="true" bounds="[384,1065][696,1191]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="Reģistrēties" clickable="true" bounds="[410,1191][670,1317]" />
+        <node package="com.android.inputmethod.latin" class="android.inputmethodservice.Keyboard" bounds="[0,1342][1080,2424]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val surface = TicketViviPageEnforcer.loginSurfaceForHierarchy(xml)
+
+    assertEquals(TicketViviRecoveryState.LOGIN_REQUIRED, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("submit_vivi_login", surface?.submit?.reason)
+    assertEquals(540, surface?.submit?.x)
+    assertEquals(957, surface?.submit?.y)
+  }
+
+  @Test
+  fun postLoginProfileCompletionRequiresAttentionInsteadOfGenericRecovery() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="1" bounds="[205,625][229,676]" />
+        <node package="com.pv.vivi" content-desc="2" bounds="[525,625][555,676]" />
+        <node package="com.pv.vivi" content-desc="3" bounds="[845,625][875,676]" />
+        <node package="com.pv.vivi" class="android.widget.EditText" text="" hint="E-pasts" clickable="true" enabled="true" focusable="true" bounds="[223,1040][1001,1119]" />
+        <node package="com.pv.vivi" class="android.widget.EditText" text="+371" clickable="true" enabled="true" focusable="true" bounds="[223,1262][1001,1341]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="TURPINĀT" clickable="false" enabled="false" bounds="[0,2230][1080,2424]" />
+      </hierarchy>
+    """.trimIndent()
+
+    assertEquals(TicketViviRecoveryState.AUTH_ATTENTION_REQUIRED, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertNull(TicketViviPageEnforcer.actionForHierarchy(xml))
+    assertNull(TicketViviPageEnforcer.recoveryActionForHierarchy(xml))
+  }
+
+  @Test
+  fun postLoginDeviceLinkedDialogRequiresAttentionInsteadOfGenericRecovery() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="Tavs Vivi konts ir savienots ar citu ierīci/ lietotnes versiju" bounds="[168,1008][912,1113]" />
+        <node package="com.pv.vivi" content-desc="Lietotnes ID nesakrīt ar iepriekšējo, kas bija piesaistīts jūsu Vivi kontam. Lūdzu, sazinies ar klientu apkalpošanas centru pa telefonu 8760 (pieejams 24/7) vai raksti uz vilciens@info.vivi.lv" bounds="[184,1140][896,1389]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" enabled="true" bounds="[781,1415][949,1541]" />
+      </hierarchy>
+    """.trimIndent()
+
+    assertEquals(TicketViviRecoveryState.AUTH_ATTENTION_REQUIRED, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertNull(TicketViviPageEnforcer.actionForHierarchy(xml))
+    assertNull(TicketViviPageEnforcer.recoveryActionForHierarchy(xml))
+  }
+
+  @Test
+  fun choosesCurrentTimeTicketWithLatestEndDateInsteadOfFirstExpiredCard() {
+    val xml = ticketListWithExpiredAndCurrentCardsXml()
+
+    val action = TicketViviPageEnforcer.bestTicketCardActionForHierarchy(
+      xml,
+      today = LocalDate.of(2026, 5, 24)
+    )
+    val recoveryAction = TicketViviPageEnforcer.recoveryActionForHierarchy(xml)
+
+    assertEquals(TicketViviRecoveryState.TICKET_LIST_WITH_CARD, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("open_fresh_time_ticket_card", action?.reason)
+    assertEquals(540, action?.x)
+    assertEquals(1466, action?.y)
+    assertEquals("open_fresh_time_ticket_card", recoveryAction?.reason)
+    assertEquals(540, recoveryAction?.x)
+    assertEquals(1466, recoveryAction?.y)
+  }
+
+  @Test
+  fun choosesSoonestUpcomingTimeTicketWhenNoCurrentTicketExists() {
+    val xml = ticketListWithOnlyFutureCardsXml()
+
+    val action = TicketViviPageEnforcer.bestTicketCardActionForHierarchy(
+      xml,
+      today = LocalDate.of(2026, 5, 24)
+    )
+
+    assertEquals(TicketViviRecoveryState.TICKET_LIST_WITH_CARD, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("open_upcoming_time_ticket_card", action?.reason)
+    assertEquals(540, action?.x)
+    assertEquals(1092, action?.y)
   }
 
   @Test
@@ -660,12 +777,12 @@ class TicketViviPageEnforcerTest {
       """
         <hierarchy>
           <node package="com.pv.vivi" content-desc="Manas biļetes" bounds="[288,158][792,270]" />
-          <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;23.04.2026 - 22.05.2026&#10;B&#10;A" clickable="true" bounds="[0,536][1080,1011]" />
+          <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;24.05.2026 - 22.06.2026&#10;B&#10;A" clickable="true" bounds="[0,536][1080,1011]" />
           <node package="com.pv.vivi" content-desc="Tickets&#10;2. cilne no 4" clickable="true" selected="true" bounds="[270,2209][540,2361]" />
         </hierarchy>
       """.trimIndent()
     )
-    assertEquals("open_ticket_card", listAction?.reason)
+    assertEquals("open_fresh_time_ticket_card", listAction?.reason)
 
     val detailAction = TicketViviPageEnforcer.resetActionForHierarchy(
       """
@@ -700,7 +817,7 @@ class TicketViviPageEnforcerTest {
     assertEquals("close_control_code_result", TicketViviPageEnforcer.recoveryActionForHierarchy(resultXml)?.reason)
     val listXml = ticketsListXml()
     assertEquals(TicketViviRecoveryState.TICKET_LIST_WITH_CARD, TicketViviPageEnforcer.classifyForRecovery(listXml))
-    assertEquals("open_ticket_card", TicketViviPageEnforcer.recoveryActionForHierarchy(listXml)?.reason)
+    assertEquals("open_fresh_time_ticket_card", TicketViviPageEnforcer.recoveryActionForHierarchy(listXml)?.reason)
     val otherTabXml = """
       <hierarchy>
         <node package="com.pv.vivi" content-desc="Maršruta plānošana" bounds="[200,300][900,390]" />
@@ -903,7 +1020,44 @@ class TicketViviPageEnforcerTest {
     return """
       <hierarchy>
         <node package="com.pv.vivi" content-desc="Manas biļetes" bounds="[288,158][792,270]" />
-        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;23.04.2026 - 22.05.2026&#10;B&#10;A" clickable="true" bounds="[0,536][1080,1011]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;24.05.2026 - 22.06.2026&#10;B&#10;A" clickable="true" bounds="[0,536][1080,1011]" />
+        <node package="com.pv.vivi" content-desc="Tickets&#10;2. cilne no 4" clickable="true" selected="true" bounds="[270,2209][540,2361]" />
+      </hierarchy>
+    """.trimIndent()
+  }
+
+  private fun loginScreenXml(): String {
+    return """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="IEIET PROFILĀ" bounds="[318,471][762,554]" />
+        <node package="com.pv.vivi" class="android.widget.EditText" text="user@example.test" clickable="true" editable="true" focusable="true" focused="false" bounds="[223,877][1001,956]" />
+        <node package="com.pv.vivi" class="android.widget.EditText" text="" hint="Parole" clickable="true" editable="true" password="true" focusable="true" focused="false" bounds="[223,1069][873,1148]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="IEIET" clickable="false" enabled="false" bounds="[79,1203][1001,1418]" />
+        <node package="com.pv.vivi" content-desc="Reģistrēties" clickable="true" bounds="[79,1479][1001,1610]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="TURPINĀT BEZ AUTORIZĀCIJAS" clickable="true" enabled="true" bounds="[79,2078][1001,2205]" />
+      </hierarchy>
+    """.trimIndent()
+  }
+
+  private fun ticketListWithExpiredAndCurrentCardsXml(): String {
+    return """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="Manas biļetes" bounds="[288,158][792,270]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;23.04.2026 - 22.05.2026&#10;B&#10;A" clickable="true" bounds="[0,536][1080,900]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;01.05.2026 - 30.05.2026&#10;B&#10;A" clickable="true" bounds="[0,910][1080,1274]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;24.05.2026 - 22.06.2026&#10;B&#10;A" clickable="true" bounds="[0,1284][1080,1648]" />
+        <node package="com.pv.vivi" content-desc="Tickets&#10;2. cilne no 4" clickable="true" selected="true" bounds="[270,2209][540,2361]" />
+      </hierarchy>
+    """.trimIndent()
+  }
+
+  private fun ticketListWithOnlyFutureCardsXml(): String {
+    return """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="Manas biļetes" bounds="[288,158][792,270]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;23.04.2026 - 22.05.2026&#10;B&#10;A" clickable="true" bounds="[0,536][1080,900]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;25.05.2026 - 23.06.2026&#10;B&#10;A" clickable="true" bounds="[0,910][1080,1274]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;01.06.2026 - 30.06.2026&#10;B&#10;A" clickable="true" bounds="[0,1284][1080,1648]" />
         <node package="com.pv.vivi" content-desc="Tickets&#10;2. cilne no 4" clickable="true" selected="true" bounds="[270,2209][540,2361]" />
       </hierarchy>
     """.trimIndent()

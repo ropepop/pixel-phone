@@ -385,6 +385,8 @@ class PhoneAutomationBridgeTest {
     assertTrue(source.contains("rootForPackage(expectedPackageName) ?: return@withContext"))
     assertTrue("Flutter/secure windows can expose the expected package only on descendant nodes", source.contains("nodePackageMatchesExpected"))
     assertTrue("Snapshot should fall back to semantically useful nodes when accessibility marks all nodes not-visible", source.contains("visibleNodes.ifEmpty"))
+    assertTrue("RS Flutter code fields may be exposed as enabled EditText nodes even when visible=false", source.contains("private fun editableNodes(root: AccessibilityNodeInfo)"))
+    assertTrue("Editable field lookup should prefer visible nodes but fall back to enabled semantic EditText nodes", source.contains("editableNodes(root).firstOrNull { node -> node.isVisibleToUser }\n      ?: editableNodes(root).firstOrNull()"))
   }
 
   private fun readFirstExisting(vararg paths: Path): String {
@@ -417,6 +419,12 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
   }
 
   override suspend fun clickFirstMatching(
+    expectedPackageName: String,
+    selectors: List<PhoneAutomationSelector>,
+    timeoutMillis: Long
+  ): Boolean = false
+
+  override suspend fun tapFirstMatchingCenter(
     expectedPackageName: String,
     selectors: List<PhoneAutomationSelector>,
     timeoutMillis: Long

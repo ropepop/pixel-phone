@@ -22,6 +22,7 @@ internal class TicketRecoveryCoordinator(
   private val scheduleBrightnessGuard: (String) -> Unit,
   private val stateMemory: TicketViviStateMemory,
   private val returnToOrchestrator: suspend () -> Unit,
+  private val loginIfNeeded: suspend (String, String) -> Boolean = { _, _ -> false },
   private val onHardReset: (String) -> Unit = {},
   private val onRecoveryResult: (String, TicketRecoveryMode, Boolean) -> Unit = { _, _, _ -> }
 ) {
@@ -43,6 +44,7 @@ internal class TicketRecoveryCoordinator(
     collapseSystemUi = collapseSystemUi,
     scheduleBrightnessGuard = scheduleBrightnessGuard,
     stateMemory = stateMemory,
+    loginIfNeeded = loginIfNeeded,
     onHardReset = onHardReset
   )
 

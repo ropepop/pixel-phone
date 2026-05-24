@@ -153,8 +153,10 @@ class TicketStreamServiceSourceTest {
     assertTrue(accept.indexOf("extendStartupDisconnectGrace()") < accept.indexOf("closeDuplicateViewerClients(info)"))
     assertTrue(cleanup.contains("val startupClientGraceActive = startupDisconnectGraceUntilMillis > SystemClock.elapsedRealtime()"))
     assertTrue(cleanup.contains("startupClientGraceActive"))
+    assertTrue(cleanup.contains("protectedControlClients.isNotEmpty() || controlCodeRequestActive()"))
     assertTrue(cleanup.contains("inactive_stream_cleanup_deferred"))
     assertTrue(cleanup.indexOf("startupClientGraceActive") < cleanup.indexOf("closeAllClients(\"inactive_stream_${'$'}reason\")"))
+    assertTrue(cleanup.indexOf("protectedControlActive") < cleanup.indexOf("closeAllClients(\"inactive_stream_${'$'}reason\")"))
   }
 
   @Test
@@ -313,22 +315,29 @@ class TicketStreamServiceSourceTest {
     assertTrue(fast.contains("focusedWindowSnapshot()"))
     assertTrue(fast.contains("focused.contains(TicketScreenConfig.VIVI_PACKAGE)"))
     assertTrue(fast.contains("wake_recent_ticket_detail_fast_ready"))
-    assertTrue(start.contains("val fastWakeReady = fastWakeReadyFromRecentTicketDetail(reason, wakeStartedAtMillis)"))
+    assertTrue(start.contains("var fastWakeReady = fastWakeReadyFromRecentTicketDetail(reason, wakeStartedAtMillis)"))
     assertTrue(start.contains("val launchedViviForWake = fastWakeReady == null"))
     assertTrue(start.contains("if (launchedViviForWake)"))
     assertTrue(start.contains("launchViviForWake(reason)"))
+    assertTrue(start.contains("fastWakeReady = fastWakeReadyFromRecentTicketDetailAfterLaunch(reason, wakeStartedAtMillis)"))
+    assertTrue(source.contains("private suspend fun fastWakeReadyFromRecentTicketDetailAfterLaunch"))
+    assertTrue(source.contains("TICKET_WAKE_POST_LAUNCH_FAST_READY_TIMEOUT_MILLIS"))
+    assertTrue(source.contains("TICKET_WAKE_POST_LAUNCH_FAST_READY_POLL_MILLIS"))
     assertTrue(start.indexOf("fastWakeReadyFromRecentTicketDetail") < start.indexOf("launchViviForWake(reason)"))
+    assertTrue(start.indexOf("launchViviForWake(reason)") < start.indexOf("fastWakeReadyFromRecentTicketDetailAfterLaunch"))
     assertTrue(start.contains("fastWakeReady ?: prepareViviForRootHardwareH264Capture"))
   }
 
   @Test
-  fun hardwareWakeFastRecentTicketDetailRejectsCurrentNonDetailMemory() {
+  fun hardwareWakeFastRecentTicketDetailRejectsOnlyNewerDefinitiveNonDetailMemory() {
     val source = ticketStreamServiceSource()
     val fast = source.substringBetween("private suspend fun fastWakeReadyFromRecentTicketDetail", "private fun remainingWakeBudgetMillis")
 
     assertTrue("wake fast readiness must inspect the latest observed ViVi state before trusting an older ticket-detail snapshot", fast.contains("val current = viviStateMemory.current()"))
-    assertTrue("forced-home/empty-list observations must invalidate stale TICKET_DETAIL memory before focus-only fast readiness can pass", fast.contains("current.state != TicketViviRecoveryState.TICKET_DETAIL"))
-    assertTrue(fast.indexOf("val current = viviStateMemory.current()") < fast.indexOf("viviStateMemory.recentTicketDetailWithin(TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS)"))
+    assertTrue("newer forced-home/empty-list observations must invalidate older TICKET_DETAIL memory before focus-only fast readiness can pass", fast.contains("current.observedAtMillis > recent.observedAtMillis"))
+    assertTrue(fast.contains("currentStateInvalidatesRecentTicketDetailFastWake(current.state)"))
+    assertFalse("an older non-detail observation must not poison a newer RS return proof", fast.contains("TICKET_WAKE_CURRENT_NON_DETAIL_INVALIDATION_MAX_AGE_MILLIS"))
+    assertTrue(fast.indexOf("viviStateMemory.recentTicketDetailWithin(TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS)") < fast.indexOf("val current = viviStateMemory.current()"))
     assertTrue(fast.contains("wake_recent_ticket_detail_fast_ready_current_non_detail"))
   }
 
@@ -634,7 +643,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(source.contains("private suspend fun handlePrepareControlCode(reason: String)"))
     assertTrue(source.contains("control_code_prepare"))
     assertTrue(source.contains("\"generate_control_code\" -> {"))
-    assertTrue(source.contains("handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage)"))
+    assertTrue(source.contains("handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage, rsQueueHint)"))
     assertTrue(source.contains("CONTROL_CODE_REQUEST_DIGITS_REGEX"))
     assertTrue(source.contains("controlCodeRequestMutex.withLock"))
 	    assertTrue(source.contains("sendCachedControlCodeResult(cleanRequestId)"))
@@ -719,7 +728,8 @@ class TicketStreamServiceSourceTest {
     assertFalse(source.contains("control_code_submit_retry_popup_missing_wait_result"))
     val waitForResult = source.substringBetween("private suspend fun waitForGeneratedControlCodeResultAfterSubmit", "private suspend fun confirmGeneratedControlCodeResultForBrowser")
     assertFalse(waitForResult.contains("controlExitGeneratedResultFastScreencapProbe("))
-    assertFalse(waitForResult.contains("controlCodeRequestRootHierarchy("))
+    assertTrue(waitForResult.contains("controlCodeRequestRootHierarchy("))
+    assertTrue(waitForResult.contains("\"wait_result_raw_ticket_root\""))
     assertFalse(waitForResult.contains("wait_generated_result_final_root"))
     assertFalse(waitForResult.contains("control_code_request_result_detected_by_final_root"))
     assertFalse(waitForResult.contains("requestControlCodeVisualProbe(\"control_code_after_ok_visual\")"))
@@ -796,13 +806,13 @@ class TicketStreamServiceSourceTest {
     assertTrue(source.contains("ok = delivery.ok"))
     assertFalse(source.contains("PendingBrowserControlCodeCapture("))
     assertFalse(source.contains("pendingBrowserControlCodeCapture = pending"))
-    assertFalse(source.contains("CONTROL_CODE_BROWSER_CAPTURE_ACK_TIMEOUT_MILLIS"))
+    assertTrue(source.contains("CONTROL_CODE_BROWSER_CAPTURE_ACK_TIMEOUT_MILLIS = 4_000L"))
     assertFalse(source.contains("schedulePendingBrowserCaptureWatchdog"))
-    assertFalse(source.contains("control_code_browser_capture_ack_timeout"))
+    assertTrue(source.contains("control_code_browser_capture_ack_timeout"))
     val browserCaptureWait = source.substringBetween("private suspend fun waitForControlCodeBrowserCapture", "private fun recentControlCodePrepareTicketReady")
-    assertTrue("phone must keep the generated Aztec open until browser capture is accepted or explicitly cancelled", browserCaptureWait.contains("while (true)"))
-    assertFalse("phone must not use timer-driven cleanup while the browser may still capture the generated Aztec", browserCaptureWait.contains("deadlineMillis"))
-    assertFalse("phone must not synthesize a failed browser capture ack from a local timer", browserCaptureWait.contains("ControlCodeBrowserCaptureAck(\n      requestId = requestId"))
+    assertTrue("phone must keep the generated Aztec open for a bounded browser capture window", browserCaptureWait.contains("deadlineMillis"))
+    assertTrue("phone must synthesize a failed browser capture ack when the browser never confirms", browserCaptureWait.contains("return ControlCodeBrowserCaptureAck("))
+    assertTrue("the synthesized browser capture ack must preserve the request id", browserCaptureWait.contains("requestId = requestId"))
     assertTrue(generateSuccess.indexOf("val browserCapture = waitForControlCodeBrowserCapture(") < generateSuccess.indexOf("returnControlCodeSurfaceToRawTicket("))
     assertFalse(source.contains("sendControlCodeFrameReady("))
     assertFalse(source.contains("imageMime\", imageMime.orEmpty()"))
@@ -845,10 +855,10 @@ class TicketStreamServiceSourceTest {
       "control-code generation must run off the websocket reader so browser-capture ack can still be received",
       generateBranch.contains("serviceScope.launch")
     )
-    assertTrue(generateBranch.contains("handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage)"))
+    assertTrue(generateBranch.contains("handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage, rsQueueHint)"))
     assertFalse(
       "websocket reader must not await the long phone automation request inline",
-      generateBranch.contains("\n        handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage)")
+      generateBranch.contains("\n        handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage, rsQueueHint)")
     )
   }
 
@@ -924,7 +934,7 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun fastControlCodeSubmitUsesKeyboardOpenOkTargetAfterTyping() {
+  fun fastControlCodeSubmitUsesPopupOkTargetAfterTyping() {
     val source = ticketStreamServiceSource()
     val fastEnter = source.substringBetween("private suspend fun enterControlCodeDigitsFastForRequest", "private suspend fun tapControlCodeSubmitFastForRequest")
     val fastSubmit = source.substringBetween("private suspend fun tapControlCodeSubmitFastForRequest", "private suspend fun waitForGeneratedControlCodeResultAfterSubmit")
@@ -938,8 +948,9 @@ class TicketStreamServiceSourceTest {
     assertTrue(transactionBuilder.contains("fallbackControlCodeKeyboardOpenSubmitAction()"))
     assertTrue(fastEnter.contains("transaction.input"))
     assertTrue(fastSubmit.contains("resolveControlCodeSubmitAfterDigitsFastForRequest(transaction, phases)"))
-    assertTrue(fastSubmit.contains("control_code_submit_current_keyboard_target"))
-    assertFalse("after typing, OK tap must not use the pre-keyboard submit coordinate", fastSubmit.contains("val submit = transaction.preKeyboardSubmit"))
+    assertTrue(fastSubmit.contains("control_code_submit_current_popup_target"))
+    assertTrue("after typing, OK tap should use the visible popup submit target", resolver.contains("return transaction.preKeyboardSubmit"))
+    assertFalse("after typing, OK tap must not use the keyboard geometry target while the popup button is visible", resolver.contains("return transaction.keyboardOpenSubmit"))
     assertFalse("after typing, OK tap must not reuse the old one-shot target field", fastSubmit.contains("val submit = targets.submit"))
     assertFalse("after typing, OK tap must not spend time on an impossible sub-second root dump", source.contains("CONTROL_CODE_CURRENT_SUBMIT_ROOT_DUMP_TIMEOUT_MILLIS"))
     assertFalse("after typing, OK tap must use cached popup geometry instead of root observation", resolver.contains("controlCodeRequestRootHierarchy("))
@@ -983,10 +994,18 @@ class TicketStreamServiceSourceTest {
     assertTrue("post-submit proof must actively ask the H.264 helper for a visual state", wait.contains("requestControlCodeVisualProbe(\"control_code_after_ok_visual_state\")"))
     assertTrue("post-submit proof must read the fresh visual state returned by the H.264 helper", wait.contains("recentControlCodeVisualProbeAfter(visualProbeStartedAtMillis)"))
     assertTrue("the entry popup must be a negative state, not a successful result", wait.contains("control_code_visual_popup_still_open"))
-    assertTrue("only the generated visual state may confirm the phone marker", wait.contains("visualProbe.result == \"generated\""))
-    assertFalse("post-submit generated-result wait must not poll root while ViVi is generating", wait.contains("controlCodeRequestRootHierarchy("))
-    assertFalse("post-submit generated-result wait must not classify root state while ViVi is generating", waitBody.contains("TicketViviRecoveryState.CONTROL_CODE_RESULT"))
-    assertFalse("post-submit generated-result wait must not parse a root value", waitBody.contains("strictControlCodeResultValueForHierarchy"))
+    assertTrue("visual generated state may confirm the phone marker", wait.contains("visualProbe.result == \"generated\""))
+    assertTrue("post-submit raw-ticket visual state must get one bounded root confirmation instead of timing out on the real ViVi result screen", wait.contains("visualProbe.result == \"raw_ticket\""))
+    assertTrue(wait.contains("controlCodeRequestRootHierarchy("))
+    assertTrue(wait.contains("\"wait_result_raw_ticket_root\""))
+    assertTrue(waitBody.contains("TicketViviRecoveryState.CONTROL_CODE_RESULT"))
+    assertTrue(wait.contains("control_code_request_phone_visual_root_confirmed_after_submit"))
+    assertTrue(wait.contains("resultProof = \"phone_visual_root_confirmed\""))
+    assertTrue(wait.contains("control_code_request_phone_visual_raw_ticket_after_submit"))
+    assertTrue(wait.contains("resultProof = \"phone_visual_raw_ticket_after_submit\""))
+    assertTrue(source.contains("CONTROL_CODE_RAW_TICKET_VISUAL_CONFIRM_COUNT = 2L"))
+    assertTrue(source.contains("CONTROL_CODE_RAW_TICKET_ROOT_CONFIRM_TIMEOUT_MILLIS = 700L"))
+    assertFalse("post-submit result proof must not parse or expose the private generated value", waitBody.contains("strictControlCodeResultValueForHierarchy"))
     assertTrue(wait.contains("confirmGeneratedControlCodeResultForBrowser("))
     assertFalse(rootConfirm.contains("requestControlCodeVisualProbe(\"control_code_result_after_root\")"))
     assertTrue(rootConfirm.contains("markerFirstControlCodeFrameWatermarkForBrowser("))
@@ -1084,7 +1103,7 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun fastResultDetectionUsesPostOkVisualProbeWithoutRootFallback() {
+  fun fastResultDetectionUsesPostOkVisualProbeWithBoundedRawTicketRootConfirmation() {
     val source = ticketStreamServiceSource()
     val wait = source.substringBetween("private suspend fun waitForGeneratedControlCodeResultAfterSubmit", "private suspend fun confirmGeneratedControlCodeResultForBrowser")
     val waitBody = wait.substringBefore("private suspend fun confirmGeneratedControlCodeResultForBrowser")
@@ -1094,8 +1113,11 @@ class TicketStreamServiceSourceTest {
     assertFalse("post-submit marker readiness must not use the removed raw capture helper", wait.contains("controlExitGeneratedResultFastScreencapProbe("))
     assertFalse("the old pre-OK/pre-settle visual shortcut must not come back", wait.contains("control_code_request_result_detected_by_visual_probe"))
     assertFalse("the removed standalone visual wait helper must not come back", wait.contains("waitForControlCodeVisualResultAfterSubmit("))
-    assertFalse("post-submit marker readiness must not use root hierarchy while ViVi is generating", wait.contains("controlCodeRequestRootHierarchy("))
-    assertFalse(waitBody.contains("TicketViviRecoveryState.CONTROL_CODE_RESULT"))
+    assertTrue("post-submit raw-ticket visual state must be confirmed through one bounded root read", wait.contains("controlCodeRequestRootHierarchy("))
+    assertTrue(wait.contains("\"wait_result_raw_ticket_root\""))
+    assertTrue(waitBody.contains("TicketViviRecoveryState.CONTROL_CODE_RESULT"))
+    assertTrue(wait.contains("rawTicketVisualCount >= CONTROL_CODE_RAW_TICKET_VISUAL_CONFIRM_COUNT"))
+    assertTrue(wait.contains("CONTROL_CODE_RAW_TICKET_ROOT_CONFIRM_TIMEOUT_MILLIS"))
     assertTrue(wait.contains("control_code_request_phone_visual_generated_after_submit"))
     assertTrue(wait.contains("delay(CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS)"))
     assertTrue(source.contains("CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 450L"))
@@ -1104,6 +1126,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(wait.contains("requestControlCodeVisualProbe(\"control_code_after_ok_visual_state\")"))
     assertTrue(wait.contains("recentControlCodeVisualProbeAfter(visualProbeStartedAtMillis)"))
     assertFalse(wait.contains("control_code_request_result_detected_by_post_ok_visual"))
+    assertTrue(wait.contains("control_code_request_phone_visual_root_confirmed_after_submit"))
     assertTrue(source.contains("CONTROL_CODE_MARKER_RESULT_HIERARCHY"))
     val rootConfirm = source.substringBetween("private suspend fun confirmGeneratedControlCodeResultForBrowser", "private fun markerFirstControlCodeFrameWatermarkForBrowser")
     val markerFirst = source.substringBetween("private fun markerFirstControlCodeFrameWatermarkForBrowser", "private suspend fun captureGeneratedControlCodeImageBytes")
@@ -1313,17 +1336,35 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun wakeFastRecentTicketDetailProofExpiresBeforeTrustingOnlyViviForeground() {
+  fun wakeFastRecentTicketDetailProofUsesLongLivedFocusedViviMemory() {
     val source = ticketStreamServiceSource()
     val fastReady = source.substringBetween("private suspend fun fastWakeReadyFromRecentTicketDetail", "private fun remainingWakeBudgetMillis")
 
     assertTrue(fastReady.contains("val ageMillis ="))
     assertTrue(
-      "wake fast-ready must not trust stale TICKET_DETAIL memory just because some ViVi screen is focused",
+      "wake fast-ready still expires remembered TICKET_DETAIL proof at the long ticket-memory horizon",
       fastReady.contains("ageMillis !in 0..TICKET_WAKE_RECENT_DETAIL_FAST_READY_MAX_AGE_MILLIS")
     )
+    assertTrue(fastReady.contains("focused.contains(TicketScreenConfig.VIVI_PACKAGE)"))
     assertTrue(fastReady.contains("wake_recent_ticket_detail_fast_ready_stale"))
-    assertTrue(source.contains("private const val TICKET_WAKE_RECENT_DETAIL_FAST_READY_MAX_AGE_MILLIS = FOREGROUND_GUARD_RECENT_TICKET_DETAIL_SKIP_MAX_AGE_MILLIS"))
+    assertTrue(source.contains("private const val TICKET_WAKE_RECENT_DETAIL_FAST_READY_MAX_AGE_MILLIS = TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS"))
+  }
+
+  @Test
+  fun wakeFastRecentTicketDetailMemorySurvivesServiceRestartWithinSameSafetyWindow() {
+    val source = ticketStreamServiceSource()
+    val onCreate = source.substringBetween("override fun onCreate()", "override fun onStartCommand")
+    val persist = source.substringBetween("private fun persistViviStateMemory", "private fun restoreViviStateMemory")
+    val restore = source.substringBetween("private fun restoreViviStateMemory", "private fun ageMillis")
+
+    assertTrue(source.contains("TicketViviStateMemory(::persistViviStateMemory)"))
+    assertTrue(onCreate.contains("restoreViviStateMemory()"))
+    assertTrue(persist.contains("KEY_VIVI_MEMORY_TICKET_WALL_MILLIS"))
+    assertTrue(persist.contains("snapshot.state == TicketViviRecoveryState.TICKET_DETAIL"))
+    assertTrue(restore.contains("viviStateMemory.seedTicketDetail"))
+    assertTrue(restore.contains("TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS"))
+    assertTrue(restore.contains("viviStateMemory.seed("))
+    assertTrue(restore.contains("currentWallMillis < ticketWallMillis"))
   }
 
   @Test
@@ -1423,6 +1464,22 @@ class TicketStreamServiceSourceTest {
     assertFalse(generate.contains("sendControlCodeFrameReady("))
     assertTrue("generated result must close after the marker is delivered", generate.substringBetween("if (ok) {", "} else if (delivery.cleanupRequired)").contains("returnControlCodeSurfaceToRawTicket("))
     assertFalse(source.contains("handleControlCodeBrowserCaptureAck("))
+  }
+
+  @Test
+  fun controlCodeRawTicketProofCompletesCleanupWithoutResultCloseTap() {
+    val source = ticketStreamServiceSource()
+    val success = source.substringBetween("if (ok) {", "} else if (delivery.cleanupRequired)")
+    val helper = source.substringBetween(
+      "private suspend fun completeControlCodeRawTicketAfterSubmitCleanup",
+      "private suspend fun returnControlCodeSurfaceToRawTicket"
+    )
+
+    assertTrue("raw-ticket phone proof should bypass result-dialog close cleanup", success.contains("completeControlCodeRawTicketAfterSubmitCleanup("))
+    assertTrue(success.indexOf("delivery.resultProof") in 0 until success.indexOf("returnControlCodeSurfaceToRawTicket("))
+    assertTrue(helper.contains("phone_visual_raw_ticket_after_submit"))
+    assertTrue(helper.contains("completeControlExitCleanup("))
+    assertFalse("already-clean raw ticket must not receive a result close tap", helper.contains("sendFastGeneratedResultCloseTap("))
   }
 
   @Test
@@ -1673,7 +1730,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(source.contains("beginControlCodeBrowserCaptureWait(cleanRequestId)"))
     assertTrue(source.contains("waitForControlCodeBrowserCapture("))
     assertTrue(source.contains("clearControlCodeBrowserCaptureWait(cleanRequestId)"))
-    assertFalse(source.contains("control_code_browser_capture_failed"))
+    assertTrue(source.contains("control_code_browser_capture_ack_timeout"))
   }
 
   @Test
@@ -1823,7 +1880,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(dispatcher.contains("val owner = element[\"owner\"]?.jsonPrimitive?.contentOrNull.orEmpty()"))
     assertTrue(dispatcher.contains("val app = element[\"app\"]?.jsonPrimitive?.contentOrNull.orEmpty()"))
     assertTrue(dispatcher.contains("val flow = element[\"flow\"]?.jsonPrimitive?.contentOrNull.orEmpty()"))
-    assertTrue(dispatcher.contains("handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage)"))
+    assertTrue(dispatcher.contains("handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage, rsQueueHint)"))
     assertTrue(handle.contains("TicketScreenConfig.TICKET_QR_APP_RIGAS_SATIKSME"))
     assertTrue(handle.contains("TicketScreenConfig.TICKET_QR_FLOW_MONTHLY_TICKET"))
     assertTrue("ticket.jolkins control-code messages must declare the ticket owner", handle.contains("val requestedOwner = owner.trim()"))
@@ -1844,62 +1901,35 @@ class TicketStreamServiceSourceTest {
     assertTrue("Rīgas Satiksme return should use an extended budget without slowing normal wake", rsFlow.contains("budgetMillis = TICKET_RS_MONTHLY_RETURN_BUDGET_MILLIS"))
     assertTrue("Rīgas Satiksme failures should report immediately with cleanup still pending", rsFlow.contains("cleanupPending = outcome.cleanupRequired"))
     assertTrue("Rīgas Satiksme path must publish cleanup completion back to the browser", rsFlow.contains("sendControlCodeCleanup("))
-    assertTrue(rsDriver.contains("TicketScreenConfig.RIGAS_SATIKSME_LAUNCH_ACTIVITY"))
-    assertTrue(rsDriver.contains("am force-stop ${'$'}{TicketScreenConfig.VIVI_PACKAGE}"))
+    assertTrue(rsDriver.contains("TicketScreenConfig.RIGAS_SATIKSME_PACKAGE") && rsDriver.contains("startActivity(launchIntent)"))
+    assertFalse("RS batch launch should not force-stop ViVi while queued RS jobs may still need the phone", rsDriver.contains("am force-stop ${'$'}{TicketScreenConfig.VIVI_PACKAGE}"))
     assertFalse("RS pressure latency must not cold-force-stop the RS app for every queued request", rsDriver.contains("am force-stop ${'$'}{TicketScreenConfig.RIGAS_SATIKSME_PACKAGE}"))
     assertFalse("Default RS launch should not spend the fast path budget on a pre-entry root readiness dump", rsDriver.contains("wait_rs_initial_ready /sdcard/pixel-rs-initial-window.xml"))
     assertTrue("Queued RS pressure jobs should pass a warm previous-QR hint into the runner so they do not pay uiautomator home discovery every time", rsFlow.contains("reusePreviousRigasSatiksmeQr = cancelPendingRigasSatiksmeReturnCleanup(\"new_rs_monthly_ticket_request\")") && rsDriver.contains("reusePreviousRigasSatiksmeQr: Boolean"))
     assertFalse("A fixed 3.8s launch sleep prevents warm queued requests from reaching the 15s average target", rsDriver.contains("sleep 3.8"))
-    assertTrue(rsDriver.contains("REGISTER A TRIP"))
-    assertTrue(rsDriver.contains("ENTER THE CODE MANUALLY"))
-    assertTrue("RS monthly-ticket path should use the coordinate fast path before the single root proof", rsDriver.contains("RS_FAST_FLOW_STATUS"))
-    assertTrue("Reuse of the previous RS QR must keep the direct Back behavior from the queued-request fast path", rsDriver.contains("input keyevent KEYCODE_BACK"))
+    val semanticDriver = rigasSatiksmeSemanticDriverSource()
+    val directDriver = rigasSatiksmeDirectTapDriverSource()
+    assertTrue("RS monthly-ticket path should use the direct tap phone driver", rsDriver.contains("RigasSatiksmeDirectTapDriver("))
+    assertTrue("RS direct driver must read the RS app state through bounded uiautomator proofs instead of the black secure screenshot feed", rsDriver.contains("snapshotRigasSatiksmeUiAutomatorNodes(") && rsDriver.contains("TicketUiautomatorDump.command("))
+    assertFalse("RS direct path must not require the phone automation accessibility service", rsDriver.contains("ensureRigasSatiksmeSemanticAutomationReady"))
+    assertTrue("Direct driver must tap known RS app targets explicitly", directDriver.contains("REGISTER_TRIP_X") && directDriver.contains("MANUAL_CODE_CHOICE_Y") && directDriver.contains("CONFIRM_CODE_Y"))
+    assertTrue("Semantic classifier must prove the final control ticket against the submitted code", semanticDriver.contains("has(cleanDigits)") && semanticDriver.contains("TICKET_CONTROL_MATCHING"))
+    assertTrue("RS text input must stay isolated to the direct manual-code entry path", rsDriver.contains("enterRigasSatiksmeManualCode") && rsDriver.contains("input text ${'$'}cleanDigits"))
+    assertTrue("RS digit entry should clear the field with one compact keyevent command instead of many shell subprocesses", rsDriver.contains("input keyevent KEYCODE_MOVE_END KEYCODE_DEL KEYCODE_DEL"))
+    assertFalse("RS digit fallback must not use the old slow delete loop", rsDriver.contains("for i in 1 2 3 4 5 6 7 8 9"))
+    assertTrue("Semantic stale QR handling should back out before fresh entry", semanticDriver.contains("TICKET_CONTROL_STALE") && semanticDriver.contains("gateway.performBack()"))
+    assertFalse("RS monthly-ticket path must not keep the coordinate fast path", rsDriver.contains("RS_FAST_FLOW_STATUS"))
+    assertTrue("RS monthly-ticket app driving must go through the isolated direct tap gateway", rsDriver.contains("tapRigasSatiksmeVisualTarget(") && directDriver.contains("gateway.tapRatio("))
     assertFalse("Default cold/unknown RS launch should not pay for the old initial hierarchy dump", rsDriver.contains("pixel-rs-initial-window.xml"))
-    assertTrue("Queued warm RS requests may skip the slow initial hierarchy dump only when Android just canceled a pending RS cleanup", rsDriver.contains("reuse_previous_rs_qr") && rsDriver.contains("= \"true\" ]; then"))
-    val fastPathBranches = rsDriver.substringBetween("if [ \"\${'$'}reuse_previous_rs_qr\" = \"true\" ]; then", "fi\n      sleep 0.75")
-    val warmPreviousQrBranch = fastPathBranches.substringBefore("\n      else\n")
-    val nonReuseFastBranch = fastPathBranches.substringAfter("\n      else\n")
-    assertTrue(
-      "When Android cancels the idle cleanup before it starts, the phone is still on the previous RS QR; close it directly instead of spending ~2.4s on a warm-probe uiautomator dump",
-      warmPreviousQrBranch.contains("input keyevent KEYCODE_BACK >/dev/null 2>&1 || true")
-    )
-    assertFalse(
-      "Warm queued RS jobs must not pay the measured warm-probe uiautomator dump before entering the next code",
-      warmPreviousQrBranch.contains("uiautomator dump /sdcard/pixel-rs-warm-probe-window.xml") ||
-        warmPreviousQrBranch.contains("pixel-rs-warm-probe-window.xml")
-    )
-    assertTrue(
-      "After directly closing the previous QR, warm queued jobs should use the current root-proved REGISTER A TRIP center before manual-code entry",
-      warmPreviousQrBranch.indexOf("input keyevent KEYCODE_BACK >/dev/null 2>&1 || true") <
-        warmPreviousQrBranch.indexOf("input tap 540 555 >/dev/null 2>&1 || true")
-    )
-    assertTrue(
-      "Default non-reuse RS jobs should skip the initial root hierarchy dump and tap the current root-proved REGISTER A TRIP center directly",
-      nonReuseFastBranch.contains("input tap 540 555 >/dev/null 2>&1 || true")
-    )
-    assertFalse(
-      "Default non-reuse RS jobs must not spend request latency on wait_rs_initial_ready before manual-code entry",
-      nonReuseFastBranch.contains("wait_rs_initial_ready") ||
-        nonReuseFastBranch.contains("pixel-rs-initial-window.xml") ||
-        nonReuseFastBranch.contains("uiautomator dump") ||
-        nonReuseFastBranch.contains("open_rs_control_entry")
-    )
-    assertTrue("When REGISTER A TRIP is available, the runner must enter that path and submit the inspector code before expecting the control QR", rsDriver.indexOf("input tap 540 555") < rsDriver.indexOf("input tap 540 2228"))
     assertFalse("RS monthly-ticket generation must not keep an in-flow recovery re-drive", service.contains("recoverRigasSatiksmeMonthlyTicketFlowBeforeFailure"))
     assertFalse("RS monthly-ticket generation must not keep hierarchy-derived recovery taps", rsDriver.contains("tap_rs_desc_center"))
-    assertFalse("Default RS fast path should not double-tap a hierarchy-derived home control button before manual-code entry", nonReuseFastBranch.contains("sleep 0.16"))
-    assertTrue(rsDriver.contains("input tap 540 2228"))
-    assertTrue(rsDriver.contains("input tap 540 1150"))
-    assertTrue("keyboard must be dismissed before tapping CONFIRM", rsDriver.contains("input keyevent KEYCODE_ENTER"))
-    assertTrue(rsDriver.contains("input tap 540 1540"))
-    assertTrue(rsDriver.contains("input tap 540 1347"))
-    assertTrue(rsDriver.contains("input tap 540 735"))
-    assertTrue(rsDriver.contains("TICKET FOR CONTROL"))
+    assertFalse("RS monthly-ticket generation must not keep shell keyboard driving", rsDriver.contains("input keyevent KEYCODE_ENTER"))
+    assertTrue(semanticDriver.contains("ticketForControlSelectors"))
     assertTrue(service.contains("hasRigasSatiksmeMonthlyTicketMarker(hierarchy)"))
     assertTrue(service.contains("30 dienu biļete"))
-    assertTrue(rsDriver.contains("qr code"))
-    assertTrue("RS result validation must prove the returned control screen contains the submitted code, not a stale prior ticket", rsDriver.contains("classifyRigasSatiksmeMonthlyTicketHierarchy(hierarchy, cleanDigits)"))
-    assertTrue(rsDriver.contains("rs_monthly_ticket_control_screen"))
+    assertTrue(semanticDriver.contains("TICKET_CONTROL_MATCHING"))
+    assertTrue("RS result validation must prove the returned control screen contains the submitted code, not a stale prior ticket", semanticDriver.contains("has(cleanDigits)"))
+    assertTrue(semanticDriver.contains("TICKET_CONTROL_MATCHING"))
     assertTrue(rsDriver.contains("captureRigasSatiksmeMonthlyTicketImageBytes("))
     assertTrue(rsDriver.contains("rs_monthly_ticket_secure_capture_blocked"))
     assertTrue(rsDriver.contains("rs_monthly_ticket_app_screenshot_ready"))
@@ -1915,16 +1945,31 @@ class TicketStreamServiceSourceTest {
   fun rsMonthlyTicketControlScreenHierarchyOverridesNonzeroShellExit() {
     val service = ticketStreamServiceSource()
     val rsDriver = service.substringBetween("private suspend fun runRigasSatiksmeMonthlyTicketFlow", "private suspend fun runFastControlCodeDeliveryForRequest")
+    val semanticDriver = rigasSatiksmeSemanticDriverSource()
 
     assertTrue(
-      "If the app hierarchy proves the RS ticket-control QR screen is visible, the flow must capture and send the image even when the shell script exits nonzero after a late/benign tap miss",
-      rsDriver.contains("val reachedControlScreen = status == \"rs_monthly_ticket_control_screen\"")
+      "If semantic RS app proof shows the ticket-control QR screen is visible, the flow must capture and send the image without depending on a shell tap result",
+      semanticDriver.contains("RigasSatiksmeSemanticState.TICKET_CONTROL_MATCHING")
     )
-    assertTrue(rsDriver.contains("ok = reachedControlScreen"))
+    assertTrue(semanticDriver.contains("ok = true"))
     assertFalse(
       "A nonzero shell exit must not turn an already-visible RS control screen into failed/generated with no image",
       rsDriver.contains("ok = result.ok && status == \"rs_monthly_ticket_control_screen\"")
     )
+  }
+
+  @Test
+  fun semanticAccessibilityTapCanUseParentBoundsForFlutterLabels() {
+    val source = phoneAutomationAccessibilityServiceSource()
+    val tap = source.substringBetween(
+      "private fun tapNodeOrParentCenter",
+      "private fun AccessibilityNodeInfo.textValue"
+    )
+
+    assertTrue("Semantic taps should not fail just because a Flutter label node has empty bounds", source.contains("tapNodeOrParentCenter(node)"))
+    assertTrue("Semantic taps should walk up to the labeled control parent when needed", tap.contains("current = current.parent"))
+    assertTrue("Semantic taps must still be geometry derived from the matched accessibility node tree, not fixed screen coordinates", tap.contains("bounds.width() > 0 && bounds.height() > 0"))
+    assertFalse("RS app driving must stay off fixed coordinate tap scripts", tap.contains("input tap"))
   }
 
   @Test
@@ -1947,17 +1992,21 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun rsMonthlyTicketResultScreenshotKeepsAndroidCaptureFullWidthForDeliveryCrop() {
+  fun rsMonthlyTicketResultScreenshotUsesBoundedSecureCaptureWithoutViviGraphicCrop() {
     val source = ticketStreamServiceSource()
     val rsCapture = source.substringBetween("private suspend fun captureRigasSatiksmeMonthlyTicketImageBytes", "private suspend fun fastVisibleHierarchy")
     val capture = source.substringBetween("private suspend fun captureGeneratedControlCodeImageBytes", "private fun decodeBase64Png")
     val viviCrop = source.substringBetween("private fun cropControlCodeImage", "private fun looksLikePng")
 
     assertTrue("RS monthly-ticket result capture must keep the RS screenshot path separate from ViVi graphic cropping", rsCapture.contains("cropToControlCodeGraphic = false"))
+    assertTrue("RS monthly-ticket result capture should use a bounded readable width so three-code batches can finish under the live target", rsCapture.contains("maxOutputWidth = RIGAS_SATIKSME_RESULT_CAPTURE_MAX_WIDTH"))
+    assertTrue(source.contains("private const val RIGAS_SATIKSME_RESULT_CAPTURE_MAX_WIDTH = 720"))
     assertFalse("RS monthly-ticket capture must be one-shot; capture failures should report quickly instead of retrying in the Pixel request path", rsCapture.contains("repeat("))
     assertFalse("Android RS capture should not perform the Telegram top/bottom delivery crop", rsCapture.contains("cropRigasSatiksmeMonthlyTicketScreenshot"))
     assertFalse("Android service should not own the RS Telegram delivery crop constant", source.contains("RIGAS_SATIKSME_RESULT_IMAGE_VERTICAL_CROP_PIXELS"))
     assertTrue(capture.contains("cropToControlCodeGraphic: Boolean = true"))
+    assertTrue(capture.contains("maxOutputWidth: Int? = null"))
+    assertTrue(capture.contains("rootHardwareH264CaptureEngine.captureSecurePngBase64("))
     assertFalse("ViVi control-code graphic crop must remain separate from RS Telegram delivery cropping", viviCrop.contains("rigasSatiksme"))
   }
 
@@ -1974,7 +2023,9 @@ class TicketStreamServiceSourceTest {
     assertFalse("RS monthly-ticket capture must not special-case ViVi as the source for Telegram RS-bot images", capture.contains("isViviMonthlyTicketControlScreen"))
     assertTrue(engine.contains("suspend fun captureSecurePngBase64("))
     assertTrue(engine.contains("--png-base64"))
-    assertTrue(helper.contains("captureSecurePngBase64(sourceWidth, sourceHeight)"))
+    assertTrue(helper.contains("captureSecurePngBase64(sourceWidth, sourceHeight, width, height)"))
+    assertTrue(helper.contains("target_width="))
+    assertTrue(helper.contains("target_height="))
     assertTrue(helper.contains("SecureScreenCapture(sourceWidth, sourceHeight)"))
     assertTrue(helper.contains("PNG_BASE64_BEGIN"))
     assertTrue(helper.contains("PNG_BASE64_END"))
@@ -1984,21 +2035,25 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun rsMonthlyTicketFlowUsesCoordinateFastPathWithSingleRootProof() {
+  fun rsMonthlyTicketFlowUsesStateCheckedCoordinatePathWithRootProofs() {
     val source = ticketStreamServiceSource()
     val rsDriver = source.substringBetween("private suspend fun runRigasSatiksmeMonthlyTicketFlow", "private suspend fun captureRigasSatiksmeMonthlyTicketImageBytes")
+    val semanticDriver = rigasSatiksmeSemanticDriverSource()
+    val directDriver = rigasSatiksmeDirectTapDriverSource()
 
-    assertTrue("RS flow should use the measured coordinate fast path instead of repeated uiautomator polling", rsDriver.contains("RS_FAST_FLOW_STATUS"))
-    assertFalse("RS validation must not use the old cheap accessibility snapshot before proof", rsDriver.contains("fastVisibleHierarchy(TicketScreenConfig.RIGAS_SATIKSME_PACKAGE"))
+    assertTrue("RS flow should delegate to the direct tap/proof driver", rsDriver.contains("RigasSatiksmeDirectTapDriver("))
+    assertFalse("RS flow must not gate launch on accessibility automation availability", rsDriver.contains("ensureRigasSatiksmeSemanticAutomationReady"))
+    assertTrue("RS direct driver must read app state with bounded uiautomator proofs because the RS secure screenshot feed can be black", rsDriver.contains("TicketUiautomatorDump.command("))
+    assertFalse("RS shell navigation must not depend on plain screencap for secure app pixels", rsDriver.contains("screencap -p | base64"))
+    assertTrue("RS semantic driver must classify the final control ticket against the submitted digits", semanticDriver.contains("has(cleanDigits)") && semanticDriver.contains("TICKET_CONTROL_MATCHING"))
+    assertTrue("RS direct driver must preserve stale-code and rejected-code as specific failures", directDriver.contains("\"rs_monthly_ticket_stale_code\"") && directDriver.contains("\"code_rejected_by_rs\""))
+    assertFalse("RS flow must not keep the measured coordinate fast path", rsDriver.contains("RS_FAST_FLOW_STATUS"))
+    assertTrue("RS coordinate taps must stay isolated behind the direct tap gateway", rsDriver.contains("tapRigasSatiksmeVisualTarget(") && directDriver.contains("gateway.tapRatio("))
+    assertTrue("RS tap coordinates must use current display size and fixed RS ratios", rsDriver.contains("currentDisplaySize()") && directDriver.contains("555.0 / 2424.0"))
+    assertTrue("RS flow may use non-touch digit input only inside the direct RS manual-code entry path", rsDriver.contains("enterRigasSatiksmeManualCode") && rsDriver.contains("input text ${'$'}cleanDigits"))
+    assertTrue("RS submit must be followed by state proof so a missed confirm is not reported as success", directDriver.contains("POST_SUBMIT_SETTLE_MILLIS") && directDriver.contains("proof_1"))
+    assertFalse("RS digit fallback must not use one shell process per delete key", rsDriver.contains("do input keyevent KEYCODE_DEL; done"))
     assertFalse("RS validation must not keep old fast-hierarchy fallback events", rsDriver.contains("rs_monthly_ticket_fast_hierarchy_wait_finished"))
-    assertTrue(rsDriver.contains("classifyRigasSatiksmeMonthlyTicketHierarchy(hierarchy, cleanDigits)"))
-    assertTrue("Fast path must use the current root-proved REGISTER A TRIP center before the RS manual-code sequence", rsDriver.contains("input tap 540 555"))
-    assertTrue(rsDriver.contains("input tap 540 2228"))
-    assertTrue(rsDriver.contains("input tap 540 1150"))
-    assertTrue(rsDriver.contains("input keyevent KEYCODE_ENTER"))
-    assertTrue(rsDriver.contains("input tap 540 1540"))
-    assertTrue(rsDriver.contains("input tap 540 1347"))
-    assertTrue(rsDriver.contains("input tap 540 735"))
     assertFalse("Fast path should not spend the request budget on repeated uiautomator polling loops", rsDriver.contains("wait_for_text()"))
     assertFalse("Fast path should not spend the request budget on repeated uiautomator polling loops", rsDriver.contains("wait_for_any_text()"))
     assertFalse("A fixed 3.5s submit sleep dominates successful request latency", rsDriver.contains("sleep 3.5"))
@@ -2008,7 +2063,7 @@ class TicketStreamServiceSourceTest {
     assertFalse("A fixed 1.4s manual-code fallback sleep should be readiness-gated", rsDriver.contains("sleep 1.4"))
     assertFalse("A fixed 0.9s monthly-ticket list sleep should be readiness-gated", rsDriver.contains("sleep 0.9"))
     assertFalse("RS Flutter fast hierarchy is empty in production; do not spend 1.8s polling it before root fallback", rsDriver.contains("hierarchyWaitStartedAt <= 1_800L") || rsDriver.contains("<= 1_800L)"))
-    assertTrue("Single root proof must be the semantic source of truth", rsDriver.contains("dumpVisibleHierarchyWithRoot(\n      path = \"/data/local/tmp/pixel-rs-ticket-window.xml\""))
+    assertFalse("Semantic RS proof should not use root hierarchy dumps as its success authority", rsDriver.contains("dumpVisibleHierarchyWithRoot(\n      path = \"/data/local/tmp/pixel-rs-ticket-window.xml\""))
     assertFalse("RS proof must not retry blank dumps inside the request", rsDriver.contains("dumpVisibleHierarchyWithRootRetry("))
   }
 
@@ -2019,7 +2074,8 @@ class TicketStreamServiceSourceTest {
 
     assertFalse("RS/ViVi root hierarchy proof files must not live under shared /sdcard because APK redeploys can change app UID and strand stale unreadable files", rsDriver.contains("/sdcard/pixel-rs"))
     assertFalse("RS return hierarchy proof files must not live under shared /sdcard", rsDriver.contains("/sdcard/pixel-vivi-fast-return-window.xml"))
-    assertTrue("RS root hierarchy proof files should live in /data/local/tmp where root/shell cleanup is stable across redeploys", rsDriver.contains("/data/local/tmp/pixel-rs-ticket-window.xml"))
+    assertFalse("Semantic RS request path should not create RS root hierarchy files", rsDriver.contains("/data/local/tmp/pixel-rs-start-window.xml"))
+    assertFalse("Semantic RS request path should not create RS root hierarchy files", rsDriver.contains("/data/local/tmp/pixel-rs-ticket-window.xml"))
   }
 
   @Test
@@ -2062,48 +2118,41 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun rsMonthlyTicketSingleRootProofHasNoRetryOrRecovery() {
+  fun rsMonthlyTicketUsesBoundedStartStateRecoveryBeforeFinalProof() {
     val source = ticketStreamServiceSource()
-    val rsDriver = source.substringBetween("private suspend fun runRigasSatiksmeMonthlyTicketFlow", "private suspend fun captureRigasSatiksmeMonthlyTicketImageBytes")
+    val semanticDriver = rigasSatiksmeSemanticDriverSource()
 
     assertTrue(
-      "The RS request must run exactly one root semantic proof after coordinate input",
-      rsDriver.contains("val hierarchy = dumpVisibleHierarchyWithRoot(\n      path = \"/data/local/tmp/pixel-rs-ticket-window.xml\"")
+      "The RS request must use semantic state observation before app actions",
+      semanticDriver.contains("val state = classify(snapshot, cleanDigits)")
+    )
+    assertTrue(
+      "The RS request must use semantic final proof against the requested digits",
+      semanticDriver.contains("TICKET_CONTROL_MATCHING")
     )
     assertFalse(source.contains("dumpVisibleHierarchyWithRootRetry"))
     assertFalse(source.contains("root_visible_hierarchy_retry"))
     assertFalse(source.contains("RS_SEMANTIC_ROOT_DUMP_ATTEMPTS"))
     assertFalse(source.contains("RS_SEMANTIC_ROOT_DUMP_RETRY_DELAY_MILLIS"))
     assertFalse(source.contains("recoverRigasSatiksmeMonthlyTicketFlowBeforeFailure"))
-    assertFalse(source.contains("rs_monthly_ticket_recovery_started"))
-    assertFalse(source.contains("rs_monthly_ticket_recovery_finished"))
+    assertTrue(semanticDriver.contains("TICKET_CONTROL_STALE"))
+    assertTrue(semanticDriver.contains("MANUAL_CODE_ENTRY"))
   }
 
   @Test
-  fun rsMonthlyTicketDefaultFastPathSkipsInitialRootDumpBeforeManualCodeEntry() {
-    val source = ticketStreamServiceSource()
-    val rsDriver = source.substringBetween("private suspend fun runRigasSatiksmeMonthlyTicketFlow", "private suspend fun captureRigasSatiksmeMonthlyTicketImageBytes")
-    val defaultBranch = rsDriver.substringBetween(
-      "else\n        # Coordinate-first default path:",
-      "      fi\n      sleep 0.75"
-    )
+  fun rsMonthlyTicketDefaultFastPathUsesInitialRootDumpBeforeManualCodeEntry() {
+    val semanticDriver = rigasSatiksmeSemanticDriverSource()
 
     assertTrue(
-      "Default non-reuse RS requests should tap the current root-proved REGISTER A TRIP center directly",
-      defaultBranch.contains("input tap 540 555 >/dev/null 2>&1 || true")
+      "Default RS requests should classify semantic state before clicking REGISTER A TRIP",
+      semanticDriver.indexOf("val state = classify(snapshot, cleanDigits)") <
+        semanticDriver.indexOf("gateway.click(registerTripSelectors")
     )
-    assertFalse(
-      "Default non-reuse fast path must not run the old initial readiness helper before manual-code entry",
-      defaultBranch.contains("wait_rs_initial_ready")
-    )
-    assertFalse(
-      "Default non-reuse fast path must not run a uiautomator dump before manual-code entry",
-      defaultBranch.contains("uiautomator dump") || defaultBranch.contains("/sdcard/pixel-rs-initial-window.xml")
-    )
+    assertFalse(semanticDriver.contains("/data/local/tmp/pixel-rs-start-window.xml"))
     assertTrue(
-      "Single root proof must still follow the coordinate-first branch",
-      rsDriver.indexOf("      fi\n      sleep 0.75") <
-        rsDriver.indexOf("classifyRigasSatiksmeMonthlyTicketHierarchy(hierarchy, cleanDigits)")
+      "Final semantic proof must follow app actions before image capture",
+      semanticDriver.contains("gateway.click(confirmSelectors") &&
+        semanticDriver.contains("RigasSatiksmeSemanticState.TICKET_CONTROL_MATCHING")
     )
   }
 
@@ -2112,19 +2161,18 @@ class TicketStreamServiceSourceTest {
     val source = ticketStreamServiceSource()
     val rsDriver = source.substringBetween("private suspend fun runRigasSatiksmeMonthlyTicketFlow", "private suspend fun captureRigasSatiksmeMonthlyTicketImageBytes")
     val handler = source.substringBetween("private suspend fun handleGenerateRigasSatiksmeMonthlyTicketQr", "private fun cancelPendingRigasSatiksmeReturnCleanup")
-    val classifier = source.substringBetween("private fun classifyRigasSatiksmeMonthlyTicketHierarchy", "private fun hasRigasSatiksmeMonthlyTicketMarker")
+    val semanticDriver = rigasSatiksmeSemanticDriverSource()
 
-    assertFalse("RS request must not branch from fast snapshot to fallback proof", rsDriver.contains("statusFromHierarchy"))
+    assertFalse("RS request must not branch from cheap fast snapshot to fallback proof", rsDriver.contains("statusFromHierarchy"))
     assertFalse("RS request must not re-drive the app before reporting a failure", rsDriver.contains("recoverRigasSatiksmeMonthlyTicketFlowBeforeFailure("))
     assertTrue(
-      "The single proof must classify the root hierarchy against the requested digits before success",
-      rsDriver.indexOf("classifyRigasSatiksmeMonthlyTicketHierarchy(hierarchy, cleanDigits)") <
-        rsDriver.indexOf("val reason = when (status)")
+      "The semantic proof must classify the RS app snapshot against the requested digits before success",
+      semanticDriver.contains("hasControl && hasQr && has(cleanDigits) && hasMonthlyMarker") &&
+        semanticDriver.contains("TICKET_CONTROL_MATCHING")
     )
     assertTrue(
       "The classifier must require both RS monthly-ticket control markers and the requested digits for success",
-      classifier.indexOf("hasViviMonthlyControlScreen && has(cleanDigits)") in 0 until classifier.indexOf("return \"rs_monthly_ticket_control_screen\"") ||
-        classifier.indexOf("hasControlScreen && has(cleanDigits)") in 0 until classifier.indexOf("return \"rs_monthly_ticket_control_screen\"")
+      semanticDriver.contains("hasControl && hasQr && has(cleanDigits) && hasMonthlyMarker")
     )
     val operation = rigasSatiksmeMonthlyTicketOperationSource()
     assertTrue(
@@ -2136,47 +2184,45 @@ class TicketStreamServiceSourceTest {
 
   @Test
   fun rsMonthlyTicketFastPathDismissesLateTripRegisteredModalBeforeProof() {
-    val source = ticketStreamServiceSource()
-    val rsDriver = source.substringBetween("private suspend fun runRigasSatiksmeMonthlyTicketFlow", "private suspend fun captureRigasSatiksmeMonthlyTicketImageBytes")
-    val afterRegisterSubmit = rsDriver.substringAfter("input tap 540 1540")
-    val beforeFastStatus = afterRegisterSubmit.substringBefore("RS_FAST_FLOW_STATUS")
-    val okTapCount = Regex(Regex.escape("input tap 540 1347")).findAll(beforeFastStatus).count()
-    val lastOkTap = beforeFastStatus.lastIndexOf("input tap 540 1347")
-    val finalControlTap = afterRegisterSubmit.lastIndexOf("input tap 540 735")
+    val semanticDriver = rigasSatiksmeSemanticDriverSource()
 
     assertTrue(
-      "RS can show the 'Trip is registered' modal late; fast path should send at least three centered OK taps so success does not spend ~9s in recovery",
-      okTapCount >= 3
+      "RS can show the 'Trip is registered' modal late; semantic path should click the OK control by label",
+      semanticDriver.contains("RigasSatiksmeSemanticState.TRIP_REGISTERED") && semanticDriver.contains("gateway.click(okSelectors")
     )
     assertTrue(
-      "The late-modal OK probe must happen before the final TICKET FOR CONTROL/QR tap, preserving recovery only for real navigation failures",
-      lastOkTap in 0 until finalControlTap
+      "The late-modal OK action must happen before opening the control ticket",
+      semanticDriver.indexOf("gateway.click(okSelectors") < semanticDriver.indexOf("gateway.click(ticketForControlSelectors")
     )
     assertFalse(
-      "Late-modal handling should stay a cheap tap/cushion, not add another slow uiautomator dump before the semantic root proof",
-      beforeFastStatus.contains("uiautomator dump")
+      "Late-modal handling should not add another slow uiautomator dump before semantic proof",
+      semanticDriver.contains("uiautomator dump")
     )
   }
 
   @Test
-  fun rsMonthlyTicketFlowDoesNotRetryInsideRsAppBeforeReportingNavigationFailure() {
+  fun rsMonthlyTicketFlowDoesNotUseUnboundedInAppRetryBeforeReportingNavigationFailure() {
     val source = ticketStreamServiceSource()
     val rsDriver = source.substringBetween("private suspend fun runRigasSatiksmeMonthlyTicketFlow", "private suspend fun captureRigasSatiksmeMonthlyTicketImageBytes")
+    val semanticDriver = rigasSatiksmeSemanticDriverSource()
 
     assertFalse(rsDriver.contains("recoverRigasSatiksmeMonthlyTicketFlowBeforeFailure("))
     assertFalse(source.contains("rs_monthly_ticket_recovery_started"))
     assertFalse(source.contains("rs_monthly_ticket_recovery_finished"))
     assertFalse(source.contains("rs_monthly_ticket_recovery_fallback"))
+    assertTrue("The only in-flow recovery should be bounded semantic state handling before code entry", semanticDriver.contains("maxStateAttempts") && semanticDriver.contains("MANUAL_CODE_ENTRY"))
   }
 
   @Test
-  fun rsMonthlyTicketStaleQrFailsFastWithoutBackoutRecovery() {
+  fun rsMonthlyTicketStaleQrBacksOutBeforeFreshEntry() {
     val source = ticketStreamServiceSource()
     val rsDriver = source.substringBetween("private suspend fun runRigasSatiksmeMonthlyTicketFlow", "private suspend fun captureRigasSatiksmeMonthlyTicketImageBytes")
+    val visualDriver = rigasSatiksmeVisualDriverSource()
 
-    assertTrue(rsDriver.contains("\"stale_control_ticket\" -> \"rs_monthly_ticket_stale_code\""))
+    assertTrue(visualDriver.contains("CONTROL_STALE") && visualDriver.contains("gateway.pressBack("))
     assertFalse(source.contains("TICKET_RS_MONTHLY_IN_APP_RECOVERY_TIMEOUT_MILLIS"))
     assertFalse(source.contains("recoverRigasSatiksmeMonthlyTicketFlowBeforeFailure"))
+    assertTrue(rsDriver.contains("input keyevent KEYCODE_BACK"))
   }
 
   @Test
@@ -2209,6 +2255,7 @@ class TicketStreamServiceSourceTest {
     val cleanup = source.substringBetween("private suspend fun returnRigasSatiksmeMonthlyTicketFlowToViviTicket", "private suspend fun runRigasSatiksmeMonthlyTicketFlow")
 
     assertTrue("RS cleanup should attempt a fast ViVi launch + single semantic dump before slow recovery", cleanup.contains("runRigasSatiksmeMonthlyTicketFastReturnToViviTicket("))
+    assertTrue("successful RS return must refresh ViVi ticket-detail memory so the next public stream load can skip slow foreground recovery", cleanup.contains("rememberRigasSatiksmeReturnedToViviTicketDetail("))
     assertTrue(cleanup.contains("rs_monthly_ticket_fast_return_started"))
     assertTrue(cleanup.contains("fastVisibleHierarchy(TicketScreenConfig.VIVI_PACKAGE"))
     assertTrue("fast cleanup should poll cheap ViVi snapshots briefly before falling back to slow wake recovery", cleanup.contains("rs_monthly_ticket_fast_return_hierarchy_wait_finished"))
@@ -2283,18 +2330,57 @@ class TicketStreamServiceSourceTest {
     val operation = rigasSatiksmeMonthlyTicketOperationSource()
     val flowFailure = operation.substringBetween("if (!flow.ok) {", "    }\n\n    val imageBytes = captureImage")
     val imageFailure = operation.substringBetween("if (imageBytes == null || imageBytes.isEmpty()) {", "    }\n\n    markPhase")
-    val failureReturn = rsFlow.substringBetween("if (!outcome.ok) {", "return\n        }")
+    val failureReturn = rsFlow.substringBetween("if (!outcome.ok) {", "return@withLock\n        }")
 
     assertTrue(flowFailure.contains("cleanupRequired = true"))
     assertTrue(imageFailure.contains("cleanupRequired = true"))
     assertTrue(
-      "RS flow failures should be sent to broker before slow ViVi return cleanup so users do not wait for cleanup or hit broker timeout",
-      failureReturn.indexOf("sendControlCodeResult(") < failureReturn.indexOf("returnRigasSatiksmeMonthlyTicketFlowToViviTicket(")
+      "RS flow failures should be sent to broker before cleanup is scheduled so users do not wait for cleanup or hit broker timeout",
+      failureReturn.indexOf("sendControlCodeResult(") < failureReturn.indexOf("pendingImmediateCleanup")
     )
     assertTrue(
-      "RS image-capture failures should be sent to broker before slow ViVi return cleanup",
-      failureReturn.indexOf("sendControlCodeResult(") < failureReturn.indexOf("returnRigasSatiksmeMonthlyTicketFlowToViviTicket(")
+      "RS immediate cleanup should run only after leaving the request mutex",
+      rsFlow.indexOf("} finally {\n      protectedControlClients.remove(replyClient)") < rsFlow.indexOf("returnRigasSatiksmeMonthlyTicketFlowToViviTicket(")
     )
+  }
+
+  @Test
+  fun rsMonthlyTicketQueuedFailureDefersViviCleanupOutsideRequestMutex() {
+    val source = ticketStreamServiceSource()
+    val handler = source.substringBetween("private suspend fun handleGenerateRigasSatiksmeMonthlyTicketQr", "private fun cancelPendingRigasSatiksmeReturnCleanup")
+    val commandParser = source.substringBetween("\"generate_control_code\" -> {", "\"prepare_control_code\" -> {")
+
+    assertTrue("Broker RS queue hints must be parsed from generate_control_code commands", commandParser.contains("rsQueueHint"))
+    assertTrue("RS handler must receive queue context for batch cleanup decisions", handler.contains("queueHint: RigasSatiksmeQueueHint"))
+    assertTrue("Queued RS work should schedule idle cleanup instead of blocking the next request on immediate ViVi return", handler.contains("shouldDeferRigasSatiksmeReturnCleanup(queueHint"))
+    assertTrue("Immediate cleanup should run after leaving controlCodeRequestMutex, not inside the hot result path", handler.contains("pendingImmediateCleanup"))
+    val deferDecision = source.substringBetween("private fun shouldDeferRigasSatiksmeReturnCleanup", "private fun rigasSatiksmeFailureRequiresImmediateCleanup")
+    assertTrue("Ticket priority should still force an immediate return to ViVi", deferDecision.contains("queueHint.ticketPriorityActive"))
+    assertFalse("Non-critical RS failures should defer cleanup even when later Telegram jobs arrived after the command hint was sent", deferDecision.contains("pendingAfterThis <= 0"))
+    val mutexBody = handler.substringBetween("controlCodeRequestMutex.withLock {", "} finally")
+    assertFalse("Slow ViVi return cleanup must not execute while holding the RS request mutex", mutexBody.contains("returnRigasSatiksmeMonthlyTicketFlowToViviTicket("))
+  }
+
+  @Test
+  fun rsMonthlyTicketBatchCommandRunsIsolatedBatchLane() {
+    val source = ticketStreamServiceSource()
+    val config = ticketScreenConfigSource()
+    val dispatcher = source.substringBetween("\"generate_rigassatiksme_qr_batch\" -> {", "\"generate_control_code\" -> {")
+    val batchHandler = source.substringBetween("private suspend fun handleGenerateRigasSatiksmeQrBatch", "private fun sendControlCodeResult")
+    val health = source.substringBetween("private fun health(): TicketStreamHealth", "private fun effectiveViviHealthForPublicStream")
+
+    assertTrue("Broker batch command must be accepted by the phone control websocket", dispatcher.contains("generate_rigassatiksme_qr_batch"))
+    assertTrue("Batch command must preserve the broker batch id", dispatcher.contains("val batchId = element[\"batchId\"]?.jsonPrimitive?.contentOrNull.orEmpty()"))
+    assertTrue("Batch command must parse all RS jobs from one phone command", dispatcher.contains("element[\"jobs\"]?.jsonArray"))
+    assertTrue("Batch command must carry ticket priority into cleanup decisions", dispatcher.contains("ticketPriorityActive"))
+    assertTrue("Batch command must declare the RS monthly-ticket owner/app/flow", dispatcher.contains("TicketScreenConfig.TICKET_QR_OWNER_RIGAS_SATIKSME"))
+    assertTrue("Batch handler must run each job through the isolated RS operation", batchHandler.contains("for (job in cleanJobs)") && batchHandler.contains("RigasSatiksmeMonthlyTicketOperation("))
+    assertTrue("Batch handler must emit per-request RS result messages", batchHandler.contains("sendRigassatiksmeQrResult("))
+    assertFalse("Batch failures must not be reported through the shared ViVi control-code result bucket", batchHandler.contains("sendControlCodeResult("))
+    assertTrue("Batch starts must cancel delayed ViVi cleanup so queued RS jobs stay in the RS app", batchHandler.contains("cancelPendingRigasSatiksmeReturnCleanup(\"new_rs_monthly_ticket_batch\")"))
+    assertTrue("Batch completion should defer ViVi return when no ticket priority is active", batchHandler.contains("scheduleRigasSatiksmeReturnCleanupAfterIdle("))
+    assertTrue("Ticket priority should still force the phone back to ViVi after a batch", batchHandler.contains("ticketPriorityActive"))
+    assertTrue("Health must expose RS batch/request state separately from ViVi control-code state", config.contains("data class TicketRigasSatiksmeBatchHealth") && health.contains("rigasSatiksmeBatch = TicketRigasSatiksmeBatchHealth("))
   }
 
   @Test
@@ -2461,9 +2547,10 @@ class TicketStreamServiceSourceTest {
     assertTrue(rsFastReturn.contains("\"rs_monthly_ticket_fast_return\""))
     assertFalse(rsFastReturn.contains("inputRootExecutor.runScript("))
 
-    assertTrue(rsFlow.contains("runFastNonTouchScript("))
-    assertTrue(rsFlow.contains("\"rs_monthly_ticket_flow\""))
-    assertFalse(rsFlow.contains("inputRootExecutor.runScript("))
+    assertTrue(rsFlow.contains("startActivity(launchIntent)"))
+    assertTrue(rsFlow.contains("\"rs_monthly_ticket_visual_launch_finished\""))
+    assertTrue(rsFlow.contains("runRigasSatiksmeVisualInput("))
+    assertTrue(rsFlow.contains("inputRootExecutor.runScript(command, RIGAS_SATIKSME_VISUAL_INPUT_TIMEOUT_MILLIS.milliseconds)"))
 
     assertTrue(rootDump.contains("runFastNonTouchWakeScript("))
     assertTrue(rootDump.contains("\"root_visible_hierarchy_dump:${'$'}reason\""))
@@ -2479,6 +2566,9 @@ class TicketStreamServiceSourceTest {
 
     assertTrue(wakeTicketScreenForSessionStart.contains("runFastNonTouchWakeScript("))
     assertTrue(wakeTicketScreenForSessionStart.contains("\"wake_session_start\""))
+    assertTrue(wakeTicketScreenForSessionStart.contains("val screenAlreadyInteractive = ticketScreenInteractive()"))
+    assertTrue(wakeTicketScreenForSessionStart.contains("val shouldSendWakeCommand = !screenAlreadyInteractive"))
+    assertTrue(wakeTicketScreenForSessionStart.contains("screen_wake_skipped_interactive"))
     assertFalse(wakeTicketScreenForSessionStart.contains("wakeRootExecutor.runScript("))
 
     assertTrue(requestTicketScreenWake.contains("runFastNonTouchScript("))
@@ -2729,6 +2819,33 @@ class TicketStreamServiceSourceTest {
     assertFalse("Do not reintroduce guarded or unguarded RS recovery hierarchy dumps", service.contains("pixel-rs-recovery-start-window.xml"))
   }
 
+  @Test
+  fun viviLoginUsesRuntimeSecretAndRedactedHealthOnly() {
+    val service = ticketStreamServiceSource()
+    val config = ticketScreenConfigSource()
+    val automationHealth = config.substringBetween("data class TicketAutomationHealth", "@Serializable")
+    val healthBuilder = service.substringBetween("automation = TicketAutomationHealth(", "      ),\n      page =")
+
+    assertTrue(service.contains("VIVI_LOGIN_SECRET_FILE"))
+    assertTrue(service.contains("/data/local/pixel-stack/conf/apps/ticket-screen-vivi-login.env"))
+    assertTrue(service.contains("loadViviLoginCredentials"))
+    assertTrue(service.contains("VIVI_LOGIN_EMAIL"))
+    assertTrue(service.contains("VIVI_LOGIN_PASSWORD"))
+    assertTrue(service.contains("loginViviIfNeeded"))
+    assertTrue(service.contains("resolveViviLoginSubmitAfterSecret"))
+    assertTrue(service.contains("androidInputTextLiteral"))
+    assertTrue(service.contains("if (reason == \"vivi_login_secret\")"))
+    assertTrue(service.contains("input text ${'$'}{shellQuote(androidInputTextLiteral(value))}"))
+    assertTrue(automationHealth.contains("viviLoginCredentialsConfigured"))
+    assertTrue(automationHealth.contains("viviLoginLastStatus"))
+    assertTrue(automationHealth.contains("viviLoginLastReason"))
+    assertTrue(healthBuilder.contains("viviLoginCredentialsConfigured"))
+    assertTrue(healthBuilder.contains("viviLoginLastStatus"))
+    assertTrue(healthBuilder.contains("viviLoginLastReason"))
+    assertFalse(automationHealth.lowercase().contains("password"))
+    assertFalse(healthBuilder.lowercase().contains("password"))
+  }
+
   private fun String.substringBetween(startNeedle: String, endNeedle: String): String {
     val start = indexOf(startNeedle)
     assertTrue("missing start needle: $startNeedle", start >= 0)
@@ -2762,6 +2879,31 @@ class TicketStreamServiceSourceTest {
   private fun rigasSatiksmeMonthlyTicketOperationSource(): String = readFirstExisting(
     Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/ticket/RigasSatiksmeMonthlyTicketOperation.kt"),
     Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/ticket/RigasSatiksmeMonthlyTicketOperation.kt")
+  )
+
+  private fun rigasSatiksmeSemanticDriverSource(): String = readFirstExisting(
+    Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/ticket/RigasSatiksmeSemanticDriver.kt"),
+    Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/ticket/RigasSatiksmeSemanticDriver.kt")
+  )
+
+  private fun rigasSatiksmeShellSemanticGatewaySource(): String = readFirstExisting(
+    Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/ticket/RigasSatiksmeShellSemanticGateway.kt"),
+    Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/ticket/RigasSatiksmeShellSemanticGateway.kt")
+  )
+
+  private fun rigasSatiksmeDirectTapDriverSource(): String = readFirstExisting(
+    Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/ticket/RigasSatiksmeDirectTapDriver.kt"),
+    Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/ticket/RigasSatiksmeDirectTapDriver.kt")
+  )
+
+  private fun rigasSatiksmeVisualDriverSource(): String = readFirstExisting(
+    Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/ticket/RigasSatiksmeVisualDriver.kt"),
+    Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/ticket/RigasSatiksmeVisualDriver.kt")
+  )
+
+  private fun phoneAutomationAccessibilityServiceSource(): String = readFirstExisting(
+    Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
+    Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
   )
 
   private fun ticketRequestOutcomeSource(): String = readFirstExisting(

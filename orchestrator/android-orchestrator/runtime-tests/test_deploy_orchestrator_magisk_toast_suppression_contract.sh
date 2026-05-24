@@ -22,6 +22,11 @@ require_source 'magisk --sqlite' 'deploy script must update Magisk policy throug
 require_source 'INSERT OR IGNORE INTO policies(uid, policy, until, logging, notification)' 'deploy script must create an allow policy when the uid changed after reinstall'
 require_source 'UPDATE policies SET notification=0 WHERE uid=${uid}' 'deploy script must disable superuser grant toasts for the orchestrator app'
 require_source 'UPDATE policies SET notification=0 WHERE uid=2000' 'deploy script must disable deployment-shell grant toasts when that policy already exists'
+require_source 'repair_phone_automation_permissions || true' 'deploy script must repair phone automation permissions before dispatch'
+if rg -Fq 'Skipping phone automation accessibility repair for ticket_screen' "${SOURCE_SCRIPT}"; then
+  echo "FAIL: ticket_screen deploy must not skip phone automation accessibility repair" >&2
+  exit 1
+fi
 
 call_line="$(rg -n '^suppress_superuser_grant_toasts \|\| true$' "${SOURCE_SCRIPT}" | cut -d: -f1 | head -n1)"
 repair_line="$(rg -n '^if should_repair_phone_automation_permissions; then$' "${SOURCE_SCRIPT}" | cut -d: -f1 | head -n1)"

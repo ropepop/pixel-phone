@@ -69,7 +69,7 @@ public final class TicketRootHardwareH264CaptureMain {
 
     exemptHiddenApis();
     if (pngBase64) {
-      captureSecurePngBase64(sourceWidth, sourceHeight);
+      captureSecurePngBase64(sourceWidth, sourceHeight, width, height);
       return;
     }
 
@@ -335,21 +335,40 @@ public final class TicketRootHardwareH264CaptureMain {
     }
   }
 
-  private static void captureSecurePngBase64(int sourceWidth, int sourceHeight) throws Exception {
+  private static void captureSecurePngBase64(
+      int sourceWidth,
+      int sourceHeight,
+      int targetWidth,
+      int targetHeight) throws Exception {
     SurfaceCapture capture = new SecureScreenCapture(sourceWidth, sourceHeight);
     CapturedFrame frame = capture.capture();
     if (frame == null || frame.bitmap == null) {
       throw new IllegalStateException("secure_screen_capture_returned_no_bitmap");
     }
     Bitmap readableSource = frame.bitmap;
+    Bitmap encodedSource = null;
     boolean copiedSource = false;
     try {
       if (frame.bitmap.getConfig() == Bitmap.Config.HARDWARE) {
         readableSource = frame.bitmap.copy(Bitmap.Config.ARGB_8888, false);
         copiedSource = true;
       }
+      if (targetWidth > 0 && targetHeight > 0 &&
+          (targetWidth != readableSource.getWidth() || targetHeight != readableSource.getHeight())) {
+        encodedSource = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(encodedSource);
+        Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
+        canvas.drawBitmap(
+          readableSource,
+          new Rect(0, 0, readableSource.getWidth(), readableSource.getHeight()),
+          new Rect(0, 0, targetWidth, targetHeight),
+          paint
+        );
+      } else {
+        encodedSource = readableSource;
+      }
       ByteArrayOutputStream output = new ByteArrayOutputStream();
-      if (!readableSource.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+      if (!encodedSource.compress(Bitmap.CompressFormat.PNG, 100, output)) {
         throw new IllegalStateException("secure_screen_capture_png_encode_failed");
       }
       byte[] bytes = output.toByteArray();
@@ -361,9 +380,14 @@ public final class TicketRootHardwareH264CaptureMain {
         "PNG_METRIC bytes=" + bytes.length +
           " source_width=" + sourceWidth +
           " source_height=" + sourceHeight +
+          " target_width=" + encodedSource.getWidth() +
+          " target_height=" + encodedSource.getHeight() +
           " method=secure_screen_capture"
       );
     } finally {
+      if (encodedSource != null && encodedSource != readableSource) {
+        encodedSource.recycle();
+      }
       if (copiedSource && readableSource != null) {
         readableSource.recycle();
       }

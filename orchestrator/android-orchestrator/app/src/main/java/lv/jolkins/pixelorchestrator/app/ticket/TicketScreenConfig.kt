@@ -76,6 +76,7 @@ data class TicketStreamHealth(
   val controlCodeSnap: TicketControlCodeSnapHealth = TicketControlCodeSnapHealth(),
   val controlCodeMode: TicketControlCodeModeHealth = TicketControlCodeModeHealth(),
   val controlCodeRequest: TicketControlCodeRequestHealth = TicketControlCodeRequestHealth(),
+  val rigasSatiksmeBatch: TicketRigasSatiksmeBatchHealth = TicketRigasSatiksmeBatchHealth(),
   val controlExitCleanup: TicketControlExitCleanupHealth = TicketControlExitCleanupHealth(),
   val loading: TicketLoadingHealth = TicketLoadingHealth(),
   val wake: TicketWakeHealth = TicketWakeHealth(),
@@ -115,7 +116,11 @@ data class TicketAutomationHealth(
   val nonRootAccessibilityAllowed: Boolean = false,
   val lastRootReadinessResult: String = "not_run",
   val lastRootReadinessDurationMillis: Long? = null,
-  val lastRootReadinessAgoMillis: Long? = null
+  val lastRootReadinessAgoMillis: Long? = null,
+  val viviLoginCredentialsConfigured: Boolean = false,
+  val viviLoginLastStatus: String = "idle",
+  val viviLoginLastReason: String = "",
+  val viviLoginLastCompletedAgoMillis: Long? = null
 )
 
 @Serializable
@@ -402,6 +407,21 @@ data class TicketControlCodeRequestHealth(
   val duplicateResults: Long = 0L,
   val lastDuplicateRequestId: String? = null,
   val lastDuplicateAgoMillis: Long? = null
+)
+
+@Serializable
+data class TicketRigasSatiksmeBatchHealth(
+  val batchId: String? = null,
+  val status: String = "idle",
+  val activeRequestId: String? = null,
+  val jobCount: Int = 0,
+  val completedCount: Int = 0,
+  val lastResultRequestId: String? = null,
+  val lastResultStatus: String? = null,
+  val lastResultReason: String? = null,
+  val lastCancelReason: String? = null,
+  val phases: Map<String, Long> = emptyMap(),
+  val completedAgoMillis: Long? = null
 )
 
 @Serializable

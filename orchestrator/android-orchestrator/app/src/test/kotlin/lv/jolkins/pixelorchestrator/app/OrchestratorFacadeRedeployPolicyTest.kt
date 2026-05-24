@@ -2,6 +2,8 @@ package lv.jolkins.pixelorchestrator.app
 
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -33,6 +35,24 @@ import kotlin.time.Duration
 class OrchestratorFacadeRedeployPolicyTest {
 
   private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
+
+  @Test
+  fun ticketScreenRuntimeEnvIsWrittenAtomicallyWithoutLineUpsertRaces() {
+    val path = listOf(
+      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/OrchestratorFacade.kt"),
+      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/OrchestratorFacade.kt")
+    ).first { Files.exists(it) }
+    val source = String(Files.readAllBytes(path), Charsets.UTF_8)
+    val writer = source.substringAfter("private suspend fun writeTicketScreenRuntimeInputs()")
+      .substringBefore("private suspend fun runRetriedRootScript")
+
+    assertTrue(writer.contains("cat >"))
+    assertTrue(writer.contains("<<'EOF_TICKET_SCREEN_ENV'"))
+    assertFalse(writer.contains("<<'EOF'"))
+    assertTrue(writer.contains("mv"))
+    assertFalse(writer.contains("upsert_env"))
+    assertFalse(writer.contains("grep -v \"^${'$'}{key}=\""))
+  }
 
   @Test
   fun redeployWaitsForLateTargetRecoveryAndIgnoresTransientNeighborWobble() = runBlocking {

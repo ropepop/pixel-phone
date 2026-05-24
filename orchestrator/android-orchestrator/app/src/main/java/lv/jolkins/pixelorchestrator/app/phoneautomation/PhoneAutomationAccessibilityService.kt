@@ -2,7 +2,9 @@ package lv.jolkins.pixelorchestrator.app.phoneautomation
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.accessibilityservice.GestureDescription
 import android.graphics.Color
+import android.graphics.Path
 import android.graphics.PixelFormat
 import android.os.Bundle
 import android.os.Build
@@ -98,6 +100,28 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
         return true
       }
       delay(250)
+    }
+    return false
+  }
+
+  override suspend fun tapFirstMatchingCenter(
+    expectedPackageName: String,
+    selectors: List<PhoneAutomationSelector>,
+    timeoutMillis: Long
+  ): Boolean {
+    val deadline = System.currentTimeMillis() + timeoutMillis.coerceAtLeast(1L)
+    while (System.currentTimeMillis() < deadline) {
+      val tapped = withContext(Dispatchers.Main.immediate) {
+        val root = rootForPackage(expectedPackageName) ?: return@withContext false
+        val node = selectors.asSequence().mapNotNull { selector ->
+          findMatchingNode(root, selector)
+        }.firstOrNull() ?: return@withContext false
+        tapNodeOrParentCenter(node)
+      }
+      if (tapped) {
+        return true
+      }
+      delay(120)
     }
     return false
   }
@@ -251,11 +275,8 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
   }
 
   private fun firstEditableNode(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-    return flattenNodes(root).firstOrNull { node ->
-      node.isVisibleToUser &&
-        node.isEnabled &&
-        (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true)
-    }
+    return editableNodes(root).firstOrNull { node -> node.isVisibleToUser }
+      ?: editableNodes(root).firstOrNull()
   }
 
   private fun editableFocusedNode(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
@@ -264,9 +285,13 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
         return focused
       }
     }
-    return flattenNodes(root).firstOrNull { node ->
-      node.isFocused &&
-        node.isEnabled &&
+    return editableNodes(root).firstOrNull { node -> node.isFocused && node.isVisibleToUser }
+      ?: editableNodes(root).firstOrNull { node -> node.isFocused }
+  }
+
+  private fun editableNodes(root: AccessibilityNodeInfo): Sequence<AccessibilityNodeInfo> {
+    return flattenNodes(root).filter { node ->
+      node.isEnabled &&
         (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true)
     }
   }
@@ -306,6 +331,26 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
       if (current.isClickable && current.isEnabled) {
         PhoneAutomationServiceBridge.markNonTouchInput("accessibility_click")
         return current.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+      }
+      current = current.parent
+    }
+    return false
+  }
+
+  private fun tapNodeOrParentCenter(node: AccessibilityNodeInfo): Boolean {
+    var current: AccessibilityNodeInfo? = node
+    while (current != null) {
+      val bounds = Rect()
+      current.getBoundsInScreen(bounds)
+      if (bounds.width() > 0 && bounds.height() > 0) {
+        val x = bounds.centerX().toFloat()
+        val y = bounds.centerY().toFloat()
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder()
+          .addStroke(GestureDescription.StrokeDescription(path, 0L, 80L))
+          .build()
+        PhoneAutomationServiceBridge.markNonTouchInput("accessibility_semantic_tap")
+        return dispatchGesture(gesture, null, null)
       }
       current = current.parent
     }

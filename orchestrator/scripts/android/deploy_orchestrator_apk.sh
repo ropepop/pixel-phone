@@ -455,17 +455,8 @@ PY
 }
 
 should_repair_phone_automation_permissions() {
-  if [[ "${COMPONENT}" == "ticket_screen" ]]; then
-    return 1
-  fi
   return 0
 }
-
-if should_repair_phone_automation_permissions; then
-  repair_phone_automation_permissions || true
-else
-  echo "Skipping phone automation accessibility repair for ticket_screen least-permission deploy"
-fi
 
 remote_sha256_file() {
   pixel_transport_remote_sha256_file "$1"
@@ -1086,6 +1077,11 @@ pixel_transport_root_exec rm -f "${ACTION_RESULT_REMOTE_PATH}" >/dev/null 2>&1 |
 
 pixel_transport_shell "am force-stop ${PKG}" >/dev/null 2>&1 || true
 pixel_transport_shell "logcat -c" >/dev/null 2>&1 || true
+if should_repair_phone_automation_permissions; then
+  repair_phone_automation_permissions || true
+else
+  echo "Skipping phone automation accessibility repair"
+fi
 dispatch_orchestrator_action
 
 sleep 4

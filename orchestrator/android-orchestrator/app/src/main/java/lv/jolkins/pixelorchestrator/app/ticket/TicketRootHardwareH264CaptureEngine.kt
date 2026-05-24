@@ -15,6 +15,7 @@ import lv.jolkins.pixelorchestrator.rootexec.RootResult
 import java.io.BufferedInputStream
 import java.io.IOException
 import java.io.InputStream
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 data class TicketControlCodeVisualProbe(
@@ -129,11 +130,17 @@ class TicketRootHardwareH264CaptureEngine(
     return true
   }
 
-  suspend fun captureSecurePngBase64(sourceWidth: Int, sourceHeight: Int): RootResult {
+  suspend fun captureSecurePngBase64(
+    sourceWidth: Int,
+    sourceHeight: Int,
+    targetWidth: Int = sourceWidth,
+    targetHeight: Int = sourceHeight,
+    timeout: Duration = 6.seconds
+  ): RootResult {
     helperClasspath = helperClasspath ?: resolveHelperClasspath()
     return rootExecutor.run(
-      rootSecurePngCommand(sourceWidth, sourceHeight),
-      timeout = 6.seconds
+      rootSecurePngCommand(sourceWidth, sourceHeight, targetWidth, targetHeight),
+      timeout = timeout
     )
   }
 
@@ -500,8 +507,15 @@ class TicketRootHardwareH264CaptureEngine(
     return rootCaptureHelperCommand(commonArgs)
   }
 
-  private fun rootSecurePngCommand(sourceWidth: Int, sourceHeight: Int): String {
-    val commonArgs = "--png-base64 --source-width $sourceWidth --source-height $sourceHeight --width $sourceWidth --height $sourceHeight"
+  private fun rootSecurePngCommand(
+    sourceWidth: Int,
+    sourceHeight: Int,
+    targetWidth: Int,
+    targetHeight: Int
+  ): String {
+    val cleanTargetWidth = targetWidth.coerceAtLeast(1)
+    val cleanTargetHeight = targetHeight.coerceAtLeast(1)
+    val commonArgs = "--png-base64 --source-width $sourceWidth --source-height $sourceHeight --width $cleanTargetWidth --height $cleanTargetHeight"
     return rootCaptureHelperCommand(commonArgs)
   }
 

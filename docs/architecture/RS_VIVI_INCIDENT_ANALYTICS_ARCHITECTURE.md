@@ -49,6 +49,10 @@ The same schema files are mirrored in the Ops repo because `phone_broker` and th
 GET /api/v1/analytics
 ```
 
+For RS monthly-ticket jobs, analytics should preserve Pixel's phase-specific visual automation reasons. `phone_timeout` means the broker received no final phone outcome inside the deadline; it is not a substitute for Pixel reasons such as `rs_app_launch_failed`, `rs_app_foreground_failed`, `code_rejected_by_rs`, `rs_monthly_ticket_missing`, `rs_manual_code_field_missing`, `rs_monthly_ticket_stale_code`, `rs_monthly_ticket_unknown_state`, `rs_auth_blocked`, or `rs_monthly_ticket_image_capture_failed`. Batch RS work should also distinguish the user-visible result time from later ViVi cleanup time; non-critical cleanup may be delayed briefly so a rapidly arriving next RS job can continue in the warm RS app.
+
+Public ticket viewer presence and ticket leases are hard phone-priority signals. They keep broker ownership on `ticket` for their full active duration, pause queued RS jobs, and preempt running RS jobs without burning RS retry budget. While ticket priority is active, the phone should remain on ViVi/ticket work rather than RS. Current operational targets are public `ticket.jolkins.id.lv` live load in 5 seconds or less, RS final image or named final failure in 15 seconds or less on average, and no regression of stream delay beyond the existing public live-frame freshness threshold.
+
 Response shape:
 
 ```json
@@ -98,7 +102,7 @@ Safety constraints:
 Semantics:
 
 - `retried` means `attempts > 1`; it includes slow successes that should still be investigated.
-- `slowSuccess` currently means successful RS QR delivery took at least 60 seconds end-to-end.
+- `slowSuccess` currently means successful RS QR delivery took at least 15 seconds end-to-end; this is the per-job incident signal that supports the 15-second average target.
 - `userImpact` groups all retained broker jobs by safe actor hash so watchdog/steward runs can start from affected users instead of aggregate health.
 - `recentIncidents` includes failures, non-user cancellations, running jobs, retried jobs, and slow successes.
 - Broker analytics are a starting point; they do not replace image semantics or live ViVi/public verification.
@@ -140,7 +144,7 @@ Current alerting thresholds:
 
 - waiting RS QR job: 90 seconds
 - running RS QR job: 85 seconds
-- slow success: 60 seconds total
+- slow success: 15 seconds total
 - retried success: any success with more than one attempt
 - failed/canceled job: always an incident unless cancellation is explicit user cancellation
 
@@ -148,10 +152,15 @@ These thresholds are operational and may be tightened as latency work improves, 
 
 ## Architecture update notes
 
+- 2026-05-23: RS QR analytics now carry safe phone phase summaries from Pixel result messages. Recent incidents may include source app, ticket flow, total phone duration, and named phase timings such as RS start-state proof and final proof timing; they still must not expose RS codes, raw Telegram IDs, chat IDs, tokens, cookies, or session values.
+- 2026-05-23: RS/ticket operational verification must preserve split outcomes: public ticket priority was proven by an RS job waiting with zero attempts while an authenticated viewer owned the phone, RS final outcomes were measured below the 15-second target after release, final clean authenticated public loads were below 5 seconds, and stream visual age stayed below the live-frame freshness threshold. Evidence is summarized in [RS/Ticket Priority Operational Verification - 2026-05-23](../../ops/reports/2026-05-23-rs-ticket-priority-operational-verification.md).
+- 2026-05-23: Broker ticket priority is hard while public viewers or ticket leases are active. The old bounded viewer-priority window is not the production contract; RS must wait or be preempted for the full ticket presence/lease duration, and `ticket_lease_active` preemptions must not burn RS retry attempts.
+- 2026-05-23: RS monthly-ticket generation now uses the visual tap/pixel driver instead of the previous accessibility semantic driver. Pixel captures fast plain RS screenshots and downscales them for visual state classification, taps RS targets through the isolated lightweight RS root input gateway, always re-registers visible matching tickets, reads the final ticket code from the bottom control-ticket pixels, and accepts success only when the visual code matches the submitted digits. ViVi/public ticket controls keep the protected screen-sleep wrapper; RS visual input does not pay that wrapper cost. The final Telegram image remains the separate secure RS screenshot artifact. Stale-ticket proof, manual-code rejection, unknown visual states, and image-capture failures remain named user-visible outcomes. Broker batching, ticket-priority preemption, and delayed non-critical ViVi cleanup remain unchanged.
+- 2026-05-23: RS monthly-ticket generation is no longer a blind coordinate-first operation. The earlier same-day implementation used the orchestrator accessibility service and bounded semantic branches; that has been superseded by visual tap/pixel driving because live Telegram batches still showed unreliable semantic state and stale Flutter labels.
 - 2026-05-22: Architecture and implementation were reorganized around ownership boundaries. RS Telegram delivery, public ViVi viewing, cleanup, and verification are separate contracts with separate success authorities; steward close-out must report split outcomes explicitly instead of merging RS delivery and public viewer health.
 - 2026-05-22: Public ticket close-out now requires visual proof plus root-sourced health proof. Steward/watchdog verification must fail fast when Brave shows a ticket but Pixel or relay health reports `needs_attention`, `capture_blocked`, stale frames, missing rooted H.264 capture, or `UNKNOWN_VIVI`; that mismatch is `public_ticket_split_brain`, not success.
 - 2026-05-22: Public viewer incidents should account for the guarded root hierarchy timeout itself. The active public-health proof uses the longer guarded timeout because the short default leaves too little real `uiautomator` time after wrapper cleanup reserve and can falsely report `UNKNOWN_VIVI` while rooted video is live.
-- 2026-05-22: Pixel RS monthly-ticket generation now reports a single fail-fast outcome from one root operation: coordinate drive, one root semantic proof, one screenshot capture, then success or one clear failure reason. Incident traces should no longer expect in-flow RS recovery/retry events from Android for this path; repeated broker attempts, if any, are separate user-visible attempts and should be analyzed as such.
+- 2026-05-22: Pixel RS monthly-ticket generation was simplified to one coordinate drive, one root semantic proof, and one screenshot capture. This was superseded on 2026-05-23 first by bounded semantic start-state handling and then by the visual tap/pixel driver after live batches still showed unreliable RS app state.
 - 2026-05-22: Live root evidence showed the RS monthly-ticket operation uses RS `REGISTER A TRIP`, `ENTER THE CODE MANUALLY`, `CONFIRM`, the `Trip is registered` modal, and then `TICKET FOR CONTROL`; the earlier coordinate correction had trusted misleading Flutter hierarchy bounds for the first tap. Steward reviews should treat the generated RS ticket-control surface with the submitted digits and monthly-ticket markers as the Pixel proof for RS Telegram delivery; public Brave viewer evidence remains a separate close-out check.
 - Added a broker analytics endpoint and schemas so agents no longer need to parse raw job state for first-pass triage.
 - Watchdog output now carries broker analytics summaries when available.

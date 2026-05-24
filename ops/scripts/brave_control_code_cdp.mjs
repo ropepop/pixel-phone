@@ -143,7 +143,7 @@ async function pageState(page) {
     phoneViviState: phone.viviState || null,
     streamDebug: frameResult.probe?.debug || null,
     dom: await evaluate(page, `(() => ({
-      bodyClass: document.body.className,
+      bodyClass: document.body?.className || '',
       requestButtonDisabled: document.querySelector('#requestControlCode')?.disabled || false,
       dialogHidden: document.querySelector('#controlCodeDialog')?.hidden ?? null,
       resultHidden: document.querySelector('#controlCodeResultArea')?.hidden ?? null,
