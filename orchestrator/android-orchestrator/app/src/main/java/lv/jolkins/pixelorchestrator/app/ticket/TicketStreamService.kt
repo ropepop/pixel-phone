@@ -121,7 +121,8 @@ class TicketStreamService : Service() {
     val streamEpoch: Long = 0L,
     val minFrameSequence: Long = 0L,
     val resultProof: String = "",
-    val resultProofAtMillis: Long = 0L
+    val resultProofAtMillis: Long = 0L,
+    val imageBytes: ByteArray = ByteArray(0)
   )
 
   private data class ControlCodeBrowserCaptureAck(
@@ -6254,6 +6255,7 @@ class TicketStreamService : Service() {
   private fun rigasSatiksmeFailureRequiresImmediateCleanup(reason: String): Boolean {
     return when (reason) {
       "rs_phone_automation_unavailable",
+      "rs_app_attention_required",
       "rs_auth_blocked" -> true
       else -> false
     }
@@ -6467,6 +6469,14 @@ class TicketStreamService : Service() {
           return snapshotRigasSatiksmeUiAutomatorNodes(reason)
         }
 
+        override suspend fun resetApp(reason: String): Boolean {
+          return resetRigasSatiksmeAppForVisualAutomation(reason)
+        }
+
+        override suspend fun tapNodeCenter(node: PhoneAutomationVisibleNode, reason: String): Boolean {
+          return tapRigasSatiksmeVisibleNodeCenter(node, reason)
+        }
+
         override suspend fun tapRatio(x: Double, y: Double, reason: String): Boolean {
           val (sourceWidth, sourceHeight) = currentDisplaySize()
           return tapRigasSatiksmeVisualTarget(
@@ -6491,6 +6501,10 @@ class TicketStreamService : Service() {
 
         override suspend fun pressBack(reason: String): Boolean {
           return pressBackForRigasSatiksmeVisualDriver(reason)
+        }
+
+        override fun recordPhase(name: String, details: String) {
+          recordTicketEvent(name, details)
         }
       }
     )
@@ -6528,6 +6542,24 @@ class TicketStreamService : Service() {
       )
       false
     }
+  }
+
+  private suspend fun resetRigasSatiksmeAppForVisualAutomation(reason: String): Boolean {
+    val startedAt = SystemClock.elapsedRealtime()
+    recordTicketEvent("rs_monthly_ticket_app_reset_started", "reason=$reason package=${TicketScreenConfig.RIGAS_SATIKSME_PACKAGE}")
+    val forceStop = runRigasSatiksmeVisualInput(
+      "am force-stop ${TicketScreenConfig.RIGAS_SATIKSME_PACKAGE}",
+      "${reason}_force_stop"
+    )
+    delay(180L)
+    val launched = launchRigasSatiksmeAppForVisualAutomation()
+    val foreground = if (launched) waitForRigasSatiksmeVisualForeground() else false
+    val ok = forceStop.ok && launched && foreground
+    recordTicketEvent(
+      "rs_monthly_ticket_app_reset_finished",
+      "reason=$reason ok=$ok force_stop_ok=${forceStop.ok} launched=$launched foreground=$foreground duration_ms=${SystemClock.elapsedRealtime() - startedAt}"
+    )
+    return ok
   }
 
   private suspend fun waitForRigasSatiksmeVisualForeground(): Boolean {
@@ -6592,6 +6624,31 @@ class TicketStreamService : Service() {
     recordTicketEvent("rs_monthly_ticket_visual_tap", "reason=$reason x=$x y=$y")
     val result = runRigasSatiksmeVisualInput("input tap $x $y", reason)
     return result.ok
+  }
+
+  private suspend fun tapRigasSatiksmeVisibleNodeCenter(
+    node: PhoneAutomationVisibleNode,
+    reason: String
+  ): Boolean {
+    val center = parseUiAutomatorNodeCenter(node.bounds) ?: return false
+    val (sourceWidth, sourceHeight) = currentDisplaySize()
+    return tapRigasSatiksmeVisualTarget(
+      x = center.first.coerceIn(0, sourceWidth - 1),
+      y = center.second.coerceIn(0, sourceHeight - 1),
+      reason = "$reason:node"
+    )
+  }
+
+  private fun parseUiAutomatorNodeCenter(bounds: String): Pair<Int, Int>? {
+    val match = Regex("""\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]""")
+      .find(bounds)
+      ?: return null
+    val left = match.groupValues[1].toIntOrNull() ?: return null
+    val top = match.groupValues[2].toIntOrNull() ?: return null
+    val right = match.groupValues[3].toIntOrNull() ?: return null
+    val bottom = match.groupValues[4].toIntOrNull() ?: return null
+    if (right <= left || bottom <= top) return null
+    return Pair((left + right) / 2, (top + bottom) / 2)
   }
 
   private suspend fun pressBackForRigasSatiksmeVisualDriver(reason: String): Boolean {
@@ -6865,16 +6922,26 @@ class TicketStreamService : Service() {
     phases: MutableMap<String, Long>,
     requestStartedAtMillis: Long
   ): FastControlCodeDelivery {
-    val transaction = openControlCodePopupFastForRequest(phases, requestStartedAtMillis) ?: return FastControlCodeDelivery(
-      ok = false,
-      reason = inputGateReason.ifBlank { "control_code_popup_timeout" },
-      cleanupRequired = true
-    )
-    if (!enterAndSubmitControlCodeDigitsFastForRequest(cleanDigits, transaction, phases, requestStartedAtMillis)) {
+    val immediateSubmitted = runImmediateControlCodeOpenTypeSubmitForRequest(cleanDigits, phases, requestStartedAtMillis)
+    if (immediateSubmitted == false) {
       return FastControlCodeDelivery(
         ok = false,
-        reason = inputGateReason.ifBlank { "control_code_input_submit_failed" }
+        reason = inputGateReason.ifBlank { "control_code_open_type_submit_failed" },
+        cleanupRequired = true
       )
+    }
+    if (immediateSubmitted != true) {
+      val transaction = openControlCodePopupFastForRequest(phases, requestStartedAtMillis) ?: return FastControlCodeDelivery(
+        ok = false,
+        reason = inputGateReason.ifBlank { "control_code_popup_timeout" },
+        cleanupRequired = true
+      )
+      if (!enterAndSubmitControlCodeDigitsFastForRequest(cleanDigits, transaction, phases, requestStartedAtMillis)) {
+        return FastControlCodeDelivery(
+          ok = false,
+          reason = inputGateReason.ifBlank { "control_code_input_submit_failed" }
+        )
+      }
     }
     val waitOutcome = waitForGeneratedControlCodeResultAfterSubmit(
       phases = phases,
@@ -6912,6 +6979,78 @@ class TicketStreamService : Service() {
       resultProof = generated.resultProof,
       resultProofAtMillis = generated.resultProofAtMillis
     )
+  }
+
+  private suspend fun runImmediateControlCodeOpenTypeSubmitForRequest(
+    digits: String,
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long
+  ): Boolean? {
+    val decision = controlCodeImmediateStartDecision()
+    if (!decision.accepted) {
+      recordTicketEvent("control_code_immediate_open_type_submit_skipped", decision.reason)
+      return null
+    }
+    val action = streamSize?.let { size ->
+      controlCodeGeometryTarget(size, "generated_request_immediate_macro").copy(reason = decision.reason)
+    } ?: fallbackControlCodeButtonTarget().copy(reason = "${decision.reason}:display_geometry")
+    recordInputGateDecision(allowed = true, reason = action.reason)
+    markControlCodeTransition("control_code_request_open_type_submit_fast")
+    val transaction = openedControlCodePopupTransactionTargets(
+      phases = phases,
+      requestStartedAtMillis = requestStartedAtMillis,
+      source = "immediate_open_type_submit_macro",
+      eventReason = "control_code_popup_transaction_ready_macro"
+    )
+    val submit = transaction.keyboardOpenSubmit
+    phases["ok_tap_target_source_keyboard_geometry"] = 1L
+    phases["ok_tap_target_source_popup_transaction"] = 1L
+    recordTicketEvent(
+      "control_code_submit_target_source",
+      "immediate_open_type_submit_macro input=${transaction.inputSource} pre=${transaction.preKeyboardSubmitSource} keyboard=${transaction.keyboardOpenSubmitSource}"
+    )
+    recordTicketEvent("control_code_submit_current_popup_target", submit.reason)
+    recordTicketEvent("control_code_submit_target", submit.reason)
+    val command = """
+      log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=popup_tap'
+      input tap ${action.x} ${action.y}
+      sleep 0.12
+      log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=popup_ready_after_short_settle'
+      input tap ${transaction.input.x} ${transaction.input.y}
+      sleep 0.035
+      log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=first_digit_start'
+      input text $digits
+      log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=digits_typed'
+      sleep 0.14
+      input tap ${submit.x} ${submit.y}
+      log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=ok_tap_sent'
+    """.trimIndent()
+    val submitted = measureInputPhase(phases, "open_type_submit_fast") {
+      runFastNonTouchInput(command, "control_code_request_open_type_submit_fast")
+    }
+    recordControlCodeSnapAttempt(
+      rawX = action.x,
+      rawY = action.y,
+      candidateZone = action.candidateZone,
+      snapTarget = SNAP_TARGET_CONTROL_CODE_BUTTON,
+      accepted = submitted.ok,
+      reason = if (submitted.ok) action.reason else "root_command_failed",
+      finalX = action.x,
+      finalY = action.y,
+      detectedButtonBounds = action.detectedButtonBounds
+    )
+    if (!submitted.ok) {
+      recordInputGateDecision(allowed = false, reason = "control_code_open_type_submit_failed")
+      return false
+    }
+    markControlCodeRequestPhase(phases, "first_phone_tap", requestStartedAtMillis)
+    markControlCodeRequestPhase(phases, "first_digit_entry", requestStartedAtMillis)
+    markControlCodeRequestPhase(phases, "digits_typed", requestStartedAtMillis)
+    markControlCodeRequestPhase(phases, "ok_tapped", requestStartedAtMillis)
+    phases["control_code_submit_attempted"] = 1L
+    recordTicketEvent("control_code_input_typed_submit_now", "open_type_submit_macro")
+    recordTicketEvent("control_code_submit_attempted", "open_type_submit_macro digits=${digits.length}")
+    return true
   }
 
   private fun requestFreshControlCodeFrameWatermark(reason: String): Pair<Long, Long> {
@@ -7001,23 +7140,12 @@ class TicketStreamService : Service() {
     }
     markControlCodeRequestPhase(phases, "first_phone_tap", requestStartedAtMillis)
     delay(CONTROL_CODE_FAST_POPUP_GEOMETRY_SETTLE_MILLIS)
-    val transaction = waitForControlCodePopupTargetsFast(phases, "immediate_popup_root")
-    if (transaction == null) {
-      return openedControlCodePopupTransactionTargets(
-        phases = phases,
-        requestStartedAtMillis = requestStartedAtMillis,
-        source = "immediate_after_tap",
-        eventReason = "control_code_popup_transaction_ready"
-      )
-    }
-    markControlCodeRequestPhase(phases, "popup_ready", requestStartedAtMillis)
-    markControlCodeModeEntered("control_code_request_popup_ready_immediate_root")
-    sendTicketStateEvent(
-      ticketState = TICKET_PIXEL_STATE_CONTROL_POPUP,
-      reason = "control_code_popup_ready_root",
-      requestId = lastControlCodeRequestId.orEmpty()
+    return openedControlCodePopupTransactionTargets(
+      phases = phases,
+      requestStartedAtMillis = requestStartedAtMillis,
+      source = "immediate_after_tap_settled_geometry",
+      eventReason = "control_code_popup_transaction_ready"
     )
-    return transaction
   }
 
   private suspend fun openControlCodePopupFromVerifiedStateFastForRequest(
@@ -7149,21 +7277,11 @@ class TicketStreamService : Service() {
       return null
     }
     markControlCodeRequestPhase(phases, "first_phone_tap", requestStartedAtMillis)
-    val transaction = waitForControlCodePopupTargetsFast(phases, "fast_popup_root")
-    if (transaction != null) {
-      markControlCodeRequestPhase(phases, "popup_ready", requestStartedAtMillis)
-      markControlCodeModeEntered("control_code_request_popup_ready_fast")
-      sendTicketStateEvent(
-        ticketState = TICKET_PIXEL_STATE_CONTROL_POPUP,
-        reason = "control_code_popup_ready",
-        requestId = lastControlCodeRequestId.orEmpty()
-      )
-      return transaction
-    }
+    delay(CONTROL_CODE_FAST_POPUP_GEOMETRY_SETTLE_MILLIS)
     return openedControlCodePopupTransactionTargets(
       phases = phases,
       requestStartedAtMillis = requestStartedAtMillis,
-      source = "verified_after_tap",
+      source = "verified_after_tap_settled_geometry",
       eventReason = "control_code_popup_transaction_ready_verified"
     )
   }
@@ -7267,6 +7385,42 @@ class TicketStreamService : Service() {
     )
   }
 
+  private suspend fun waitForControlCodePopupVisualReadyFast(
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long,
+    source: String,
+    eventReason: String
+  ): FastControlCodePopupTransaction? {
+    val startedAtMillis = SystemClock.elapsedRealtime()
+    rootHardwareH264CaptureEngine.requestBurst("control_code_popup_visual_ready")
+    rootHardwareH264CaptureEngine.requestControlCodeVisualProbe("control_code_popup_visual_ready")
+    val visualProbe = waitForFreshControlCodeVisualProbe(
+      startedAtMillis,
+      CONTROL_CODE_FAST_POPUP_VISUAL_WAIT_MILLIS
+    )
+    phases["popup_visual_probe"] = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+    if (visualProbe != null && visualProbe.result == "control_popup") {
+      phases["popup_visual_ready"] = (visualProbe.atMillis - startedAtMillis).coerceAtLeast(0L)
+      recordTicketEvent(
+        "control_code_popup_visual_ready",
+        "source=$source reason=${visualProbe.reason} duration_ms=${phases["popup_visual_ready"]}"
+      )
+      return openedControlCodePopupTransactionTargets(
+        phases = phases,
+        requestStartedAtMillis = requestStartedAtMillis,
+        source = "visual_popup:$source",
+        eventReason = eventReason
+      )
+    }
+    if (visualProbe != null) {
+      recordTicketEvent(
+        "control_code_popup_visual_not_ready",
+        "source=$source result=${visualProbe.result} reason=${visualProbe.reason}"
+      )
+    }
+    return null
+  }
+
   private suspend fun waitForControlCodePopupTargetsFast(
     phases: MutableMap<String, Long>,
     phase: String
@@ -7290,33 +7444,42 @@ class TicketStreamService : Service() {
     phases: MutableMap<String, Long>,
     requestStartedAtMillis: Long
   ): Boolean {
-    val submit = resolveControlCodeSubmitAfterDigitsFastForRequest(transaction, phases)
-    phases["ok_tap_target_source_popup_transaction"] = 1L
-    recordTicketEvent("control_code_submit_current_popup_target", submit.reason)
-    recordTicketEvent("control_code_submit_target", submit.reason)
-    val command = """
+    val typeCommand = """
       input tap ${transaction.input.x} ${transaction.input.y}
       sleep 0.08
       input keyevent KEYCODE_MOVE_END
       for i in 1 2 3 4 5 6; do input keyevent KEYCODE_DEL; done
       input text $digits
       sleep 0.04
+    """.trimIndent()
+    val typed = measureInputPhase(phases, "type_digits_fast") {
+      runFastNonTouchInput(typeCommand, "control_code_request_type_digits_fast")
+    }
+    if (!typed.ok) {
+      recordInputGateDecision(allowed = false, reason = "control_code_input_set_failed")
+      return false
+    }
+    markControlCodeRequestPhase(phases, "digits_typed", requestStartedAtMillis)
+    val submit = resolveControlCodeSubmitAfterDigitsFastForRequest(transaction, phases)
+    phases["ok_tap_target_source_popup_transaction"] = 1L
+    recordTicketEvent("control_code_submit_current_popup_target", submit.reason)
+    recordTicketEvent("control_code_submit_target", submit.reason)
+    val submitCommand = """
       input tap ${submit.x} ${submit.y}
       sleep 0.12
       input tap ${submit.x} ${submit.y}
     """.trimIndent()
-    val submitted = measureInputPhase(phases, "type_and_submit_fast") {
-      runFastNonTouchInput(command, "control_code_request_type_and_submit_fast")
+    val submitted = measureInputPhase(phases, "submit_digits_fast") {
+      runFastNonTouchInput(submitCommand, "control_code_request_submit_button_fast")
     }
     if (!submitted.ok) {
-      recordInputGateDecision(allowed = false, reason = "control_code_input_submit_failed")
+      recordInputGateDecision(allowed = false, reason = "control_code_submit_missing")
       return false
     }
-    markControlCodeRequestPhase(phases, "digits_typed", requestStartedAtMillis)
     markControlCodeRequestPhase(phases, "ok_tapped", requestStartedAtMillis)
     phases["control_code_submit_attempted"] = 1L
-    recordTicketEvent("control_code_input_typed_submit_now", "combined_shell_text_ok")
-    recordTicketEvent("control_code_submit_attempted", "coordinate_ok_combined digits=${digits.length}")
+    recordTicketEvent("control_code_input_typed_submit_now", "split_shell_text_ok")
+    recordTicketEvent("control_code_submit_attempted", "coordinate_ok_after_digits digits=${digits.length}")
     return true
   }
 
@@ -7380,16 +7543,26 @@ class TicketStreamService : Service() {
     return submitAttempted
   }
 
-  private fun resolveControlCodeSubmitAfterDigitsFastForRequest(
+  private suspend fun resolveControlCodeSubmitAfterDigitsFastForRequest(
     transaction: FastControlCodePopupTransaction,
     phases: MutableMap<String, Long>
   ): TicketViviPageAction {
-    phases["ok_tap_target_source_popup_geometry"] = 1L
+    val current = controlCodeRequestRootHierarchy(phases, "submit_after_digits_root")
+      ?.let { hierarchy -> controlCodeFastTargetsForHierarchy(hierarchy) }
+    if (current != null) {
+      phases["ok_tap_target_source_current_popup_geometry"] = 1L
+      recordTicketEvent(
+        "control_code_submit_target_source",
+        "current_popup_after_digits input=${current.inputSource} pre=${current.preKeyboardSubmitSource} keyboard=${current.keyboardOpenSubmitSource}"
+      )
+      return current.preKeyboardSubmit
+    }
+    phases["ok_tap_target_source_keyboard_geometry"] = 1L
     recordTicketEvent(
       "control_code_submit_target_source",
-      "popup_geometry_after_digits input=${transaction.inputSource} pre=${transaction.preKeyboardSubmitSource} keyboard=${transaction.keyboardOpenSubmitSource}"
+      "keyboard_geometry_after_digits_root_unavailable input=${transaction.inputSource} pre=${transaction.preKeyboardSubmitSource} keyboard=${transaction.keyboardOpenSubmitSource}"
     )
-    return transaction.preKeyboardSubmit
+    return transaction.keyboardOpenSubmit
   }
 
   private suspend fun waitForGeneratedControlCodeResultAfterSubmit(
@@ -7406,7 +7579,9 @@ class TicketStreamService : Service() {
       "control_code_after_ok_marker_settle",
       "settle_ms=$CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS"
     )
-    delay(CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS)
+    if (CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS > 0L) {
+      delay(CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS)
+    }
     val deadlineAtMillis = startedAtMillis + timeoutMillis
     var popupRejectCount = 0L
     var lastObservedState = "not_run"
@@ -10086,10 +10261,11 @@ class TicketStreamService : Service() {
     private const val CONTROL_CODE_FAST_ROOT_RETRY_COUNT = 1
     private const val CONTROL_CODE_PREPARE_ROOT_DUMP_TIMEOUT_MILLIS = 700L
     private const val CONTROL_CODE_FAST_POPUP_TIMEOUT_MILLIS = 2_400L
+    private const val CONTROL_CODE_FAST_POPUP_VISUAL_WAIT_MILLIS = 650L
     private const val CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS = 18_000L
     private const val CONTROL_CODE_BROWSER_CAPTURE_ACK_POLL_MILLIS = 40L
-    private const val CONTROL_CODE_BROWSER_CAPTURE_ACK_TIMEOUT_MILLIS = 4_000L
-    private const val CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 450L
+    private const val CONTROL_CODE_BROWSER_CAPTURE_ACK_TIMEOUT_MILLIS = 10_000L
+    private const val CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 0L
     private const val CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS = 420L
     private const val CONTROL_CODE_VISUAL_STATE_POLL_MILLIS = 40L
     private const val CONTROL_CODE_VISUAL_STATE_RETRY_MILLIS = 80L

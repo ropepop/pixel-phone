@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "componentId": "subscription_bot",
+  "releaseId": "subscription-bot-20260331T092545Z",
+  "signatureSchema": "none",
+  "artifacts": [
+    {
+      "id": "subscription-bot-bundle",
+      "url": "/data/local/pixel-stack/conf/runtime/components/subscription_bot/artifacts/subscription-bot-bundle-subscription-bot-20260331T092545Z.tar",
+      "sha256": "b14a177c8e1108a0731ea3fc96923743fbb6e6a30bd12f667be44343f68bb1e4",
+      "fileName": "subscription-bot-bundle-subscription-bot-20260331T092545Z.tar",
+      "sizeBytes": 19466752,
+      "required": true
+    }
+  ]
+}

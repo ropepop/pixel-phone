@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "componentId": "dns",
+  "releaseId": "dns-20260330T050529Z-25950",
+  "signatureSchema": "none",
+  "artifacts": [
+    {
+      "id": "adguardhome-rootfs",
+      "url": "/data/local/pixel-stack/conf/runtime/components/dns/artifacts/adguardhome-rootfs-arm64.tar",
+      "sha256": "9b1a5f1a6e49b7f179b4a82b7e961a756f1d1645aaf78c0dc51545a253d7768e",
+      "fileName": "adguardhome-rootfs-arm64.tar",
+      "sizeBytes": 1340661760,
+      "required": true
+    },
+    {
+      "id": "dns-runtime-assets",
+      "url": "/data/local/pixel-stack/conf/runtime/components/dns/artifacts/dns-runtime-assets.tar",
+      "sha256": "a5de2858605ddec55cfc20e7ef7d8c3a851274069fd219fefe329a362a2f8899",
+      "fileName": "dns-runtime-assets.tar",
+      "sizeBytes": 962560,
+      "required": true
+    }
+  ]
+}

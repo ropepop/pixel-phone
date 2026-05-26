@@ -1,0 +1,201 @@
+{
+  "files": {
+    "data/local/pixel-stack/conf/adguardhome.env": {
+      "mode": 384,
+      "sha256": "ccbc6f01e7414f69d20c8e0a0e8499a10c563dbe4dc1b17143efbce4653ff927",
+      "size": 1823
+    },
+    "data/local/pixel-stack/conf/adguardhome/remote-admin-password": {
+      "mode": 384,
+      "sha256": "e3b767c1023cf63936d6dd2692bfd42f03926550407c5f8db21f6418c2e6258a",
+      "size": 25
+    },
+    "data/local/pixel-stack/conf/adguardhome/remote-admin-password.hash": {
+      "mode": 384,
+      "sha256": "33c22d25f4a75588293b59cfd42af6f26c659b6018f5ae83894919d5e6f3c615",
+      "size": 60
+    },
+    "data/local/pixel-stack/conf/apps/codex-mv-test": {
+      "mode": 420,
+      "sha256": "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2",
+      "size": 5
+    },
+    "data/local/pixel-stack/conf/apps/codex-small": {
+      "mode": 420,
+      "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      "size": 3
+    },
+    "data/local/pixel-stack/conf/apps/codex-small-dot.json": {
+      "mode": 420,
+      "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      "size": 3
+    },
+    "data/local/pixel-stack/conf/apps/satiksme-bot-cloudflared.json": {
+      "mode": 384,
+      "sha256": "05a274f91983aecf0860406b48decfb3ba6f415ed2c24abfee4b2f08e81721f0",
+      "size": 175
+    },
+    "data/local/pixel-stack/conf/apps/satiksme-bot-spacetime.key": {
+      "mode": 384,
+      "sha256": "25847acb7e6d737a6546a320f56edfc397389d9bad897e3999377cda2aa9474f",
+      "size": 1704
+    },
+    "data/local/pixel-stack/conf/apps/satiksme-bot-web-session-secret": {
+      "mode": 384,
+      "sha256": "0dc4b4db0b26aa2afa95b3279aa681b6088c17f43cbe9da78a4c50d0b611dd46",
+      "size": 64
+    },
+    "data/local/pixel-stack/conf/apps/satiksme-bot.env": {
+      "mode": 384,
+      "sha256": "d32ec1109e7962dda867faea4e586a461bb88af77c5240a93984dafc005b9785",
+      "size": 2560
+    },
+    "data/local/pixel-stack/conf/apps/site-notifications.env": {
+      "mode": 384,
+      "sha256": "7e9bf3d00985736099164cdfb4b595a6da7ef3bae951e7d051ce88e9369dd1df",
+      "size": 860
+    },
+    "data/local/pixel-stack/conf/apps/site-notifications.env.bak.20260226-172517": {
+      "mode": 384,
+      "sha256": "65434a8ab79b55a5a09dac3241fccf03396cadf2e0402b22386597fb73a26989",
+      "size": 1288
+    },
+    "data/local/pixel-stack/conf/apps/subscription-bot-cloudflared.json": {
+      "mode": 384,
+      "sha256": "def0800f3a8dd7b7737f1f0d2a2f83eeea299664e614c190006981080a9ed65f",
+      "size": 175
+    },
+    "data/local/pixel-stack/conf/apps/subscription-bot-web-session-secret": {
+      "mode": 384,
+      "sha256": "cdfa9990ad9331b151a83a9f460a7efb2c3d309ddfd90599a8f4dc4a67070918",
+      "size": 48
+    },
+    "data/local/pixel-stack/conf/apps/subscription-bot.env": {
+      "mode": 384,
+      "sha256": "ae74983602bf30ebd21047936d97bc0ebc29e3480928458bf953cdcbb4be80ee",
+      "size": 1851
+    },
+    "data/local/pixel-stack/conf/apps/ticket-screen-cloudflared.json": {
+      "mode": 384,
+      "sha256": "d961d4233dc7b9fe9fadc994c62960f4e8846e131e074b663ebe3365697d9e16",
+      "size": 175
+    },
+    "data/local/pixel-stack/conf/apps/ticket-screen-vivi-login.env": {
+      "mode": 384,
+      "sha256": "ab74618f098ed6402b8773485dca1c3ddb20539954a3defd3f90b3908c7f52e9",
+      "size": 78
+    },
+    "data/local/pixel-stack/conf/apps/ticket-screen.env": {
+      "mode": 384,
+      "sha256": "5d2e11b52cb4129de319c40ae5d3d6bb0bb8535f41b2f7b53682f653504d3989",
+      "size": 400
+    },
+    "data/local/pixel-stack/conf/apps/train-bot-cloudflared": {
+      "mode": 420,
+      "sha256": "edeaaff3f1774ad2888673770c6d64097e391bc362d7d6fb34982ddf0efd18cb",
+      "size": 4
+    },
+    "data/local/pixel-stack/conf/apps/train-bot-cloudflared.json": {
+      "mode": 384,
+      "sha256": "a49259c239acc2b3c781780b2b0c1d0dbd12e0849e4d522b7ba41edfcdaf9f52",
+      "size": 175
+    },
+    "data/local/pixel-stack/conf/apps/train-bot-spacetime.key": {
+      "mode": 384,
+      "sha256": "661e441a90382de6765b0fd40b575ae21fa63f3b5dbe5fd16841529f9bb0c4e7",
+      "size": 1704
+    },
+    "data/local/pixel-stack/conf/apps/train-bot-web-session-secret": {
+      "mode": 384,
+      "sha256": "5856a80a0477b194b4e247d58c0f14d669e7d96ef0708fa2b8fe6c72e6a53211",
+      "size": 64
+    },
+    "data/local/pixel-stack/conf/apps/train-bot.env": {
+      "mode": 384,
+      "sha256": "425b45f274b7d28e680940c10fdc55fc45e285b98c1f698aaa6465d9144565fe",
+      "size": 2022
+    },
+    "data/local/pixel-stack/conf/apps/trainbotcloudflaredjson": {
+      "mode": 420,
+      "sha256": "edeaaff3f1774ad2888673770c6d64097e391bc362d7d6fb34982ddf0efd18cb",
+      "size": 4
+    },
+    "data/local/pixel-stack/conf/ddns.env": {
+      "mode": 384,
+      "sha256": "0771bd373f29eed6989e37cff7d646c284c0bd8631e80ff474cdb30664b6a6cf",
+      "size": 592
+    },
+    "data/local/pixel-stack/conf/ddns/cloudflare-token": {
+      "mode": 384,
+      "sha256": "6c0c1f1afbe0374b84d526efc5838a34c1159987c3cec57045f68eaf7b4606ac",
+      "size": 41
+    },
+    "data/local/pixel-stack/conf/orchestrator-config-v1.json": {
+      "mode": 384,
+      "sha256": "60744545d99819a56164245a5b14f7c9f777a4e1d9f4f481affb98e77b2aaea7",
+      "size": 6689
+    },
+    "data/local/pixel-stack/conf/pihole-rooted.env": {
+      "mode": 384,
+      "sha256": "f11fb51223107054fae58b79aae65b9b5302372c88ab256533e6834ff16acff3",
+      "size": 1357
+    },
+    "data/local/pixel-stack/conf/pihole-rooted/remote-admin-password": {
+      "mode": 384,
+      "sha256": "e3b767c1023cf63936d6dd2692bfd42f03926550407c5f8db21f6418c2e6258a",
+      "size": 25
+    },
+    "data/local/pixel-stack/conf/runtime/components/dns/release-manifest.json": {
+      "mode": 384,
+      "sha256": "85ddd3264cd5d16132944baac172336863d3f5793bf564e006558051d2629244",
+      "size": 805
+    },
+    "data/local/pixel-stack/conf/runtime/components/satiksme_bot/release-manifest.json": {
+      "mode": 384,
+      "sha256": "c8513e64b76053842dfa94447cceb19f051faa4a935caa18b78ad94aaeaee631",
+      "size": 588
+    },
+    "data/local/pixel-stack/conf/runtime/components/site_notifier/release-manifest.json": {
+      "mode": 384,
+      "sha256": "e14c8a492771de0d95d63d62486c22d6335347cc75edcdbd19c9b31f55e61725",
+      "size": 558
+    },
+    "data/local/pixel-stack/conf/runtime/components/subscription_bot/release-manifest.json": {
+      "mode": 384,
+      "sha256": "aeef63004236f710dc1ba840a1095863467b4ff68f17d5ebeb3406aa261feddd",
+      "size": 581
+    },
+    "data/local/pixel-stack/conf/runtime/components/train_bot/release-manifest.json": {
+      "mode": 384,
+      "sha256": "0f74ae0e59ba8b21af5e13596915957415333e4738ce9090902e48095b4c758d",
+      "size": 564
+    },
+    "data/local/pixel-stack/conf/runtime/runtime-manifest.json": {
+      "mode": 384,
+      "sha256": "0cd7d0b89615f35973c1cacff05734e0247da6a9e543fa76f3e1ffb721b9ef94",
+      "size": 1377
+    },
+    "data/local/pixel-stack/conf/ssh/authorized_keys": {
+      "mode": 384,
+      "sha256": "4242af4ac3a0adfcfad8ba11124135d3874b30c331c485cd6a429026ec24b0d9",
+      "size": 101
+    },
+    "data/local/pixel-stack/conf/ssh/root_password.hash": {
+      "mode": 384,
+      "sha256": "35d01971e8076a2b3822a551b03bf38a072263d4807ced89f52832753c568912",
+      "size": 107
+    },
+    "data/local/pixel-stack/conf/vpn/tailscale-authkey": {
+      "mode": 384,
+      "sha256": "2312b8e68b9c0e3841258cabeb0fe333c72f37181974071f1a9f50b3e7b1b87c",
+      "size": 62
+    },
+    "data/local/pixel-stack/conf/vpn/tailscale.env": {
+      "mode": 384,
+      "sha256": "e757409f654ab6f16e586f8b0fb249c1dcbb98e9057517e49dd48ffdbca80e5d",
+      "size": 416
+    }
+  },
+  "profile": "pixel",
+  "updatedEpochSeconds": 1779654374
+}

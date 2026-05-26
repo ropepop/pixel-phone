@@ -715,8 +715,8 @@ class TicketStreamServiceSourceTest {
     assertTrue(fastFlow.contains("markControlCodeRequestPhase(phases, \"result_marker_requested\", requestStartedAtMillis)"))
     val generateFlow = source.substringBetween("private suspend fun handleGenerateControlCode", "private suspend fun handleGenerateRigasSatiksmeMonthlyTicketQr")
     val generateSuccess = generateFlow.substringBetween("if (ok) {", "} else if (delivery.cleanupRequired)")
-    assertFalse("ViVi control-code delivery must not capture a PNG/RS artifact before returning raw", fastFlow.contains("captureGeneratedControlCodeImageBytes("))
-    assertFalse("ViVi control-code delivery must not wait on a result-image capture phase", fastFlow.contains("result_image_captured"))
+    assertFalse("ViVi control-code delivery must not capture a phone PNG for the user-facing result", fastFlow.contains("captureGeneratedControlCodeImageBytes("))
+    assertFalse("ViVi control-code delivery must not record phone screenshot result phases", generateSuccess.contains("result_image_png_ready"))
     assertFalse("ticket.jolkins/ViVi control-code delivery must never emit Telegram RS-bot image results", generateSuccess.contains("sendRigassatiksmeQrResult("))
     assertFalse("ticket.jolkins/ViVi control-code delivery must not route resultImage into ViVi monthly-ticket capture", generateFlow.contains("runFastViviMonthlyTicketImageDeliveryForRequest"))
     assertTrue(fastFlow.indexOf("waitForGeneratedControlCodeResultAfterSubmit(") < fastFlow.indexOf("reason = \"control_code_marker_ready\""))
@@ -806,7 +806,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(source.contains("ok = delivery.ok"))
     assertFalse(source.contains("PendingBrowserControlCodeCapture("))
     assertFalse(source.contains("pendingBrowserControlCodeCapture = pending"))
-    assertTrue(source.contains("CONTROL_CODE_BROWSER_CAPTURE_ACK_TIMEOUT_MILLIS = 4_000L"))
+    assertTrue(source.contains("CONTROL_CODE_BROWSER_CAPTURE_ACK_TIMEOUT_MILLIS = 10_000L"))
     assertFalse(source.contains("schedulePendingBrowserCaptureWatchdog"))
     assertTrue(source.contains("control_code_browser_capture_ack_timeout"))
     val browserCaptureWait = source.substringBetween("private suspend fun waitForControlCodeBrowserCapture", "private fun recentControlCodePrepareTicketReady")
@@ -874,14 +874,45 @@ class TicketStreamServiceSourceTest {
       fastFlow.indexOf("enterAndSubmitControlCodeDigitsFastForRequest(cleanDigits, transaction, phases, requestStartedAtMillis)") <
         fastFlow.indexOf("waitForGeneratedControlCodeResultAfterSubmit(")
     )
-    assertTrue(combined.contains("control_code_request_type_and_submit_fast"))
+    assertTrue(combined.contains("control_code_request_type_digits_fast"))
+    assertTrue(combined.contains("control_code_request_submit_button_fast"))
     assertTrue(combined.contains("input tap ${'$'}{transaction.input.x} ${'$'}{transaction.input.y}"))
     assertTrue(combined.contains("input text ${'$'}digits"))
     assertTrue(combined.contains("input tap ${'$'}{submit.x} ${'$'}{submit.y}"))
+    assertTrue(combined.contains("resolveControlCodeSubmitAfterDigitsFastForRequest(transaction, phases)"))
     assertTrue(combined.contains("markControlCodeRequestPhase(phases, \"digits_typed\", requestStartedAtMillis)"))
     assertTrue(combined.contains("markControlCodeRequestPhase(phases, \"ok_tapped\", requestStartedAtMillis)"))
-    assertFalse("combined input/submit macro must stay off the slow root observation lane", combined.contains("controlCodeRequestRootHierarchy("))
+    assertTrue("digits should be typed before resolving the OK tap target", combined.indexOf("input text ${'$'}digits") < combined.indexOf("resolveControlCodeSubmitAfterDigitsFastForRequest(transaction, phases)"))
     assertFalse("combined input/submit macro must not use accessibility", combined.contains("PhoneAutomationServiceBridge.clickSelectors("))
+  }
+
+  @Test
+  fun immediateFreshPopupPathOpensTypesAndSubmitsInOneRootCommand() {
+    val source = ticketStreamServiceSource()
+    val fastFlow = source.substringBetween("private suspend fun runFastControlCodeDeliveryForRequest", "private fun requestFreshControlCodeFrameWatermark")
+    val immediate = source.substringBetween("private suspend fun runImmediateControlCodeOpenTypeSubmitForRequest", "private suspend fun openControlCodePopupFastForRequest")
+
+    assertTrue(
+      "the known-live ticket path should try the one-command open/type/OK macro before the older two-step popup path",
+      fastFlow.indexOf("runImmediateControlCodeOpenTypeSubmitForRequest(cleanDigits, phases, requestStartedAtMillis)") <
+        fastFlow.indexOf("openControlCodePopupFastForRequest(phases, requestStartedAtMillis)")
+    )
+    assertTrue(immediate.contains("control_code_request_open_type_submit_fast"))
+    assertTrue(immediate.contains("input tap ${'$'}{action.x} ${'$'}{action.y}"))
+    assertTrue(immediate.contains("input tap ${'$'}{transaction.input.x} ${'$'}{transaction.input.y}"))
+    assertTrue(immediate.contains("input text ${'$'}digits"))
+    assertTrue(immediate.contains("input tap ${'$'}{submit.x} ${'$'}{submit.y}"))
+    assertTrue(immediate.contains("control_code_macro_phase"))
+    assertTrue(immediate.contains("detail=first_digit_start"))
+    assertTrue(immediate.contains("detail=ok_tap_sent"))
+    assertTrue(
+      "the immediate path should settle after typing before its single OK tap, so the button is enabled without adding any post-OK tail",
+      immediate.contains("input text ${'$'}digits\n      log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=digits_typed'\n      sleep 0.14\n      input tap ${'$'}{submit.x} ${'$'}{submit.y}")
+    )
+    assertFalse("freshly opened popup should not spend normal-path time clearing an already-empty field", immediate.contains("KEYCODE_DEL"))
+    assertFalse("freshly opened popup should not spend normal-path time moving the cursor before first digit", immediate.contains("KEYCODE_MOVE_END"))
+    assertFalse("normal immediate path must not keep waiting in the shell after OK before generated-result detection can start", immediate.contains("detail=ok_tap_sent'\n      sleep 0.12"))
+    assertFalse("normal immediate path must not send a trailing second OK tap before generated-result detection", immediate.contains("input tap ${'$'}{submit.x} ${'$'}{submit.y}\n    \"\"\".trimIndent()"))
   }
 
   @Test
@@ -919,26 +950,57 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun immediatePopupOpenUsesRootConfirmedPopupTargetsBeforeSubmit() {
+  fun immediatePopupOpenUsesSettledGeometryWithoutBlockingVisualProbe() {
     val source = ticketStreamServiceSource()
     val immediate = source.substringBetween(
       "private suspend fun openControlCodePopupImmediateForRequest",
       "private suspend fun openControlCodePopupFromVerifiedStateFastForRequest"
     )
+    val visualReady = source.substringBetween(
+      "private suspend fun waitForControlCodePopupVisualReadyFast",
+      "private suspend fun waitForControlCodePopupTargetsFast"
+    )
 
     assertTrue(immediate.contains("delay(CONTROL_CODE_FAST_POPUP_GEOMETRY_SETTLE_MILLIS)"))
-    assertTrue("successful immediate popup tap must prove popup targets through root before submit", immediate.contains("waitForControlCodePopupTargetsFast("))
+    assertFalse("successful immediate popup tap must not wait on visual popup proof before typing", immediate.contains("waitForControlCodePopupVisualReadyFast("))
+    assertFalse("successful immediate popup tap must not wait on slow root target discovery before typing", immediate.contains("waitForControlCodePopupTargetsFast("))
+    assertTrue(visualReady.contains("requestControlCodeVisualProbe(\"control_code_popup_visual_ready\""))
+    assertTrue(visualReady.contains("visualProbe.result == \"control_popup\""))
+    assertTrue(visualReady.contains("openedControlCodePopupTransactionTargets("))
+    assertTrue(visualReady.contains("source = \"visual_popup:${'$'}source\""))
+    assertTrue(visualReady.contains("control_code_popup_visual_ready"))
+    assertTrue(source.contains("CONTROL_CODE_FAST_POPUP_VISUAL_WAIT_MILLIS = 650L"))
     assertTrue("a successful popup tap must build a transaction instead of failing on a transient root miss", immediate.contains("openedControlCodePopupTransactionTargets("))
+    assertTrue(immediate.contains("source = \"immediate_after_tap_settled_geometry\""))
     assertTrue(immediate.contains("control_code_popup_transaction_ready"))
     assertFalse("production immediate path must not return the old geometry-only popup fallback", immediate.contains("fallbackControlCodePopupTargetsAfterImmediateOpen("))
   }
 
   @Test
+  fun verifiedPopupOpenUsesSettledGeometryInsteadOfSlowRootTargetsAfterTap() {
+    val source = ticketStreamServiceSource()
+    val verifiedOpen = source.substringBetween(
+      "private suspend fun openControlCodePopupFromVerifiedStateFastForRequest",
+      "private suspend fun resolveControlCodeHierarchyForFastRequest"
+    )
+
+    val afterSuccessfulTap = verifiedOpen.substringAfter("markControlCodeRequestPhase(phases, \"first_phone_tap\", requestStartedAtMillis)")
+    assertFalse(afterSuccessfulTap.contains("waitForControlCodePopupVisualReadyFast("))
+    assertFalse(
+      "after a successful verified popup tap, typing must not be delayed by visual proof or slow popup root target discovery",
+      afterSuccessfulTap.contains("waitForControlCodePopupTargetsFast(")
+    )
+    assertTrue(afterSuccessfulTap.contains("source = \"verified_after_tap_settled_geometry\""))
+    assertTrue(afterSuccessfulTap.contains("control_code_popup_transaction_ready_verified"))
+  }
+
+  @Test
   fun fastControlCodeSubmitUsesPopupOkTargetAfterTyping() {
     val source = ticketStreamServiceSource()
+    val combinedSubmit = source.substringBetween("private suspend fun enterAndSubmitControlCodeDigitsFastForRequest", "private suspend fun enterControlCodeDigitsFastForRequest")
     val fastEnter = source.substringBetween("private suspend fun enterControlCodeDigitsFastForRequest", "private suspend fun tapControlCodeSubmitFastForRequest")
     val fastSubmit = source.substringBetween("private suspend fun tapControlCodeSubmitFastForRequest", "private suspend fun waitForGeneratedControlCodeResultAfterSubmit")
-    val resolver = source.substringBetween("private fun resolveControlCodeSubmitAfterDigitsFastForRequest", "private suspend fun waitForGeneratedControlCodeResultAfterSubmit")
+    val resolver = source.substringBetween("private suspend fun resolveControlCodeSubmitAfterDigitsFastForRequest", "private suspend fun waitForGeneratedControlCodeResultAfterSubmit")
     val transactionBuilder = source.substringBetween("private fun openedControlCodePopupTransaction", "private fun fallbackControlCodePopupTargetsAfterImmediateOpen")
 
     assertTrue(source.contains("private data class FastControlCodePopupTransaction"))
@@ -949,12 +1011,12 @@ class TicketStreamServiceSourceTest {
     assertTrue(fastEnter.contains("transaction.input"))
     assertTrue(fastSubmit.contains("resolveControlCodeSubmitAfterDigitsFastForRequest(transaction, phases)"))
     assertTrue(fastSubmit.contains("control_code_submit_current_popup_target"))
-    assertTrue("after typing, OK tap should use the visible popup submit target", resolver.contains("return transaction.preKeyboardSubmit"))
-    assertFalse("after typing, OK tap must not use the keyboard geometry target while the popup button is visible", resolver.contains("return transaction.keyboardOpenSubmit"))
+    assertTrue("after typing, OK tap should re-read the visible popup when possible", resolver.contains("controlCodeRequestRootHierarchy(phases, \"submit_after_digits_root\""))
+    assertTrue("after typing, OK tap should prefer the current visible popup submit target", resolver.contains("current.preKeyboardSubmit"))
+    assertTrue("after typing, OK tap should use keyboard-open geometry only when the live popup read is unavailable", resolver.contains("return transaction.keyboardOpenSubmit"))
     assertFalse("after typing, OK tap must not reuse the old one-shot target field", fastSubmit.contains("val submit = targets.submit"))
     assertFalse("after typing, OK tap must not spend time on an impossible sub-second root dump", source.contains("CONTROL_CODE_CURRENT_SUBMIT_ROOT_DUMP_TIMEOUT_MILLIS"))
-    assertFalse("after typing, OK tap must use cached popup geometry instead of root observation", resolver.contains("controlCodeRequestRootHierarchy("))
-    assertFalse("after typing, OK tap must not try to resolve a fresh root submit target", resolver.contains("current_root"))
+    assertTrue("digits must be typed before resolving the final OK target", combinedSubmit.indexOf("input text ${'$'}digits") < combinedSubmit.indexOf("resolveControlCodeSubmitAfterDigitsFastForRequest(transaction, phases)"))
   }
 
   @Test
@@ -989,7 +1051,8 @@ class TicketStreamServiceSourceTest {
     assertFalse(wait.contains("control_code_request_result_assumed_fast"))
     assertFalse(wait.contains("control_code_request_result_assumed_after_submit"))
     assertFalse("the old pre-settle bitmap shortcut must stay removed", wait.contains("control_code_request_result_detected_by_visual_probe"))
-    assertTrue("post-submit result proof must wait for the post-OK Aztec settle", preRootWait.contains("delay(CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS)"))
+    assertTrue("post-submit result proof must poll immediately unless a nonzero settle is configured", preRootWait.contains("if (CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS > 0L)"))
+    assertTrue(source.contains("CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 0L"))
     assertTrue("post-submit success must wait for the strict phone-side visual state proof", wait.contains("wait_result_phone_visual_generated_state"))
     assertTrue("post-submit proof must actively ask the H.264 helper for a visual state", wait.contains("requestControlCodeVisualProbe(\"control_code_after_ok_visual_state\")"))
     assertTrue("post-submit proof must read the fresh visual state returned by the H.264 helper", wait.contains("recentControlCodeVisualProbeAfter(visualProbeStartedAtMillis)"))
@@ -1019,7 +1082,8 @@ class TicketStreamServiceSourceTest {
     assertTrue(delivery.contains("minFrameSequence = watermark.second"))
     assertTrue("the ViVi path must emit phone-side visual proof metadata", source.contains("resultProof = \"phone_visual\""))
     assertTrue("phone visual proof must be the default marker proof", rootConfirm.contains("resultProof: String = \"phone_visual\""))
-    assertTrue("marker delivery must wait for browser capture ack before cleanup", source.contains("waitForControlCodeBrowserCapture("))
+    assertFalse("ViVi control-code delivery must not wait on Pixel-image result acknowledgements", source.contains("waitForControlCodeResultAck("))
+    assertTrue("normal ViVi marker delivery must wait for browser capture ack before cleanup", source.contains("waitForControlCodeBrowserCapture("))
     assertFalse(source.contains("CONTROL_CODE_BROWSER_CAPTURE_ACK_TIMEOUT_MILLIS = 12_000L"))
     assertTrue(eventSender.contains("resultProof: String = \"\""))
     assertTrue(eventSender.contains("resultFrameEpoch: Long = 0L"))
@@ -1045,8 +1109,10 @@ class TicketStreamServiceSourceTest {
     assertTrue(success.contains("sendTicketStateEvent("))
     assertFalse("ticket.jolkins/ViVi success path must not send Telegram RS-bot image results", success.contains("sendRigassatiksmeQrResult("))
     assertFalse("ticket.jolkins/ViVi success path must not branch resultImage into ViVi monthly-ticket capture", success.contains("runFastViviMonthlyTicketImageDeliveryForRequest"))
-    assertTrue("success path should close after the marker is sent", success.contains("returnControlCodeSurfaceToRawTicket("))
+    assertTrue("success path should close after the result is accepted or fallback marker is sent", success.contains("returnControlCodeSurfaceToRawTicket("))
     assertTrue("ViVi success must mark the result handled before raw-ticket cleanup so it does not send an unwatermarked control_code_result over the recovered raw ticket", success.contains("resultSent = true"))
+    assertFalse(success.contains("sendControlCodeImageResult("))
+    assertFalse(success.contains("waitForControlCodeResultAck("))
     val successAfterTicketEvent = success.substringAfter("sendTicketStateEvent(")
     assertTrue(successAfterTicketEvent.indexOf("resultSent = true") < successAfterTicketEvent.indexOf("returnControlCodeSurfaceToRawTicket("))
     assertTrue(successAfterTicketEvent.contains("waitForControlCodeBrowserCapture("))
@@ -1119,8 +1185,8 @@ class TicketStreamServiceSourceTest {
     assertTrue(wait.contains("rawTicketVisualCount >= CONTROL_CODE_RAW_TICKET_VISUAL_CONFIRM_COUNT"))
     assertTrue(wait.contains("CONTROL_CODE_RAW_TICKET_ROOT_CONFIRM_TIMEOUT_MILLIS"))
     assertTrue(wait.contains("control_code_request_phone_visual_generated_after_submit"))
-    assertTrue(wait.contains("delay(CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS)"))
-    assertTrue(source.contains("CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 450L"))
+    assertTrue(wait.contains("if (CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS > 0L)"))
+    assertTrue(source.contains("CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 0L"))
     assertTrue(wait.contains("visualProbeStartedAtMillis"))
     assertFalse(wait.contains("requestControlCodeVisualProbe(\"control_code_after_ok_visual\")"))
     assertTrue(wait.contains("requestControlCodeVisualProbe(\"control_code_after_ok_visual_state\")"))
@@ -1131,7 +1197,7 @@ class TicketStreamServiceSourceTest {
     val rootConfirm = source.substringBetween("private suspend fun confirmGeneratedControlCodeResultForBrowser", "private fun markerFirstControlCodeFrameWatermarkForBrowser")
     val markerFirst = source.substringBetween("private fun markerFirstControlCodeFrameWatermarkForBrowser", "private suspend fun captureGeneratedControlCodeImageBytes")
     assertTrue(rootConfirm.contains("markerFirstControlCodeFrameWatermarkForBrowser("))
-    assertTrue(wait.contains("delay(CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS)"))
+    assertTrue(wait.contains("if (CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS > 0L)"))
     assertFalse(wait.contains("requestControlCodeVisualProbe(\"control_code_result_after_root\")"))
     assertTrue(rootConfirm.contains("result_first_visible"))
     assertTrue(markerFirst.contains("result_marker_frame_ready"))
@@ -1143,7 +1209,7 @@ class TicketStreamServiceSourceTest {
     val source = ticketStreamServiceSource()
     val wait = source.substringBetween("private suspend fun waitForGeneratedControlCodeResultAfterSubmit", "private suspend fun confirmGeneratedControlCodeResultForBrowser")
 
-    assertTrue(source.contains("CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 450L"))
+    assertTrue(source.contains("CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 0L"))
     assertTrue(source.contains("CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS = 18_000L"))
     assertTrue(wait.contains("control_code_waiting_result_marker"))
     assertTrue(wait.contains("control_code_request_phone_visual_generated_after_submit"))
@@ -1181,13 +1247,17 @@ class TicketStreamServiceSourceTest {
     assertTrue(engine.contains("lastControlCodeVisualProbeResult"))
     assertTrue(helper.contains("cmd.equals(\"control_code_visual_probe\")"))
     assertTrue(helper.contains("classifyControlCodeVisualState(source.bitmap, sourceCrop)"))
-    assertTrue("popup state must be rejected before generated chip detection", visualProbe.indexOf("frameHasControlCodeInputPopup(probe)") in 0 until visualProbe.indexOf("frameHasGeneratedControlCodeResultChip(probe)"))
+    assertTrue("popup state must be rejected before generated-result detection", visualProbe.indexOf("frameHasControlCodeInputPopup(probe)") in 0 until visualProbe.indexOf("frameHasGeneratedControlCodeResultHeader(probe)"))
+    assertTrue("generated-result detection must run before raw-ticket detection", visualProbe.indexOf("frameHasGeneratedControlCodeResultHeader(probe)") in 0 until visualProbe.indexOf("frameHasRawTicketCodeGraphic(probe)"))
     assertTrue(visualProbe.contains("return \"control_popup\";"))
     assertTrue(visualProbe.contains("return \"generated\";"))
     assertTrue(visualProbe.contains("return \"raw_ticket\";"))
     assertTrue(helper.contains("frameHasControlCodeInputPopup(probe)"))
     assertTrue(helper.contains("frameHasControlCodePopupOrangeOkButton(probe)"))
+    assertTrue(helper.contains("frameHasGeneratedControlCodeResultHeader(probe)"))
     assertTrue(helper.contains("frameHasGeneratedControlCodeResultChip(probe)"))
+    assertTrue(helper.contains("redRatio >= 0.24"))
+    assertTrue(helper.contains("label.lightRatio >= 0.48"))
     assertTrue(helper.contains("chipRows >= 3"))
     assertTrue(helper.contains("rowDark >= 30"))
     assertTrue(helper.contains("darkRatio >= 0.58"))
@@ -1452,17 +1522,15 @@ class TicketStreamServiceSourceTest {
     val fastFlow = source.substringBetween("private suspend fun runFastControlCodeDeliveryForRequest", "private suspend fun prepareViviForControlCodeRequest")
 
     assertTrue(config.contains("const val TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS = 200"))
-    assertTrue(fastFlow.contains("markerFirstControlCodeFrameWatermarkForBrowser("))
-    assertTrue(fastFlow.contains("reason = \"control_code_marker_ready\""))
-    assertTrue(fastFlow.contains("streamEpoch = watermark.first"))
-    assertTrue(fastFlow.contains("minFrameSequence = watermark.second"))
-    assertFalse("ViVi marker path must not capture a PNG before cleanup", fastFlow.contains("captureGeneratedControlCodeImageBytes("))
+    assertFalse(fastFlow.contains("captureGeneratedControlCodeImageBytes("))
+    assertFalse(fastFlow.contains("resultProof = \"phone_root_image\""))
+    assertFalse(fastFlow.contains("imageBytes = imageBytes"))
     assertFalse("ViVi marker path must not carry RS image bytes", fastFlow.contains("resultImageBytes = imageBytes"))
     assertFalse("ticket.jolkins/ViVi marker path must never send Telegram RS-bot image results", generate.contains("sendRigassatiksmeQrResult("))
     assertFalse("ticket.jolkins/ViVi marker path must not route resultImage into ViVi monthly-ticket capture", generate.contains("runFastViviMonthlyTicketImageDeliveryForRequest"))
     assertFalse(generate.contains("PendingBrowserControlCodeCapture("))
     assertFalse(generate.contains("sendControlCodeFrameReady("))
-    assertTrue("generated result must close after the marker is delivered", generate.substringBetween("if (ok) {", "} else if (delivery.cleanupRequired)").contains("returnControlCodeSurfaceToRawTicket("))
+    assertTrue("generated result must wait for browser capture ack before cleanup", generate.substringBetween("if (ok) {", "} else if (delivery.cleanupRequired)").contains("waitForControlCodeBrowserCapture("))
     assertFalse(source.contains("handleControlCodeBrowserCaptureAck("))
   }
 
@@ -1731,6 +1799,12 @@ class TicketStreamServiceSourceTest {
     assertTrue(source.contains("waitForControlCodeBrowserCapture("))
     assertTrue(source.contains("clearControlCodeBrowserCaptureWait(cleanRequestId)"))
     assertTrue(source.contains("control_code_browser_capture_ack_timeout"))
+    assertFalse(source.contains("\"control_code_result_ack\" -> {"))
+    assertFalse(source.contains("handleControlCodeResultAck(requestId, ok, reason)"))
+    assertFalse(source.contains("beginControlCodeResultAckWait(cleanRequestId)"))
+    assertFalse(source.contains("waitForControlCodeResultAck("))
+    assertFalse(source.contains("clearControlCodeResultAckWait(cleanRequestId)"))
+    assertFalse(source.contains("control_code_result_ack_timeout"))
   }
 
   @Test
@@ -1824,9 +1898,10 @@ class TicketStreamServiceSourceTest {
     assertTrue(source.contains("put(\"imageBase64\", imageBase64)"))
     assertTrue(source.contains("put(\"imageMime\", imageMime)"))
     assertFalse(delivery.contains("captureGeneratedControlCodeImageBytes("))
-    assertFalse(delivery.contains("encodeControlCodeImageBase64("))
-    assertTrue(delivery.contains("streamEpoch = watermark.first"))
-    assertTrue(delivery.contains("minFrameSequence = watermark.second"))
+    assertFalse(delivery.contains("imageBytes = imageBytes"))
+    assertFalse(delivery.contains("resultProof = \"phone_root_image\""))
+    assertFalse(generate.contains("sendControlCodeImageResult("))
+    assertFalse(generate.contains("waitForControlCodeResultAck("))
   }
 
   @Test
@@ -1866,6 +1941,8 @@ class TicketStreamServiceSourceTest {
     val handle = service.substringBetween("private suspend fun handleGenerateControlCode", "private suspend fun runFastControlCodeDeliveryForRequest")
     val rsFlow = service.substringBetween("private suspend fun handleGenerateRigasSatiksmeMonthlyTicketQr", "private suspend fun runRigasSatiksmeMonthlyTicketFlow")
     val rsDriver = service.substringBetween("private suspend fun runRigasSatiksmeMonthlyTicketFlow", "private suspend fun runFastControlCodeDeliveryForRequest")
+    val rsLaunch = service.substringBetween("private suspend fun launchRigasSatiksmeAppForVisualAutomation", "private suspend fun resetRigasSatiksmeAppForVisualAutomation")
+    val rsReset = service.substringBetween("private suspend fun resetRigasSatiksmeAppForVisualAutomation", "private suspend fun waitForRigasSatiksmeVisualForeground")
 
     assertTrue(config.contains("const val RIGAS_SATIKSME_PACKAGE = \"com.flutter.rspassenger\""))
     assertTrue(config.contains("const val RIGAS_SATIKSME_LAUNCH_ACTIVITY = \"com.flutter.rspassenger/.MainActivity\""))
@@ -1903,7 +1980,8 @@ class TicketStreamServiceSourceTest {
     assertTrue("Rīgas Satiksme path must publish cleanup completion back to the browser", rsFlow.contains("sendControlCodeCleanup("))
     assertTrue(rsDriver.contains("TicketScreenConfig.RIGAS_SATIKSME_PACKAGE") && rsDriver.contains("startActivity(launchIntent)"))
     assertFalse("RS batch launch should not force-stop ViVi while queued RS jobs may still need the phone", rsDriver.contains("am force-stop ${'$'}{TicketScreenConfig.VIVI_PACKAGE}"))
-    assertFalse("RS pressure latency must not cold-force-stop the RS app for every queued request", rsDriver.contains("am force-stop ${'$'}{TicketScreenConfig.RIGAS_SATIKSME_PACKAGE}"))
+    assertFalse("RS pressure latency must not cold-force-stop the RS app for every queued request", rsLaunch.contains("am force-stop ${'$'}{TicketScreenConfig.RIGAS_SATIKSME_PACKAGE}"))
+    assertTrue("Persistent unknown RS app state should get one no-data-loss force-stop/relaunch recovery", rsReset.contains("am force-stop ${'$'}{TicketScreenConfig.RIGAS_SATIKSME_PACKAGE}") && rsDriver.contains("resetRigasSatiksmeAppForVisualAutomation(reason)"))
     assertFalse("Default RS launch should not spend the fast path budget on a pre-entry root readiness dump", rsDriver.contains("wait_rs_initial_ready /sdcard/pixel-rs-initial-window.xml"))
     assertTrue("Queued RS pressure jobs should pass a warm previous-QR hint into the runner so they do not pay uiautomator home discovery every time", rsFlow.contains("reusePreviousRigasSatiksmeQr = cancelPendingRigasSatiksmeReturnCleanup(\"new_rs_monthly_ticket_request\")") && rsDriver.contains("reusePreviousRigasSatiksmeQr: Boolean"))
     assertFalse("A fixed 3.8s launch sleep prevents warm queued requests from reaching the 15s average target", rsDriver.contains("sleep 3.8"))

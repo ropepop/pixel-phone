@@ -99,6 +99,9 @@ internal object ScreenBrightnessControl {
     val systemRestore = if (restoreMode == AUTOMATIC_BRIGHTNESS_MODE) {
       """
         settings put system screen_brightness $restoreValue
+        if ! cmd display set-brightness $restorePercent --unit percentage >/dev/null 2>&1; then
+          settings put system screen_brightness $restoreValue
+        fi
         settings put system screen_brightness_mode $AUTOMATIC_BRIGHTNESS_MODE
       """.trimIndent()
     } else {

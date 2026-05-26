@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "componentId": "satiksme_bot",
+  "releaseId": "satiksme-bot-20260331T092431Z-d31b221cad14",
+  "signatureSchema": "none",
+  "artifacts": [
+    {
+      "id": "satiksme-bot-bundle",
+      "url": "/data/local/pixel-stack/conf/runtime/components/satiksme_bot/artifacts/satiksme-bot-bundle-satiksme-bot-20260331T092431Z-d31b221cad14.tar",
+      "sha256": "f0710a57e36ce44275e13b31a518c7c01dcf333f5a5c72f87852ba860313cdf0",
+      "fileName": "satiksme-bot-bundle-satiksme-bot-20260331T092431Z-d31b221cad14.tar",
+      "sizeBytes": 23635968,
+      "required": true
+    }
+  ]
+}

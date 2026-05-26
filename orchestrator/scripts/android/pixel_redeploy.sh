@@ -13,6 +13,8 @@ PACKAGE_DNS_COMPONENT_RELEASE_SCRIPT="${ORCHESTRATOR_ROOT}/scripts/android/packa
 PACKAGE_COMPONENT_RELEASE_SCRIPT="${ORCHESTRATOR_ROOT}/scripts/android/package_component_release.sh"
 PACKAGE_RUNTIME_SCRIPT="${ORCHESTRATOR_ROOT}/scripts/android/package_runtime_bundle.sh"
 RUNTIME_FRESHNESS_SCRIPT="${ORCHESTRATOR_ROOT}/scripts/android/runtime_asset_freshness.sh"
+HOST_MIRROR_SCRIPT="${WORKSPACE_ROOT}/tools/pixel/host_mirror.py"
+HOST_MIRROR_ROOT="${PIXEL_HOST_MIRROR_ROOT:-${WORKSPACE_ROOT}/host-mirror}"
 
 TRAIN_DEPLOY_SCRIPT="${WORKSPACE_ROOT}/workloads/train-bot/scripts/pixel/redeploy_release.sh"
 TRAIN_RELEASE_CHECK_SCRIPT="${WORKSPACE_ROOT}/workloads/train-bot/scripts/pixel/release_check.sh"
@@ -53,6 +55,7 @@ SCOPE="full"
 MODE="auto"
 SKIP_BUILD=0
 DESTRUCTIVE_E2E=0
+MIRROR_ACTION=""
 
 PIXEL_RUN_ID="${PIXEL_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM}"
 export PIXEL_TRANSPORT ADB_SERIAL PIXEL_SSH_HOST PIXEL_SSH_PORT PIXEL_RUN_ID
@@ -127,6 +130,10 @@ Options:
   --rootfs-tarball FILE       explicit AdGuardHome rootfs tarball to package for dns/platform scopes
   --skip-build                skip orchestrator APK build
   --destructive-e2e           run destructive restart/kill-recovery checks after standard validation
+  mirror-pull                 pull Pixel deployment variables and secrets into the local plaintext mirror
+  mirror-audit                compare the local Pixel mirror with the device and report drift
+  mirror-push                 push local Pixel mirror changes when the device has not drifted
+  deploy-config               push local mirror changes and restart/resync only affected components
   -h, --help                  show help
 USAGE
 }
@@ -159,6 +166,141 @@ sha256_file() {
   fi
 }
 
+stat_mode_octal() {
+  local path="$1"
+  if stat -f '%Lp' "${path}" >/dev/null 2>&1; then
+    stat -f '%Lp' "${path}"
+  else
+    stat -c '%a' "${path}"
+  fi
+}
+
+pixel_mirror_pull_remote_tree() {
+  local destination="$1"
+  local remote_tar="/data/local/tmp/pixel-host-mirror-${PIXEL_RUN_ID}.tar"
+  local local_tar=""
+  local_tar="$(mktemp "${TMPDIR:-/tmp}/pixel-host-mirror.XXXXXX")"
+  mkdir -p "${destination}"
+  pixel_transport_root_shell "
+    set -e
+    list_file='/data/local/tmp/pixel-host-mirror-${PIXEL_RUN_ID}.list'
+    rm -f '${remote_tar}'
+    rm -f \"\${list_file}\"
+    if [ -d /data/local/pixel-stack/conf ]; then
+      cd /
+      find data/local/pixel-stack/conf \\
+        \\( -path data/local/pixel-stack/conf/runtime/artifacts -o -path 'data/local/pixel-stack/conf/runtime/components/*/artifacts' \\) -prune \\
+        -o -type f -print > \"\${list_file}\"
+      tar -cf '${remote_tar}' -T \"\${list_file}\"
+    else
+      tmp_empty=\$(mktemp -d /data/local/tmp/pixel-host-mirror-empty.XXXXXX)
+      tar -cf '${remote_tar}' -C \"\${tmp_empty}\" .
+      rm -rf \"\${tmp_empty}\"
+    fi
+    chmod 0644 '${remote_tar}'
+    rm -f \"\${list_file}\"
+  " >/dev/null
+  pixel_transport_pull "${remote_tar}" "${local_tar}" >/dev/null
+  pixel_transport_root_exec rm -f "${remote_tar}" >/dev/null 2>&1 || true
+  tar -C "${destination}" -xf "${local_tar}"
+  rm -f "${local_tar}"
+  rm -rf "${destination}/data/local/pixel-stack/conf/runtime/artifacts"
+  find "${destination}/data/local/pixel-stack/conf/runtime/components" -path '*/artifacts' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+}
+
+pixel_mirror_run_helper() {
+  local mirror_action="$1"
+  local changed_paths_file="${2:-}"
+  local tmpdir=""
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "${tmpdir}"' RETURN
+  pixel_mirror_pull_remote_tree "${tmpdir}/remote"
+  case "${mirror_action}" in
+    pull|audit)
+      python3 "${HOST_MIRROR_SCRIPT}" "${mirror_action}" --profile pixel --remote-root "${tmpdir}/remote" --mirror-root "${HOST_MIRROR_ROOT}"
+      ;;
+    push)
+      python3 "${HOST_MIRROR_SCRIPT}" push --profile pixel --remote-root "${tmpdir}/remote" --mirror-root "${HOST_MIRROR_ROOT}" --changed-paths-file "${changed_paths_file}"
+      ;;
+  esac
+}
+
+pixel_mirror_apply_changed_paths() {
+  local changed_paths_file="$1"
+  local rel=""
+  local local_path=""
+  local remote_path=""
+  local mode=""
+  while IFS= read -r rel; do
+    [[ -n "${rel}" ]] || continue
+    local_path="${HOST_MIRROR_ROOT}/${rel}"
+    remote_path="/${rel}"
+    if [[ -f "${local_path}" ]]; then
+      pixel_transport_push "${local_path}" "${remote_path}" >/dev/null
+      mode="$(stat_mode_octal "${local_path}")"
+      pixel_transport_root_exec chmod "${mode}" "${remote_path}" >/dev/null 2>&1 || true
+    else
+      pixel_transport_root_exec rm -f "${remote_path}" >/dev/null 2>&1 || true
+    fi
+  done < "${changed_paths_file}"
+}
+
+pixel_mirror_affected_actions() {
+  local changed_paths_file="$1"
+  local rel=""
+  local -a actions=()
+  local seen_train=0 seen_satiksme=0 seen_site=0 seen_subscription=0 seen_dns=0 seen_ssh=0 seen_vpn=0 seen_ddns=0
+  while IFS= read -r rel; do
+    case "${rel}" in
+      data/local/pixel-stack/conf/apps/train-bot.env|data/local/pixel-stack/conf/apps/train-bot-cloudflared.json) seen_train=1 ;;
+      data/local/pixel-stack/conf/apps/satiksme-bot.env) seen_satiksme=1 ;;
+      data/local/pixel-stack/conf/apps/site-notifications.env) seen_site=1 ;;
+      data/local/pixel-stack/conf/apps/subscription-bot.env) seen_subscription=1 ;;
+      data/local/pixel-stack/conf/ssh/*) seen_ssh=1 ;;
+      data/local/pixel-stack/conf/vpn/*) seen_vpn=1 ;;
+      data/local/pixel-stack/conf/ddns/*) seen_ddns=1 ;;
+      data/local/pixel-stack/conf/adguardhome/*|data/local/pixel-stack/conf/runtime/runtime-manifest.json|data/local/pixel-stack/conf/runtime/components/dns/*) seen_dns=1 ;;
+    esac
+  done < "${changed_paths_file}"
+  (( seen_train == 1 )) && actions+=("restart_component train_bot")
+  (( seen_satiksme == 1 )) && actions+=("restart_component satiksme_bot")
+  (( seen_site == 1 )) && actions+=("restart_component site_notifier")
+  (( seen_subscription == 1 )) && actions+=("restart_component subscription_bot")
+  (( seen_ssh == 1 )) && actions+=("restart_component ssh")
+  (( seen_vpn == 1 )) && actions+=("restart_component vpn")
+  (( seen_ddns == 1 )) && actions+=("sync_ddns")
+  (( seen_dns == 1 )) && actions+=("restart_component dns")
+  printf '%s\n' "${actions[@]}"
+}
+
+pixel_mirror_deploy_config() {
+  local changed_paths_file=""
+  local action_line=""
+  local action_name=""
+  local component_name=""
+  local -a deploy_args=()
+  changed_paths_file="$(mktemp "${TMPDIR:-/tmp}/pixel-host-mirror-changed.XXXXXX")"
+  trap 'rm -f "${changed_paths_file}"' RETURN
+  pixel_mirror_run_helper push "${changed_paths_file}"
+  pixel_mirror_apply_changed_paths "${changed_paths_file}"
+  if [[ ! -s "${changed_paths_file}" ]]; then
+    log "Deploy config: mirror is already in sync; no components need restart"
+    return 0
+  fi
+  while IFS= read -r action_line; do
+    [[ -n "${action_line}" ]] || continue
+    action_name="${action_line%% *}"
+    component_name="${action_line#* }"
+    if [[ "${action_name}" == "sync_ddns" ]]; then
+      deploy_args=("${DEPLOY_SCRIPT}" --skip-build --action sync_ddns)
+    else
+      deploy_args=("${DEPLOY_SCRIPT}" --skip-build --action "${action_name}" --component "${component_name}")
+    fi
+    pixel_transport_append_cli_args deploy_args
+    "${deploy_args[@]}"
+  done < <(pixel_mirror_affected_actions "${changed_paths_file}")
+}
+
 while (( $# > 0 )); do
   if pixel_transport_parse_arg "$1" "${2:-}"; then
     shift "${PIXEL_TRANSPORT_PARSE_CONSUMED}"
@@ -166,6 +308,13 @@ while (( $# > 0 )); do
   fi
 
   case "$1" in
+    mirror-pull|mirror-audit|mirror-push|deploy-config)
+      if [[ -n "${MIRROR_ACTION}" ]]; then
+        echo "Only one mirror action is allowed" >&2
+        exit 2
+      fi
+      MIRROR_ACTION="$1"
+      ;;
     --scope)
       shift
       SCOPE="${1:-}"
@@ -196,6 +345,30 @@ while (( $# > 0 )); do
   esac
   shift
 done
+
+if [[ -n "${MIRROR_ACTION}" ]]; then
+  require_cmd python3
+  require_cmd tar
+  pixel_transport_require_device >/dev/null
+  case "${MIRROR_ACTION}" in
+    mirror-pull)
+      pixel_mirror_run_helper pull
+      ;;
+    mirror-audit)
+      pixel_mirror_run_helper audit
+      ;;
+    mirror-push)
+      changed_paths_file="$(mktemp "${TMPDIR:-/tmp}/pixel-host-mirror-changed.XXXXXX")"
+      trap 'rm -f "${changed_paths_file}"' EXIT
+      pixel_mirror_run_helper push "${changed_paths_file}"
+      pixel_mirror_apply_changed_paths "${changed_paths_file}"
+      ;;
+    deploy-config)
+      pixel_mirror_deploy_config
+      ;;
+  esac
+  exit 0
+fi
 
 case "${SCOPE}" in
   full|platform|dns|train_bot|satiksme_bot|site_notifier|subscription_bot) ;;

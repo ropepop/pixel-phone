@@ -470,7 +470,7 @@ public final class TicketRootHardwareH264CaptureMain {
       if (frameHasControlCodeInputPopup(probe)) {
         return "control_popup";
       }
-      if (frameHasGeneratedControlCodeResultChip(probe)) {
+      if (frameHasGeneratedControlCodeResultHeader(probe) || frameHasGeneratedControlCodeResultChip(probe)) {
         return "generated";
       }
       if (frameHasRawTicketCodeGraphic(probe)) {
@@ -513,6 +513,34 @@ public final class TicketRootHardwareH264CaptureMain {
       }
     }
     return sampled > 0 && orange / (double) sampled >= 0.08;
+  }
+
+  private static boolean frameHasGeneratedControlCodeResultHeader(Bitmap probe) {
+    VisualStats label = visualStats(probe, 2, 2, 19, 7);
+    VisualStats topBand = visualStats(probe, 0, 0, CONTROL_CODE_VISUAL_SAMPLE_WIDTH, 10);
+    int redSamples = 0;
+    int redPixels = 0;
+    for (int y = 8; y < 15; y++) {
+      for (int x = 1; x < CONTROL_CODE_VISUAL_SAMPLE_WIDTH - 1; x++) {
+        int pixel = probe.getPixel(x, y);
+        int red = (pixel >> 16) & 0xff;
+        int green = (pixel >> 8) & 0xff;
+        int blue = pixel & 0xff;
+        if (red >= 135 && red - green >= 25 && red - blue >= 35 && green <= 110 && blue <= 115) {
+          redPixels += 1;
+        }
+        redSamples += 1;
+      }
+    }
+    double redRatio = redSamples == 0 ? 0.0 : redPixels / (double) redSamples;
+    boolean labelPillVisible = label.mean >= 150.0 &&
+      label.lightRatio >= 0.48 &&
+      label.darkRatio <= 0.34 &&
+      label.contrast <= 115.0;
+    boolean generatedHeaderShape = topBand.lightRatio >= 0.10 &&
+      topBand.darkRatio >= 0.10 &&
+      redRatio >= 0.24;
+    return labelPillVisible && generatedHeaderShape;
   }
 
   private static boolean frameHasGeneratedControlCodeResultChip(Bitmap probe) {

@@ -389,25 +389,63 @@ internal class RigasSatiksmeSemanticDriver(
           .joinToString(" ")
       }
       fun has(value: String): Boolean = text.contains(value, ignoreCase = true)
+      fun hasAny(vararg values: String): Boolean = values.any { has(it) }
       val hasEditable = nodes.any { it.editable || it.className.contains("EditText", ignoreCase = true) }
-      val hasMonthlyMarker = has("1 month") || has("1 mēnes") || has("monthly") || has("month ticket")
-      val hasQr = has("qr code") || has("qr") || has("KONTROLES KODS")
-      val hasControl = has("TICKET FOR CONTROL") || has("Ticket for control") || has("Present a ticket for control")
+      val hasMonthlyMarker = hasAny(
+        "1 month",
+        "1 mēnes",
+        "monthly",
+        "month ticket",
+        "30 dienu biļete",
+        "30 dienu bilete",
+        "30 day ticket",
+        "30-day ticket"
+      )
+      val hasQr = hasAny("qr code", "qr", "KONTROLES KODS", "kontroles kods")
+      val hasControl = hasAny(
+        "TICKET FOR CONTROL",
+        "Ticket for control",
+        "Present a ticket for control",
+        "KONTROLES KODS",
+        "Kontroles kods",
+        "Kontrolei"
+      )
+      val hasConfirm = hasAny("CONFIRM", "OK", "Labi")
+      val hasCancel = hasAny("Cancel", "Atcelt")
 
       return when {
         hasControl && hasQr && has(cleanDigits) && hasMonthlyMarker -> RigasSatiksmeSemanticState.TICKET_CONTROL_MATCHING
         hasControl && hasQr && hasMonthlyMarker -> RigasSatiksmeSemanticState.TICKET_CONTROL_STALE
-        has("wrong code") || has("incorrect code") || has("invalid code") -> RigasSatiksmeSemanticState.WRONG_CODE
-        has("no active tickets") || has("no tickets") || has("empty ticket list") -> RigasSatiksmeSemanticState.NO_MONTHLY_TICKET
-        has("sign in") || has("log in") || has("authentication") || has("session expired") -> RigasSatiksmeSemanticState.AUTH_BLOCKED
-        has("trip is registered") || has("registered") && has("OK") -> RigasSatiksmeSemanticState.TRIP_REGISTERED
-        hasEditable || has("Control code") || has("Kods") && has("CONFIRM") -> RigasSatiksmeSemanticState.MANUAL_CODE_ENTRY
-        has("ENTER THE CODE MANUALLY") || has("ENTER CODE MANUALLY") || has("Enter code manually") -> {
+        hasAny("wrong code", "incorrect code", "invalid code", "nepareizs kods", "nederīgs kods", "nederigs kods") -> {
+          RigasSatiksmeSemanticState.WRONG_CODE
+        }
+        hasAny("no active tickets", "no tickets", "empty ticket list", "nav aktīvu biļešu", "nav aktivu bilesu", "nav biļešu") -> {
+          RigasSatiksmeSemanticState.NO_MONTHLY_TICKET
+        }
+        hasAny("sign in", "log in", "authentication", "session expired", "pieslēgties", "pierakstīties", "autentifik", "sesija beigusies") -> {
+          RigasSatiksmeSemanticState.AUTH_BLOCKED
+        }
+        has("trip is registered") || (has("registered") && hasConfirm) || (has("brauciens reģistrēts") && hasConfirm) -> {
+          RigasSatiksmeSemanticState.TRIP_REGISTERED
+        }
+        hasEditable || hasAny("Control code", "Ievadi kontroles kodu") || (hasAny("Kods", "kontroles kods") && (hasConfirm || hasCancel)) -> {
+          RigasSatiksmeSemanticState.MANUAL_CODE_ENTRY
+        }
+        hasAny(
+          "ENTER THE CODE MANUALLY",
+          "ENTER CODE MANUALLY",
+          "Enter code manually",
+          "Ievadīt kodu manuāli",
+          "Ievadit kodu manuali",
+          "Ievadīt kodu"
+        ) -> {
           RigasSatiksmeSemanticState.MANUAL_CODE_BUTTON_READY
         }
-        has("REGISTER A TRIP") || has("Register a trip") -> RigasSatiksmeSemanticState.REGISTER_TRIP_READY
-        has("Public transport") && hasMonthlyMarker -> RigasSatiksmeSemanticState.HOME_READY
-        has("Tickets") && hasMonthlyMarker -> RigasSatiksmeSemanticState.TICKET_LIST_READY
+        hasAny("REGISTER A TRIP", "Register a trip", "Reģistrēt braucienu", "Registret braucienu") -> {
+          RigasSatiksmeSemanticState.REGISTER_TRIP_READY
+        }
+        hasAny("Public transport", "Sabiedriskais transports") && hasMonthlyMarker -> RigasSatiksmeSemanticState.HOME_READY
+        hasAny("Tickets", "Biļetes", "Biletes", "Manas biļetes") && hasMonthlyMarker -> RigasSatiksmeSemanticState.TICKET_LIST_READY
         else -> RigasSatiksmeSemanticState.UNKNOWN
       }
     }

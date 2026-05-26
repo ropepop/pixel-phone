@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "manifestVersion": "pixel-redeploy-20260330T054816Z-22317",
+  "signatureSchema": "none",
+  "artifacts": [
+    {
+      "id": "adguardhome-rootfs",
+      "url": "/data/local/pixel-stack/conf/runtime/artifacts/adguardhome-rootfs-arm64.tar",
+      "sha256": "9b1a5f1a6e49b7f179b4a82b7e961a756f1d1645aaf78c0dc51545a253d7768e",
+      "fileName": "adguardhome-rootfs-arm64.tar",
+      "sizeBytes": 1340661760,
+      "required": true
+    },
+    {
+      "id": "dns-runtime-assets",
+      "url": "/data/local/pixel-stack/conf/runtime/artifacts/dns-runtime-assets.tar",
+      "sha256": "a5de2858605ddec55cfc20e7ef7d8c3a851274069fd219fefe329a362a2f8899",
+      "fileName": "dns-runtime-assets.tar",
+      "sizeBytes": 962560,
+      "required": true
+    },
+    {
+      "id": "dropbear-bundle",
+      "url": "/data/local/pixel-stack/conf/runtime/artifacts/dropbear-bundle.tar",
+      "sha256": "3936d6b1399347426a08127acd7e9b0c8d41a5be9c70a766de2f5addafafb6b2",
+      "fileName": "dropbear-bundle.tar",
+      "sizeBytes": 624640,
+      "required": true
+    },
+    {
+      "id": "tailscale-bundle",
+      "url": "/data/local/pixel-stack/conf/runtime/artifacts/tailscale-bundle.tar",
+      "sha256": "e29df9ead50c00bd156a69830d808ef4d3f6aaa7652289f2630ee228cc88b5a3",
+      "fileName": "tailscale-bundle.tar",
+      "sizeBytes": 40327168,
+      "required": true
+    }
+  ]
+}

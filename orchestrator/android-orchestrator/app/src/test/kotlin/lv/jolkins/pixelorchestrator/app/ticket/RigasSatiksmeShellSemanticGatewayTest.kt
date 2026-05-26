@@ -43,4 +43,67 @@ class RigasSatiksmeShellSemanticGatewayTest {
     )
     assertTrue(nodes.any { it.contentDescription == "Ok" && it.clickable })
   }
+
+  @Test
+  fun classifiesLatvianMonthlyControlTicketWithRequestedCode() {
+    val nodes = RigasSatiksmeShellSemanticGateway.parseUiAutomatorNodes(
+      """
+      <hierarchy rotation="0">
+        <node text="" resource-id="" class="android.view.View" package="com.flutter.rspassenger" content-desc="KONTROLES KODS" clickable="false" enabled="true" focusable="true" focused="false" bounds="[54,250][454,338]" />
+        <node text="" resource-id="" class="android.view.View" package="com.flutter.rspassenger" content-desc="qr code" clickable="false" enabled="true" focusable="true" focused="false" bounds="[190,532][890,1232]" />
+        <node text="" resource-id="" class="android.view.View" package="com.flutter.rspassenger" content-desc="30 dienu biļete" clickable="false" enabled="true" focusable="true" focused="false" bounds="[347,1533][733,1601]" />
+        <node text="" resource-id="" class="android.view.View" package="com.flutter.rspassenger" content-desc="68803" clickable="false" enabled="true" focusable="true" focused="false" bounds="[425,1400][655,1480]" />
+      </hierarchy>
+      """.trimIndent()
+    )
+
+    assertEquals(
+      RigasSatiksmeSemanticState.TICKET_CONTROL_MATCHING,
+      RigasSatiksmeSemanticDriver.classify(nodes, "68803")
+    )
+  }
+
+  @Test
+  fun classifiesLatvianRsEntryFlowStates() {
+    assertEquals(
+      RigasSatiksmeSemanticState.REGISTER_TRIP_READY,
+      RigasSatiksmeSemanticDriver.classify(
+        visibleNodes("30 dienu biļete", "Reģistrēt braucienu"),
+        "58011"
+      )
+    )
+    assertEquals(
+      RigasSatiksmeSemanticState.MANUAL_CODE_BUTTON_READY,
+      RigasSatiksmeSemanticDriver.classify(
+        visibleNodes("Ievadīt kodu manuāli"),
+        "58011"
+      )
+    )
+    assertEquals(
+      RigasSatiksmeSemanticState.MANUAL_CODE_ENTRY,
+      RigasSatiksmeSemanticDriver.classify(
+        visibleNodes("Ievadi kontroles kodu", "Atcelt", "OK"),
+        "58011"
+      )
+    )
+  }
+
+  @Test
+  fun classifiesLatvianGeneratedTicketWithoutMatchingCodeAsStale() {
+    val nodes = visibleNodes("KONTROLES KODS", "qr code", "30 dienu biļete", "55555")
+
+    assertEquals(
+      RigasSatiksmeSemanticState.TICKET_CONTROL_STALE,
+      RigasSatiksmeSemanticDriver.classify(nodes, "68803")
+    )
+  }
+
+  private fun visibleNodes(vararg labels: String) =
+    labels.map { label ->
+      lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationVisibleNode(
+        text = label,
+        resourceId = "",
+        contentDescription = label
+      )
+    }
 }

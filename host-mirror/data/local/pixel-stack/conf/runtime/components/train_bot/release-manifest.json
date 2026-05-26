@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "componentId": "train_bot",
+  "releaseId": "train-bot-20260406T204644Z-ddbd256933e1",
+  "signatureSchema": "none",
+  "artifacts": [
+    {
+      "id": "train-bot-bundle",
+      "url": "/data/local/pixel-stack/conf/runtime/components/train_bot/artifacts/train-bot-bundle-train-bot-20260406T204644Z-ddbd256933e1.tar",
+      "sha256": "7557c22f1bec0ff067ec85a7d8e27405d33f03057fcad98868d397b8d7c8710a",
+      "fileName": "train-bot-bundle-train-bot-20260406T204644Z-ddbd256933e1.tar",
+      "sizeBytes": 22240768,
+      "required": true
+    }
+  ]
+}

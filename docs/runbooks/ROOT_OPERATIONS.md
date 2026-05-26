@@ -120,6 +120,31 @@ Canonical runtime root:
 Canonical config/secrets root:
 - `/data/local/pixel-stack/conf`
 
+### Local-First Config And Secrets Mirror
+
+After the first pull, this Mac is the editable source of truth for Pixel deployment variables and secrets.
+
+Pull the current device copy:
+
+```bash
+./tools/pixel/redeploy.sh mirror-pull --transport ssh --ssh-host "${PIXEL_SSH_HOST}"
+```
+
+Edit plaintext files under `host-mirror/`, then audit or push:
+
+```bash
+./tools/pixel/redeploy.sh mirror-audit --transport ssh --ssh-host "${PIXEL_SSH_HOST}"
+./tools/pixel/redeploy.sh mirror-push --transport ssh --ssh-host "${PIXEL_SSH_HOST}"
+```
+
+For config/secret-only changes, use:
+
+```bash
+./tools/pixel/redeploy.sh deploy-config --transport ssh --ssh-host "${PIXEL_SSH_HOST}"
+```
+
+`deploy-config` syncs local mirror changes and restarts or resyncs only the affected component where possible. It does not rebuild workload artifacts or run a full redeploy. The mirror intentionally excludes app databases, logs, caches, browser/session captures, and user activity state.
+
 <a id="architecture"></a>
 <a id="architecture-overview-control-plane--runtime-plane"></a>
 ## Architecture Overview (Control Plane + Runtime Plane)

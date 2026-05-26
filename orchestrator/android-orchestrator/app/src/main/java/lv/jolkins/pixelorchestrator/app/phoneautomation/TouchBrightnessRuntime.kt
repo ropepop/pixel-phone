@@ -300,7 +300,7 @@ internal class AndroidTouchBrightnessDeviceController(
 
   override suspend fun setBrightnessPercent(percent: Int): PhoneAutomationActionResult {
     val targetPercent = percent.coerceIn(0, 100)
-    val panelOnly = true
+    val panelOnly = targetPercent == PANEL_SLEEP_TARGET_PERCENT
     val before = readBrightnessStateForVerification(panelOnly)
     if (
       targetPercent != PANEL_SLEEP_TARGET_PERCENT &&
@@ -323,11 +323,7 @@ internal class AndroidTouchBrightnessDeviceController(
         )}
       """.trimIndent()
     } else {
-      ScreenBrightnessControl.buildSetPanelPercentScript(
-        percent = targetPercent,
-        holdMillis = 0L,
-        holdIntervalMillis = DIM_HOLD_INTERVAL_MILLIS
-      )
+      ScreenBrightnessControl.buildSetPercentScript(targetPercent)
     }
     val result = rootExecutor.runScript(script)
     if (!result.ok) {
@@ -350,23 +346,25 @@ internal class AndroidTouchBrightnessDeviceController(
   }
 
   override suspend fun restoreBrightnessState(state: ScreenBrightnessState): PhoneAutomationActionResult {
-    val panelOnly = true
+    val panelOnly = false
     val restoreState = state.withRemotePanelFallback()
     val before = readBrightnessStateForVerification(panelOnly)
     if (before != null && before.matchesRestoredStateLenient(restoreState, panelOnly = panelOnly)) {
       return PhoneAutomationActionResult(true, "Brightness already restored")
     }
-    val capturedPanelScript = ScreenBrightnessControl.buildRestorePanelScript(restoreState)
-    val script = capturedPanelScript.ifBlank {
-      """
-        ${ScreenBrightnessControl.buildRestoreScript(restoreState)}
-        ${ScreenBrightnessControl.buildSetPanelPercentScript(
-          percent = restoreState.visiblePanelFallbackPercent(),
-          holdMillis = VISIBLE_HOLD_MILLIS,
-          holdIntervalMillis = DIM_HOLD_INTERVAL_MILLIS
-        )}
-      """.trimIndent()
+    val fallbackPanelScript = if (restoreState.hasVisiblePanelBrightnessData()) {
+      ""
+    } else {
+      ScreenBrightnessControl.buildSetPanelPercentScript(
+        percent = restoreState.visiblePanelFallbackPercent(),
+        holdMillis = VISIBLE_HOLD_MILLIS,
+        holdIntervalMillis = DIM_HOLD_INTERVAL_MILLIS
+      )
     }
+    val script = """
+      ${ScreenBrightnessControl.buildRestoreScript(restoreState)}
+      $fallbackPanelScript
+    """.trimIndent()
     val result = rootExecutor.runScript(script)
     if (!result.ok) {
       return PhoneAutomationActionResult(
@@ -461,7 +459,13 @@ internal class AndroidTouchBrightnessDeviceController(
     if (panelOnly) {
       return panelPercentMatches(targetPercent)
     }
+    if (targetPercent > PANEL_SLEEP_TARGET_PERCENT && hasPanelBrightnessData() && !panelPercentMatches(targetPercent)) {
+      return false
+    }
     if (mode != null && mode != MANUAL_BRIGHTNESS_MODE) {
+      return false
+    }
+    if (targetPercent > PANEL_SLEEP_TARGET_PERCENT && displayPercentage != null && displayPercentage <= DISPLAY_PERCENT_TOLERANCE) {
       return false
     }
     val targetSystemValue = ScreenBrightnessControl.legacySystemValue(targetPercent)
@@ -482,13 +486,25 @@ internal class AndroidTouchBrightnessDeviceController(
       val expectedPanel = expected.panelBrightness ?: expected.panelActualBrightness
       val actualPanel = panelActualBrightness ?: panelBrightness
       if (expectedPanel != null && actualPanel != null && kotlin.math.abs(actualPanel - expectedPanel) <= PANEL_VALUE_TOLERANCE) {
-        return true
-      }
-      if (panelOnly) {
+        if (panelOnly) {
+          return true
+        }
+      } else if (panelOnly) {
+        return false
+      } else if (expectedPanel != null && actualPanel != null) {
         return false
       }
     } else if (panelOnly) {
       return !hasPanelBrightnessData() || hasVisiblePanelBrightnessData()
+    }
+    if (!panelOnly && expected.mode != AUTOMATIC_BRIGHTNESS_MODE && hasPanelBrightnessData() && !hasVisiblePanelBrightnessData()) {
+      return false
+    }
+    val expectsVisibleAndroidBrightness =
+      (expected.displayPercentage != null && expected.displayPercentage > DISPLAY_PERCENT_TOLERANCE) ||
+        ((expected.value ?: 0) > 0)
+    if (!panelOnly && expectsVisibleAndroidBrightness && displayPercentage != null && displayPercentage <= DISPLAY_PERCENT_TOLERANCE) {
+      return false
     }
     if (expected.mode != null && mode != null && mode != expected.mode) {
       return false
@@ -1147,7 +1163,13 @@ internal class TouchBrightnessRuntime(
             currentTouchSnapshot.selectedDevice?.let {
               currentSource = it
             }
-            if (PhoneAutomationServiceBridge.isNonTouchInputSuppressed(event.observedAtUptimeMillis)) {
+            val physicalTouchStarted = event.activeTouchCount > 0 && currentTouchSnapshot.isRawTouchActive()
+            val physicalTouchReleased = previousTouchCount > 0 && event.activeTouchCount == 0
+            if (
+              PhoneAutomationServiceBridge.isNonTouchInputSuppressed(event.observedAtUptimeMillis) &&
+              !physicalTouchStarted &&
+              !physicalTouchReleased
+            ) {
               activeTouchCount = 0
               overlayPointerCount = 0
               currentTouchSnapshot = currentTouchSnapshot.copy(
@@ -1233,7 +1255,7 @@ internal class TouchBrightnessRuntime(
             } else {
               val liveTouchSnapshot = eventSource.currentTouchSnapshot() ?: currentTouchSnapshot
               val nonTouchInputSuppressed = PhoneAutomationServiceBridge.isNonTouchInputSuppressed(uptimeClock())
-              val liveTouchCount = if (nonTouchInputSuppressed) {
+              val liveTouchCount = if (nonTouchInputSuppressed && !liveTouchSnapshot.isRawTouchActive()) {
                 0
               } else {
                 maxOf(
@@ -1259,29 +1281,33 @@ internal class TouchBrightnessRuntime(
               }
               if (
                 activeTouchCount == 0 &&
+                nonTouchInputSuppressed &&
                 (
                   internalMode == InternalTouchBrightnessMode.PANEL_SLEEP ||
-                    (nonTouchInputSuppressed && internalMode == InternalTouchBrightnessMode.SUSPENDED_SCREEN_OFF)
+                    internalMode == InternalTouchBrightnessMode.SUSPENDED_SCREEN_OFF
                   )
               ) {
-                val reassertReason = if (nonTouchInputSuppressed) {
-                  "screen_on_non_touch_panel_sleep_reasserted"
-                } else {
-                  "screen_on_panel_sleep_reasserted"
-                }
+                val reassertReason = "screen_on_non_touch_panel_sleep_reasserted"
                 reassertPanelSleepBrightness(reassertReason)
-                if (nonTouchInputSuppressed) {
-                  schedulePanelSleepReassertBurst(reassertReason)
-                }
+                schedulePanelSleepReassertBurst(reassertReason)
               } else if (activeTouchCount > 0) {
                 enterBrightTouchActive()
               } else {
-                enterBrightIdle(uptimeClock(), "screen_on_visible_idle")
+                enterBrightIdle(
+                  uptimeClock(),
+                  "screen_on_visible_idle",
+                  powerButtonVisibleIdle = internalMode == InternalTouchBrightnessMode.PANEL_SLEEP
+                )
               }
             }
           }
 
           is TouchBrightnessEvent.NonTouchInput -> {
+            if (activeTouchCount > 0 || currentTouchSnapshot.isRawTouchActive()) {
+              publishDebugState()
+              logTouchState("non_touch_input_deferred_physical_touch_active:${event.reason}")
+              return@collect
+            }
             activeTouchCount = 0
             overlayPointerCount = 0
             currentTouchSnapshot = currentTouchSnapshot.copy(

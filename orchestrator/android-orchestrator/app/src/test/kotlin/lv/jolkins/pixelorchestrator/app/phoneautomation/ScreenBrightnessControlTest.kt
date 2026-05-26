@@ -23,6 +23,7 @@ class ScreenBrightnessControlTest {
       ScreenBrightnessState(mode = 1, value = 127)
     )
 
+    assertTrue(script.contains("cmd display set-brightness 49 --unit percentage"))
     assertTrue(script.contains("settings put system screen_brightness 127"))
     assertTrue(script.contains("settings put system screen_brightness_mode 1"))
   }

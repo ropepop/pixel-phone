@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "componentId": "site_notifier",
+  "releaseId": "site-notifier-20260331T092435Z",
+  "signatureSchema": "none",
+  "artifacts": [
+    {
+      "id": "site-notifier-bundle",
+      "url": "/data/local/pixel-stack/conf/runtime/components/site_notifier/artifacts/site-notifier-bundle-site-notifier-20260331T092435Z.tar",
+      "sha256": "600cf5d7deb5e031c9e85648a60d23b46ac872b08cd383af54224d5c06a73a1c",
+      "fileName": "site-notifier-bundle-site-notifier-20260331T092435Z.tar",
+      "sizeBytes": 631351808,
+      "required": true
+    }
+  ]
+}
