@@ -3686,16 +3686,20 @@ class TicketStreamService : Service() {
     launchVivi()
   }
 
-  private suspend fun launchViviForWake(reason: String) {
+  private suspend fun launchViviForWake(
+    reason: String,
+    timeoutMillis: Long = TICKET_WAKE_LAUNCH_TIMEOUT_MILLIS
+  ) {
     recordTicketEvent("wake_launch_vivi_root", reason)
+    val boundedTimeoutMillis = timeoutMillis.coerceAtLeast(1L)
     val result = runFastNonTouchWakeScript(
       """
         am start -n ${TicketScreenConfig.VIVI_LAUNCH_ACTIVITY} -a android.intent.action.MAIN -c android.intent.category.LAUNCHER
       """.trimIndent(),
       "wake_launch_vivi:$reason",
-      TICKET_WAKE_LAUNCH_TIMEOUT_MILLIS.milliseconds
+      boundedTimeoutMillis.milliseconds
     )
-    recordTicketEvent("wake_launch_vivi_root", "ok=${result.ok} duration_ms=${result.durationMs}")
+    recordTicketEvent("wake_launch_vivi_root", "ok=${result.ok} duration_ms=${result.durationMs} timeout_ms=$boundedTimeoutMillis")
   }
 
   private suspend fun fastWakeReadyFromRecentTicketDetail(
@@ -3740,9 +3744,13 @@ class TicketStreamService : Service() {
 
   private suspend fun fastWakeReadyFromRecentTicketDetailAfterLaunch(
     reason: String,
-    wakeStartedAtMillis: Long
+    wakeStartedAtMillis: Long,
+    budgetMillis: Long = TICKET_WAKE_BUDGET_MILLIS
   ): TicketAutopilotResult? {
-    val deadlineMillis = SystemClock.elapsedRealtime() + TICKET_WAKE_POST_LAUNCH_FAST_READY_TIMEOUT_MILLIS
+    val deadlineMillis = minOf(
+      SystemClock.elapsedRealtime() + TICKET_WAKE_POST_LAUNCH_FAST_READY_TIMEOUT_MILLIS,
+      wakeStartedAtMillis + budgetMillis
+    )
     while (SystemClock.elapsedRealtime() <= deadlineMillis) {
       val result = fastWakeReadyFromRecentTicketDetail("$reason:post_launch", wakeStartedAtMillis)
       if (result != null) {
@@ -3751,7 +3759,10 @@ class TicketStreamService : Service() {
       }
       delay(TICKET_WAKE_POST_LAUNCH_FAST_READY_POLL_MILLIS)
     }
-    recordTicketEvent("wake_recent_ticket_detail_fast_ready_after_launch_missed", "reason=$reason")
+    recordTicketEvent(
+      "wake_recent_ticket_detail_fast_ready_after_launch_missed",
+      "reason=$reason remaining_ms=${remainingWakeBudgetMillis(wakeStartedAtMillis, budgetMillis)}"
+    )
     return null
   }
 
@@ -3769,6 +3780,27 @@ class TicketStreamService : Service() {
   ): Long {
     val elapsedMillis = SystemClock.elapsedRealtime() - wakeStartedAtMillis
     return (budgetMillis - elapsedMillis).coerceAtLeast(0L)
+  }
+
+  private fun remainingFastPublicOpenBudgetMillis(wakeStartedAtMillis: Long): Long {
+    return remainingWakeBudgetMillis(wakeStartedAtMillis, TICKET_FAST_PUBLIC_OPEN_BUDGET_MILLIS)
+  }
+
+  private fun recentTicketDetailMemoryAvailableForFastWake(): Boolean {
+    return viviStateMemory.recentTicketDetailWithin(TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS) != null
+  }
+
+  private suspend fun viviFocusedForFastPublicOpen(reason: String): Boolean {
+    if (!ticketScreenInteractive()) {
+      recordTicketEvent("fast_public_open_vivi_focus_missed", "reason=$reason interactive=false")
+      return false
+    }
+    val focused = focusedWindowSnapshot()
+    val focusedVivi = focused?.contains(TicketScreenConfig.VIVI_PACKAGE) == true
+    if (!focusedVivi) {
+      recordTicketEvent("fast_public_open_vivi_focus_missed", "reason=$reason focused=${focused.orEmpty().take(120)}")
+    }
+    return focusedVivi
   }
 
   private fun wakeRootDumpTimeoutMillis(
@@ -3991,6 +4023,114 @@ class TicketStreamService : Service() {
     }
   }
 
+  private suspend fun observeTicketDetailForFastPublicOpenVisibleProof(
+    reason: String,
+    wakeStartedAtMillis: Long
+  ): TicketAutopilotResult? {
+    val observation = observeFastViviState("fast_public_open:$reason") ?: return null
+    val state = observation.state
+    return when (state) {
+      TicketViviRecoveryState.TICKET_DETAIL -> {
+        recordTicketEvent(
+          "fast_public_open_visible_proof",
+          "reason=$reason state=${state.name} duration_ms=${observation.durationMillis}"
+        )
+        TicketAutopilotResult(true, state, "fast_open_visible_ticket_detail")
+      }
+      TicketViviRecoveryState.UNKNOWN_VIVI,
+      TicketViviRecoveryState.BLANK,
+      TicketViviRecoveryState.OUTSIDE_VIVI -> {
+        recordTicketEvent(
+          "fast_public_open_visible_proof_inconclusive",
+          "reason=$reason state=${state.name} duration_ms=${observation.durationMillis}"
+        )
+        null
+      }
+      else -> {
+        val step = "fast_open_visible_${state.name.lowercase()}"
+        recordTicketEvent(
+          "fast_public_open_visible_proof_failed",
+          "reason=$reason state=${state.name} step=$step duration_ms=${observation.durationMillis}"
+        )
+        TicketAutopilotResult(false, state, step)
+      }
+    }
+  }
+
+  private suspend fun observeTicketDetailForFastPublicOpenRootProof(
+    reason: String,
+    wakeStartedAtMillis: Long
+  ): TicketAutopilotResult {
+    val remainingMillis = remainingFastPublicOpenBudgetMillis(wakeStartedAtMillis)
+    if (remainingMillis < TICKET_FAST_PUBLIC_OPEN_MIN_ROOT_PROOF_TIMEOUT_MILLIS) {
+      recordTicketEvent(
+        "fast_public_open_root_proof_skipped",
+        "reason=$reason remaining_ms=$remainingMillis"
+      )
+      return TicketAutopilotResult(false, TicketViviRecoveryState.UNKNOWN_VIVI, "fast_public_open_budget_exhausted")
+    }
+    val timeoutMillis = minOf(TICKET_FAST_PUBLIC_OPEN_ROOT_PROOF_TIMEOUT_MILLIS, remainingMillis)
+    recordTicketEvent("fast_public_open_root_proof", "reason=$reason timeout_ms=$timeoutMillis")
+    val observation = observeRootViviStateForWake("fast_open_root:$reason", timeoutMillis = timeoutMillis)
+    val state = observation.state
+    return if (state == TicketViviRecoveryState.TICKET_DETAIL && !observation.hierarchy.isNullOrBlank()) {
+      TicketAutopilotResult(true, state, "fast_open_root_ticket_detail")
+    } else {
+      val step = if (observation.hierarchy.isNullOrBlank()) {
+        "fast_open_root_unavailable"
+      } else {
+        "fast_open_root_${state.name.lowercase()}"
+      }
+      recordTicketEvent("fast_public_open_root_proof_failed", "reason=$reason state=${state.name} step=$step")
+      TicketAutopilotResult(false, state, step)
+    }
+  }
+
+  private suspend fun prepareViviForRootHardwareH264FastOpen(
+    reason: String,
+    wakeStartedAtMillis: Long
+  ): TicketAutopilotResult {
+    var result = fastWakeReadyFromRecentTicketDetail(reason, wakeStartedAtMillis)
+    val launchedViviForWake = result == null && !viviFocusedForFastPublicOpen(reason)
+    if (launchedViviForWake) {
+      val launchBudgetMillis = remainingFastPublicOpenBudgetMillis(wakeStartedAtMillis)
+      if (launchBudgetMillis > 0L) {
+        val launchTimeoutMillis = minOf(TICKET_WAKE_LAUNCH_TIMEOUT_MILLIS, launchBudgetMillis)
+        recordTicketEvent("fast_public_open_launch_once", "reason=$reason timeout_ms=$launchTimeoutMillis")
+        launchViviForWake(reason, timeoutMillis = launchTimeoutMillis)
+        if (recentTicketDetailMemoryAvailableForFastWake()) {
+          result = fastWakeReadyFromRecentTicketDetailAfterLaunch(
+            reason,
+            wakeStartedAtMillis,
+            budgetMillis = TICKET_FAST_PUBLIC_OPEN_BUDGET_MILLIS
+          )
+        } else {
+          recordTicketEvent("fast_public_open_post_launch_memory_skipped", reason)
+        }
+      } else {
+        recordTicketEvent("fast_public_open_launch_skipped", "reason=$reason remaining_ms=$launchBudgetMillis")
+      }
+    }
+    result = result ?: observeTicketDetailForFastPublicOpenVisibleProof(reason, wakeStartedAtMillis)
+    val prepareResult = result ?: observeTicketDetailForFastPublicOpenRootProof(reason, wakeStartedAtMillis)
+    markWakeReadyIfNeeded(wakeStartedAtMillis, prepareResult)
+    recordTicketEvent(
+      "root_hardware_h264_fast_open_prepare",
+      "${prepareResult.state}:${prepareResult.step}:success=${prepareResult.success}"
+    )
+    if (prepareResult.success) {
+      updateTicketSessionState(TICKET_SESSION_LIVE, "root_hardware_h264_vivi_ready_fast_$reason")
+    } else {
+      updateTicketSessionState(TICKET_SESSION_NEEDS_ATTENTION, "root_hardware_h264_fast_open_${prepareResult.state.name.lowercase()}")
+    }
+    finishTicketWake(
+      wakeStartedAtMillis,
+      succeeded = prepareResult.success,
+      reason = if (prepareResult.success) "ticket_ready" else prepareResult.step
+    )
+    return prepareResult
+  }
+
   private suspend fun prepareViviForRootHardwareH264Capture(
     reason: String,
     wakeStartedAtMillis: Long,
@@ -4021,26 +4161,7 @@ class TicketStreamService : Service() {
       updateTicketSessionState(TICKET_SESSION_STARTING, "${modeName}_prepare_$reason")
       val wakeStartedAtMillis = beginTicketWake(reason)
       wakeTicketScreenForSessionStart(reason, wakeStartedAtMillis)
-      var fastWakeReady = fastWakeReadyFromRecentTicketDetail(reason, wakeStartedAtMillis)
-      val launchedViviForWake = fastWakeReady == null
-      if (launchedViviForWake) {
-        launchViviForWake(reason)
-        fastWakeReady = fastWakeReadyFromRecentTicketDetailAfterLaunch(reason, wakeStartedAtMillis)
-      }
-      val wakeProofBudgetMillis = if (launchedViviForWake) {
-        TICKET_WAKE_RECOVERY_BUDGET_MILLIS
-      } else {
-        TICKET_WAKE_BUDGET_MILLIS
-      }
-      val prepareResult = fastWakeReady ?: prepareViviForRootHardwareH264Capture(
-        reason,
-        wakeStartedAtMillis,
-        budgetMillis = wakeProofBudgetMillis
-      )
-      if (fastWakeReady != null) {
-        updateTicketSessionState(TICKET_SESSION_LIVE, "root_hardware_h264_vivi_ready_fast_$reason")
-        finishTicketWake(wakeStartedAtMillis, succeeded = true, reason = fastWakeReady.step)
-      }
+      val prepareResult = prepareViviForRootHardwareH264FastOpen(reason, wakeStartedAtMillis)
       if (!streamActive || activeCaptureMode == CAPTURE_MODE_IDLE) {
         recordTicketEvent("${modeName}_prepare_ignored", "session_inactive:$reason")
         broadcastStatus()
@@ -10197,6 +10318,9 @@ class TicketStreamService : Service() {
     private const val VIDEO_CLIENT_PENDING_MAX_AGE_MILLIS = 150L
     private const val VIDEO_CLIENT_SLOW_CLOSE_MILLIS = 250L
     private const val TICKET_WAKE_BUDGET_MILLIS = 5_000L
+    private const val TICKET_FAST_PUBLIC_OPEN_BUDGET_MILLIS = 5_000L
+    private const val TICKET_FAST_PUBLIC_OPEN_ROOT_PROOF_TIMEOUT_MILLIS = 2_500L
+    private const val TICKET_FAST_PUBLIC_OPEN_MIN_ROOT_PROOF_TIMEOUT_MILLIS = 1_000L
     private const val TICKET_WAKE_RECOVERY_BUDGET_MILLIS = 60_000L
     private const val TICKET_WAKE_RECOVERY_MAX_ACTIONS = 4
     private const val TICKET_RS_MONTHLY_RETURN_BUDGET_MILLIS = 45_000L
