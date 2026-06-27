@@ -68,6 +68,6 @@ internal object TicketScreenObserver {
     )
   }
 
-  private const val ROOT_DUMP_MIN_INTERVAL_MILLIS = 350L
-  private const val ROOT_DUMP_TIMEOUT_MILLIS = 3_000L
+  private const val ROOT_DUMP_MIN_INTERVAL_MILLIS = 200L
+  private const val ROOT_DUMP_TIMEOUT_MILLIS = 1_500L
 }

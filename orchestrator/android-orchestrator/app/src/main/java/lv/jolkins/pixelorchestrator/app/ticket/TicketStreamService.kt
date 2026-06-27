@@ -98,6 +98,26 @@ class TicketStreamService : Service() {
     val createdAt: String = ""
   )
 
+  private class RigassatiksmeLoginCodeHolder {
+    @Volatile private var value: String? = null
+
+    fun put(code: String) {
+      value = code
+    }
+
+    fun consume(): String? {
+      val current = value
+      value = null
+      return current
+    }
+
+    fun peek(): String? = value
+
+    fun clear() {
+      value = null
+    }
+  }
+
   private data class PendingRigasSatiksmeReturnCleanup(
     val requestId: String,
     val phases: MutableMap<String, Long>,
@@ -259,6 +279,23 @@ class TicketStreamService : Service() {
   @Volatile private var lastRigasSatiksmeBatchCancelReason: String? = null
   @Volatile private var lastRigasSatiksmeBatchPhases: Map<String, Long> = emptyMap()
   @Volatile private var lastRigasSatiksmeBatchCompletedAtMillis: Long = 0L
+  @Volatile private var rigassatiksmeLoginRequestId: String? = null
+  @Volatile private var rigassatiksmeLoginPhoneLast4: String? = null
+  @Volatile private var rigassatiksmeLoginState: String = "idle"
+  @Volatile private var rigassatiksmeLoginLastState: String = "idle"
+  @Volatile private var rigassatiksmeLoginLastFailureReason: String? = null
+  @Volatile private var rigassatiksmeLoginStartedAtMillis: Long = 0L
+  @Volatile private var rigassatiksmeLoginCompletedAtMillis: Long = 0L
+  @Volatile private var rigassatiksmeLoginAttempts: Long = 0L
+  @Volatile private var rigassatiksmeLoginSuccesses: Long = 0L
+  @Volatile private var rigassatiksmeLoginFailures: Long = 0L
+  @Volatile private var rigassatiksmeLoginFailureByReason: Map<String, Long> = emptyMap()
+  @Volatile private var rigassatiksmeLoginAwaitingSms: Boolean = false
+  @Volatile private var rigassatiksmeLoginLastResultJson: String? = null
+  @Volatile private var rigassatiksmeLoginLastResultAtMillis: Long = 0L
+  private val rigassatiksmeLoginFailureByReasonLock = Any()
+  private val rigassatiksmeLoginCodeHolder = RigassatiksmeLoginCodeHolder()
+  private var rigassatiksmeLoginJob: Job? = null
   private var rootH264BlankProbeJob: Job? = null
   private var ticketScreenWakeLock: PowerManager.WakeLock? = null
   private var ticketScreenWakeLockUsesTouchBrightnessOwner: Boolean? = null
@@ -649,6 +686,18 @@ class TicketStreamService : Service() {
           Log.i(TAG, "ticket_client_log $message")
           sendJsonPayload(output, """{"ok":true}""")
         }
+        method == "POST" && path == "/api/v1/rs/login/start" -> {
+          sendJsonPayload(output, handleRigassatiksmeLoginStartHttp(bodyText))
+        }
+        method == "POST" && path == "/api/v1/rs/login/sms" -> {
+          sendJsonPayload(output, handleRigassatiksmeLoginSmsHttp(bodyText))
+        }
+        method == "GET" && path == "/api/v1/rs/login/status" -> {
+          sendJsonPayload(output, rigassatiksmeLoginStatusPayload())
+        }
+        method == "POST" && path == "/api/v1/rs/login/cancel" -> {
+          sendJsonPayload(output, handleRigassatiksmeLoginCancelHttp(bodyText))
+        }
         else -> sendText(output, 404, "not found")
       }
     }.onFailure { error ->
@@ -867,6 +916,22 @@ class TicketStreamService : Service() {
           recordTicketEvent("rs_monthly_ticket_batch_cancel_requested", "batch=$batchId reason=$reason")
           broadcastStatus()
         }
+      }
+      "rigassatiksme_login_start" -> {
+        val requestId = element["requestId"]?.jsonPrimitive?.contentOrNull.orEmpty().trim()
+        val phone = element["phone"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val locale = element["locale"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        handleRigassatiksmeLoginStart(requestId, phone, locale, client)
+      }
+      "rigassatiksme_login_sms" -> {
+        val requestId = element["requestId"]?.jsonPrimitive?.contentOrNull.orEmpty().trim()
+        val code = element["code"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        handleRigassatiksmeLoginSms(requestId, code, client)
+      }
+      "cancel_rigassatiksme_login" -> {
+        val requestId = element["requestId"]?.jsonPrimitive?.contentOrNull.orEmpty().trim()
+        val reason = element["reason"]?.jsonPrimitive?.contentOrNull.orEmpty().ifBlank { "broker_cancel" }
+        handleRigassatiksmeLoginCancel(requestId, reason)
       }
       "prepare_control_code" -> {
         val owner = element["owner"]?.jsonPrimitive?.contentOrNull.orEmpty()
@@ -10250,6 +10315,727 @@ class TicketStreamService : Service() {
     }
   }
 
+  // ===========================================================================
+  // Rīgas Satiksme re-login channel
+  // ----------------------------------------------------------------------------
+  // Pixel-side consumer for the admin-driven re-login channel
+  // (broker `POST /api/v1/rs/login/start` → WebSocket `rigassatiksme_login_start`).
+  // Pixel runs a bounded, state-gated login flow and broadcasts the result
+  // back to the broker as `rigassatiksme_login_result { state, failureReason? }`.
+  //
+  // Safety contract (mirrors the broker side):
+  //   * The SMS code is never logged, never written to disk, never echoed in
+  //     any `recordTicketEvent` or `Log.*` call.
+  //   * The phone is persisted only as `phoneLast4`.
+  //   * Exactly one SMS attempt per `rigassatiksme_login_start`.
+  //   * A running RS QR job is preempted by the broker; the Pixel does not
+  //     race the broker here.
+  // ===========================================================================
+
+  private fun handleRigassatiksmeLoginStart(
+    requestId: String,
+    phone: String,
+    locale: String,
+    client: TicketWebSocket?,
+  ) {
+    if (requestId.isBlank()) {
+      recordTicketEvent("rigassatiksme_login_invalid", "reason=missing_request_id")
+      return
+    }
+    if (!RigasSatiksmeLoginOperation.isValidPhone(phone)) {
+      recordTicketEvent(
+        "rigassatiksme_login_invalid",
+        "request_id=$requestId reason=phone_invalid"
+      )
+      sendRigassatiksmeLoginResult(
+        requestId = requestId,
+        state = "failed",
+        failureReason = "phone_field_missing",
+        phases = mapOf("login_invalid_at" to SystemClock.elapsedRealtime()),
+      )
+      return
+    }
+    val previousRequestId = rigassatiksmeLoginRequestId
+    val previousState = rigassatiksmeLoginState
+    if (rigassatiksmeLoginJob != null && rigassatiksmeLoginJob?.isActive == true &&
+      (previousState == "waiting_for_sms" || previousState == "running" || previousState == "started")
+    ) {
+      recordTicketEvent(
+        "rigassatiksme_login_duplicate_rejected",
+        "request_id=$requestId previous_request_id=${previousRequestId.orEmpty()} previous_state=$previousState"
+      )
+      sendRigassatiksmeLoginResult(
+        requestId = requestId,
+        state = "failed",
+        failureReason = "login_unreachable",
+        phases = mapOf("login_duplicate_at" to SystemClock.elapsedRealtime()),
+      )
+      return
+    }
+    val phoneLast4 = RigasSatiksmeLoginOperation.phoneLast4(phone)
+    rigassatiksmeLoginRequestId = requestId
+    rigassatiksmeLoginPhoneLast4 = phoneLast4
+    rigassatiksmeLoginState = "started"
+    rigassatiksmeLoginLastState = "started"
+    rigassatiksmeLoginLastFailureReason = null
+    rigassatiksmeLoginStartedAtMillis = SystemClock.elapsedRealtime()
+    rigassatiksmeLoginCompletedAtMillis = 0L
+    rigassatiksmeLoginAwaitingSms = false
+    synchronized(rigassatiksmeLoginFailureByReasonLock) {
+      rigassatiksmeLoginFailureByReason = rigassatiksmeLoginFailureByReason
+    }
+    rigassatiksmeLoginAttempts += 1
+    rigassatiksmeLoginCodeHolder.clear()
+    val nowMillis = SystemClock.elapsedRealtime()
+    recordTicketEvent(
+      "rigassatiksme_login_started",
+      "request_id=$requestId phone_last4=$phoneLast4 locale=${locale.take(20).ifBlank { "missing" }}"
+    )
+    sendRigassatiksmeLoginResult(
+      requestId = requestId,
+      state = "started",
+      failureReason = null,
+      phases = mapOf("login_started_at" to nowMillis),
+    )
+    val previousJob = rigassatiksmeLoginJob
+    previousJob?.cancel()
+    rigassatiksmeLoginJob = serviceScope.launch {
+      try {
+        runRigassatiksmeLoginFlow(requestId, phone, phoneLast4, locale)
+      } catch (cancellation: CancellationException) {
+        sendRigassatiksmeLoginResult(
+          requestId = requestId,
+          state = "failed",
+          failureReason = "canceled",
+          phases = mapOf("login_canceled_at" to SystemClock.elapsedRealtime()),
+        )
+        markRigassatiksmeLoginTerminal(requestId, "failed", "canceled", nowMillis)
+        throw cancellation
+      } catch (error: Throwable) {
+        val reason = "login_unreachable"
+        recordTicketEvent(
+          "rigassatiksme_login_unhandled_error",
+          "request_id=$requestId phone_last4=$phoneLast4 error=${error.message?.take(120)?.replace('\n', ' ')?.replace('\r', ' ')}"
+        )
+        sendRigassatiksmeLoginResult(
+          requestId = requestId,
+          state = "failed",
+          failureReason = reason,
+          phases = mapOf("login_error_at" to SystemClock.elapsedRealtime()),
+        )
+        markRigassatiksmeLoginTerminal(requestId, "failed", reason, SystemClock.elapsedRealtime())
+      }
+    }
+  }
+
+  private fun handleRigassatiksmeLoginSms(
+    requestId: String,
+    code: String,
+    client: TicketWebSocket?,
+  ) {
+    if (requestId.isBlank()) {
+      recordTicketEvent("rigassatiksme_login_sms_invalid", "reason=missing_request_id")
+      return
+    }
+    if (requestId != rigassatiksmeLoginRequestId) {
+      recordTicketEvent(
+        "rigassatiksme_login_sms_invalid",
+        "request_id=$requestId active_request_id=${rigassatiksmeLoginRequestId.orEmpty()} reason=request_id_mismatch"
+      )
+      sendRigassatiksmeLoginResult(
+        requestId = requestId,
+        state = "failed",
+        failureReason = "sms_field_missing",
+        phases = mapOf("login_sms_no_active_at" to SystemClock.elapsedRealtime()),
+      )
+      return
+    }
+    if (rigassatiksmeLoginState != "waiting_for_sms") {
+      recordTicketEvent(
+        "rigassatiksme_login_sms_invalid",
+        "request_id=$requestId state=${rigassatiksmeLoginState} reason=state_mismatch"
+      )
+      val reason = if (rigassatiksmeLoginState == "succeeded" || rigassatiksmeLoginState == "failed") {
+        "wrong_sms_code"
+      } else {
+        "sms_field_missing"
+      }
+      sendRigassatiksmeLoginResult(
+        requestId = requestId,
+        state = "failed",
+        failureReason = reason,
+        phases = mapOf("login_sms_state_at" to SystemClock.elapsedRealtime()),
+      )
+      markRigassatiksmeLoginTerminal(requestId, "failed", reason, SystemClock.elapsedRealtime())
+      return
+    }
+    if (!RigasSatiksmeLoginOperation.isValidSmsCode(code)) {
+      recordTicketEvent(
+        "rigassatiksme_login_sms_invalid",
+        "request_id=$requestId reason=code_invalid"
+      )
+      sendRigassatiksmeLoginResult(
+        requestId = requestId,
+        state = "failed",
+        failureReason = "sms_field_missing",
+        phases = mapOf("login_sms_code_invalid_at" to SystemClock.elapsedRealtime()),
+      )
+      markRigassatiksmeLoginTerminal(requestId, "failed", "sms_field_missing", SystemClock.elapsedRealtime())
+      return
+    }
+    rigassatiksmeLoginCodeHolder.put(code)
+    rigassatiksmeLoginState = "running"
+    rigassatiksmeLoginAwaitingSms = false
+    recordTicketEvent(
+      "rigassatiksme_login_sms_accepted",
+      "request_id=$requestId phone_last4=${rigassatiksmeLoginPhoneLast4.orEmpty()}"
+    )
+  }
+
+  private fun handleRigassatiksmeLoginCancel(requestId: String, reason: String) {
+    if (requestId.isBlank()) {
+      recordTicketEvent("rigassatiksme_login_cancel_invalid", "reason=missing_request_id")
+      return
+    }
+    if (requestId != rigassatiksmeLoginRequestId) {
+      recordTicketEvent(
+        "rigassatiksme_login_cancel_no_active",
+        "request_id=$requestId active_request_id=${rigassatiksmeLoginRequestId.orEmpty()} reason=$reason"
+      )
+      return
+    }
+    rigassatiksmeLoginJob?.cancel()
+    rigassatiksmeLoginJob = null
+    rigassatiksmeLoginCodeHolder.clear()
+    recordTicketEvent(
+      "rigassatiksme_login_canceled",
+      "request_id=$requestId phone_last4=${rigassatiksmeLoginPhoneLast4.orEmpty()} reason=$reason"
+    )
+    sendRigassatiksmeLoginResult(
+      requestId = requestId,
+      state = "failed",
+      failureReason = if (reason.isBlank()) "canceled" else reason,
+      phases = mapOf("login_canceled_at" to SystemClock.elapsedRealtime()),
+    )
+    markRigassatiksmeLoginTerminal(requestId, "failed", if (reason.isBlank()) "canceled" else reason, SystemClock.elapsedRealtime())
+  }
+
+  private fun handleRigassatiksmeLoginStartHttp(body: String): String {
+    val parsed = try {
+      org.json.JSONObject(body)
+    } catch (error: Throwable) {
+      return buildJsonObject {
+        put("ok", false)
+        put("error", "invalid_json")
+      }.toString()
+    }
+    val requestId = parsed.optString("requestId", "").trim()
+    val phone = parsed.optString("phone", "").trim()
+    val locale = parsed.optString("locale", "").trim()
+    if (requestId.isBlank()) {
+      return buildJsonObject {
+        put("ok", false)
+        put("error", "missing_request_id")
+      }.toString()
+    }
+    if (!RigasSatiksmeLoginOperation.isValidPhone(phone)) {
+      return buildJsonObject {
+        put("ok", false)
+        put("error", "invalid_phone")
+      }.toString()
+    }
+    handleRigassatiksmeLoginStart(
+      requestId = requestId,
+      phone = phone,
+      locale = locale,
+      client = null,
+    )
+    return buildJsonObject {
+      put("ok", true)
+      put("requestId", requestId)
+      put("state", rigassatiksmeLoginState)
+    }.toString()
+  }
+
+  private fun handleRigassatiksmeLoginSmsHttp(body: String): String {
+    val parsed = try {
+      org.json.JSONObject(body)
+    } catch (error: Throwable) {
+      return buildJsonObject {
+        put("ok", false)
+        put("error", "invalid_json")
+      }.toString()
+    }
+    val requestId = parsed.optString("requestId", "").trim()
+    val code = parsed.optString("code", "")
+    if (requestId.isBlank()) {
+      return buildJsonObject {
+        put("ok", false)
+        put("error", "missing_request_id")
+      }.toString()
+    }
+    if (requestId != rigassatiksmeLoginRequestId) {
+      return buildJsonObject {
+        put("ok", false)
+        put("error", "request_id_mismatch")
+        put("activeRequestId", rigassatiksmeLoginRequestId.orEmpty())
+      }.toString()
+    }
+    if (rigassatiksmeLoginState != "waiting_for_sms") {
+      return buildJsonObject {
+        put("ok", false)
+        put("error", "not_waiting_for_sms")
+        put("state", rigassatiksmeLoginState)
+      }.toString()
+    }
+    if (!RigasSatiksmeLoginOperation.isValidSmsCode(code)) {
+      return buildJsonObject {
+        put("ok", false)
+        put("error", "invalid_code")
+      }.toString()
+    }
+    handleRigassatiksmeLoginSms(
+      requestId = requestId,
+      code = code,
+      client = null,
+    )
+    return buildJsonObject {
+      put("ok", true)
+      put("requestId", requestId)
+      put("state", rigassatiksmeLoginState)
+    }.toString()
+  }
+
+  private fun handleRigassatiksmeLoginCancelHttp(body: String): String {
+    val parsed = try {
+      org.json.JSONObject(body)
+    } catch (error: Throwable) {
+      return buildJsonObject {
+        put("ok", false)
+        put("error", "invalid_json")
+      }.toString()
+    }
+    val requestId = parsed.optString("requestId", "").trim()
+    val reason = parsed.optString("reason", "canceled").trim()
+    if (requestId.isBlank()) {
+      return buildJsonObject {
+        put("ok", false)
+        put("error", "missing_request_id")
+      }.toString()
+    }
+    handleRigassatiksmeLoginCancel(requestId, reason)
+    return buildJsonObject {
+      put("ok", true)
+      put("requestId", requestId)
+      put("state", rigassatiksmeLoginState)
+    }.toString()
+  }
+
+  private fun rigassatiksmeLoginStatusPayload(): String {
+    val nowMillis = SystemClock.elapsedRealtime()
+    val durationMs = if (rigassatiksmeLoginStartedAtMillis > 0L) {
+      (nowMillis - rigassatiksmeLoginStartedAtMillis).coerceAtLeast(0L)
+    } else {
+      0L
+    }
+    return buildJsonObject {
+      put("state", rigassatiksmeLoginState)
+      put("requestId", rigassatiksmeLoginRequestId.orEmpty())
+      put("phoneLast4", rigassatiksmeLoginPhoneLast4.orEmpty())
+      put("failureReason", rigassatiksmeLoginLastFailureReason.orEmpty())
+      put("startedAtMillis", rigassatiksmeLoginStartedAtMillis)
+      put("completedAtMillis", rigassatiksmeLoginCompletedAtMillis)
+      put("durationMillis", durationMs)
+      put("awaitingSms", rigassatiksmeLoginAwaitingSms)
+      put("attempts", rigassatiksmeLoginAttempts)
+      put("successes", rigassatiksmeLoginSuccesses)
+      put("failures", rigassatiksmeLoginFailures)
+      put("lastResult", rigassatiksmeLoginLastResultJson.orEmpty())
+      put("lastResultAtMillis", rigassatiksmeLoginLastResultAtMillis)
+    }.toString()
+  }
+
+  private suspend fun runRigassatiksmeLoginFlow(
+    requestId: String,
+    phone: String,
+    phoneLast4: String,
+    locale: String,
+  ) {
+    val startedAtMillis = SystemClock.elapsedRealtime()
+    // Pause the foreground guard for the entire login flow so it doesn't
+    // fight us by switching back to ViVi while we're driving the RS app.
+    markControlCodeTransition("rs_login_request")
+    controlCodeTransitionGraceUntilMillis = startedAtMillis + RS_LOGIN_TIMEOUT_MILLIS + 10_000L
+    val operation = RigasSatiksmeLoginOperation()
+    var step = RigasSatiksmeLoginOperation.LoginStep.IDLE
+    var launched = false
+    var phoneTyped = false
+    var codeTyped = false
+    var submitTapped = false
+    val maxActions = RS_LOGIN_MAX_ACTIONS
+    val deadlineMillis = startedAtMillis + RS_LOGIN_TIMEOUT_MILLIS
+    var actionCount = 0
+    var consecutiveUnknown = 0
+    var lastFailureReason: String? = null
+    while (actionCount < maxActions && SystemClock.elapsedRealtime() < deadlineMillis) {
+      if (rigassatiksmeLoginRequestId != requestId) {
+        recordTicketEvent(
+          "rigassatiksme_login_preempted",
+          "request_id=$requestId phone_last4=$phoneLast4"
+        )
+        return
+      }
+      if (!launched) {
+        if (!ensureRigassatiksmeLoginForeground()) {
+          markRigassatiksmeLoginFailure(requestId, "phone_unavailable", phoneLast4)
+          return
+        }
+        launched = true
+        delay(RS_LOGIN_AFTER_LAUNCH_SETTLE_MILLIS)
+      }
+      val snapshot = snapshotRigasSatiksmeUiAutomatorNodes("rs_login_step_$actionCount")
+      val smsCodeAvailable = rigassatiksmeLoginCodeHolder.peek() != null
+      val decision = operation.decide(step, snapshot, smsCodeAvailable)
+      step = decision.nextState
+      if (decision.done) {
+        when (decision.resultState) {
+          "succeeded" -> {
+            sendRigassatiksmeLoginResult(
+              requestId = requestId,
+              state = "succeeded",
+              failureReason = null,
+              phases = buildRigassatiksmeLoginPhases(startedAtMillis, mapOf("login_done_observed" to true)),
+            )
+            markRigassatiksmeLoginTerminal(requestId, "succeeded", null, SystemClock.elapsedRealtime())
+            return
+          }
+          "failed" -> {
+            val reason = when (decision.action) {
+              RigasSatiksmeLoginDriverAction.ReportAuthBlocked -> "rs_auth_blocked"
+              RigasSatiksmeLoginDriverAction.ReportWrongCode -> "wrong_sms_code"
+              else -> "login_unreachable"
+            }
+            markRigassatiksmeLoginFailure(requestId, reason, phoneLast4)
+            return
+          }
+        }
+      }
+      when (decision.action) {
+        RigasSatiksmeLoginDriverAction.Noop -> {
+          consecutiveUnknown += 1
+          delay(RS_LOGIN_STEP_SETTLE_MILLIS)
+        }
+        RigasSatiksmeLoginDriverAction.TypePhone -> {
+          if (!phoneTyped) {
+            if (!typeRigassatiksmeLoginPhone(phone, phoneLast4)) {
+              markRigassatiksmeLoginFailure(requestId, "phone_field_missing", phoneLast4)
+              return
+            }
+            phoneTyped = true
+            rigassatiksmeLoginState = "waiting_for_sms"
+            rigassatiksmeLoginAwaitingSms = true
+            delay(RS_LOGIN_AFTER_INPUT_SETTLE_MILLIS)
+          }
+          consecutiveUnknown = 0
+        }
+        RigasSatiksmeLoginDriverAction.TypeCode -> {
+          if (!codeTyped) {
+            val code = rigassatiksmeLoginCodeHolder.consume()
+            if (code.isNullOrBlank() || !RigasSatiksmeLoginOperation.isValidSmsCode(code)) {
+              markRigassatiksmeLoginFailure(requestId, "sms_field_missing", phoneLast4)
+              return
+            }
+            if (!typeRigassatiksmeLoginCode(code, phoneLast4)) {
+              markRigassatiksmeLoginFailure(requestId, "sms_field_missing", phoneLast4)
+              return
+            }
+            codeTyped = true
+            rigassatiksmeLoginAwaitingSms = false
+            delay(RS_LOGIN_AFTER_INPUT_SETTLE_MILLIS)
+          }
+          consecutiveUnknown = 0
+        }
+        RigasSatiksmeLoginDriverAction.TapSignIn -> {
+          if (!submitTapped) {
+            if (!tapRigassatiksmeLoginButton(phoneLast4)) {
+              markRigassatiksmeLoginFailure(requestId, "submit_failed", phoneLast4)
+              return
+            }
+            submitTapped = true
+            rigassatiksmeLoginState = "running"
+            delay(RS_LOGIN_AFTER_SUBMIT_SETTLE_MILLIS)
+          }
+          consecutiveUnknown = 0
+        }
+        RigasSatiksmeLoginDriverAction.TapSignInToShowForm -> {
+          if (!tapRigassatiksmeLandingLoginButton(phoneLast4)) {
+            markRigassatiksmeLoginFailure(requestId, "login_landing_tap_failed", phoneLast4)
+            return
+          }
+          delay(RS_LOGIN_AFTER_LAUNCH_SETTLE_MILLIS)
+          consecutiveUnknown = 0
+        }
+        RigasSatiksmeLoginDriverAction.ReportWrongCode -> {
+          markRigassatiksmeLoginFailure(requestId, "wrong_sms_code", phoneLast4)
+          return
+        }
+        RigasSatiksmeLoginDriverAction.ReportAuthBlocked -> {
+          markRigassatiksmeLoginFailure(requestId, "rs_auth_blocked", phoneLast4)
+          return
+        }
+      }
+      actionCount += 1
+    }
+    if (SystemClock.elapsedRealtime() >= deadlineMillis) {
+      lastFailureReason = if (phoneTyped && !codeTyped) "sms_timeout" else "phone_field_missing"
+    } else if (actionCount >= maxActions) {
+      lastFailureReason = if (submitTapped) "login_unreachable" else "phone_field_missing"
+    }
+    val reason = lastFailureReason ?: "phone_field_missing"
+    markRigassatiksmeLoginFailure(requestId, reason, phoneLast4)
+  }
+
+  private suspend fun ensureRigassatiksmeLoginForeground(): Boolean {
+    // If the RS app is already in the foreground, don't force-stop it.
+    // The session might still be valid. Just take a snapshot and let the
+    // classifier determine if we need to log in or if we're already done.
+    if (PhoneAutomationServiceBridge.waitForForegroundPackage(
+        TicketScreenConfig.RIGAS_SATIKSME_PACKAGE,
+        timeoutMillis = 1_500L
+      )
+    ) {
+      return true
+    }
+    // RS app is not in the foreground. Launch it without force-stopping.
+    recordTicketEvent("rigassatiksme_login_launch", "package=${TicketScreenConfig.RIGAS_SATIKSME_PACKAGE}")
+    return try {
+      withContext(Dispatchers.Main) {
+        val launchIntent = Intent().setClassName(
+          TicketScreenConfig.RIGAS_SATIKSME_PACKAGE,
+          "${TicketScreenConfig.RIGAS_SATIKSME_PACKAGE}.MainActivity"
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+        startActivity(launchIntent)
+      }
+      delay(700L)
+      true
+    } catch (error: Throwable) {
+      recordTicketEvent(
+        "rigassatiksme_login_launch_failed",
+        "error=${error.message?.take(120)?.replace('\n', ' ')?.replace('\r', ' ')}"
+      )
+      false
+    }
+  }
+
+  private suspend fun typeRigassatiksmeLoginPhone(phone: String, phoneLast4: String): Boolean {
+    recordTicketEvent("rigassatiksme_login_phone_typing_started", "phone_last4=$phoneLast4")
+    val cleanPhone = phone.filter { it.isDigit() }
+    val result = runRigasSatiksmeVisualInput(
+      buildString {
+        append("input tap 650 894\n")
+        append("sleep 0.15\n")
+        append("input keyevent KEYCODE_MOVE_END\n")
+        for (i in 0 until 20) {
+          append("input keyevent KEYCODE_DEL\n")
+        }
+        append("input text ").append(cleanPhone)
+      },
+      "rs_login_type_phone"
+    )
+    if (!result.ok) {
+      recordTicketEvent(
+        "rigassatiksme_login_phone_typing_failed",
+        "phone_last4=$phoneLast4"
+      )
+      return false
+    }
+    recordTicketEvent("rigassatiksme_login_phone_typed", "phone_last4=$phoneLast4")
+    return true
+  }
+
+  private suspend fun typeRigassatiksmeLoginCode(code: String, phoneLast4: String): Boolean {
+    recordTicketEvent("rigassatiksme_login_code_typing_started", "phone_last4=$phoneLast4")
+    val cleanCode = code.trim()
+    if (!RigasSatiksmeLoginOperation.isValidSmsCode(cleanCode)) {
+      recordTicketEvent(
+        "rigassatiksme_login_code_invalid",
+        "phone_last4=$phoneLast4"
+      )
+      return false
+    }
+    // Escape spaces in the password for the shell; hyphens and alphanumerics are safe.
+    val shellSafeCode = cleanCode.replace(" ", "\\ ")
+    val result = runRigasSatiksmeVisualInput(
+      buildString {
+        append("input tap 540 1062\n")
+        append("sleep 0.15\n")
+        append("input keyevent KEYCODE_MOVE_END\n")
+        for (i in 0 until 30) {
+          append("input keyevent KEYCODE_DEL\n")
+        }
+        append("input text ").append(shellSafeCode)
+      },
+      "rs_login_type_code"
+    )
+    if (!result.ok) {
+      recordTicketEvent(
+        "rigassatiksme_login_code_typing_failed",
+        "phone_last4=$phoneLast4"
+      )
+      return false
+    }
+    recordTicketEvent("rigassatiksme_login_code_typed", "phone_last4=$phoneLast4")
+    return true
+  }
+
+  private suspend fun tapRigassatiksmeLoginButton(phoneLast4: String): Boolean {
+    recordTicketEvent("rigassatiksme_login_submit_tap_started", "phone_last4=$phoneLast4")
+    val tapResult = runRigasSatiksmeVisualInput(
+      "input tap 540 1266",
+      "rs_login_tap_log_in"
+    )
+    if (!tapResult.ok) {
+      recordTicketEvent(
+        "rigassatiksme_login_submit_tap_failed",
+        "phone_last4=$phoneLast4"
+      )
+      return false
+    }
+    recordTicketEvent("rigassatiksme_login_submit_tapped", "phone_last4=$phoneLast4")
+    return true
+  }
+
+  private suspend fun tapRigassatiksmeLandingLoginButton(phoneLast4: String): Boolean {
+    recordTicketEvent("rigassatiksme_login_landing_tap_started", "phone_last4=$phoneLast4")
+    val tapResult = runRigasSatiksmeVisualInput(
+      "input tap 540 1124",
+      "rs_login_tap_landing_log_in"
+    )
+    if (!tapResult.ok) {
+      recordTicketEvent(
+        "rigassatiksme_login_landing_tap_failed",
+        "phone_last4=$phoneLast4"
+      )
+      return false
+    }
+    recordTicketEvent("rigassatiksme_login_landing_tapped", "phone_last4=$phoneLast4")
+    return true
+  }
+
+  private fun markRigassatiksmeLoginFailure(
+    requestId: String,
+    reason: String,
+    phoneLast4: String,
+  ) {
+    if (rigassatiksmeLoginRequestId != requestId) return
+    val nowMillis = SystemClock.elapsedRealtime()
+    sendRigassatiksmeLoginResult(
+      requestId = requestId,
+      state = "failed",
+      failureReason = reason,
+      phases = mapOf("login_failure_at" to nowMillis),
+    )
+    markRigassatiksmeLoginTerminal(requestId, "failed", reason, nowMillis)
+    recordTicketEvent(
+      "rigassatiksme_login_finished",
+      "request_id=$requestId phone_last4=$phoneLast4 state=failed reason=$reason duration_ms=${nowMillis - rigassatiksmeLoginStartedAtMillis}"
+    )
+  }
+
+  private fun markRigassatiksmeLoginTerminal(
+    requestId: String,
+    state: String,
+    failureReason: String?,
+    nowMillis: Long,
+  ) {
+    if (rigassatiksmeLoginRequestId != requestId) return
+    rigassatiksmeLoginState = state
+    rigassatiksmeLoginLastState = state
+    rigassatiksmeLoginLastFailureReason = failureReason
+    rigassatiksmeLoginCompletedAtMillis = nowMillis
+    rigassatiksmeLoginAwaitingSms = false
+    rigassatiksmeLoginCodeHolder.clear()
+    // Release the foreground guard pause so the ticket stream can resume.
+    controlCodeTransitionGraceUntilMillis = 0L
+    if (state == "succeeded") {
+      rigassatiksmeLoginSuccesses += 1
+    } else if (state == "failed") {
+      rigassatiksmeLoginFailures += 1
+      val reason = failureReason?.takeIf { it.isNotBlank() } ?: "unknown"
+      synchronized(rigassatiksmeLoginFailureByReasonLock) {
+        val updated = rigassatiksmeLoginFailureByReason.toMutableMap()
+        updated[reason] = (updated[reason] ?: 0L) + 1L
+        rigassatiksmeLoginFailureByReason = updated
+      }
+    }
+  }
+
+  private fun buildRigassatiksmeLoginPhases(
+    startedAtMillis: Long,
+    extra: Map<String, Any>,
+  ): Map<String, Long> {
+    val nowMillis = SystemClock.elapsedRealtime()
+    val total = (nowMillis - startedAtMillis).coerceAtLeast(0L)
+    val phases = mutableMapOf<String, Long>(
+      "rs_login_total" to total
+    )
+    extra.forEach { (key, value) ->
+      when (value) {
+        is Boolean -> if (value) phases[key] = nowMillis
+        is Long -> phases[key] = value
+        is Number -> phases[key] = value.toLong()
+        else -> Unit
+      }
+    }
+    return phases
+  }
+
+  private fun sendRigassatiksmeLoginResult(
+    requestId: String,
+    state: String,
+    failureReason: String?,
+    phases: Map<String, Long>,
+  ) {
+    val phoneLast4 = rigassatiksmeLoginPhoneLast4.orEmpty()
+    val normalizedState = when (state) {
+      "succeeded" -> "succeeded"
+      "started" -> "started"
+      "waiting_for_sms" -> "waiting_for_sms"
+      "running" -> "running"
+      "failed" -> "failed"
+      "canceled" -> "failed"
+      else -> "failed"
+    }
+    val normalizedReason = failureReason?.takeIf { it.isNotBlank() }
+      ?: when (normalizedState) {
+        "succeeded" -> "generated"
+        "started" -> ""
+        "waiting_for_sms" -> ""
+        "running" -> ""
+        else -> "login_unreachable"
+      }
+    val payload = buildJsonObject {
+      put("type", "rigassatiksme_login_result")
+      put("requestId", requestId)
+      put("state", normalizedState)
+      put("phoneLast4", phoneLast4)
+      put("failureReason", normalizedReason)
+      put("phases", buildJsonObject {
+        phases.forEach { (key, value) -> put(key, value) }
+      })
+    }
+    val message = payload.toString()
+    rigassatiksmeLoginLastResultJson = message
+    rigassatiksmeLoginLastResultAtMillis = SystemClock.elapsedRealtime()
+    controlClientSnapshot().forEach { client -> client.sendText(message) }
+    val durationMs = (SystemClock.elapsedRealtime() - rigassatiksmeLoginStartedAtMillis).coerceAtLeast(0L)
+    recordTicketEvent(
+      "rigassatiksme_login_result",
+      "request_id=$requestId state=$normalizedState phone_last4=$phoneLast4 reason=$normalizedReason duration_ms=$durationMs"
+    )
+    broadcastStatus()
+  }
+
   companion object {
     private const val TAG = "TicketStreamService"
     private const val CHANNEL_ID = "ticket_screen_guard"
@@ -10317,7 +11103,7 @@ class TicketStreamService : Service() {
     private const val VIDEO_CLIENT_SLOW_WRITE_MILLIS = 100L
     private const val VIDEO_CLIENT_PENDING_MAX_AGE_MILLIS = 150L
     private const val VIDEO_CLIENT_SLOW_CLOSE_MILLIS = 250L
-    private const val TICKET_WAKE_BUDGET_MILLIS = 5_000L
+    private const val TICKET_WAKE_BUDGET_MILLIS = 3_000L
     private const val TICKET_FAST_PUBLIC_OPEN_BUDGET_MILLIS = 5_000L
     private const val TICKET_FAST_PUBLIC_OPEN_ROOT_PROOF_TIMEOUT_MILLIS = 2_500L
     private const val TICKET_FAST_PUBLIC_OPEN_MIN_ROOT_PROOF_TIMEOUT_MILLIS = 1_000L
@@ -10332,10 +11118,16 @@ class TicketStreamService : Service() {
     private const val RIGAS_SATIKSME_VISUAL_CAPTURE_TIMEOUT_MILLIS = 2_500L
     private const val RIGAS_SATIKSME_VISUAL_INPUT_TIMEOUT_MILLIS = 5_000L
     private const val RIGAS_SATIKSME_DIRECT_UI_DUMP_TIMEOUT_MILLIS = 3_800L
+    private const val RS_LOGIN_TIMEOUT_MILLIS = 120_000L
+    private const val RS_LOGIN_MAX_ACTIONS = 20
+    private const val RS_LOGIN_STEP_SETTLE_MILLIS = 500L
+    private const val RS_LOGIN_AFTER_INPUT_SETTLE_MILLIS = 400L
+    private const val RS_LOGIN_AFTER_SUBMIT_SETTLE_MILLIS = 1500L
+    private const val RS_LOGIN_AFTER_LAUNCH_SETTLE_MILLIS = 2000L
     private const val TICKET_ROOT_HIERARCHY_DUMP_TIMEOUT_MILLIS = 8_000L
     private const val TICKET_WAKE_COMMAND_TIMEOUT_MILLIS = 3_000L
     private const val TICKET_WAKE_INTERACTIVE_TIMEOUT_MILLIS = 900L
-    private const val TICKET_WAKE_LAUNCH_TIMEOUT_MILLIS = 3_000L
+    private const val TICKET_WAKE_LAUNCH_TIMEOUT_MILLIS = 1_500L
     private const val TICKET_WAKE_FAST_INITIAL_TIMEOUT_MILLIS = 0L
     private const val TICKET_WAKE_FAST_POST_LAUNCH_TIMEOUT_MILLIS = 600L
     private const val TICKET_WAKE_FAST_ROOT_DUMP_TIMEOUT_MILLIS = 8_000L
@@ -10350,7 +11142,7 @@ class TicketStreamService : Service() {
     private const val NON_TOUCH_COMMAND_SELF_TIMEOUT_CUSHION_MILLIS = 250L
     private const val NON_TOUCH_PANEL_SLEEP_CLAMP_INTERVAL_MILLIS = 5L
     private const val TICKET_WAKE_PANEL_SLEEP_CLAMP_POST_MILLIS = 250L
-    private const val NON_TOUCH_PANEL_SLEEP_CLAMP_POST_MILLIS = 2_500L
+    private const val NON_TOUCH_PANEL_SLEEP_CLAMP_POST_MILLIS = 500L
     private const val STARTUP_CLIENT_DISCONNECT_GRACE_MILLIS = 5_000L
     private const val CLIENT_DISCONNECT_IDLE_GRACE_MILLIS = 30_000L
     private const val VIVI_FOREGROUND_INITIAL_DELAY_MILLIS = 1_500L
@@ -10376,7 +11168,7 @@ class TicketStreamService : Service() {
     private const val VIVI_LOGIN_ROOT_DUMP_TIMEOUT_MILLIS = 3_000L
     private const val CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS = 80L
     private const val CONTROL_CODE_POPUP_READY_CACHE_MILLIS = 2_000L
-    private const val CONTROL_CODE_FAST_ROOT_DUMP_TIMEOUT_MILLIS = 900L
+    private const val CONTROL_CODE_FAST_ROOT_DUMP_TIMEOUT_MILLIS = 600L
     private const val CONTROL_CODE_FAST_RESULT_ROOT_DUMP_TIMEOUT_MILLIS = 2_500L
     private const val CONTROL_CODE_RAW_TICKET_ROOT_CONFIRM_TIMEOUT_MILLIS = 700L
     private const val CONTROL_CODE_RAW_TICKET_VISUAL_CONFIRM_COUNT = 2L
@@ -10386,13 +11178,13 @@ class TicketStreamService : Service() {
     private const val CONTROL_CODE_PREPARE_ROOT_DUMP_TIMEOUT_MILLIS = 700L
     private const val CONTROL_CODE_FAST_POPUP_TIMEOUT_MILLIS = 2_400L
     private const val CONTROL_CODE_FAST_POPUP_VISUAL_WAIT_MILLIS = 650L
-    private const val CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS = 18_000L
+    private const val CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS = 10_000L
     private const val CONTROL_CODE_BROWSER_CAPTURE_ACK_POLL_MILLIS = 40L
     private const val CONTROL_CODE_BROWSER_CAPTURE_ACK_TIMEOUT_MILLIS = 10_000L
     private const val CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 0L
-    private const val CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS = 420L
+    private const val CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS = 250L
     private const val CONTROL_CODE_VISUAL_STATE_POLL_MILLIS = 40L
-    private const val CONTROL_CODE_VISUAL_STATE_RETRY_MILLIS = 80L
+    private const val CONTROL_CODE_VISUAL_STATE_RETRY_MILLIS = 50L
     private const val CONTROL_CODE_DIGITS_TYPED_SUBMIT_SETTLE_MILLIS = 40L
     private const val CONTROL_CODE_FAST_POLL_MILLIS = 90L
     private const val CONTROL_CODE_FAST_BUTTON_X_FRACTION = 0.23f
@@ -10403,7 +11195,7 @@ class TicketStreamService : Service() {
     private const val CONTROL_CODE_FAST_SHIFTED_OK_Y_FRACTION = 0.422f
     private const val CONTROL_CODE_POPUP_TRANSACTION_SUBMIT_X_FRACTION = 0.738f
     private const val CONTROL_CODE_POPUP_TRANSACTION_SUBMIT_Y_FRACTION = 0.573f
-    private const val CONTROL_CODE_FAST_POPUP_GEOMETRY_SETTLE_MILLIS = 120L
+    private const val CONTROL_CODE_FAST_POPUP_GEOMETRY_SETTLE_MILLIS = 60L
     private const val CONTROL_CODE_IMMEDIATE_TICKET_DETAIL_MEMORY_MAX_AGE_MILLIS = 15_000L
     private const val CONTROL_CODE_STALE_PREPARE_TICKET_DETAIL_MEMORY_MAX_AGE_MILLIS = TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS
     private const val CONTROL_CODE_REQUEST_PREPARE_MAX_STEPS = 5
