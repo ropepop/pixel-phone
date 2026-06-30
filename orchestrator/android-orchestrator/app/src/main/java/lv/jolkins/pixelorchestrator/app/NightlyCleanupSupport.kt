@@ -443,6 +443,10 @@ internal class NightlyCleanupSupport(
       append(singleQuote(ORCHESTRATOR_CACHE_DIR))
       append(" --termux-home ")
       append(singleQuote(TERMUX_HOME))
+      append(" --artifact-age-days ")
+      append(CLEANUP_RETENTION_DAYS)
+      append(" --log-age-days ")
+      append(CLEANUP_RETENTION_DAYS)
       append(dryRunArg)
     }
   }
@@ -581,6 +585,7 @@ internal class NightlyCleanupSupport(
     const val MUTATION_LOCK_PATH = "${StackPaths.RUN}/orchestrator-mutation.lock"
     const val ORCHESTRATOR_CACHE_DIR = "/data/user/0/lv.jolkins.pixelorchestrator/cache"
     const val TERMUX_HOME = "/data/user/0/com.termux/files/home"
+    const val CLEANUP_RETENTION_DAYS = 30
     const val RUNTIME_MANIFEST_FILE = "/data/local/pixel-stack/conf/runtime/runtime-manifest.json"
     val REPORT_STAMP: DateTimeFormatter =
       DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'", Locale.US).withZone(ZoneOffset.UTC)

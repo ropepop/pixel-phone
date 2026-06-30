@@ -146,3 +146,15 @@ modules:
     health_command: sh /data/local/pixel-stack/bin/pixel-ticket-health.sh
     redeploy:
       mode: job
+  - id: runtime_cleanup
+    display_name: Runtime Cleanup
+    domain: orchestrator
+    runtime_type: job
+    owner_path: orchestrator/android-orchestrator
+    health_key: runtimeCleanupHealthy
+    component_id: runtime_cleanup
+    start_command: am start-foreground-service -n lv.jolkins.pixelorchestrator/.app.SupervisorService -a lv.jolkins.pixelorchestrator.action.CLEANUP --es orchestrator_action cleanup --es orchestrator_cleanup_trigger manual
+    stop_command: true
+    health_command: latest=$(ls -1t /data/local/pixel-stack/logs/events/cleanup-*.json 2>/dev/null | grep -v -- '-dry-run.json' | sed -n '1p'); [ -n "$latest" ] && ! grep -q '"status"[[:space:]]*:[[:space:]]*"failed"' "$latest"
+    redeploy:
+      mode: job

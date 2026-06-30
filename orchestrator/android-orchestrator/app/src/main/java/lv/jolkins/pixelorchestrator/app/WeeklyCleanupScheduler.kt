@@ -11,7 +11,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-internal class NightlyCleanupScheduler(
+internal class WeeklyCleanupScheduler(
   context: Context
 ) {
   private val appContext = context.applicationContext
@@ -25,7 +25,7 @@ internal class NightlyCleanupScheduler(
     }
 
     val nextRunMillis =
-      NightlyCleanupSchedulePolicy.nextRunAfter(
+      WeeklyCleanupSchedulePolicy.nextRunAfter(
         nowMillis = System.currentTimeMillis(),
         zoneId = ZoneId.systemDefault()
       )
@@ -70,6 +70,6 @@ internal class NightlyCleanupScheduler(
     const val CLEANUP_REQUEST_CODE = 4003
     val RUN_ID_FORMATTER: DateTimeFormatter =
       DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'", Locale.US).withZone(java.time.ZoneOffset.UTC)
-    const val TAG = "NightlyCleanupScheduler"
+    const val TAG = "WeeklyCleanupScheduler"
   }
 }

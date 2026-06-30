@@ -106,6 +106,12 @@ object ComponentRegistry {
       startCommand = "true",
       stopCommand = "true",
       healthCommand = "sh /data/local/pixel-stack/bin/pixel-management-health.sh"
+    ),
+    ComponentRegistryEntry(
+      id = RuntimeCleanupComponentController.COMPONENT_NAME,
+      startCommand = "am start-foreground-service -n lv.jolkins.pixelorchestrator/.app.SupervisorService -a lv.jolkins.pixelorchestrator.action.CLEANUP --es orchestrator_action cleanup --es orchestrator_cleanup_trigger manual",
+      stopCommand = "true",
+      healthCommand = "latest=${'$'}(ls -1t /data/local/pixel-stack/logs/events/cleanup-*.json 2>/dev/null | grep -v -- '-dry-run.json' | sed -n '1p'); [ -n \"${'$'}latest\" ] && ! grep -q '\"status\"[[:space:]]*:[[:space:]]*\"failed\"' \"${'$'}latest\""
     )
   )
 }

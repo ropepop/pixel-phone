@@ -55,10 +55,13 @@ object AppGraph {
           stopCommand = entry.stopCommand,
           healthCommand = entry.healthCommand
         )
-        entry.id to if (entry.id == "ticket_screen") {
-          TicketServiceComponentController(controller, ticketServiceStore)
-        } else {
-          controller
+        entry.id to when (entry.id) {
+          "ticket_screen" -> TicketServiceComponentController(controller, ticketServiceStore)
+          RuntimeCleanupComponentController.COMPONENT_NAME -> RuntimeCleanupComponentController(
+            rootExecutor = rootExecutor,
+            json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+          )
+          else -> controller
         }
       } + mapOf(cpuFrequencyController.name to cpuFrequencyController)
 

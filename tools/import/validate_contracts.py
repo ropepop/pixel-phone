@@ -115,7 +115,7 @@ else:
         if len(component_ids) != len(set(component_ids)):
             errors.append("registry contains duplicate component_id values")
 
-required_components = {"dns", "ssh", "ddns", "remote", "train_bot", "site_notifier"}
+required_components = {"dns", "ssh", "ddns", "remote", "train_bot", "site_notifier", "runtime_cleanup"}
 if registry_modules:
     observed = {m.get("component_id") for m in registry_modules if isinstance(m, dict)}
     missing = sorted(required_components - observed)
@@ -179,7 +179,7 @@ else:
 
 if orchestrator_manifest_path.exists() and registry_modules:
     orchestrator_manifest = yaml.safe_load(orchestrator_manifest_path.read_text(encoding="utf-8")) or {}
-    shared_components = ["dns", "ssh", "vpn", "ddns", "remote", "train_bot", "site_notifier"]
+    shared_components = ["dns", "ssh", "vpn", "ddns", "remote", "train_bot", "site_notifier", "runtime_cleanup"]
     for cid in shared_components:
         reg = registry_by_component.get(cid)
         if reg is None:

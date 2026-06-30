@@ -30,6 +30,7 @@ data class StackStateV1(
       "ddns" to ServiceRuntimeState(),
       "remote" to ServiceRuntimeState(),
       "management" to ServiceRuntimeState(),
+      "runtime_cleanup" to ServiceRuntimeState(),
       "supervisor" to ServiceRuntimeState(status = ServiceStatus.STARTING)
     )
 
@@ -45,6 +46,7 @@ data class StackStateV1(
       "ddns" to ModuleRuntimeState(),
       "remote" to ModuleRuntimeState(),
       "management" to ModuleRuntimeState(),
+      "runtime_cleanup" to ModuleRuntimeState(),
       "supervisor" to ModuleRuntimeState()
     )
   }

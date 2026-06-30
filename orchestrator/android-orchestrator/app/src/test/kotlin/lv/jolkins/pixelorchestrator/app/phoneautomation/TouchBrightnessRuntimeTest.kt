@@ -37,7 +37,7 @@ class TouchBrightnessRuntimeTest {
   }
 
   @Test
-  fun startKeepsPanelVisibleUntilTwoMinutePhysicalTouchTimeout() = runTest {
+  fun startWithoutPhysicalTouchEntersPanelSleepImmediately() = runTest {
     val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
     val deviceController = FakeTouchBrightnessDeviceController()
     val overlayController = FakeBlackoutOverlayController()
@@ -55,23 +55,11 @@ class TouchBrightnessRuntimeTest {
     runtime.start()
     runCurrent()
 
-    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
-    assertEquals(emptyList<Int>(), deviceController.setBrightnessPercentCalls)
-    assertEquals(0, overlayController.showCalls)
-    assertTrue(powerController.wakeHoldActive)
-    assertTrue(store.load().touchBrightnessDebugDetail.contains("timer=pending("))
-
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS - 1L)
-    runCurrent()
-    assertEquals(emptyList<Int>(), deviceController.setBrightnessPercentCalls)
-
-    advanceTimeBy(1L)
-    runCurrent()
-
-    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
     assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
-    assertTrue(powerController.wakeHoldActive)
+    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
     assertEquals(0, overlayController.showCalls)
+    assertTrue(powerController.wakeHoldActive)
+    assertTrue(store.load().touchBrightnessDebugDetail.contains("timer=none"))
   }
 
   @Test
@@ -93,12 +81,7 @@ class TouchBrightnessRuntimeTest {
     advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS - 1_000L)
     runCurrent()
 
-    eventSource.emit(
-      TouchBrightnessEvent.TouchCountChanged(
-        activeTouchCount = 1,
-        observedAtUptimeMillis = testScheduler.currentTime
-      )
-    )
+    eventSource.emit(physicalTouchEvent(activeTouchCount = 1, observedAtUptimeMillis = testScheduler.currentTime))
     runCurrent()
     assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
 
@@ -111,19 +94,14 @@ class TouchBrightnessRuntimeTest {
     runCurrent()
     advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS - 1L)
     runCurrent()
-    assertEquals(emptyList<Int>(), deviceController.setBrightnessPercentCalls)
+    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
 
     advanceTimeBy(1L)
     runCurrent()
-    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
+    assertEquals(listOf(0, 0), deviceController.setBrightnessPercentCalls)
     assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
 
-    eventSource.emit(
-      TouchBrightnessEvent.TouchCountChanged(
-        activeTouchCount = 1,
-        observedAtUptimeMillis = testScheduler.currentTime
-      )
-    )
+    eventSource.emit(physicalTouchEvent(activeTouchCount = 1, observedAtUptimeMillis = testScheduler.currentTime))
     runCurrent()
 
     assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
@@ -156,7 +134,15 @@ class TouchBrightnessRuntimeTest {
     eventSource.emit(
       TouchBrightnessEvent.TouchCountChanged(
         activeTouchCount = 1,
-        observedAtUptimeMillis = testScheduler.currentTime
+        observedAtUptimeMillis = testScheduler.currentTime,
+        snapshot = RootTouchSnapshot(
+          activeTouchCount = 1,
+          btnTouchActive = false,
+          toolFingerActive = false,
+          activeSlotCount = 0,
+          selectedDevice = touchSource,
+          lastEventUptimeMillis = testScheduler.currentTime
+        )
       )
     )
     runCurrent()
@@ -164,7 +150,7 @@ class TouchBrightnessRuntimeTest {
     advanceTimeBy(1_000L)
     runCurrent()
 
-    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
+    assertEquals(listOf(0, 0), deviceController.setBrightnessPercentCalls)
     assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
   }
 
@@ -184,8 +170,6 @@ class TouchBrightnessRuntimeTest {
     }
 
     runtime.start()
-    runCurrent()
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
     runCurrent()
     assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
 
@@ -223,8 +207,6 @@ class TouchBrightnessRuntimeTest {
 
     runtime.start()
     runCurrent()
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
-    runCurrent()
     eventSource.emit(TouchBrightnessEvent.PowerButtonPressed(testScheduler.currentTime, powerSource))
     runCurrent()
     eventSource.emit(TouchBrightnessEvent.ScreenInteractiveChanged(interactive = false))
@@ -250,8 +232,6 @@ class TouchBrightnessRuntimeTest {
     }
 
     runtime.start()
-    runCurrent()
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
     runCurrent()
     val powerPressedAtMillis = testScheduler.currentTime
     eventSource.emit(TouchBrightnessEvent.PowerButtonPressed(powerPressedAtMillis, powerSource))
@@ -295,8 +275,6 @@ class TouchBrightnessRuntimeTest {
 
     runtime.start()
     runCurrent()
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
-    runCurrent()
     assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
 
     val screenOffAtMillis = testScheduler.currentTime
@@ -328,7 +306,7 @@ class TouchBrightnessRuntimeTest {
     }
     val eventSource = FakeTouchBrightnessEventSource(
       interactive = true,
-      activeTouchCount = 0,
+      activeTouchCount = 1,
       source = touchSource,
       powerSource = powerSource
     )
@@ -360,8 +338,6 @@ class TouchBrightnessRuntimeTest {
     }
 
     runtime.start()
-    runCurrent()
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
     runCurrent()
     assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
     assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
@@ -412,8 +388,6 @@ class TouchBrightnessRuntimeTest {
 
     runtime.start()
     runCurrent()
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
-    runCurrent()
     PhoneAutomationServiceBridge.markNonTouchInput(
       reason = "ticket:rs_monthly_ticket_fast_return:active",
       durationMillis = 4_000L,
@@ -459,7 +433,7 @@ class TouchBrightnessRuntimeTest {
     assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
     assertTrue(store.load().touchBrightnessDetail.contains("touch is active"))
     assertTrue(store.load().touchBrightnessDebugDetail.contains("touches=1"))
-    assertEquals(emptyList<Int>(), deviceController.setBrightnessPercentCalls)
+    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
   }
 
   @Test
@@ -476,6 +450,15 @@ class TouchBrightnessRuntimeTest {
     }
 
     runtime.start()
+    runCurrent()
+    eventSource.emit(physicalTouchEvent(activeTouchCount = 1, observedAtUptimeMillis = testScheduler.currentTime))
+    runCurrent()
+    eventSource.emit(
+      TouchBrightnessEvent.TouchCountChanged(
+        activeTouchCount = 0,
+        observedAtUptimeMillis = testScheduler.currentTime
+      )
+    )
     runCurrent()
     eventSource.emit(TouchBrightnessEvent.ScreenInteractiveChanged(interactive = false))
     runCurrent()
@@ -498,8 +481,6 @@ class TouchBrightnessRuntimeTest {
     }
 
     runtime.start()
-    runCurrent()
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
     runCurrent()
     store.setTouchBrightnessEnabled(false)
 
@@ -527,8 +508,6 @@ class TouchBrightnessRuntimeTest {
     }
 
     runtime.start()
-    runCurrent()
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
     runCurrent()
     val restoreCallsAfterPanelSleep = deviceController.restoreBrightnessStateCalls.size
     PhoneAutomationServiceBridge.markNonTouchInput(
@@ -567,8 +546,6 @@ class TouchBrightnessRuntimeTest {
     }
 
     runtime.start()
-    runCurrent()
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
     runCurrent()
     assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
 
@@ -623,8 +600,6 @@ class TouchBrightnessRuntimeTest {
     }
 
     runtime.start()
-    runCurrent()
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
     runCurrent()
     assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
     assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
@@ -682,8 +657,6 @@ class TouchBrightnessRuntimeTest {
     }
 
     runtime.start()
-    runCurrent()
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
     runCurrent()
     assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
     assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
@@ -766,8 +739,6 @@ class TouchBrightnessRuntimeTest {
 
     runtime.start()
     runCurrent()
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
-    runCurrent()
     val restoreCallsAfterPanelSleep = deviceController.restoreBrightnessStateCalls.size
 
     eventSource.emit(TouchBrightnessEvent.ScreenInteractiveChanged(interactive = true))
@@ -800,8 +771,6 @@ class TouchBrightnessRuntimeTest {
     }
 
     runtime.start()
-    runCurrent()
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
     runCurrent()
     assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
 
@@ -839,8 +808,6 @@ class TouchBrightnessRuntimeTest {
 
     runtime.start()
     runCurrent()
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
-    runCurrent()
     assertTrue(powerController.wakeHoldActive)
     powerController.releaseHold("test_expired")
     assertFalse(powerController.wakeHoldActive)
@@ -875,8 +842,6 @@ class TouchBrightnessRuntimeTest {
     }
 
     runtime.start()
-    runCurrent()
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
     runCurrent()
     deviceController.setBrightnessResult = PhoneAutomationActionResult(false, "panel still bright")
 
@@ -926,6 +891,64 @@ class TouchBrightnessRuntimeTest {
     assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
     assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
     assertEquals(emptyList<ScreenBrightnessState>(), deviceController.restoreBrightnessStateCalls)
+  }
+
+  @Test
+  fun darkSavedRestoreStateIsTreatedAsPanelSleepOnStartup() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(
+      touchBrightnessEnabled = true,
+      initialTouchBrightnessState = TouchBrightnessRuntimeState.ERROR,
+      initialRestoreMode = 0,
+      initialRestoreValue = 0
+    )
+    val deviceController = FakeTouchBrightnessDeviceController()
+    val eventSource = FakeTouchBrightnessEventSource(
+      interactive = true,
+      activeTouchCount = 0,
+      source = touchSource,
+      powerSource = powerSource
+    )
+    val runtime = buildRuntime(backgroundScope, store, deviceController, FakeBlackoutOverlayController(), eventSource) {
+      testScheduler.currentTime
+    }
+
+    runtime.start()
+    runCurrent()
+
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
+    assertEquals(emptyList<ScreenBrightnessState>(), deviceController.restoreBrightnessStateCalls)
+    assertEquals(null, store.load().touchBrightnessRestoreMode)
+    assertEquals(null, store.load().touchBrightnessRestoreValue)
+  }
+
+  @Test
+  fun physicalTouchWithDarkSavedRestoreStateStillGetsVisibleFallback() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(
+      touchBrightnessEnabled = true,
+      initialTouchBrightnessState = TouchBrightnessRuntimeState.ERROR,
+      initialRestoreMode = 0,
+      initialRestoreValue = 0
+    )
+    val deviceController = FakeTouchBrightnessDeviceController()
+    val eventSource = FakeTouchBrightnessEventSource(
+      interactive = true,
+      activeTouchCount = 1,
+      source = touchSource,
+      powerSource = powerSource
+    )
+    val runtime = buildRuntime(backgroundScope, store, deviceController, FakeBlackoutOverlayController(), eventSource) {
+      testScheduler.currentTime
+    }
+
+    runtime.start()
+    runCurrent()
+
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+    assertEquals(listOf(TouchBrightnessRuntime.SAFE_VISIBLE_FALLBACK_PERCENT), deviceController.setBrightnessPercentCalls)
+    assertEquals(emptyList<ScreenBrightnessState>(), deviceController.restoreBrightnessStateCalls)
+    assertEquals(null, store.load().touchBrightnessRestoreMode)
+    assertEquals(null, store.load().touchBrightnessRestoreValue)
   }
 
   private fun buildRuntime(

@@ -12,7 +12,7 @@ class BootReceiver : BroadcastReceiver() {
     val action = intent?.action.orEmpty()
     val decision = BootReceiverActionPolicy.decisionFor(action)
     val cleanupReason = "receiver:$action"
-    val scheduler = NightlyCleanupScheduler(context)
+    val scheduler = WeeklyCleanupScheduler(context)
     val schedule = scheduler.scheduleNext(reason = cleanupReason)
     if (!schedule.success) {
       Log.e(TAG, "cleanup_schedule_failed action=$action detail=${schedule.reason}")

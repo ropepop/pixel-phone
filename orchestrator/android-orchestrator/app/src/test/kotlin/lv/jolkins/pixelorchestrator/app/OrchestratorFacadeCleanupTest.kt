@@ -23,6 +23,7 @@ import lv.jolkins.pixelorchestrator.runtimeinstaller.ReleaseRollbackMetadata
 import lv.jolkins.pixelorchestrator.runtimeinstaller.RuntimeInstallerControl
 import lv.jolkins.pixelorchestrator.runtimeinstaller.SyncResult
 import lv.jolkins.pixelorchestrator.supervisor.SupervisorControl
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -139,6 +140,61 @@ class OrchestratorFacadeCleanupTest {
     assertTrue(rootExecutor.commands.any { it.contains("/data/local/pixel-stack/run/orchestrator-mutation.lock/owner") })
     assertTrue(rootExecutor.commands.any { it.contains("rm -rf '/data/local/pixel-stack/run/orchestrator-mutation.lock'") })
   }
+
+  @Test
+  fun runtimeCleanupComponentDoesNotAutoStart() = runBlocking {
+    val rootExecutor = FakeCleanupRootExecutor(
+      runtimeManifestJson = basicRuntimeManifestJson(),
+      componentManifests = emptyMap(),
+      cleanupStdout = ""
+    )
+    val controller = RuntimeCleanupComponentController(rootExecutor, json)
+
+    assertFalse(controller.shouldAutoStart())
+    assertTrue(controller.start())
+    assertFalse(rootExecutor.commands.any { it.contains("/data/local/pixel-stack/bin/pixel-runtime-cleanup.sh") })
+  }
+
+  @Test
+  fun runtimeCleanupComponentStartRunsCleanupAction() = runBlocking {
+    val rootExecutor = FakeCleanupRootExecutor(
+      runtimeManifestJson = basicRuntimeManifestJson(),
+      componentManifests = emptyMap(),
+      cleanupStdout = """
+        DELETE	tmp_artifact	4096	/data/local/tmp/pixel-orchestrator-runtime-old	old_runtime_tmp
+      """.trimIndent()
+    )
+    val facade = buildFacade(rootExecutor)
+
+    val result = facade.startComponent(RuntimeCleanupComponentController.COMPONENT_NAME)
+
+    assertTrue(result.success)
+    assertTrue(result.message.contains("Cleanup complete"))
+    assertTrue(rootExecutor.commands.any { it.contains("/data/local/pixel-stack/bin/pixel-runtime-cleanup.sh") })
+    val report = rootExecutor.decodeCleanupReport(result.outputPath)
+    assertEquals(CleanupReportStatus.COMPLETED.wireValue(), report.status)
+    assertTrue(report.deletedPaths.any { it.category == "tmp_artifact" })
+  }
+
+  private fun basicRuntimeManifestJson(): String =
+    json.encodeToString(
+      ArtifactManifest.serializer(),
+      ArtifactManifest(
+        schema = 1,
+        manifestVersion = "pixel-cleanup-test",
+        signatureSchema = "none",
+        artifacts = listOf(
+          ArtifactEntry(
+            id = "adguardhome-rootfs",
+            url = "/data/local/pixel-stack/conf/runtime/artifacts/adguardhome-rootfs-arm64.tar",
+            sha256 = "abc",
+            fileName = "adguardhome-rootfs-arm64.tar",
+            sizeBytes = 10,
+            required = true
+          )
+        )
+      )
+    )
 
   private fun buildFacade(rootExecutor: FakeCleanupRootExecutor): OrchestratorFacade {
     val healthChecker = RuntimeHealthChecker(CommandRunner { CommandResult(ok = true, stdout = "", stderr = "") })

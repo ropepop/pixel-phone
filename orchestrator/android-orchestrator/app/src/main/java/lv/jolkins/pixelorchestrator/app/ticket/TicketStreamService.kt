@@ -6196,20 +6196,12 @@ class TicketStreamService : Service() {
               lastControlCodeRequestPhases = phases.toMap()
               clearControlCodeBrowserCaptureWait(cleanRequestId)
               val cleanupReason = if (browserCapture.ok) "browser_capture_confirmed" else browserCapture.reason
-              val cleanupSucceeded = if (delivery.resultProof == "phone_visual_raw_ticket_after_submit") {
-                completeControlCodeRawTicketAfterSubmitCleanup(
-                  reason = cleanupReason,
-                  phases = phases,
-                  requestStartedAtMillis = startedAtMillis
-                )
-              } else {
-                returnControlCodeSurfaceToRawTicket(
-                  generatedHierarchy = delivery.generatedHierarchy,
-                  reason = cleanupReason,
-                  phases = phases,
-                  requestStartedAtMillis = startedAtMillis
-                )
-              }
+              val cleanupSucceeded = returnControlCodeSurfaceToRawTicket(
+                generatedHierarchy = delivery.generatedHierarchy,
+                reason = cleanupReason,
+                phases = phases,
+                requestStartedAtMillis = startedAtMillis
+              )
               sendControlCodeCleanup(
                 requestId = cleanRequestId,
                 ok = cleanupSucceeded,
@@ -7189,6 +7181,7 @@ class TicketStreamService : Service() {
       eventReason = "control_code_popup_transaction_ready_macro"
     )
     val submit = transaction.keyboardOpenSubmit
+    val digitKeyEvents = controlCodeDigitKeyEvents(digits)
     phases["ok_tap_target_source_keyboard_geometry"] = 1L
     phases["ok_tap_target_source_popup_transaction"] = 1L
     recordTicketEvent(
@@ -7198,21 +7191,62 @@ class TicketStreamService : Service() {
     recordTicketEvent("control_code_submit_current_popup_target", submit.reason)
     recordTicketEvent("control_code_submit_target", submit.reason)
     val command = """
-      log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=popup_tap'
-      input tap ${action.x} ${action.y}
-      sleep 0.12
-      log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=popup_ready_after_short_settle'
-      input tap ${transaction.input.x} ${transaction.input.y}
-      sleep 0.035
-      log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=first_digit_start'
-      input text $digits
-      log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=digits_typed'
-      sleep 0.14
-      input tap ${submit.x} ${submit.y}
+      ticket_macro_panel_dir=""
+      for ticket_macro_candidate in /sys/class/backlight/panel0-backlight /sys/class/backlight/*; do
+        if [ -f "${'$'}ticket_macro_candidate/brightness" ]; then
+          ticket_macro_panel_dir="${'$'}ticket_macro_candidate"
+          break
+        fi
+      done
+      ticket_macro_panel_sysfs_dark() {
+        if [ -n "${'$'}ticket_macro_panel_dir" ]; then
+          echo 0 > "${'$'}ticket_macro_panel_dir/brightness" 2>/dev/null || true
+        fi
+      }
+      ticket_macro_panel_display_dark_once() {
+        if [ -z "${'$'}ticket_macro_panel_dir" ]; then
+          settings put system screen_brightness_mode 0 >/dev/null 2>&1 || true
+          settings put system screen_brightness 0 >/dev/null 2>&1 || true
+        fi
+        ticket_macro_panel_sysfs_dark
+	      }
+      ticket_macro_input_tap() {
+        ticket_macro_panel_sysfs_dark
+        input tap "${'$'}1" "${'$'}2"
+        ticket_macro_panel_sysfs_dark
+      }
+      ticket_macro_input_keyevents() {
+        ticket_macro_panel_sysfs_dark
+        input keyevent "${'$'}@"
+        ticket_macro_panel_sysfs_dark
+      }
+	      ticket_macro_wait_panel_bursts() {
+	        ticket_macro_panel_sysfs_dark
+	        sleep 0.020 2>/dev/null || usleep 20000 2>/dev/null || true
+	        ticket_macro_panel_sysfs_dark
+	        ticket_macro_panel_display_dark_once
+	      }
+      ticket_macro_panel_display_dark_once
+	      log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=popup_tap'
+	      ticket_macro_input_tap ${action.x} ${action.y}
+	      sleep 0.070
+	      log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=popup_ready_after_short_settle'
+	      ticket_macro_input_tap ${transaction.input.x} ${transaction.input.y}
+	      sleep 0.020
+	      log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=first_digit_start'
+	      ticket_macro_input_keyevents $digitKeyEvents
+	      log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=digits_typed'
+	      sleep 0.060
+	      ticket_macro_input_tap ${submit.x} ${submit.y}
       log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=ok_tap_sent'
-    """.trimIndent()
+      ticket_macro_wait_panel_bursts
+	    """.trimIndent()
     val submitted = measureInputPhase(phases, "open_type_submit_fast") {
-      runFastNonTouchInput(command, "control_code_request_open_type_submit_fast")
+      runFastNonTouchInput(
+        command,
+        "control_code_request_open_type_submit_fast",
+        postMillis = CONTROL_CODE_FAST_PANEL_SLEEP_CLAMP_POST_MILLIS
+      )
     }
     recordControlCodeSnapAttempt(
       rawX = action.x,
@@ -7630,12 +7664,13 @@ class TicketStreamService : Service() {
     phases: MutableMap<String, Long>,
     requestStartedAtMillis: Long
   ): Boolean {
+    val digitKeyEvents = controlCodeDigitKeyEvents(digits)
     val typeCommand = """
       input tap ${transaction.input.x} ${transaction.input.y}
       sleep 0.08
       input keyevent KEYCODE_MOVE_END
       for i in 1 2 3 4 5 6; do input keyevent KEYCODE_DEL; done
-      input text $digits
+      input keyevent $digitKeyEvents
       sleep 0.04
     """.trimIndent()
     val typed = measureInputPhase(phases, "type_digits_fast") {
@@ -7664,7 +7699,7 @@ class TicketStreamService : Service() {
     }
     markControlCodeRequestPhase(phases, "ok_tapped", requestStartedAtMillis)
     phases["control_code_submit_attempted"] = 1L
-    recordTicketEvent("control_code_input_typed_submit_now", "split_shell_text_ok")
+    recordTicketEvent("control_code_input_typed_submit_now", "split_shell_keyevents_ok")
     recordTicketEvent("control_code_submit_attempted", "coordinate_ok_after_digits digits=${digits.length}")
     return true
   }
@@ -7683,12 +7718,13 @@ class TicketStreamService : Service() {
       return false
     }
     delay(CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS)
+    val digitKeyEvents = controlCodeDigitKeyEvents(digits)
     val typed = measureInputPhase(phases, "type_digits_fast") {
       runFastNonTouchInput(
         """
         input keyevent KEYCODE_MOVE_END
         for i in 1 2 3 4 5 6; do input keyevent KEYCODE_DEL; done
-        input text $digits
+        input keyevent $digitKeyEvents
         """.trimIndent(),
         "control_code_request_type_digits_fast"
       )
@@ -7699,7 +7735,7 @@ class TicketStreamService : Service() {
     }
     delay(CONTROL_CODE_DIGITS_TYPED_SUBMIT_SETTLE_MILLIS)
     markControlCodeRequestPhase(phases, "digits_typed", requestStartedAtMillis)
-    recordTicketEvent("control_code_input_typed_submit_now", "shell_text_ok")
+    recordTicketEvent("control_code_input_typed_submit_now", "shell_keyevents_ok")
     return true
   }
 
@@ -7830,20 +7866,12 @@ class TicketStreamService : Service() {
                 return ControlCodeResultWaitOutcome(generated = visualMarker, failureReason = "")
               }
             }
-            if (rawTicketVisualCount >= CONTROL_CODE_RAW_TICKET_VISUAL_CONFIRM_COUNT) {
-              val visualMarker = confirmGeneratedControlCodeResultForBrowser(
-                value = "",
-                hierarchy = CONTROL_CODE_MARKER_RESULT_HIERARCHY,
-                phases = phases,
-                requestStartedAtMillis = requestStartedAtMillis,
-                waitStartedAtMillis = startedAtMillis,
-                phase = "wait_result_phone_visual_generated_state",
-                modeReason = "control_code_request_phone_visual_raw_ticket_after_submit",
-                eventValue = "phone_visual_raw_ticket_after_submit",
-                resultProof = "phone_visual_raw_ticket_after_submit"
+            if (rawTicketVisualCount == CONTROL_CODE_RAW_TICKET_VISUAL_REJECT_LOG_COUNT) {
+              phases["control_code_visual_raw_ticket_after_submit_rejected"] = SystemClock.elapsedRealtime() - startedAtMillis
+              recordTicketEvent(
+                "control_code_visual_raw_ticket_after_submit_wait",
+                "count=$rawTicketVisualCount root_confirmed=false"
               )
-              phases["control_code_visual_popup_reject_count"] = popupRejectCount
-              return ControlCodeResultWaitOutcome(generated = visualMarker, failureReason = "")
             }
           }
           visualProbe.result == "control_popup" -> {
@@ -8804,29 +8832,6 @@ class TicketStreamService : Service() {
     recordInputGateDecision(allowed = false, reason = "phone_stuck_on_generated_code")
     recordTicketEvent("control_code_generated_heal_failed", "phone_stuck_on_generated_code")
     return false
-  }
-
-  private suspend fun completeControlCodeRawTicketAfterSubmitCleanup(
-    reason: String,
-    phases: MutableMap<String, Long>,
-    requestStartedAtMillis: Long
-  ): Boolean {
-    val startedAtMillis = SystemClock.elapsedRealtime()
-    markControlCodeRequestPhase(phases, "cleanup_started", requestStartedAtMillis)
-    markControlCodeRequestPhase(phases, "phone_raw_recovered", requestStartedAtMillis)
-    recordTicketEvent(
-      "control_code_fast_cleanup_phase",
-      "phone_visual_raw_ticket_after_submit"
-    )
-    updateTicketSessionState(TICKET_SESSION_CONTROL_EXIT, reason)
-    return completeControlExitCleanup(
-      reason = reason,
-      detectedState = TicketViviRecoveryState.CONTROL_CODE_RESULT.name,
-      closeAction = "already_raw_after_submit",
-      startedAtMillis = startedAtMillis,
-      verificationResult = "phone_visual_raw_ticket_after_submit",
-      freshFrameRequested = true
-    )
   }
 
   private suspend fun returnControlCodeSurfaceToRawTicket(
@@ -9906,10 +9911,18 @@ class TicketStreamService : Service() {
     return result
   }
 
-  private suspend fun runFastNonTouchInput(command: String, reason: String): RootResult {
+  private suspend fun runFastNonTouchInput(
+    command: String,
+    reason: String,
+    postMillis: Long = NON_TOUCH_PANEL_SLEEP_CLAMP_POST_MILLIS
+  ): RootResult {
     PhoneAutomationServiceBridge.markNonTouchInput("ticket:$reason")
     val result = inputRootExecutor.runScript(
-      wrapNonTouchPanelSleepClamp(command, commandTimeout = NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS.milliseconds)
+      wrapNonTouchPanelSleepClamp(
+        command,
+        postMillis = postMillis,
+        commandTimeout = NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS.milliseconds
+      )
     ).also { recordInputCommandResult(reason, it) }
     PhoneAutomationServiceBridge.markNonTouchInput("ticket:$reason:complete")
     return result
@@ -9972,8 +9985,11 @@ class TicketStreamService : Service() {
     commandTimeout: Duration? = null
   ): String {
     val intervalMicros = NON_TOUCH_PANEL_SLEEP_CLAMP_INTERVAL_MILLIS * 1_000L
+    val postDisplayIntervalMicros = NON_TOUCH_PANEL_SLEEP_CLAMP_POST_DISPLAY_INTERVAL_MILLIS * 1_000L
     val postWrites = ((postMillis + NON_TOUCH_PANEL_SLEEP_CLAMP_INTERVAL_MILLIS - 1) /
       NON_TOUCH_PANEL_SLEEP_CLAMP_INTERVAL_MILLIS).coerceAtLeast(1L)
+    val postDisplayWrites = ((postMillis + NON_TOUCH_PANEL_SLEEP_CLAMP_POST_DISPLAY_INTERVAL_MILLIS - 1) /
+      NON_TOUCH_PANEL_SLEEP_CLAMP_POST_DISPLAY_INTERVAL_MILLIS).coerceAtLeast(1L)
     val commandTimeoutMillis = commandTimeout?.inWholeMilliseconds
       ?.minus(NON_TOUCH_COMMAND_SELF_TIMEOUT_CUSHION_MILLIS)
       ?.coerceAtLeast(250L)
@@ -10003,7 +10019,8 @@ class TicketStreamService : Service() {
     return """
       ticket_clamp_stop="/data/local/tmp/pixel-ticket-panel-clamp-${'$'}${'$'}-$(date +%s%N 2>/dev/null || date +%s)"
       ticket_command_file="/data/local/tmp/pixel-ticket-nontouch-command-${'$'}${'$'}-$(date +%s%N 2>/dev/null || date +%s).sh"
-      ticket_sysfs_clamp_pid=""
+      ticket_sysfs_clamp_pids=""
+      ticket_busy_clamp_pid=""
       ticket_display_clamp_pid=""
       ticket_command_rc=0
       ticket_command_timed_out=0
@@ -10015,64 +10032,105 @@ class TicketStreamService : Service() {
           break
         fi
       done
-      if [ -n "${'$'}ticket_panel_dir" ]; then
-        echo 0 > "${'$'}ticket_panel_dir/brightness" 2>/dev/null || true
+      ticket_panel_sysfs_dark() {
+        if [ -n "${'$'}ticket_panel_dir" ]; then
+          echo 0 > "${'$'}ticket_panel_dir/brightness" 2>/dev/null || true
+        fi
+      }
+      ticket_panel_display_dark_once() {
+        if [ -z "${'$'}ticket_panel_dir" ]; then
+          settings put system screen_brightness_mode 0 >/dev/null 2>&1 || true
+          settings put system screen_brightness 0 >/dev/null 2>&1 || true
+        fi
+        ticket_panel_sysfs_dark
+      }
+      ticket_panel_sysfs_dark
+      if [ -z "${'$'}ticket_panel_dir" ]; then
+        ticket_panel_display_dark_once
       fi
-      settings put system screen_brightness_mode 0 >/dev/null 2>&1 || true
-      if ! cmd display set-brightness 0 --unit percentage >/dev/null 2>&1; then
-        settings put system screen_brightness 0 >/dev/null 2>&1 || true
-      fi
-      settings put system screen_brightness 0 >/dev/null 2>&1 || true
       ticket_panel_clamp_sleep() {
         sleep 0.005 2>/dev/null || usleep $intervalMicros 2>/dev/null || sleep 1
       }
       ticket_panel_display_sleep() {
-        sleep 0.100 2>/dev/null || usleep 100000 2>/dev/null || sleep 1
+        sleep 0.010 2>/dev/null || usleep 10000 2>/dev/null || sleep 1
       }
       ticket_panel_sysfs_clamp() {
         while [ ! -f "${'$'}ticket_clamp_stop" ]; do
-          if [ -n "${'$'}ticket_panel_dir" ]; then
-            echo 0 > "${'$'}ticket_panel_dir/brightness" 2>/dev/null || true
-          fi
+          ticket_panel_sysfs_dark
           ticket_panel_clamp_sleep
         done
       }
-      ticket_panel_post_clamp() {
-        ticket_panel_post_write_index=0
-        while [ "${'$'}ticket_panel_post_write_index" -lt "$postWrites" ]; do
-          if [ -n "${'$'}ticket_panel_dir" ]; then
-            echo 0 > "${'$'}ticket_panel_dir/brightness" 2>/dev/null || true
+      ticket_panel_start_sysfs_clamp() {
+        ticket_panel_sysfs_clamp >/dev/null 2>&1 &
+        ticket_sysfs_clamp_pids="${'$'}ticket_sysfs_clamp_pids ${'$'}!"
+      }
+      ticket_panel_busy_sysfs_clamp() {
+        ticket_panel_busy_index=0
+        while [ ! -f "${'$'}ticket_clamp_stop" ]; do
+          ticket_panel_sysfs_dark
+          ticket_panel_busy_index=${'$'}((ticket_panel_busy_index + 1))
+          if [ "${'$'}ticket_panel_busy_index" -ge 500 ]; then
+            ticket_panel_busy_index=0
+            sleep 0.001 2>/dev/null || true
           fi
-          settings put system screen_brightness_mode 0 >/dev/null 2>&1 || true
-          if ! cmd display set-brightness 0 --unit percentage >/dev/null 2>&1; then
-            settings put system screen_brightness 0 >/dev/null 2>&1 || true
-          fi
-          settings put system screen_brightness 0 >/dev/null 2>&1 || true
-          ticket_panel_post_write_index=${'$'}((ticket_panel_post_write_index + 1))
-          if [ "${'$'}ticket_panel_post_write_index" -lt "$postWrites" ]; then
+        done
+      }
+      ticket_panel_start_busy_clamp() {
+        if [ -n "${'$'}ticket_panel_dir" ]; then
+          ticket_panel_busy_sysfs_clamp >/dev/null 2>&1 &
+          ticket_busy_clamp_pid=${'$'}!
+        fi
+      }
+      ticket_panel_post_sysfs_clamp() {
+        ticket_panel_post_sysfs_index=0
+        while [ "${'$'}ticket_panel_post_sysfs_index" -lt "$postWrites" ]; do
+          ticket_panel_sysfs_dark
+          ticket_panel_post_sysfs_index=${'$'}((ticket_panel_post_sysfs_index + 1))
+          if [ "${'$'}ticket_panel_post_sysfs_index" -lt "$postWrites" ]; then
             ticket_panel_clamp_sleep
           fi
         done
       }
+      ticket_panel_post_clamp() {
+        ticket_panel_post_sysfs_pids=""
+        ticket_panel_post_sysfs_clamp >/dev/null 2>&1 &
+        ticket_panel_post_sysfs_pids="${'$'}ticket_panel_post_sysfs_pids ${'$'}!"
+        usleep 2000 2>/dev/null || sleep 0.002 2>/dev/null || true
+        ticket_panel_post_sysfs_clamp >/dev/null 2>&1 &
+        ticket_panel_post_sysfs_pids="${'$'}ticket_panel_post_sysfs_pids ${'$'}!"
+        usleep 2000 2>/dev/null || sleep 0.002 2>/dev/null || true
+        ticket_panel_post_sysfs_clamp >/dev/null 2>&1 &
+        ticket_panel_post_sysfs_pids="${'$'}ticket_panel_post_sysfs_pids ${'$'}!"
+        if [ -z "${'$'}ticket_panel_dir" ]; then
+          ticket_panel_post_display_write_index=0
+          while [ "${'$'}ticket_panel_post_display_write_index" -lt "$postDisplayWrites" ]; do
+            ticket_panel_display_dark_once
+            ticket_panel_post_display_write_index=${'$'}((ticket_panel_post_display_write_index + 1))
+            if [ "${'$'}ticket_panel_post_display_write_index" -lt "$postDisplayWrites" ]; then
+              usleep $postDisplayIntervalMicros 2>/dev/null || sleep ${
+                NON_TOUCH_PANEL_SLEEP_CLAMP_POST_DISPLAY_INTERVAL_MILLIS / 1_000
+              }.${(NON_TOUCH_PANEL_SLEEP_CLAMP_POST_DISPLAY_INTERVAL_MILLIS % 1_000).toString().padStart(3, '0')} 2>/dev/null || sleep 1
+            fi
+          done
+        fi
+        for ticket_panel_post_sysfs_pid in ${'$'}ticket_panel_post_sysfs_pids; do
+          wait "${'$'}ticket_panel_post_sysfs_pid" >/dev/null 2>&1 || true
+        done
+      }
       ticket_panel_display_clamp() {
         while [ ! -f "${'$'}ticket_clamp_stop" ]; do
-          settings put system screen_brightness_mode 0 >/dev/null 2>&1 || true
-          if ! cmd display set-brightness 0 --unit percentage >/dev/null 2>&1; then
-            settings put system screen_brightness 0 >/dev/null 2>&1 || true
-          fi
-          settings put system screen_brightness 0 >/dev/null 2>&1 || true
-          ticket_panel_display_sleep
+          ticket_panel_display_dark_once
+          sleep 0.500 2>/dev/null || usleep 500000 2>/dev/null || sleep 1
         done
-        settings put system screen_brightness_mode 0 >/dev/null 2>&1 || true
-        if ! cmd display set-brightness 0 --unit percentage >/dev/null 2>&1; then
-          settings put system screen_brightness 0 >/dev/null 2>&1 || true
-        fi
-        settings put system screen_brightness 0 >/dev/null 2>&1 || true
+        ticket_panel_display_dark_once
       }
       ticket_panel_stop_clamps() {
         touch "${'$'}ticket_clamp_stop" >/dev/null 2>&1 || true
-        if [ -n "${'$'}ticket_sysfs_clamp_pid" ]; then
+        for ticket_sysfs_clamp_pid in ${'$'}ticket_sysfs_clamp_pids; do
           wait "${'$'}ticket_sysfs_clamp_pid" >/dev/null 2>&1 || true
+        done
+        if [ -n "${'$'}ticket_busy_clamp_pid" ]; then
+          wait "${'$'}ticket_busy_clamp_pid" >/dev/null 2>&1 || true
         fi
         if [ -n "${'$'}ticket_display_clamp_pid" ]; then
           wait "${'$'}ticket_display_clamp_pid" >/dev/null 2>&1 || true
@@ -10085,10 +10143,22 @@ class TicketStreamService : Service() {
         exit "${'$'}ticket_trap_rc"
       }
       trap 'ticket_panel_trap_cleanup 143' HUP INT TERM
-      ticket_panel_sysfs_clamp >/dev/null 2>&1 &
-      ticket_sysfs_clamp_pid=${'$'}!
-      ticket_panel_display_clamp >/dev/null 2>&1 &
-      ticket_display_clamp_pid=${'$'}!
+      ticket_panel_start_sysfs_clamp
+      usleep 2000 2>/dev/null || sleep 0.002 2>/dev/null || true
+      ticket_panel_start_sysfs_clamp
+      usleep 2000 2>/dev/null || sleep 0.002 2>/dev/null || true
+      ticket_panel_start_sysfs_clamp
+      usleep 2000 2>/dev/null || sleep 0.002 2>/dev/null || true
+      ticket_panel_start_sysfs_clamp
+      usleep 2000 2>/dev/null || sleep 0.002 2>/dev/null || true
+      ticket_panel_start_sysfs_clamp
+      usleep 2000 2>/dev/null || sleep 0.002 2>/dev/null || true
+      ticket_panel_start_sysfs_clamp
+      ticket_panel_start_busy_clamp
+      if [ -z "${'$'}ticket_panel_dir" ]; then
+        ticket_panel_display_clamp >/dev/null 2>&1 &
+        ticket_display_clamp_pid=${'$'}!
+      fi
       ticket_panel_clamp_sleep
       printf '%s\n' $quotedCommand > "${'$'}ticket_command_file"
       chmod 0700 "${'$'}ticket_command_file" >/dev/null 2>&1 || true
@@ -10115,6 +10185,11 @@ class TicketStreamService : Service() {
       .replace("%", "%25")
       .replace(" ", "%s")
   }
+
+  private fun controlCodeDigitKeyEvents(value: String): String =
+    value.filter { it in '0'..'9' }
+      .map { "KEYCODE_$it" }
+      .joinToString(" ")
 
   private fun recordInputCommandResult(reason: String, result: RootResult) {
     lastInputCommandReason = reason
@@ -11127,7 +11202,7 @@ class TicketStreamService : Service() {
     private const val TICKET_ROOT_HIERARCHY_DUMP_TIMEOUT_MILLIS = 8_000L
     private const val TICKET_WAKE_COMMAND_TIMEOUT_MILLIS = 3_000L
     private const val TICKET_WAKE_INTERACTIVE_TIMEOUT_MILLIS = 900L
-    private const val TICKET_WAKE_LAUNCH_TIMEOUT_MILLIS = 1_500L
+    private const val TICKET_WAKE_LAUNCH_TIMEOUT_MILLIS = 3_000L
     private const val TICKET_WAKE_FAST_INITIAL_TIMEOUT_MILLIS = 0L
     private const val TICKET_WAKE_FAST_POST_LAUNCH_TIMEOUT_MILLIS = 600L
     private const val TICKET_WAKE_FAST_ROOT_DUMP_TIMEOUT_MILLIS = 8_000L
@@ -11141,8 +11216,10 @@ class TicketStreamService : Service() {
     private const val NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS = 120_000L
     private const val NON_TOUCH_COMMAND_SELF_TIMEOUT_CUSHION_MILLIS = 250L
     private const val NON_TOUCH_PANEL_SLEEP_CLAMP_INTERVAL_MILLIS = 5L
+    private const val NON_TOUCH_PANEL_SLEEP_CLAMP_POST_DISPLAY_INTERVAL_MILLIS = 1_250L
     private const val TICKET_WAKE_PANEL_SLEEP_CLAMP_POST_MILLIS = 250L
-    private const val NON_TOUCH_PANEL_SLEEP_CLAMP_POST_MILLIS = 500L
+    private const val CONTROL_CODE_FAST_PANEL_SLEEP_CLAMP_POST_MILLIS = 250L
+    private const val NON_TOUCH_PANEL_SLEEP_CLAMP_POST_MILLIS = 2_500L
     private const val STARTUP_CLIENT_DISCONNECT_GRACE_MILLIS = 5_000L
     private const val CLIENT_DISCONNECT_IDLE_GRACE_MILLIS = 30_000L
     private const val VIVI_FOREGROUND_INITIAL_DELAY_MILLIS = 1_500L
@@ -11171,14 +11248,14 @@ class TicketStreamService : Service() {
     private const val CONTROL_CODE_FAST_ROOT_DUMP_TIMEOUT_MILLIS = 600L
     private const val CONTROL_CODE_FAST_RESULT_ROOT_DUMP_TIMEOUT_MILLIS = 2_500L
     private const val CONTROL_CODE_RAW_TICKET_ROOT_CONFIRM_TIMEOUT_MILLIS = 700L
-    private const val CONTROL_CODE_RAW_TICKET_VISUAL_CONFIRM_COUNT = 2L
+    private const val CONTROL_CODE_RAW_TICKET_VISUAL_REJECT_LOG_COUNT = 2L
     private const val CONTROL_CODE_FAST_RESULT_FINAL_ROOT_DUMP_TIMEOUT_MILLIS = 1_500L
     private const val CONTROL_CODE_GENERATED_RESULT_HARD_ROOT_DUMP_TIMEOUT_MILLIS = 3_000L
     private const val CONTROL_CODE_FAST_ROOT_RETRY_COUNT = 1
     private const val CONTROL_CODE_PREPARE_ROOT_DUMP_TIMEOUT_MILLIS = 700L
     private const val CONTROL_CODE_FAST_POPUP_TIMEOUT_MILLIS = 2_400L
     private const val CONTROL_CODE_FAST_POPUP_VISUAL_WAIT_MILLIS = 650L
-    private const val CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS = 10_000L
+    private const val CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS = 18_000L
     private const val CONTROL_CODE_BROWSER_CAPTURE_ACK_POLL_MILLIS = 40L
     private const val CONTROL_CODE_BROWSER_CAPTURE_ACK_TIMEOUT_MILLIS = 10_000L
     private const val CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 0L

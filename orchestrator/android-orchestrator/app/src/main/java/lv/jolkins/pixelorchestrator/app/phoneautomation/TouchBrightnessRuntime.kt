@@ -309,9 +309,26 @@ internal class AndroidTouchBrightnessDeviceController(
     ) {
       return PhoneAutomationActionResult(true, "Brightness already at $targetPercent%")
     }
-    val script = if (targetPercent == PANEL_SLEEP_TARGET_PERCENT) {
+    val panelAlreadySleeping = panelOnly && before?.matchesTargetLenient(targetPercent, panelOnly = true) == true
+    val script = if (targetPercent == PANEL_SLEEP_TARGET_PERCENT && panelAlreadySleeping) {
+      ScreenBrightnessControl.buildSetPanelPercentScript(
+        percent = targetPercent,
+        holdMillis = PANEL_SLEEP_HOLD_MILLIS,
+        holdIntervalMillis = DIM_HOLD_INTERVAL_MILLIS
+      )
+    } else if (targetPercent == PANEL_SLEEP_TARGET_PERCENT) {
       """
+        ${ScreenBrightnessControl.buildSetPanelPercentScript(
+          percent = targetPercent,
+          holdMillis = 0L,
+          holdIntervalMillis = DIM_HOLD_INTERVAL_MILLIS
+        )}
         settings put system screen_brightness_mode 0
+        ${ScreenBrightnessControl.buildSetPanelPercentScript(
+          percent = targetPercent,
+          holdMillis = 0L,
+          holdIntervalMillis = DIM_HOLD_INTERVAL_MILLIS
+        )}
         if ! cmd display set-brightness 0 --unit percentage >/dev/null 2>&1; then
           settings put system screen_brightness 0
         fi
@@ -1110,7 +1127,6 @@ internal class TouchBrightnessRuntime(
     }
 
     val startupSnapshot = settingsStore.load()
-    val resumePanelSleep = startupSnapshot.touchBrightnessState == TouchBrightnessRuntimeState.PANEL_SLEEP
 
     internalMode = InternalTouchBrightnessMode.STARTING
     publishCurrentState()
@@ -1119,8 +1135,15 @@ internal class TouchBrightnessRuntime(
     if (!preparation.ready) {
       throw IllegalStateException(preparation.detail)
     }
-    visibleBrightnessState = captureRestoreStateIfNeeded()
-    if (visibleBrightnessState == null) {
+    val capturedBrightnessState = captureRestoreStateIfNeeded()
+    val startupBrightnessWasPanelSleep = capturedBrightnessState?.isPanelSleepBrightnessState() == true
+    visibleBrightnessState = if (startupBrightnessWasPanelSleep) {
+      settingsStore.clearTouchBrightnessRestoreState()
+      null
+    } else {
+      capturedBrightnessState
+    }
+    if (visibleBrightnessState == null && !startupBrightnessWasPanelSleep) {
       throw IllegalStateException("Could not read the current brightness state")
     }
 
@@ -1139,10 +1162,8 @@ internal class TouchBrightnessRuntime(
       enterSuspendedScreenOff()
     } else if (activeTouchCount > 0) {
       enterBrightTouchActive()
-    } else if (resumePanelSleep) {
-      reassertPanelSleepBrightness("start_panel_sleep_reasserted")
     } else {
-      enterBrightIdle(uptimeClock(), "start_visible_idle")
+      reassertPanelSleepBrightness("start_panel_sleep_reasserted")
     }
 
     val eventJob = launch {
@@ -1465,6 +1486,19 @@ internal class TouchBrightnessRuntime(
     )
   }
 
+  private fun ScreenBrightnessState.isPanelSleepBrightnessState(): Boolean {
+    val systemBrightness = value
+    if (systemBrightness != null && systemBrightness <= 0) {
+      return true
+    }
+    val display = displayPercentage
+    if (display != null && display <= PANEL_SLEEP_DISPLAY_PERCENT_TOLERANCE) {
+      return true
+    }
+    val panel = panelActualBrightness ?: panelBrightness
+    return panel != null && panel <= PANEL_SLEEP_PANEL_VALUE_TOLERANCE
+  }
+
   companion object {
     internal const val BRIGHT_PERCENT = 100
     internal const val SAFE_VISIBLE_FALLBACK_PERCENT = 20
@@ -1478,6 +1512,8 @@ internal class TouchBrightnessRuntime(
     internal const val SESSION_RETRY_INITIAL_DELAY_MILLIS = 1_000L
     internal const val SESSION_RETRY_MAX_DELAY_MILLIS = 15_000L
     private const val AUTOMATIC_BRIGHTNESS_MODE_VALUE = 1
+    private const val PANEL_SLEEP_DISPLAY_PERCENT_TOLERANCE = 0.5f
+    private const val PANEL_SLEEP_PANEL_VALUE_TOLERANCE = 2
     private const val SERVICE_DESTROYED_REASON = "service_destroyed"
     private const val TAG = "TouchBrightness"
   }

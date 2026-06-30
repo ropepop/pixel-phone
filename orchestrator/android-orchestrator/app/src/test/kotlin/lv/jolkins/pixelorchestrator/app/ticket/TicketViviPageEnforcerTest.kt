@@ -7,6 +7,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 
 class TicketViviPageEnforcerTest {
   @Test
@@ -50,10 +51,11 @@ class TicketViviPageEnforcerTest {
 
   @Test
   fun opensVisibleTicketCardFromTicketsList() {
+    val currentRange = currentTicketDateRange()
     val xml = """
       <hierarchy>
         <node package="com.pv.vivi" content-desc="Manas biļetes" bounds="[288,158][792,270]" />
-        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;24.05.2026 - 22.06.2026&#10;B&#10;A" clickable="true" bounds="[0,536][1080,1011]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;$currentRange&#10;B&#10;A" clickable="true" bounds="[0,536][1080,1011]" />
         <node package="com.pv.vivi" content-desc="Tickets&#10;2. cilne no 4" clickable="true" selected="true" bounds="[270,2209][540,2361]" />
       </hierarchy>
     """.trimIndent()
@@ -149,11 +151,12 @@ class TicketViviPageEnforcerTest {
 
   @Test
   fun choosesCurrentTimeTicketWithLatestEndDateInsteadOfFirstExpiredCard() {
-    val xml = ticketListWithExpiredAndCurrentCardsXml()
+    val today = LocalDate.now()
+    val xml = ticketListWithExpiredAndCurrentCardsXml(today)
 
     val action = TicketViviPageEnforcer.bestTicketCardActionForHierarchy(
       xml,
-      today = LocalDate.of(2026, 5, 24)
+      today = today
     )
     val recoveryAction = TicketViviPageEnforcer.recoveryActionForHierarchy(xml)
 
@@ -168,11 +171,12 @@ class TicketViviPageEnforcerTest {
 
   @Test
   fun choosesSoonestUpcomingTimeTicketWhenNoCurrentTicketExists() {
-    val xml = ticketListWithOnlyFutureCardsXml()
+    val today = LocalDate.now()
+    val xml = ticketListWithOnlyFutureCardsXml(today)
 
     val action = TicketViviPageEnforcer.bestTicketCardActionForHierarchy(
       xml,
-      today = LocalDate.of(2026, 5, 24)
+      today = today
     )
 
     assertEquals(TicketViviRecoveryState.TICKET_LIST_WITH_CARD, TicketViviPageEnforcer.classifyForRecovery(xml))
@@ -773,11 +777,12 @@ class TicketViviPageEnforcerTest {
     val popupAction = TicketViviPageEnforcer.resetActionForHierarchy(controlCodePopupXml(inputFocused = false))
     assertEquals("close_control_code_popup", popupAction?.reason)
 
+    val currentRange = currentTicketDateRange()
     val listAction = TicketViviPageEnforcer.resetActionForHierarchy(
       """
         <hierarchy>
           <node package="com.pv.vivi" content-desc="Manas biļetes" bounds="[288,158][792,270]" />
-          <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;24.05.2026 - 22.06.2026&#10;B&#10;A" clickable="true" bounds="[0,536][1080,1011]" />
+          <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;$currentRange&#10;B&#10;A" clickable="true" bounds="[0,536][1080,1011]" />
           <node package="com.pv.vivi" content-desc="Tickets&#10;2. cilne no 4" clickable="true" selected="true" bounds="[270,2209][540,2361]" />
         </hierarchy>
       """.trimIndent()
@@ -1017,10 +1022,11 @@ class TicketViviPageEnforcerTest {
   }
 
   private fun ticketsListXml(): String {
+    val currentRange = currentTicketDateRange()
     return """
       <hierarchy>
         <node package="com.pv.vivi" content-desc="Manas biļetes" bounds="[288,158][792,270]" />
-        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;24.05.2026 - 22.06.2026&#10;B&#10;A" clickable="true" bounds="[0,536][1080,1011]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;$currentRange&#10;B&#10;A" clickable="true" bounds="[0,536][1080,1011]" />
         <node package="com.pv.vivi" content-desc="Tickets&#10;2. cilne no 4" clickable="true" selected="true" bounds="[270,2209][540,2361]" />
       </hierarchy>
     """.trimIndent()
@@ -1039,28 +1045,42 @@ class TicketViviPageEnforcerTest {
     """.trimIndent()
   }
 
-  private fun ticketListWithExpiredAndCurrentCardsXml(): String {
+  private fun ticketListWithExpiredAndCurrentCardsXml(today: LocalDate = LocalDate.now()): String {
+    val firstExpiredRange = ticketDateRange(today.minusDays(65), today.minusDays(36))
+    val secondExpiredRange = ticketDateRange(today.minusDays(40), today.minusDays(11))
+    val currentRange = ticketDateRange(today.minusDays(3), today.plusDays(26))
     return """
       <hierarchy>
         <node package="com.pv.vivi" content-desc="Manas biļetes" bounds="[288,158][792,270]" />
-        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;23.04.2026 - 22.05.2026&#10;B&#10;A" clickable="true" bounds="[0,536][1080,900]" />
-        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;01.05.2026 - 30.05.2026&#10;B&#10;A" clickable="true" bounds="[0,910][1080,1274]" />
-        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;24.05.2026 - 22.06.2026&#10;B&#10;A" clickable="true" bounds="[0,1284][1080,1648]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;$firstExpiredRange&#10;B&#10;A" clickable="true" bounds="[0,536][1080,900]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;$secondExpiredRange&#10;B&#10;A" clickable="true" bounds="[0,910][1080,1274]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;$currentRange&#10;B&#10;A" clickable="true" bounds="[0,1284][1080,1648]" />
         <node package="com.pv.vivi" content-desc="Tickets&#10;2. cilne no 4" clickable="true" selected="true" bounds="[270,2209][540,2361]" />
       </hierarchy>
     """.trimIndent()
   }
 
-  private fun ticketListWithOnlyFutureCardsXml(): String {
+  private fun ticketListWithOnlyFutureCardsXml(today: LocalDate = LocalDate.now()): String {
+    val expiredRange = ticketDateRange(today.minusDays(65), today.minusDays(36))
+    val firstFutureRange = ticketDateRange(today.plusDays(1), today.plusDays(30))
+    val secondFutureRange = ticketDateRange(today.plusDays(8), today.plusDays(37))
     return """
       <hierarchy>
         <node package="com.pv.vivi" content-desc="Manas biļetes" bounds="[288,158][792,270]" />
-        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;23.04.2026 - 22.05.2026&#10;B&#10;A" clickable="true" bounds="[0,536][1080,900]" />
-        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;25.05.2026 - 23.06.2026&#10;B&#10;A" clickable="true" bounds="[0,910][1080,1274]" />
-        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;01.06.2026 - 30.06.2026&#10;B&#10;A" clickable="true" bounds="[0,1284][1080,1648]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;$expiredRange&#10;B&#10;A" clickable="true" bounds="[0,536][1080,900]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;$firstFutureRange&#10;B&#10;A" clickable="true" bounds="[0,910][1080,1274]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;$secondFutureRange&#10;B&#10;A" clickable="true" bounds="[0,1284][1080,1648]" />
         <node package="com.pv.vivi" content-desc="Tickets&#10;2. cilne no 4" clickable="true" selected="true" bounds="[270,2209][540,2361]" />
       </hierarchy>
     """.trimIndent()
+  }
+
+  private fun currentTicketDateRange(today: LocalDate = LocalDate.now()): String {
+    return ticketDateRange(today.minusDays(3), today.plusDays(26))
+  }
+
+  private fun ticketDateRange(start: LocalDate, end: LocalDate): String {
+    return "${start.format(TICKET_DATE_FORMAT)} - ${end.format(TICKET_DATE_FORMAT)}"
   }
 
   private fun ticketDetailXml(): String {
@@ -1071,5 +1091,9 @@ class TicketViviPageEnforcerTest {
         <node package="com.pv.vivi" content-desc="PV-ELB-20260423-0RJB2M" bounds="[119,1329][961,1423]" />
       </hierarchy>
     """.trimIndent()
+  }
+
+  private companion object {
+    val TICKET_DATE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy")
   }
 }

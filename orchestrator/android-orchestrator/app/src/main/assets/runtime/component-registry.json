@@ -66,6 +66,12 @@
       "startCommand": "sh /data/local/pixel-stack/bin/pixel-ticket-start.sh",
       "stopCommand": "sh /data/local/pixel-stack/bin/pixel-ticket-stop.sh",
       "healthCommand": "sh /data/local/pixel-stack/bin/pixel-ticket-health.sh"
+    },
+    {
+      "id": "runtime_cleanup",
+      "startCommand": "am start-foreground-service -n lv.jolkins.pixelorchestrator/.app.SupervisorService -a lv.jolkins.pixelorchestrator.action.CLEANUP --es orchestrator_action cleanup --es orchestrator_cleanup_trigger manual",
+      "stopCommand": "true",
+      "healthCommand": "latest=$(ls -1t /data/local/pixel-stack/logs/events/cleanup-*.json 2>/dev/null | grep -v -- '-dry-run.json' | sed -n '1p'); [ -n \"$latest\" ] && ! grep -q '\"status\"[[:space:]]*:[[:space:]]*\"failed\"' \"$latest\""
     }
   ]
 }

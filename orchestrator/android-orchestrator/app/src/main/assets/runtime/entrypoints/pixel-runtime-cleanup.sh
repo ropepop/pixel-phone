@@ -4,9 +4,15 @@ set -eu
 STACK_BASE="/data/local/pixel-stack"
 ORCHESTRATOR_CACHE="/data/user/0/lv.jolkins.pixelorchestrator/cache"
 TERMUX_HOME="/data/user/0/com.termux/files/home"
+LOCAL_TMP="/data/local/tmp"
+SUPERUSER_LOG_DB="/data/user_de/0/giilmkonhuutj.ih.wb/databases/sulogs.db"
+SUPERUSER_PACKAGE="giilmkonhuutj.ih.wb"
+ROOT_RECHECK_COMMAND="id -u"
 PROTECTED_LIST=""
 DRY_RUN=0
 TERMUX_RETENTION_LIST=""
+ARTIFACT_AGE_DAYS=30
+LOG_AGE_DAYS=30
 
 cleanup_tmp_files() {
   [ -n "${TERMUX_RETENTION_LIST}" ] && rm -f "${TERMUX_RETENTION_LIST}" 2>/dev/null || true
@@ -32,6 +38,30 @@ while [ "$#" -gt 0 ]; do
       TERMUX_HOME="${2:-}"
       shift 2
       ;;
+    --local-tmp)
+      LOCAL_TMP="${2:-}"
+      shift 2
+      ;;
+    --superuser-log-db)
+      SUPERUSER_LOG_DB="${2:-}"
+      shift 2
+      ;;
+    --superuser-package)
+      SUPERUSER_PACKAGE="${2:-}"
+      shift 2
+      ;;
+    --root-recheck-command)
+      ROOT_RECHECK_COMMAND="${2:-}"
+      shift 2
+      ;;
+    --artifact-age-days)
+      ARTIFACT_AGE_DAYS="${2:-}"
+      shift 2
+      ;;
+    --log-age-days)
+      LOG_AGE_DAYS="${2:-}"
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -47,6 +77,13 @@ if [ -z "${PROTECTED_LIST}" ] || [ ! -f "${PROTECTED_LIST}" ]; then
   echo "Protected path list is required" >&2
   exit 2
 fi
+
+case "${ARTIFACT_AGE_DAYS}" in
+  ''|*[!0-9]*) echo "artifact age must be a whole number of days" >&2; exit 2 ;;
+esac
+case "${LOG_AGE_DAYS}" in
+  ''|*[!0-9]*) echo "log age must be a whole number of days" >&2; exit 2 ;;
+esac
 
 bytes_of_path() {
   bytes_path="$1"
@@ -113,6 +150,34 @@ delete_or_candidate() {
   record "FAIL" "${delete_category}" "${delete_bytes}" "${delete_path}" "delete_failed:${delete_detail}"
 }
 
+truncate_or_candidate() {
+  truncate_category="$1"
+  truncate_path="$2"
+  truncate_detail="${3:-}"
+
+  if [ ! -f "${truncate_path}" ]; then
+    return 0
+  fi
+
+  truncate_bytes="$(bytes_of_path "${truncate_path}")"
+  if is_protected "${truncate_path}"; then
+    record "SKIP" "${truncate_category}" "${truncate_bytes}" "${truncate_path}" "protected"
+    return 0
+  fi
+
+  if [ "${DRY_RUN}" -eq 1 ]; then
+    record "CANDIDATE" "${truncate_category}" "${truncate_bytes}" "${truncate_path}" "${truncate_detail}"
+    return 0
+  fi
+
+  if : > "${truncate_path}" 2>/dev/null; then
+    record "DELETE" "${truncate_category}" "${truncate_bytes}" "${truncate_path}" "truncated:${truncate_detail}"
+    return 0
+  fi
+
+  record "FAIL" "${truncate_category}" "${truncate_bytes}" "${truncate_path}" "truncate_failed:${truncate_detail}"
+}
+
 scan_find() {
   scan_category="$1"
   scan_detail="$2"
@@ -121,6 +186,68 @@ scan_find() {
     [ -n "${scan_path}" ] || continue
     delete_or_candidate "${scan_category}" "${scan_path}" "${scan_detail}"
   done
+}
+
+truncate_if_old() {
+  truncate_path="$1"
+  truncate_detail="$2"
+  find "${truncate_path}" -maxdepth 0 -type f -mtime "+${LOG_AGE_DAYS}" 2>/dev/null | while IFS= read -r old_log_path; do
+    [ -n "${old_log_path}" ] || continue
+    truncate_or_candidate "runtime_log" "${old_log_path}" "${truncate_detail}"
+  done
+}
+
+root_recheck_ok() {
+  if [ "${ROOT_RECHECK_COMMAND}" = "id -u" ]; then
+    [ "$(id -u 2>/dev/null || echo 1)" = "0" ]
+    return $?
+  fi
+  sh -c "${ROOT_RECHECK_COMMAND}" >/dev/null 2>&1
+}
+
+superuser_log_bytes() {
+  total=0
+  for superuser_log_path in "${SUPERUSER_LOG_DB}" "${SUPERUSER_LOG_DB}-wal" "${SUPERUSER_LOG_DB}-shm"; do
+    if [ -e "${superuser_log_path}" ]; then
+      path_bytes="$(bytes_of_path "${superuser_log_path}")"
+      total=$((total + path_bytes))
+    fi
+  done
+  echo "${total}"
+}
+
+cleanup_superuser_log_db() {
+  if [ ! -e "${SUPERUSER_LOG_DB}" ] && [ ! -e "${SUPERUSER_LOG_DB}-wal" ] && [ ! -e "${SUPERUSER_LOG_DB}-shm" ]; then
+    return 0
+  fi
+
+  superuser_bytes="$(superuser_log_bytes)"
+  if is_protected "${SUPERUSER_LOG_DB}"; then
+    record "SKIP" "superuser_log_db" "${superuser_bytes}" "${SUPERUSER_LOG_DB}" "protected"
+    return 0
+  fi
+  if ! find "${SUPERUSER_LOG_DB}" -maxdepth 0 -type f -mtime "+${LOG_AGE_DAYS}" 2>/dev/null | grep -q .; then
+    record "SKIP" "superuser_log_db" "${superuser_bytes}" "${SUPERUSER_LOG_DB}" "younger_than_retention"
+    return 0
+  fi
+
+  if [ "${DRY_RUN}" -eq 1 ]; then
+    record "CANDIDATE" "superuser_log_db" "${superuser_bytes}" "${SUPERUSER_LOG_DB}" "sulogs_db"
+    return 0
+  fi
+
+  am force-stop "${SUPERUSER_PACKAGE}" >/dev/null 2>&1 || true
+  rm -f "${SUPERUSER_LOG_DB}" "${SUPERUSER_LOG_DB}-wal" "${SUPERUSER_LOG_DB}-shm" 2>/dev/null || true
+  if ! root_recheck_ok; then
+    record "FAIL" "superuser_log_db" "${superuser_bytes}" "${SUPERUSER_LOG_DB}" "root_recheck_failed"
+    return 0
+  fi
+  if [ -e "${SUPERUSER_LOG_DB}" ] || [ -e "${SUPERUSER_LOG_DB}-wal" ] || [ -e "${SUPERUSER_LOG_DB}-shm" ]; then
+    record "FAIL" "superuser_log_db" "${superuser_bytes}" "${SUPERUSER_LOG_DB}" "delete_failed"
+    return 0
+  fi
+
+  record "DELETE" "superuser_log_db" "${superuser_bytes}" "${SUPERUSER_LOG_DB}" "sulogs_db"
 }
 
 append_termux_retention() {
@@ -163,8 +290,27 @@ build_termux_retention_list() {
 
 build_termux_retention_list
 
-ARTIFACT_AGE_ARGS="-mtime +2"
-LOG_AGE_ARGS="-mtime +6"
+ARTIFACT_AGE_ARGS="-mtime +${ARTIFACT_AGE_DAYS}"
+LOG_AGE_ARGS="-mtime +${LOG_AGE_DAYS}"
+
+scan_find "tmp_artifact" "pixel_orchestrator_runtime_dir" "${LOCAL_TMP}" -mindepth 1 -maxdepth 1 -type d -name 'pixel-orchestrator-runtime-*' ${ARTIFACT_AGE_ARGS}
+scan_find "tmp_artifact" "orchestrator_runtime_dir" "${LOCAL_TMP}" -mindepth 1 -maxdepth 1 -type d -name 'orchestrator-runtime-*' ${ARTIFACT_AGE_ARGS}
+scan_find "tmp_artifact" "site_notifier_build_dir" "${LOCAL_TMP}" -mindepth 1 -maxdepth 1 -type d -name 'site-notifications-build*' ${ARTIFACT_AGE_ARGS}
+scan_find "tmp_artifact" "ticket_capture_dir" "${LOCAL_TMP}" -mindepth 1 -maxdepth 1 -type d \( -name 'ticket-poll-*' -o -name 'ticket-capture-*' \) ${ARTIFACT_AGE_ARGS}
+scan_find "tmp_artifact" "runtime_bundle" "${LOCAL_TMP}" -mindepth 1 -maxdepth 1 -type f \( \
+  -name 'adguardhome-rootfs*.tar' -o \
+  -name '*-rootfs-*.tar' -o \
+  -name 'dropbear-bundle*.tar' -o \
+  -name 'tailscale-bundle*.tar' -o \
+  -name 'site-notifier-bundle*.tar' -o \
+  -name 'source-site-notifier-*.tar' -o \
+  -name 'train-bot-bundle*.tar' -o \
+  -name 'satiksme-bot-bundle*.tar' -o \
+  -name 'subscription-bot-bundle*.tar' -o \
+  -name 'pixel-orchestrator-runtime-*.tar' \
+\) ${ARTIFACT_AGE_ARGS}
+scan_find "tmp_artifact" "debug_apk" "${LOCAL_TMP}" -mindepth 1 -maxdepth 1 -type f \( -name '*-debug.apk' -o -name 'app-debug.apk' -o -name 'pixel-orchestrator*.apk' \) ${ARTIFACT_AGE_ARGS}
+scan_find "tmp_artifact" "ticket_capture_file" "${LOCAL_TMP}" -mindepth 1 -maxdepth 1 -type f \( -name 'ticket-poll-*' -o -name 'ticket-capture-*' -o -name 'pixel-ticket-*capture*' \) ${ARTIFACT_AGE_ARGS}
 
 scan_find "app_cache" "runtime_artifact_cache" "${ORCHESTRATOR_CACHE}/runtime-artifacts" -mindepth 1 -maxdepth 1 \( -type f -o -type d \) ${ARTIFACT_AGE_ARGS}
 scan_find "app_cache" "staged_asset_temp" "${ORCHESTRATOR_CACHE}" -mindepth 1 -maxdepth 1 -type f -name 'asset-stage-*' ${ARTIFACT_AGE_ARGS}
@@ -200,3 +346,13 @@ for legacy_log in \
   vpn-break-glass.log; do
   scan_find "legacy_log" "legacy_debug_log" "${STACK_BASE}/logs" -mindepth 1 -maxdepth 1 -type f -name "${legacy_log}" ${LOG_AGE_ARGS}
 done
+
+for runtime_log_path in \
+  "${STACK_BASE}/vpn/logs/tailscaled.log" \
+  "${STACK_BASE}/ssh/logs/dropbear.log" \
+  "${STACK_BASE}/apps/ticket-screen/logs/ticket-screen-cloudflared.log" \
+  "${STACK_BASE}/apps/ticket-screen/logs/ticket-web-tunnel-service-loop.log"; do
+  truncate_if_old "${runtime_log_path}" "known_runtime_log"
+done
+
+cleanup_superuser_log_db

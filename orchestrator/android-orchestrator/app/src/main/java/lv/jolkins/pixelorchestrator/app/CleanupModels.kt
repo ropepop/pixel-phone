@@ -27,8 +27,8 @@ enum class CleanupReportStatus {
 
 @Serializable
 data class CleanupRetentionPolicy(
-  val artifactHours: Int = 72,
-  val logHours: Int = 168
+  val artifactHours: Int = 720,
+  val logHours: Int = 720
 )
 
 @Serializable

@@ -45,6 +45,7 @@ Key roles:
 - `RuntimeInstaller` syncs bundled runtime assets and installs component releases.
 - `SupervisorEngine` starts, stops, restarts, and health-checks runtime components.
 - `RuntimeHealthChecker` synthesizes component health from runtime probes.
+- `runtime_cleanup` is a scheduled/manual job component. It runs through the Android cleanup action, uses the runtime mutation lock, and reports health from cleanup reports.
 - `StackStore` persists app-private config and state.
 
 ## 3. Runtime Plane
@@ -86,6 +87,7 @@ The module registry and module manifests are the source of truth for ownership. 
 | `ddns` | `orchestrator/android-orchestrator` | job | `job` | Runs sync entrypoint and records last-sync state. |
 | `remote` | `orchestrator/android-orchestrator` | synthetic health | `derived` from `dns` | Represents public remote endpoint health. |
 | `management` | `orchestrator/android-orchestrator` | synthetic health | `derived` from `vpn` | Represents management reachability. |
+| `runtime_cleanup` | `orchestrator/android-orchestrator` | job | `job` | Weekly Monday 03:00 cleanup of approved generated artifacts and logs older than 30 days. |
 | `train_bot` | `workloads/train-bot` | rooted service | `artifact_release` | Uses immutable releases under `/apps/train-bot/releases`. |
 | `satiksme_bot` | `workloads/satiksme-bot` | rooted service | `artifact_release` | Uses immutable releases under `/apps/satiksme-bot/releases`. |
 | `site_notifier` | `workloads/site-notifications` | rooted service | `artifact_release` | Uses immutable releases under `/apps/site-notifications/releases`. |
@@ -103,6 +105,7 @@ Use the narrowest action that matches the intended mutation.
 - `restart_component`: lifecycle control only. It must not publish a new release or repair stale runtime assets.
 - `start_component` and `stop_component`: runtime control without release mutation.
 - `health` and `health_component`: read-only validation paths.
+- `cleanup` and `start_component runtime_cleanup`: manual cleanup paths. The scheduled cleanup alarm runs the same action weekly on Monday at 03:00 device-local time.
 
 `ticket_screen` has an extra Android-side reliability toggle. When off, the supervisor loop must not auto-start that component. When on, SupervisorService keeps the local ticket server and tunnel ready after app start, package replace, and phone reboot, while leaving ViVi and capture idle until a viewer requests the stream.
 
@@ -126,6 +129,7 @@ Canonical evidence locations:
 - `standards/schemas/`: observability event and health schemas.
 - `/data/local/pixel-stack/run/orchestrator-action-results`: on-device action result artifacts.
 - `/data/local/pixel-stack/logs`: component logs.
+- `/data/local/pixel-stack/logs/events/cleanup-*.json`: cleanup reports, including deleted/skipped/failure counts and category summaries.
 
 Do not promote a measurement report into architecture by reference alone. If a report changes understanding of the stable design, update this architecture doc or the relevant subsystem doc and link the report as evidence.
 
@@ -141,6 +145,7 @@ These boundaries are architectural constraints:
 - Do not weaken notification lockdown, secure-window handling, input safety, or tunnel access controls without updating the relevant architecture and runbook.
 - Do not treat public and Pixel-local ticket surfaces as the same deploy target.
 - Do not clear browser profiles, cookies, or stored auth state unless explicitly requested.
+- Runtime cleanup must remain allowlisted and protected-path driven. It must not delete active runtime artifacts, chroots, current releases, state, run, conf, ssh, vpn, `/data/app`, or Termux repo roots.
 - When touch brightness is enabled, it is the sole owner of physical panel brightness, physical-touch timing, and power-button wake rebound. Ticket brightness guards and other screen guards must park instead of writing the panel.
 
 ## Architecture Update Notes
@@ -150,3 +155,4 @@ Future agents should append short notes here only when a change affects the whol
 - 2026-05-03: `ticket_screen` auto-start is now governed by a persisted Android toggle instead of generic supervisor auto-start. This keeps OFF truly stopped and ON ready after reboot without forcing ViVi or stream capture.
 - 2026-05-05: Root executor timeouts now clean up shell child process trees, and stable ticket readiness checks are throttled once the local server and tunnel are already ready. This prevents idle health probes from leaving CPU-burning orphan processes.
 - 2026-05-07: Touch brightness panel sleep owns zero-panel-brightness behavior when enabled: Android stays awake, the panel is written to `0` after two minutes without physical touch, and ticket brightness guards must park.
+- 2026-06-27: Runtime cleanup is now a first-class `runtime_cleanup` job component. The Android app schedules it weekly for Monday 03:00 local device time, keeps manual cleanup available, and limits automatic deletion to approved generated artifacts/logs older than 30 days with active runtime paths protected.

@@ -228,9 +228,64 @@ class AndroidTouchBrightnessDeviceControllerTest {
 
     assertTrue(result.success)
     assertEquals(3, rootExecutor.scripts.size)
-    assertTrue(rootExecutor.scripts[1].contains("screen_brightness 0"))
+    assertFalse(
+      "reasserting an already-sleeping panel must not touch Android brightness settings because that can rebound the panel",
+      rootExecutor.scripts[1].contains("screen_brightness")
+    )
     assertTrue(rootExecutor.scripts[1].contains("panel_writes=$(( (1500 + 50 - 1) / 50 ))"))
     assertFalse(rootExecutor.scripts[1].contains("if [ \"${'$'}panel_current\" = \"${'$'}panel_target\" ]"))
+  }
+
+  @Test
+  fun setBrightnessPercentZeroClampsPanelAroundInitialAndroidBrightnessWrites() = runTest {
+    val rootExecutor = QueuedRootExecutor(
+      scriptResults = ArrayDeque(
+        listOf(
+          okResult(
+            stdout = """
+              mode=0
+              value=1
+              display_percentage=0.0
+              panel_path=/sys/class/backlight/panel0-backlight
+              panel_brightness=1
+              panel_actual_brightness=1
+              panel_max_brightness=3939
+            """.trimIndent()
+          ),
+          okResult(stdout = ""),
+          okResult(
+            stdout = """
+              mode=0
+              value=0
+              display_percentage=0.0
+              panel_path=/sys/class/backlight/panel0-backlight
+              panel_brightness=0
+              panel_actual_brightness=0
+              panel_max_brightness=3939
+            """.trimIndent()
+          )
+        )
+      )
+    )
+    val controller = AndroidTouchBrightnessDeviceController(
+      context = ContextWrapper(null),
+      rootExecutor = rootExecutor
+    )
+
+    val result = controller.setBrightnessPercent(0)
+
+    assertTrue(result.success)
+    assertTrue(rootExecutor.scripts[1].contains("screen_brightness 0"))
+    assertTrue(
+      "initial panel-sleep writes must clamp the real backlight before Android brightness settings can rebound it",
+      rootExecutor.scripts[1].indexOf("echo \"${'$'}panel_target\" > \"${'$'}panel_dir/brightness\"") <
+        rootExecutor.scripts[1].indexOf("settings put system screen_brightness_mode 0")
+    )
+    assertTrue(
+      "initial panel-sleep writes must clamp the real backlight again after Android brightness settings",
+      rootExecutor.scripts[1].lastIndexOf("echo \"${'$'}panel_target\" > \"${'$'}panel_dir/brightness\"") >
+        rootExecutor.scripts[1].lastIndexOf("settings put system screen_brightness 0")
+    )
   }
 
   @Test

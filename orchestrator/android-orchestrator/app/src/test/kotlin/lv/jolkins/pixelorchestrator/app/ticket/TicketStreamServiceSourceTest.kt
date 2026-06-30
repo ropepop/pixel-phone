@@ -753,7 +753,9 @@ class TicketStreamServiceSourceTest {
     assertTrue(source.contains("CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS = 18_000L"))
     val fastEnter = source.substringBetween("private suspend fun enterControlCodeDigitsFastForRequest", "private suspend fun tapControlCodeSubmitFastForRequest")
     assertTrue(fastEnter.contains("input tap ${'$'}{transaction.input.x} ${'$'}{transaction.input.y}"))
-    assertTrue(fastEnter.contains("input text ${'$'}digits"))
+    assertTrue(fastEnter.contains("val digitKeyEvents = controlCodeDigitKeyEvents(digits)"))
+    assertTrue(fastEnter.contains("input keyevent ${'$'}digitKeyEvents"))
+    assertFalse(fastEnter.contains("input text ${'$'}digits"))
     assertTrue(fastEnter.contains("for i in 1 2 3 4 5 6; do input keyevent KEYCODE_DEL; done"))
     assertFalse("fast digit entry should not spend time deleting more characters than the known control-code field can hold", fastEnter.contains("for i in 1 2 3 4 5 6 7 8 9"))
     assertTrue(fastEnter.contains("control_code_input_typed_submit_now"))
@@ -792,13 +794,13 @@ class TicketStreamServiceSourceTest {
     assertTrue(source.contains("openedControlCodePopupTransactionTargets("))
     assertTrue(source.contains("control_code_popup_transaction_ready"))
     assertFalse("normal request path should not return the old geometry-only popup fallback after opening the popup", source.substringBetween("private suspend fun openControlCodePopupImmediateForRequest", "private suspend fun openControlCodePopupFromVerifiedStateFastForRequest").contains("fallbackControlCodePopupTargetsAfterImmediateOpen("))
-    assertTrue(source.contains("CONTROL_CODE_FAST_POPUP_GEOMETRY_SETTLE_MILLIS = 120L"))
+    assertTrue(source.contains("CONTROL_CODE_FAST_POPUP_GEOMETRY_SETTLE_MILLIS = 60L"))
     assertTrue(source.contains("CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS = 80L"))
     assertTrue(source.contains("CONTROL_CODE_DIGITS_TYPED_SUBMIT_SETTLE_MILLIS = 40L"))
     assertTrue(source.contains("CONTROL_CODE_FAST_POPUP_INPUT_X_FRACTION = 0.50f"))
     assertTrue(source.contains("CONTROL_CODE_FAST_POPUP_INPUT_Y_FRACTION = 0.511f"))
     assertTrue("already-open popup should be reused before any root hierarchy work", source.indexOf("cachedControlCodePopupTargetsForRequest(phases, requestStartedAtMillis)") < source.indexOf("openControlCodePopupImmediateForRequest(phases, requestStartedAtMillis)"))
-    assertTrue(source.contains("CONTROL_CODE_FAST_ROOT_DUMP_TIMEOUT_MILLIS = 900L"))
+    assertTrue(source.contains("CONTROL_CODE_FAST_ROOT_DUMP_TIMEOUT_MILLIS = 600L"))
     assertTrue(source.contains("CONTROL_CODE_FAST_ROOT_RETRY_COUNT = 1"))
     assertTrue(source.contains("controlCodeInputActionLooseForHierarchy(hierarchy)"))
     assertFalse("normal control-code submit must not fall back to accessibility clicks", fastSubmit.contains("PhoneAutomationServiceBridge.clickSelectors("))
@@ -890,12 +892,14 @@ class TicketStreamServiceSourceTest {
     assertTrue(combined.contains("control_code_request_type_digits_fast"))
     assertTrue(combined.contains("control_code_request_submit_button_fast"))
     assertTrue(combined.contains("input tap ${'$'}{transaction.input.x} ${'$'}{transaction.input.y}"))
-    assertTrue(combined.contains("input text ${'$'}digits"))
+    assertTrue(combined.contains("val digitKeyEvents = controlCodeDigitKeyEvents(digits)"))
+    assertTrue(combined.contains("input keyevent ${'$'}digitKeyEvents"))
+    assertFalse(combined.contains("input text ${'$'}digits"))
     assertTrue(combined.contains("input tap ${'$'}{submit.x} ${'$'}{submit.y}"))
     assertTrue(combined.contains("resolveControlCodeSubmitAfterDigitsFastForRequest(transaction, phases)"))
     assertTrue(combined.contains("markControlCodeRequestPhase(phases, \"digits_typed\", requestStartedAtMillis)"))
     assertTrue(combined.contains("markControlCodeRequestPhase(phases, \"ok_tapped\", requestStartedAtMillis)"))
-    assertTrue("digits should be typed before resolving the OK tap target", combined.indexOf("input text ${'$'}digits") < combined.indexOf("resolveControlCodeSubmitAfterDigitsFastForRequest(transaction, phases)"))
+    assertTrue("digits should be typed before resolving the OK tap target", combined.indexOf("input keyevent ${'$'}digitKeyEvents") < combined.indexOf("resolveControlCodeSubmitAfterDigitsFastForRequest(transaction, phases)"))
     assertFalse("combined input/submit macro must not use accessibility", combined.contains("PhoneAutomationServiceBridge.clickSelectors("))
   }
 
@@ -911,21 +915,30 @@ class TicketStreamServiceSourceTest {
         fastFlow.indexOf("openControlCodePopupFastForRequest(phases, requestStartedAtMillis)")
     )
     assertTrue(immediate.contains("control_code_request_open_type_submit_fast"))
-    assertTrue(immediate.contains("input tap ${'$'}{action.x} ${'$'}{action.y}"))
-    assertTrue(immediate.contains("input tap ${'$'}{transaction.input.x} ${'$'}{transaction.input.y}"))
-    assertTrue(immediate.contains("input text ${'$'}digits"))
-    assertTrue(immediate.contains("input tap ${'$'}{submit.x} ${'$'}{submit.y}"))
+    assertTrue(immediate.contains("ticket_macro_input_tap ${'$'}{action.x} ${'$'}{action.y}"))
+    assertTrue(immediate.contains("ticket_macro_input_tap ${'$'}{transaction.input.x} ${'$'}{transaction.input.y}"))
+    assertTrue(immediate.contains("val digitKeyEvents = controlCodeDigitKeyEvents(digits)"))
+    assertTrue(immediate.contains("ticket_macro_input_keyevents ${'$'}digitKeyEvents"))
+    assertFalse(immediate.contains("ticket_macro_input_text ${'$'}digits"))
+    assertTrue(immediate.contains("ticket_macro_input_tap ${'$'}{submit.x} ${'$'}{submit.y}"))
+    assertTrue(immediate.contains("ticket_macro_panel_sysfs_dark"))
+    assertTrue(immediate.contains("ticket_macro_wait_panel_bursts"))
+    assertTrue(immediate.contains("CONTROL_CODE_FAST_PANEL_SLEEP_CLAMP_POST_MILLIS"))
     assertTrue(immediate.contains("control_code_macro_phase"))
     assertTrue(immediate.contains("detail=first_digit_start"))
     assertTrue(immediate.contains("detail=ok_tap_sent"))
     assertTrue(
       "the immediate path should settle after typing before its single OK tap, so the button is enabled without adding any post-OK tail",
-      immediate.contains("input text ${'$'}digits\n      log -p i -t TicketStreamService 'ticket_event event=control_code_macro_phase detail=digits_typed'\n      sleep 0.14\n      input tap ${'$'}{submit.x} ${'$'}{submit.y}")
+      immediate.indexOf("ticket_macro_input_keyevents ${'$'}digitKeyEvents") <
+        immediate.indexOf("sleep 0.060") &&
+        immediate.indexOf("sleep 0.060") <
+        immediate.indexOf("ticket_macro_input_tap ${'$'}{submit.x} ${'$'}{submit.y}")
     )
     assertFalse("freshly opened popup should not spend normal-path time clearing an already-empty field", immediate.contains("KEYCODE_DEL"))
     assertFalse("freshly opened popup should not spend normal-path time moving the cursor before first digit", immediate.contains("KEYCODE_MOVE_END"))
+    assertFalse("fast macro should not spawn per-tap brightness bursts inside the already-clamped root command", immediate.contains("ticket_macro_start_panel_burst"))
     assertFalse("normal immediate path must not keep waiting in the shell after OK before generated-result detection can start", immediate.contains("detail=ok_tap_sent'\n      sleep 0.12"))
-    assertFalse("normal immediate path must not send a trailing second OK tap before generated-result detection", immediate.contains("input tap ${'$'}{submit.x} ${'$'}{submit.y}\n    \"\"\".trimIndent()"))
+    assertFalse("normal immediate path must not send a trailing second OK tap before generated-result detection", immediate.contains("ticket_macro_input_tap ${'$'}{submit.x} ${'$'}{submit.y}\n    \"\"\".trimIndent()"))
   }
 
   @Test
@@ -1029,7 +1042,8 @@ class TicketStreamServiceSourceTest {
     assertTrue("after typing, OK tap should use keyboard-open geometry only when the live popup read is unavailable", resolver.contains("return transaction.keyboardOpenSubmit"))
     assertFalse("after typing, OK tap must not reuse the old one-shot target field", fastSubmit.contains("val submit = targets.submit"))
     assertFalse("after typing, OK tap must not spend time on an impossible sub-second root dump", source.contains("CONTROL_CODE_CURRENT_SUBMIT_ROOT_DUMP_TIMEOUT_MILLIS"))
-    assertTrue("digits must be typed before resolving the final OK target", combinedSubmit.indexOf("input text ${'$'}digits") < combinedSubmit.indexOf("resolveControlCodeSubmitAfterDigitsFastForRequest(transaction, phases)"))
+    assertTrue("digits must be typed before resolving the final OK target", combinedSubmit.indexOf("input keyevent ${'$'}digitKeyEvents") < combinedSubmit.indexOf("resolveControlCodeSubmitAfterDigitsFastForRequest(transaction, phases)"))
+    assertFalse("fast submit must not use the slower Android text-entry path", combinedSubmit.contains("input text ${'$'}digits"))
   }
 
   @Test
@@ -1077,9 +1091,10 @@ class TicketStreamServiceSourceTest {
     assertTrue(waitBody.contains("TicketViviRecoveryState.CONTROL_CODE_RESULT"))
     assertTrue(wait.contains("control_code_request_phone_visual_root_confirmed_after_submit"))
     assertTrue(wait.contains("resultProof = \"phone_visual_root_confirmed\""))
-    assertTrue(wait.contains("control_code_request_phone_visual_raw_ticket_after_submit"))
-    assertTrue(wait.contains("resultProof = \"phone_visual_raw_ticket_after_submit\""))
-    assertTrue(source.contains("CONTROL_CODE_RAW_TICKET_VISUAL_CONFIRM_COUNT = 2L"))
+    assertTrue(wait.contains("control_code_visual_raw_ticket_after_submit_wait"))
+    assertTrue(source.contains("CONTROL_CODE_RAW_TICKET_VISUAL_REJECT_LOG_COUNT = 2L"))
+    assertFalse("raw-ticket visual state must not be promoted into generated proof", wait.contains("control_code_request_phone_visual_raw_ticket_after_submit"))
+    assertFalse("raw-ticket visual state must not be a browser-capture proof", wait.contains("resultProof = \"phone_visual_raw_ticket_after_submit\""))
     assertTrue(source.contains("CONTROL_CODE_RAW_TICKET_ROOT_CONFIRM_TIMEOUT_MILLIS = 700L"))
     assertFalse("post-submit result proof must not parse or expose the private generated value", waitBody.contains("strictControlCodeResultValueForHierarchy"))
     assertTrue(wait.contains("confirmGeneratedControlCodeResultForBrowser("))
@@ -1195,7 +1210,8 @@ class TicketStreamServiceSourceTest {
     assertTrue("post-submit raw-ticket visual state must be confirmed through one bounded root read", wait.contains("controlCodeRequestRootHierarchy("))
     assertTrue(wait.contains("\"wait_result_raw_ticket_root\""))
     assertTrue(waitBody.contains("TicketViviRecoveryState.CONTROL_CODE_RESULT"))
-    assertTrue(wait.contains("rawTicketVisualCount >= CONTROL_CODE_RAW_TICKET_VISUAL_CONFIRM_COUNT"))
+    assertTrue(wait.contains("rawTicketVisualCount == CONTROL_CODE_RAW_TICKET_VISUAL_REJECT_LOG_COUNT"))
+    assertTrue(wait.contains("control_code_visual_raw_ticket_after_submit_wait"))
     assertTrue(wait.contains("CONTROL_CODE_RAW_TICKET_ROOT_CONFIRM_TIMEOUT_MILLIS"))
     assertTrue(wait.contains("control_code_request_phone_visual_generated_after_submit"))
     assertTrue(wait.contains("if (CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS > 0L)"))
@@ -1548,19 +1564,14 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun controlCodeRawTicketProofCompletesCleanupWithoutResultCloseTap() {
+  fun rawTicketAfterSubmitDoesNotCompleteAsGeneratedControlCodeProof() {
     val source = ticketStreamServiceSource()
     val success = source.substringBetween("if (ok) {", "} else if (delivery.cleanupRequired)")
-    val helper = source.substringBetween(
-      "private suspend fun completeControlCodeRawTicketAfterSubmitCleanup",
-      "private suspend fun returnControlCodeSurfaceToRawTicket"
-    )
 
-    assertTrue("raw-ticket phone proof should bypass result-dialog close cleanup", success.contains("completeControlCodeRawTicketAfterSubmitCleanup("))
-    assertTrue(success.indexOf("delivery.resultProof") in 0 until success.indexOf("returnControlCodeSurfaceToRawTicket("))
-    assertTrue(helper.contains("phone_visual_raw_ticket_after_submit"))
-    assertTrue(helper.contains("completeControlExitCleanup("))
-    assertFalse("already-clean raw ticket must not receive a result close tap", helper.contains("sendFastGeneratedResultCloseTap("))
+    assertFalse("raw-ticket phone proof must not bypass generated-result cleanup", success.contains("completeControlCodeRawTicketAfterSubmitCleanup("))
+    assertFalse("raw-ticket phone proof must not be a successful proof value", source.contains("phone_visual_raw_ticket_after_submit"))
+    assertFalse("cleanup must not branch on a raw-ticket proof", success.contains("delivery.resultProof =="))
+    assertTrue("generated proof cleanup must still return the phone to the raw ticket", success.contains("returnControlCodeSurfaceToRawTicket("))
   }
 
   @Test
@@ -2631,7 +2642,7 @@ class TicketStreamServiceSourceTest {
       "private fun cacheForegroundViolation"
     )
     val fastInputWrapper = source.substringBetween(
-      "private suspend fun runFastNonTouchInput(command: String, reason: String): RootResult",
+      "private suspend fun runFastNonTouchInput(",
       "private suspend fun runFastNonTouchScript(command: String, reason: String, timeout: Duration): RootResult"
     )
     val wrapper = source.substringBetween(
@@ -2672,6 +2683,7 @@ class TicketStreamServiceSourceTest {
     assertFalse(requestTicketScreenWake.contains("rootExecutor.runScript("))
 
     assertTrue(source.contains("private const val NON_TOUCH_PANEL_SLEEP_CLAMP_INTERVAL_MILLIS = 5L"))
+    assertTrue(source.contains("private const val NON_TOUCH_PANEL_SLEEP_CLAMP_POST_DISPLAY_INTERVAL_MILLIS = 1_250L"))
     assertTrue(source.contains("private const val NON_TOUCH_PANEL_SLEEP_CLAMP_POST_MILLIS = 2_500L"))
     assertTrue(source.contains("private const val NON_TOUCH_COMMAND_SELF_TIMEOUT_CUSHION_MILLIS = 250L"))
     assertTrue(source.contains("private fun wrapNonTouchPanelSleepClamp("))
@@ -2686,19 +2698,24 @@ class TicketStreamServiceSourceTest {
     assertTrue(source.contains("val intervalMicros = NON_TOUCH_PANEL_SLEEP_CLAMP_INTERVAL_MILLIS * 1_000L"))
     assertTrue(source.contains("usleep $" + "intervalMicros"))
     assertTrue(
-      "sysfs panel clamp must run before slower DisplayManager brightness calls",
-      wrapper.indexOf("echo 0 > ") < wrapper.indexOf("cmd display set-brightness 0 --unit percentage")
+      "sysfs panel clamp must run before slower Android settings resets",
+      wrapper.indexOf("ticket_panel_sysfs_dark") < wrapper.indexOf("ticket_panel_display_dark_once")
     )
-    val displayManagerClampCount = Regex("cmd display set-brightness 0 --unit percentage")
-      .findAll(wrapper)
-      .count()
     assertTrue(
-      "non-touch clamp must repeatedly reset DisplayManager brightness while active and during the post-window",
-      displayManagerClampCount >= 2
+      "the hot non-touch clamp must skip the slower Android display loop when a panel backlight file is available",
+      wrapper.contains("if [ -z \"\${'$'}ticket_panel_dir\" ]; then") &&
+        wrapper.contains("ticket_panel_display_clamp >/dev/null 2>&1 &")
+    )
+    assertFalse(
+      "the active input clamp must not call DisplayManager repeatedly; direct sysfs writes own the sensitive tap window",
+      wrapper.contains("cmd display set-brightness 0 --unit percentage")
     )
 
     assertTrue(fastInputWrapper.contains("inputRootExecutor.runScript("))
-    assertTrue(fastInputWrapper.contains("wrapNonTouchPanelSleepClamp(command, commandTimeout = NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS.milliseconds)"))
+    assertTrue(fastInputWrapper.contains("postMillis: Long = NON_TOUCH_PANEL_SLEEP_CLAMP_POST_MILLIS"))
+    assertTrue(fastInputWrapper.contains("wrapNonTouchPanelSleepClamp("))
+    assertTrue(fastInputWrapper.contains("postMillis = postMillis"))
+    assertTrue(fastInputWrapper.contains("commandTimeout = NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS.milliseconds"))
     assertFalse(fastInputWrapper.contains("inputRootExecutor.run(command)"))
 
     assertTrue(wrapper.contains("private suspend fun runFastNonTouchScript(command: String, reason: String, timeout: Duration): RootResult"))
@@ -2756,6 +2773,17 @@ class TicketStreamServiceSourceTest {
     assertTrue(
       "post-command brightness clamping must continue in the background instead of blocking wake command completion",
       clamp.contains("ticket_panel_post_clamp >/dev/null 2>&1 &")
+    )
+    assertTrue(
+      "post-command clamping must keep a direct sysfs loop active while the slower Android display APIs run",
+      clamp.contains("ticket_panel_post_sysfs_clamp >/dev/null 2>&1 &") &&
+        clamp.contains("wait \"\${'$'}ticket_panel_post_sysfs_pid\"")
+    )
+    assertTrue(
+      "post-command DisplayManager resets must be bounded separately from the 5ms sysfs loop to avoid a long settings storm",
+      clamp.contains("val postDisplayWrites =") &&
+        clamp.contains("NON_TOUCH_PANEL_SLEEP_CLAMP_POST_DISPLAY_INTERVAL_MILLIS") &&
+        clamp.contains("ticket_panel_post_display_write_index")
     )
     assertTrue(
       "the end-of-command marker should be reachable before the post-clamp window completes",

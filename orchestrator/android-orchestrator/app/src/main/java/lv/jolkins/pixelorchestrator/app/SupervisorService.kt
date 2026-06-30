@@ -139,7 +139,7 @@ class SupervisorService : Service() {
       prerequisiteMonitor = PhoneAutomationPrerequisiteMonitor(this)
       NotificationHelper.ensureChannel(this)
       promoteToForeground()
-      NightlyCleanupScheduler(this).scheduleNext(reason = "service_create")
+      WeeklyCleanupScheduler(this).scheduleNext(reason = "service_create")
       reschedulePhoneAutomationWake(reason = "service_create", force = true)
       syncPhoneAutomation(trigger = "service_create")
       syncCpuFrequency(trigger = "service_create")
@@ -289,7 +289,7 @@ class SupervisorService : Service() {
         facade.writeActionResult(pixelRunId, resultAction, component, result)
       }
       if (action == ACTION_CLEANUP) {
-        NightlyCleanupScheduler(this@SupervisorService).scheduleNext(reason = "cleanup_complete:${cleanupTrigger.ifBlank { "manual" }}")
+        WeeklyCleanupScheduler(this@SupervisorService).scheduleNext(reason = "cleanup_complete:${cleanupTrigger.ifBlank { "manual" }}")
       }
     }
 
@@ -435,7 +435,7 @@ class SupervisorService : Service() {
           }
         }
         runCatching {
-          NightlyCleanupScheduler(context).scheduleNext(reason = "foreground_service_start_failed:$action")
+          WeeklyCleanupScheduler(context).scheduleNext(reason = "foreground_service_start_failed:$action")
         }
       }
     }
@@ -927,7 +927,7 @@ class SupervisorService : Service() {
       reschedulePhoneAutomationWake(reason = "foreground_service_timeout", force = true)
     }
     runCatching {
-      NightlyCleanupScheduler(this).scheduleNext(reason = "foreground_service_timeout")
+      WeeklyCleanupScheduler(this).scheduleNext(reason = "foreground_service_timeout")
     }
     runCatching {
       stopForeground(STOP_FOREGROUND_REMOVE)
@@ -952,7 +952,7 @@ class SupervisorService : Service() {
       reschedulePhoneAutomationWake(snapshot = snapshot, reason = "startup_failure:$stage", force = true)
     }
     runCatching {
-      NightlyCleanupScheduler(this).scheduleNext(reason = "startup_failure:$stage")
+      WeeklyCleanupScheduler(this).scheduleNext(reason = "startup_failure:$stage")
     }
     runCatching {
       stopForeground(STOP_FOREGROUND_REMOVE)
