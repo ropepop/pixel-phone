@@ -1,0 +1,8 @@
+snapshot_utc=2026-06-30T18:51:32Z
+panel=0
+actual=0
+max=3939
+screen_brightness=1
+screen_brightness_mode=0
+  mWakefulness=Awake
+  mBrightnessReason=manual

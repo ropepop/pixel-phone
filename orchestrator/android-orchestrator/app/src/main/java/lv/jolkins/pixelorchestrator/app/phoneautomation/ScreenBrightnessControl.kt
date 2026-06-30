@@ -35,7 +35,11 @@ internal object ScreenBrightnessControl {
     }
   }
 
-  fun buildSetPercentScript(percent: Int): String {
+  fun buildSetPercentScript(
+    percent: Int,
+    panelHoldMillis: Long = 0L,
+    panelHoldIntervalMillis: Long = 50L
+  ): String {
     val targetPercent = percent.coerceIn(0, 100)
     val targetSystemValue = legacySystemValue(targetPercent)
     return """
@@ -43,7 +47,11 @@ internal object ScreenBrightnessControl {
       if ! cmd display set-brightness $targetPercent --unit percentage >/dev/null 2>&1; then
         settings put system screen_brightness $targetSystemValue
       fi
-      ${buildSetPanelPercentScript(targetPercent)}
+      ${buildSetPanelPercentScript(
+      percent = targetPercent,
+      holdMillis = panelHoldMillis,
+      holdIntervalMillis = panelHoldIntervalMillis
+    )}
     """.trimIndent()
   }
 
@@ -89,7 +97,11 @@ internal object ScreenBrightnessControl {
     """.trimIndent()
   }
 
-  fun buildRestoreScript(state: ScreenBrightnessState): String {
+  fun buildRestoreScript(
+    state: ScreenBrightnessState,
+    panelHoldMillis: Long = 0L,
+    panelHoldIntervalMillis: Long = 50L
+  ): String {
     val restoreMode = state.mode ?: MANUAL_BRIGHTNESS_MODE
     val restoreValue = (state.value ?: 0).coerceIn(0, 255)
     val restorePercent = state.displayPercentage
@@ -115,19 +127,45 @@ internal object ScreenBrightnessControl {
     }
     return """
       $systemRestore
-      ${buildRestorePanelScript(state)}
+      ${buildRestorePanelScript(
+      state = state,
+      holdMillis = panelHoldMillis,
+      holdIntervalMillis = panelHoldIntervalMillis
+    )}
     """.trimIndent()
   }
 
-  fun buildRestorePanelScript(state: ScreenBrightnessState): String {
+  fun buildRestorePanelScript(
+    state: ScreenBrightnessState,
+    holdMillis: Long = 0L,
+    holdIntervalMillis: Long = 50L
+  ): String {
     val panelBrightness = state.panelBrightness ?: state.panelActualBrightness
     return if (state.panelPath.isNullOrBlank() || panelBrightness == null) {
       ""
     } else {
+      val holdMs = holdMillis.coerceAtLeast(0L)
+      val intervalMs = holdIntervalMillis.coerceAtLeast(1L)
+      val sleepSeconds = intervalMs / 1000.0
       """
         panel_dir=${state.panelPath.shellQuote()}
         if [ -w "${'$'}panel_dir/brightness" ]; then
-          echo ${panelBrightness.coerceAtLeast(0)} > "${'$'}panel_dir/brightness"
+          panel_target=${panelBrightness.coerceAtLeast(0)}
+          panel_writes=1
+          if [ $holdMs -gt 0 ]; then
+            panel_writes=$(( ($holdMs + $intervalMs - 1) / $intervalMs ))
+            if [ "${'$'}panel_writes" -lt 1 ]; then
+              panel_writes=1
+            fi
+          fi
+          panel_write_index=0
+          while [ "${'$'}panel_write_index" -lt "${'$'}panel_writes" ]; do
+            echo "${'$'}panel_target" > "${'$'}panel_dir/brightness"
+            panel_write_index="${'$'}((panel_write_index + 1))"
+            if [ "${'$'}panel_write_index" -lt "${'$'}panel_writes" ]; then
+              sleep $sleepSeconds
+            fi
+          done
         fi
       """.trimIndent()
     }

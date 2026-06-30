@@ -465,6 +465,13 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
     return firstEditableOpenResult
   }
 
+  override suspend fun tapScreenRatio(
+    expectedPackageName: String,
+    xRatio: Double,
+    yRatio: Double,
+    timeoutMillis: Long
+  ): Boolean = false
+
   override suspend fun performBack(): Boolean {
     backCalls += 1
     return backResult

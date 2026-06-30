@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.Serializable
 
 data class PhoneAutomationObservedNotification(
   val key: String,
@@ -74,6 +75,7 @@ data class PhoneAutomationNonTouchInputEvent(
   val suppressedUntilUptimeMillis: Long
 )
 
+@Serializable
 data class PhoneAutomationVisibleNode(
   val text: String,
   val resourceId: String,
@@ -128,6 +130,13 @@ internal interface PhoneAutomationAccessibilityHost {
   suspend fun setTextInFirstEditableInput(
     expectedPackageName: String,
     text: String,
+    timeoutMillis: Long
+  ): Boolean
+
+  suspend fun tapScreenRatio(
+    expectedPackageName: String,
+    xRatio: Double,
+    yRatio: Double,
     timeoutMillis: Long
   ): Boolean
 
@@ -465,6 +474,18 @@ object PhoneAutomationServiceBridge {
     val service = accessibilityService.value ?: return false
     return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
       service.setTextInFirstEditableInput(expectedPackageName, text, timeoutMillis)
+    } ?: false
+  }
+
+  suspend fun tapScreenRatio(
+    expectedPackageName: String,
+    xRatio: Double,
+    yRatio: Double,
+    timeoutMillis: Long
+  ): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
+      service.tapScreenRatio(expectedPackageName, xRatio, yRatio, timeoutMillis)
     } ?: false
   }
 

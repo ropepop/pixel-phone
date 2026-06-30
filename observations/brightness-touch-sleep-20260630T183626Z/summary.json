@@ -1,0 +1,94 @@
+{
+  "duration_observed_ms": 899367,
+  "first_local_epoch_ms": 1782844589358,
+  "high_90pct_segment_count": 0,
+  "high_90pct_segments_preview": [],
+  "high_90pct_total_ms": 0,
+  "last_local_epoch_ms": 1782845488725,
+  "max_panel_brightness_capacity": 3939,
+  "max_panel_brightness_seen": 788,
+  "median_interval_ms": 734,
+  "nonzero_segment_count": 11,
+  "nonzero_segments_preview": [
+    {
+      "duration_ms": 17435,
+      "end_local_epoch_ms": 1782844606059,
+      "max_value": 498,
+      "samples": 35,
+      "start_local_epoch_ms": 1782844589358
+    },
+    {
+      "duration_ms": 23160,
+      "end_local_epoch_ms": 1782844640480,
+      "max_value": 788,
+      "samples": 39,
+      "start_local_epoch_ms": 1782844618054
+    },
+    {
+      "duration_ms": 21670,
+      "end_local_epoch_ms": 1782844675298,
+      "max_value": 788,
+      "samples": 39,
+      "start_local_epoch_ms": 1782844654362
+    },
+    {
+      "duration_ms": 22552,
+      "end_local_epoch_ms": 1782844735032,
+      "max_value": 788,
+      "samples": 34,
+      "start_local_epoch_ms": 1782844713214
+    },
+    {
+      "duration_ms": 21756,
+      "end_local_epoch_ms": 1782844767723,
+      "max_value": 788,
+      "samples": 37,
+      "start_local_epoch_ms": 1782844746701
+    },
+    {
+      "duration_ms": 734,
+      "end_local_epoch_ms": 1782844786435,
+      "max_value": 788,
+      "samples": 1,
+      "start_local_epoch_ms": 1782844786435
+    },
+    {
+      "duration_ms": 19306,
+      "end_local_epoch_ms": 1782844807842,
+      "max_value": 498,
+      "samples": 33,
+      "start_local_epoch_ms": 1782844789270
+    },
+    {
+      "duration_ms": 23167,
+      "end_local_epoch_ms": 1782844842537,
+      "max_value": 788,
+      "samples": 37,
+      "start_local_epoch_ms": 1782844820104
+    },
+    {
+      "duration_ms": 18265,
+      "end_local_epoch_ms": 1782844879895,
+      "max_value": 271,
+      "samples": 25,
+      "start_local_epoch_ms": 1782844862364
+    },
+    {
+      "duration_ms": 21879,
+      "end_local_epoch_ms": 1782844912056,
+      "max_value": 788,
+      "samples": 33,
+      "start_local_epoch_ms": 1782844890911
+    },
+    {
+      "duration_ms": 23167,
+      "end_local_epoch_ms": 1782844992211,
+      "max_value": 788,
+      "samples": 31,
+      "start_local_epoch_ms": 1782844969778
+    }
+  ],
+  "nonzero_total_ms": 213091,
+  "observer_finished_utc": "2026-06-30T18:51:30.174+00:00",
+  "sample_count": 1267
+}

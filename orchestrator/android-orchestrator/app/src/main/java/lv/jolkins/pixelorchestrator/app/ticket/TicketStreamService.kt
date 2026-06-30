@@ -44,6 +44,9 @@ import kotlinx.serialization.json.put
 import lv.jolkins.pixelorchestrator.app.MainActivity
 import lv.jolkins.pixelorchestrator.app.SupervisorService
 import lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidPhoneAutomationAccessibilityRecoveryEnvironment
+import lv.jolkins.pixelorchestrator.app.phoneautomation.ChatGPTRootShellInput
+import lv.jolkins.pixelorchestrator.app.phoneautomation.ChatGPTPhoneRunner
+import lv.jolkins.pixelorchestrator.app.phoneautomation.ChatGPTSpacetimeWorker
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationAccessibilityRecovery
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationPreferencesStore
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationServiceBridge
@@ -68,6 +71,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 class TicketStreamService : Service() {
   private data class TicketClientInfo(
@@ -196,6 +200,13 @@ class TicketStreamService : Service() {
     val error: String = ""
   )
 
+  private data class StartupTracePhaseRecord(
+    val name: String,
+    val detail: String,
+    val sinceStartMillis: Long,
+    val sincePreviousMillis: Long
+  )
+
   private data class ViviLoginCredentials(
     val email: String,
     val secret: String
@@ -224,6 +235,8 @@ class TicketStreamService : Service() {
   private val wakeRootExecutor = TicketRootCommandWorker()
   private val foregroundRootExecutor = TicketRootCommandWorker()
   private val runtimeStateStore = TicketRuntimeStateStore(rootExecutor, json)
+  private val chatgptRunner by lazy { ChatGPTPhoneRunner(this, shellInput = ChatGPTRootShellInput(inputRootExecutor)) }
+  private var chatgptSpacetimeWorker: ChatGPTSpacetimeWorker? = null
   private val serverMutex = Mutex()
   private val controlClients = Collections.synchronizedSet(mutableSetOf<TicketWebSocket>())
   private val protectedControlClients = Collections.synchronizedSet(mutableSetOf<TicketWebSocket>())
@@ -482,6 +495,13 @@ class TicketStreamService : Service() {
   @Volatile private var lastWakeSlowestPhaseDurationMillis: Long? = null
   @Volatile private var lastWakeFailureReason: String? = null
   @Volatile private var lastWakePreviousPhaseElapsedMillis: Long = 0L
+  private val startupTraceLock = Object()
+  private var startupTraceId: String = ""
+  private var startupTraceReason: String = ""
+  private var startupTraceStartedAtMillis: Long = 0L
+  private var startupTraceLastPhaseAtMillis: Long = 0L
+  private var startupTraceCompletedAtMillis: Long = 0L
+  private val startupTracePhases = ArrayDeque<StartupTracePhaseRecord>()
   @Volatile private var lastRootReadinessResult: String = "not_run"
   @Volatile private var lastRootReadinessDurationMillis: Long? = null
   @Volatile private var lastRootReadinessAtMillis: Long = 0L
@@ -516,6 +536,14 @@ class TicketStreamService : Service() {
       rootHardwareH264CaptureEngine.cleanupStaleProcesses()
       rootHardwareH264CaptureEngine.probe()
     }
+    chatgptSpacetimeWorker = ChatGPTSpacetimeWorker(
+      scope = serviceScope,
+      rootExecutor = inputRootExecutor,
+      runner = chatgptRunner,
+      ticketPriorityActive = ::chatgptTicketPriorityActive
+    ).also { worker ->
+      worker.start()
+    }
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -539,6 +567,8 @@ class TicketStreamService : Service() {
     ticketBrightnessGuardActive = false
     clientDisconnectStopJob?.cancel()
     clientDisconnectStopJob = null
+    chatgptSpacetimeWorker?.stop()
+    chatgptSpacetimeWorker = null
     rootH264BlankProbeJob?.cancel()
     rootH264BlankProbeJob = null
     cancelInactivityTimer()
@@ -678,6 +708,9 @@ class TicketStreamService : Service() {
           sendJsonPayload(output, bootstrapPayload(), clearSiteCache = true)
         }
         method == "GET" && path == "/api/v1/health" -> sendJson(output, health())
+        (method == "GET" || method == "POST") && path.startsWith("/api/v1/chatgpt/") -> {
+          sendText(output, 410, "chatgpt phone http control disabled; use spacetime queue")
+        }
         method == "POST" && path == "/api/v1/session/start" -> sendJson(output, startTicketSession())
         method == "POST" && path == "/api/v1/session/stop" -> sendJson(output, handleBrowserStopRequest(bodyText))
         method == "POST" && path == "/api/v1/client-log" -> {
@@ -1012,7 +1045,9 @@ class TicketStreamService : Service() {
   }
 
   private suspend fun startTicketSessionLocked(): TicketSessionResponse {
+    beginStartupTrace("session_start")
     if (!TicketPackageSupport.isInstalled(this, TicketScreenConfig.VIVI_PACKAGE)) {
+      recordStartupTracePhase("vivi_missing", "package=${TicketScreenConfig.VIVI_PACKAGE}", complete = true)
       return TicketSessionResponse(
         ok = false,
         state = "vivi_missing",
@@ -1032,6 +1067,7 @@ class TicketStreamService : Service() {
         startForegroundGuard()
         broadcastStatus()
         persistRuntimeState("session_start_already_preparing")
+        recordStartupTracePhase("session_already_preparing", "state=$ticketSessionState frame_sequence=$frameSequence", once = true)
         return TicketSessionResponse(ok = true, state = "starting", message = lastMessage)
       }
       if (canReuseActiveHardwareStreamWithoutRootRevalidation("session_start_already_active")) {
@@ -1044,6 +1080,7 @@ class TicketStreamService : Service() {
         ensureEncoderIfPossible()
         broadcastStatus()
         persistRuntimeState("session_start_already_active")
+        recordStartupTracePhase("active_stream_reused", "fast=true frame_sequence=$frameSequence", once = true, complete = true)
         return TicketSessionResponse(ok = true, state = "active", message = lastMessage)
       }
       if (!validateActiveTicketSessionBeforeReuse("session_start_already_active")) {
@@ -1059,6 +1096,7 @@ class TicketStreamService : Service() {
         ensureEncoderIfPossible()
         scheduleTicketRecovery("session_start_already_active_revalidate", TicketRecoveryMode.ACTIVE_SOFT)
         persistRuntimeState("session_start_already_active_revalidate")
+        recordStartupTracePhase("active_stream_revalidation_started", "state=$ticketSessionState frame_sequence=$frameSequence", once = true)
         return TicketSessionResponse(ok = true, state = "starting", message = lastMessage)
       }
       updateTicketSessionState(TICKET_SESSION_LIVE, "session_start_already_active")
@@ -1070,6 +1108,7 @@ class TicketStreamService : Service() {
       ensureEncoderIfPossible()
       broadcastStatus()
       persistRuntimeState("session_start_already_active")
+      recordStartupTracePhase("active_stream_reused", "validated=true frame_sequence=$frameSequence", once = true, complete = true)
       return TicketSessionResponse(ok = true, state = "active", message = lastMessage)
     }
     val sourceSize = currentDisplaySize()
@@ -1084,6 +1123,7 @@ class TicketStreamService : Service() {
       else -> null
     }
     updateTicketSessionState(TICKET_SESSION_STARTING, "session_start_requested")
+    recordStartupTracePhase("session_start_requested", "hardware_state=${hardwareCapture.state}", once = true)
     recordTicketEvent(
       "session_start_requested",
       "root_hardware_h264_available=${hardwareCapture.available} root_hardware_h264_state=${hardwareCapture.state} selected_mode=${if (hardwareUnavailableReason == null) CAPTURE_MODE_ROOT_HARDWARE_H264 else CAPTURE_MODE_IDLE}"
@@ -1103,6 +1143,7 @@ class TicketStreamService : Service() {
       updateTicketSessionState(TICKET_SESSION_UNAVAILABLE, "hardware_h264_unavailable")
       recordTicketEvent("session_unavailable", fallbackReason.orEmpty())
       persistRuntimeState("hardware_h264_unavailable")
+      recordStartupTracePhase("hardware_h264_unavailable", fallbackReason.orEmpty(), complete = true)
       return TicketSessionResponse(
         ok = false,
         state = "hardware_h264_unavailable",
@@ -1119,6 +1160,7 @@ class TicketStreamService : Service() {
     markViewerInput("session_start_${modeLabel}_prepare")
     lastMessage = "Preparing ViVi for secure H.264 capture"
     recordTicketEvent("session_capture_mode_selected", "mode=$activeCaptureMode fallback=${fallbackReason.orEmpty()}")
+    recordStartupTracePhase("capture_mode_selected", "mode=$activeCaptureMode", once = true)
     recordTicketEvent("session_started", "mode=$activeCaptureMode")
     startForegroundGuard()
     scheduleRootHardwareH264CaptureStart("session_start_root_hardware_h264_capture", suppressBlackout = false)
@@ -1330,6 +1372,22 @@ class TicketStreamService : Service() {
     return streamActive
   }
 
+  private fun chatgptTicketPriorityActive(): Boolean {
+    return streamActive ||
+      totalClientCount() > 0 ||
+      protectedControlClients.isNotEmpty() ||
+      controlCodeRequestActive() ||
+      ticketSessionState in setOf(
+        TICKET_SESSION_STARTING,
+        TICKET_SESSION_LIVE,
+        TICKET_SESSION_CONTROL_TRANSITION,
+        TICKET_SESSION_CONTROL_ACTIVE,
+        TICKET_SESSION_CONTROL_EXIT,
+        TICKET_SESSION_SOFT_RECOVERY,
+        TICKET_SESSION_NEEDS_ATTENTION
+      )
+  }
+
   private fun updateTicketSessionState(next: String, reason: String) {
     val now = SystemClock.elapsedRealtime()
     val previous = ticketSessionState
@@ -1499,6 +1557,86 @@ class TicketStreamService : Service() {
     return getSystemService(PowerManager::class.java)?.isInteractive == true
   }
 
+  private fun beginStartupTrace(reason: String) {
+    val nowMillis = SystemClock.elapsedRealtime()
+    synchronized(startupTraceLock) {
+      startupTraceId = "phone:${System.currentTimeMillis()}:$nowMillis"
+      startupTraceReason = reason.take(160)
+      startupTraceStartedAtMillis = nowMillis
+      startupTraceLastPhaseAtMillis = nowMillis
+      startupTraceCompletedAtMillis = 0L
+      startupTracePhases.clear()
+      addStartupTracePhaseLocked("phone_session_start_received", reason.take(500), nowMillis, once = false)
+    }
+  }
+
+  private fun recordStartupTracePhase(
+    name: String,
+    detail: String = "",
+    once: Boolean = false,
+    complete: Boolean = false
+  ) {
+    val cleanName = name.take(96)
+    if (cleanName.isBlank()) return
+    val nowMillis = SystemClock.elapsedRealtime()
+    synchronized(startupTraceLock) {
+      if (startupTraceId.isBlank()) return
+      if (startupTraceCompletedAtMillis > 0L) return
+      val phaseAdded = addStartupTracePhaseLocked(cleanName, detail.take(500), nowMillis, once)
+      if (complete && phaseAdded) {
+        startupTraceCompletedAtMillis = nowMillis
+      }
+    }
+  }
+
+  private fun addStartupTracePhaseLocked(name: String, detail: String, nowMillis: Long, once: Boolean): Boolean {
+    if (once && startupTracePhases.any { it.name == name }) return false
+    val startedAt = startupTraceStartedAtMillis.takeIf { it > 0L } ?: nowMillis
+    val previousAt = startupTraceLastPhaseAtMillis.takeIf { it > 0L } ?: startedAt
+    startupTracePhases.addLast(
+      StartupTracePhaseRecord(
+        name = name,
+        detail = detail,
+        sinceStartMillis = (nowMillis - startedAt).coerceAtLeast(0L),
+        sincePreviousMillis = (nowMillis - previousAt).coerceAtLeast(0L)
+      )
+    )
+    while (startupTracePhases.size > STARTUP_TRACE_MAX_PHASES) {
+      startupTracePhases.removeFirst()
+    }
+    startupTraceLastPhaseAtMillis = nowMillis
+    return true
+  }
+
+  private fun startupTraceSnapshot(nowMillis: Long): TicketStartupTraceHealth {
+    synchronized(startupTraceLock) {
+      if (startupTraceId.isBlank() || startupTraceStartedAtMillis <= 0L) {
+        return TicketStartupTraceHealth()
+      }
+      val completedAt = startupTraceCompletedAtMillis.takeIf { it > 0L }
+      val elapsedMillis = ((completedAt ?: nowMillis) - startupTraceStartedAtMillis).coerceAtLeast(0L)
+      val phases = startupTracePhases.map {
+        TicketStartupTracePhaseHealth(
+          name = it.name,
+          detail = it.detail,
+          sinceStartMillis = it.sinceStartMillis,
+          sincePreviousMillis = it.sincePreviousMillis
+        )
+      }
+      return TicketStartupTraceHealth(
+        id = startupTraceId,
+        reason = startupTraceReason,
+        startedAgoMillis = ageMillis(startupTraceStartedAtMillis, nowMillis),
+        elapsedMillis = elapsedMillis,
+        targetMillis = TICKET_FAST_PUBLIC_OPEN_BUDGET_MILLIS,
+        overBudget = elapsedMillis > TICKET_FAST_PUBLIC_OPEN_BUDGET_MILLIS,
+        complete = completedAt != null,
+        lastPhase = phases.lastOrNull()?.name.orEmpty(),
+        phases = phases
+      )
+    }
+  }
+
   private fun beginTicketWake(reason: String): Long {
     val nowMillis = SystemClock.elapsedRealtime()
     lastWakeReason = reason
@@ -1514,6 +1652,7 @@ class TicketStreamService : Service() {
     lastWakeFailureReason = null
     lastWakePreviousPhaseElapsedMillis = 0L
     recordTicketEvent("wake_started", reason)
+    recordStartupTracePhase("wake_started", reason, once = true)
     return nowMillis
   }
 
@@ -1542,6 +1681,7 @@ class TicketStreamService : Service() {
       "ticket_ready" -> lastWakeTicketReadyMillis = elapsedMillis
     }
     recordTicketEvent("wake_phase", "phase=$phase elapsed_ms=$elapsedMillis duration_ms=$phaseDurationMillis")
+    recordStartupTracePhase("wake_$phase", "elapsed_ms=$elapsedMillis duration_ms=$phaseDurationMillis", once = true)
   }
 
   private fun finishTicketWake(startedAtMillis: Long, succeeded: Boolean, reason: String) {
@@ -1561,6 +1701,7 @@ class TicketStreamService : Service() {
       "wake_finished",
       "success=$succeeded reason=$reason total_ms=$totalMillis slowest=${lastWakeSlowestPhase.orEmpty()}:${lastWakeSlowestPhaseDurationMillis ?: 0L}"
     )
+    recordStartupTracePhase("wake_finished", "success=$succeeded reason=$reason total_ms=$totalMillis", once = true)
   }
 
   private suspend fun wakeTicketScreenForSessionStart(reason: String, startedAtMillis: Long): Boolean {
@@ -2502,6 +2643,7 @@ class TicketStreamService : Service() {
         targetFps = TicketScreenConfig.ROOT_HARDWARE_H264_FPS
       )
       hardwareCaptureSnapshot = rootHardwareH264CaptureEngine.snapshot()
+      recordStartupTracePhase("root_capture_start_requested", "width=${size.width} height=${size.height} fps=${TicketScreenConfig.ROOT_HARDWARE_H264_FPS}", once = true)
       Log.i(TAG, "ticket_root_hardware_h264_capture_requested width=${size.width} height=${size.height} bitrate=${TicketScreenConfig.ROOT_HARDWARE_H264_BITRATE} video_clients=${videoClients.size}")
     }
   }
@@ -2637,6 +2779,7 @@ class TicketStreamService : Service() {
   private fun broadcastConfig(size: TicketStreamSize) {
     val message = configMessage(size)
     lastConfigSentAtMillis = SystemClock.elapsedRealtime()
+    recordStartupTracePhase("stream_config_sent", "width=${size.width} height=${size.height} clients=${videoClients.size}", once = true)
     Log.i(TAG, "ticket_stream_config_sent width=${size.width} height=${size.height} video_clients=${videoClients.size}")
     videoClientSnapshot().forEach { client ->
       client.sendText(message)
@@ -2818,6 +2961,7 @@ class TicketStreamService : Service() {
     if (frame.keyFrame) {
       keyFrames += 1
       lastKeyFrameEncodedAtMillis = lastFrameEncodedAtMillis
+      recordStartupTracePhase("first_keyframe_encoded", "encoded_frames=$encodedFrames", once = true)
     }
     if (!hardwareFrameBroadcastAllowed) {
       hardwareCaptureSnapshot = rootHardwareH264CaptureEngine.snapshot()
@@ -2830,6 +2974,9 @@ class TicketStreamService : Service() {
       payload = frame.payload
     )
     hardwareCaptureSnapshot = rootHardwareH264CaptureEngine.snapshot()
+    if (hardwareCaptureVerified) {
+      recordStartupTracePhase("first_visible_frame_sent", "sequence=$frameSequence keyframe=${frame.keyFrame}", once = true, complete = true)
+    }
     if ((firstVisibleFrame || ticketSessionState == TICKET_SESSION_STARTING) && hardwareCaptureVerified) {
       updateTicketSessionState(TICKET_SESSION_LIVE, "root_hardware_h264_first_visible_frame")
       lastMessage = "Ticket session is active through hardware H.264 capture"
@@ -2905,6 +3052,7 @@ class TicketStreamService : Service() {
     val nowMillis = SystemClock.elapsedRealtime()
     lastKeyFrameRequestedAtMillis = nowMillis
     keyFrameRequests += 1
+    recordStartupTracePhase("keyframe_requested", reason, once = true)
     if (activeStreamStaleForRecovery(nowMillis)) {
       restartActiveStreamEngine("stale_keyframe_request_$reason")
     } else if (reason == "viewport_changed" && activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264) {
@@ -3589,6 +3737,7 @@ class TicketStreamService : Service() {
       ),
       ffmpeg = TicketFfmpegHealth(),
       hardwareH264 = hardwareCapture,
+      startupTrace = startupTraceSnapshot(nowMillis),
       recovery = recoverySnapshot,
       ticketState = TicketControlStateHealth(
         state = effectiveSessionState,
@@ -4184,8 +4333,10 @@ class TicketStreamService : Service() {
       "${prepareResult.state}:${prepareResult.step}:success=${prepareResult.success}"
     )
     if (prepareResult.success) {
+      recordStartupTracePhase("ticket_ready_proved", "state=${prepareResult.state} step=${prepareResult.step}", once = true)
       updateTicketSessionState(TICKET_SESSION_LIVE, "root_hardware_h264_vivi_ready_fast_$reason")
     } else {
+      recordStartupTracePhase("ticket_ready_failed", "state=${prepareResult.state} step=${prepareResult.step}", once = true)
       updateTicketSessionState(TICKET_SESSION_NEEDS_ATTENTION, "root_hardware_h264_fast_open_${prepareResult.state.name.lowercase()}")
     }
     finishTicketWake(
@@ -4209,8 +4360,10 @@ class TicketStreamService : Service() {
     markWakeReadyIfNeeded(wakeStartedAtMillis, result)
     recordTicketEvent("root_hardware_h264_vivi_prepare", "${result.state}:${result.step}:success=${result.success}")
     if (result.success) {
+      recordStartupTracePhase("ticket_ready_proved", "state=${result.state} step=${result.step}", once = true)
       updateTicketSessionState(TICKET_SESSION_LIVE, "root_hardware_h264_vivi_ready_$reason")
     } else {
+      recordStartupTracePhase("ticket_ready_failed", "state=${result.state} step=${result.step}", once = true)
       updateTicketSessionState(TICKET_SESSION_NEEDS_ATTENTION, "root_hardware_h264_vivi_prepare_${result.state.name.lowercase()}")
     }
     finishTicketWake(wakeStartedAtMillis, succeeded = result.success, reason = if (result.success) "ticket_ready" else result.step)
@@ -4242,6 +4395,7 @@ class TicketStreamService : Service() {
         resetFrameEpoch("phone_not_ready:$reason", active = false)
         lastMessage = "Phone not ready: root could not confirm the ViVi ticket screen"
         recordTicketEvent("phone_not_ready", prepareResult.step)
+        recordStartupTracePhase("phone_not_ready", prepareResult.step, once = true, complete = true)
         broadcastStatus()
         persistRuntimeState("phone_not_ready")
         return@launch
@@ -11180,6 +11334,7 @@ class TicketStreamService : Service() {
     private const val VIDEO_CLIENT_SLOW_CLOSE_MILLIS = 250L
     private const val TICKET_WAKE_BUDGET_MILLIS = 3_000L
     private const val TICKET_FAST_PUBLIC_OPEN_BUDGET_MILLIS = 5_000L
+    private const val STARTUP_TRACE_MAX_PHASES = 32
     private const val TICKET_FAST_PUBLIC_OPEN_ROOT_PROOF_TIMEOUT_MILLIS = 2_500L
     private const val TICKET_FAST_PUBLIC_OPEN_MIN_ROOT_PROOF_TIMEOUT_MILLIS = 1_000L
     private const val TICKET_WAKE_RECOVERY_BUDGET_MILLIS = 60_000L

@@ -225,6 +225,35 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     return false
   }
 
+  override suspend fun tapScreenRatio(
+    expectedPackageName: String,
+    xRatio: Double,
+    yRatio: Double,
+    timeoutMillis: Long
+  ): Boolean {
+    val deadline = System.currentTimeMillis() + timeoutMillis.coerceAtLeast(1L)
+    while (System.currentTimeMillis() < deadline) {
+      val tapped = withContext(Dispatchers.Main.immediate) {
+        val root = rootForPackage(expectedPackageName) ?: return@withContext false
+        val width = resources.displayMetrics.widthPixels
+        val height = resources.displayMetrics.heightPixels
+        val x = (width * xRatio.coerceIn(0.0, 1.0)).toFloat()
+        val y = (height * yRatio.coerceIn(0.0, 1.0)).toFloat()
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder()
+          .addStroke(GestureDescription.StrokeDescription(path, 0L, 80L))
+          .build()
+        PhoneAutomationServiceBridge.markNonTouchInput("accessibility_ratio_tap")
+        dispatchGesture(gesture, null, null)
+      }
+      if (tapped) {
+        return true
+      }
+      delay(80)
+    }
+    return false
+  }
+
   override suspend fun openFirstEditableInput(
     expectedPackageName: String,
     timeoutMillis: Long

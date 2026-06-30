@@ -51,7 +51,40 @@ class ScreenBrightnessControlTest {
     )
 
     assertTrue(script.contains("panel0-backlight"))
-    assertTrue(script.contains("echo 830"))
+    assertTrue(script.contains("panel_target=830"))
+    assertTrue(script.contains("echo \"${'$'}panel_target\""))
+  }
+
+  @Test
+  fun setPercentScriptCanHoldVisiblePanelBrightness() {
+    val script = ScreenBrightnessControl.buildSetPercentScript(
+      percent = 20,
+      panelHoldMillis = 1_500,
+      panelHoldIntervalMillis = 50
+    )
+
+    assertTrue(script.contains("cmd display set-brightness 20 --unit percentage"))
+    assertTrue(script.contains("panel_writes=${'$'}(( (1500 + 50 - 1) / 50 ))"))
+    assertTrue(script.contains("sleep 0.05"))
+  }
+
+  @Test
+  fun restoreScriptCanHoldExactCapturedPanelBrightness() {
+    val script = ScreenBrightnessControl.buildRestoreScript(
+      state = ScreenBrightnessState(
+        mode = 0,
+        value = 127,
+        panelPath = "/sys/class/backlight/panel0-backlight",
+        panelBrightness = 1969,
+        panelMaxBrightness = 3939
+      ),
+      panelHoldMillis = 1_500,
+      panelHoldIntervalMillis = 50
+    )
+
+    assertTrue(script.contains("panel_target=1969"))
+    assertTrue(script.contains("panel_writes=${'$'}(( (1500 + 50 - 1) / 50 ))"))
+    assertTrue(script.contains("sleep 0.05"))
   }
 
   @Test

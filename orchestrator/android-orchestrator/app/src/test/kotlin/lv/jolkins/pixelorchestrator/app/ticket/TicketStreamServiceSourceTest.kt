@@ -2588,6 +2588,21 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
+  fun publicStreamStartupTraceIsExposedInHealth() {
+    val service = ticketStreamServiceSource()
+    val config = ticketScreenConfigSource()
+
+    assertTrue(config.contains("val startupTrace: TicketStartupTraceHealth = TicketStartupTraceHealth()"))
+    assertTrue(config.contains("data class TicketStartupTraceHealth("))
+    assertTrue(service.contains("private fun beginStartupTrace(reason: String)"))
+    assertTrue(service.contains("private fun startupTraceSnapshot(nowMillis: Long): TicketStartupTraceHealth"))
+    assertTrue(service.contains("startupTrace = startupTraceSnapshot(nowMillis)"))
+    assertTrue(service.contains("recordStartupTracePhase(\"wake_\$phase\""))
+    assertTrue(service.contains("recordStartupTracePhase(\"root_capture_start_requested\""))
+    assertTrue(service.contains("recordStartupTracePhase(\"first_visible_frame_sent\""))
+  }
+
+  @Test
   fun controlCodeRequestStartsTicketSessionBeforeInputGate() {
     val source = ticketStreamServiceSource()
     val handler = source.substringBetween("private suspend fun handleGenerateControlCode(", "private suspend fun handleGenerateRigasSatiksmeMonthlyTicketQr(")

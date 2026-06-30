@@ -87,6 +87,7 @@ data class TicketStreamHealth(
   val visibleFrame: TicketVisibleFrameHealth = TicketVisibleFrameHealth(),
   val ffmpeg: TicketFfmpegHealth = TicketFfmpegHealth(),
   val hardwareH264: TicketHardwareH264Health = TicketHardwareH264Health(),
+  val startupTrace: TicketStartupTraceHealth = TicketStartupTraceHealth(),
   val recovery: TicketRecoveryHealth = TicketRecoveryHealth(),
   val ticketState: TicketControlStateHealth = TicketControlStateHealth(),
   val viviState: TicketViviStateHealth = TicketViviStateHealth(),
@@ -95,6 +96,27 @@ data class TicketStreamHealth(
   val recentClientTelemetry: List<TicketClientTelemetry> = emptyList(),
   val recentEvents: List<TicketSessionEvent> = emptyList(),
   val message: String
+)
+
+@Serializable
+data class TicketStartupTraceHealth(
+  val id: String = "",
+  val reason: String = "",
+  val startedAgoMillis: Long? = null,
+  val elapsedMillis: Long? = null,
+  val targetMillis: Long = 5_000L,
+  val overBudget: Boolean = false,
+  val complete: Boolean = false,
+  val lastPhase: String = "",
+  val phases: List<TicketStartupTracePhaseHealth> = emptyList()
+)
+
+@Serializable
+data class TicketStartupTracePhaseHealth(
+  val name: String,
+  val detail: String = "",
+  val sinceStartMillis: Long,
+  val sincePreviousMillis: Long
 )
 
 @Serializable

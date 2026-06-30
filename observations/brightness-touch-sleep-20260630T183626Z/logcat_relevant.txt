@@ -1,0 +1,1157 @@
+--------- beginning of main
+         1782844590.188 12227   663 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844590.240 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844590.409 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844593.450 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844595.673 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844598.629 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844600.932 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844603.801 12227 29206 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844606.190 12227  9336 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844608.988 12227  9336 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844611.454 12227  9336 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844612.174 12227 28471 D TouchBrightness: touch_brightness_debug reason=start_panel_sleep_reasserted touches=0 source=unknown power_source=unknown last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844612.314 12227 12339 D TouchBrightness: touch_brightness_debug reason=power_source_selected touches=0 source=unknown power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844612.394 12227 12339 D TouchBrightness: touch_brightness_debug reason=touch_source_selected touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844614.169 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844616.718 12227  9336 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844617.171 12227  5988 D TouchBrightness: touch_brightness_debug reason=touch_count_changed touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=13ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844617.172 12227  5988 D TouchBrightness: touch_brightness_debug reason=wake_promoted_to_active_touch touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=16ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844619.350 12227 12274 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844620.481 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844620.516 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844620.672 12227  9336 W TouchBrightness: saved brightness restore failed during wake; forcing safe visible brightness: Brightness restore verification failed: mode=0 value=1 display=0.0 panel=788/3939 path=/sys/class/backlight/panel0-backlight
+         1782844621.977 12227  9336 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844623.149 12227  5988 E TouchBrightness: touch brightness session failed
+         1782844623.149 12227  5988 E TouchBrightness: java.lang.IllegalStateException: Could not set bright mode: Brightness verification failed: mode=0 value=3 display=20.0 panel=498/3939 path=/sys/class/backlight/panel0-backlight
+         1782844623.149 12227  5988 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.invokeSuspend$enterBrightTouchActive(TouchBrightnessRuntime.kt:1106)
+         1782844623.149 12227  5988 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.access$invokeSuspend$enterBrightTouchActive(Unknown Source:0)
+         1782844623.149 12227  5988 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2$enterBrightTouchActive$1.invokeSuspend(Unknown Source:36)
+         1782844623.149 12227  5988 E TouchBrightness: 	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844623.149 12227  5988 E TouchBrightness: 	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844623.149 12227  5988 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:584)
+         1782844623.149 12227  5988 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:811)
+         1782844623.149 12227  5988 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:715)
+         1782844623.149 12227  5988 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:702)
+         1782844623.149 12227  5988 E TouchBrightness: 	Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844623.149 12227  5988 E TouchBrightness: 		at libcore.io.Linux.readBytes(Native Method)
+         1782844623.149 12227  5988 E TouchBrightness: 		at libcore.io.Linux.read(Linux.java:231)
+         1782844623.149 12227  5988 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844623.149 12227  5988 E TouchBrightness: 		at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844623.149 12227  5988 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844623.149 12227  5988 E TouchBrightness: 		at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844623.149 12227  5988 E TouchBrightness: 		at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844623.149 12227  5988 E TouchBrightness: 		at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844623.149 12227  5988 E TouchBrightness: 		at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844623.149 12227  5988 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844623.149 12227  5988 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844623.149 12227  5988 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844623.149 12227  5988 E TouchBrightness: 		at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844623.149 12227  5988 E TouchBrightness: 		at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844623.149 12227  5988 E TouchBrightness: 		at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844623.149 12227  5988 E TouchBrightness: 		at java.io.Reader.read(Reader.java:229)
+         1782844623.149 12227  5988 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844623.149 12227  5988 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844623.149 12227  5988 E TouchBrightness: 		at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844623.149 12227  5988 E TouchBrightness: 		at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootTouchMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootTouchMonitor.kt:271)
+         1782844623.149 12227  5988 E TouchBrightness: 		at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844623.149 12227  5988 E TouchBrightness: 		at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844623.149 12227  5988 E TouchBrightness: 		at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:111)
+         1782844623.149 12227  5988 E TouchBrightness: 		at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:99)
+         1782844623.149 12227  5988 E TouchBrightness: 		... 4 more
+         1782844623.149 12227  5988 E TouchBrightness: 		Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844623.149 12227  5988 E TouchBrightness: 			at libcore.io.Linux.readBytes(Native Method)
+         1782844623.149 12227  5988 E TouchBrightness: 			at libcore.io.Linux.read(Linux.java:231)
+         1782844623.149 12227  5988 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844623.149 12227  5988 E TouchBrightness: 			at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844623.149 12227  5988 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844623.149 12227  5988 E TouchBrightness: 			at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844623.149 12227  5988 E TouchBrightness: 			at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844623.149 12227  5988 E TouchBrightness: 			at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844623.149 12227  5988 E TouchBrightness: 			at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844623.149 12227  5988 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844623.149 12227  5988 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844623.149 12227  5988 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844623.149 12227  5988 E TouchBrightness: 			at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844623.149 12227  5988 E TouchBrightness: 			at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844623.149 12227  5988 E TouchBrightness: 			at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844623.149 12227  5988 E TouchBrightness: 			at java.io.Reader.read(Reader.java:229)
+         1782844623.149 12227  5988 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844623.149 12227  5988 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844623.151 12227  5988 E TouchBrightness: 			at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844623.151 12227  5988 E TouchBrightness: 			at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootPowerKeyMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootPowerKeyMonitor.kt:136)
+         1782844623.151 12227  5988 E TouchBrightness: 			... 8 more
+         1782844624.521 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844627.216 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844629.724 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844632.457 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844634.905 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844637.806 12227 29206 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844640.068 12227 17202 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844643.008 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844644.907 12227   663 D TouchBrightness: touch_brightness_debug reason=start_panel_sleep_reasserted touches=0 source=unknown power_source=unknown last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844645.038 12227   663 D TouchBrightness: touch_brightness_debug reason=power_source_selected touches=0 source=unknown power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844645.087 12227 12339 D TouchBrightness: touch_brightness_debug reason=touch_source_selected touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844645.180 12227 29206 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+--------- beginning of system
+         1782844645.644  1384 32044 I ActivityTaskManager: START u0 {flg=0x2000000 xflg=0x4 cmp=com.google.android.gms/.auth.uiflows.addaccount.WrapperControlledActivity (has extras)} with LAUNCH_MULTIPLE from uid 10197 (com.google.android.gms) (sr=207649457) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844645.735  1384  2576 I ActivityTaskManager: START u0 {act=com.google.android.gms.auth.addaccount.POST_ADD_ACCOUNT cmp=com.google.android.gms/.setupservices.GoogleServicesActivity (has extras)} with LAUNCH_MULTIPLE from uid 10197 (com.google.android.gms) (rr=199717933) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844645.878  1384  1447 I ActivityTaskManager: Displayed com.google.android.gms/.setupservices.GoogleServicesActivity for user 0: +239ms
+         1782844646.968  1384 25879 I ActivityTaskManager: Add Task{88f852 #2997 type=standard A=10196:com.android.vending} to hidden list because adding Task{56833fe #2998 type=standard A=10196:com.android.vending}
+         1782844646.969  1384 25879 I ActivityTaskManager: START u0 {act=android.intent.action.VIEW dat=http://play.google.com/... flg=0x10000000 xflg=0x4 pkg=com.android.vending cmp=com.android.vending/com.google.android.finsky.activities.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 10196 (com.android.vending) (sr=230089949) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844648.239 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844649.345  1384  1447 I ActivityTaskManager: Displayed com.android.vending/com.google.android.finsky.activities.MainActivity for user 0: +2s384ms
+         1782844649.590 12227  6291 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844650.342 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844650.798 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844650.842 12227 29206 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844653.445 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844653.590 12227 12339 D TouchBrightness: touch_brightness_debug reason=touch_count_changed touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844653.590 12227 12339 D TouchBrightness: touch_brightness_debug reason=wake_promoted_to_active_touch touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=1ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844653.656  1384 17502 I ActivityTaskManager: START u0 {act=android.content.pm.action.CONFIRM_INSTALL xflg=0x4 pkg=com.android.packageinstaller cmp=com.android.packageinstaller/.InstallStart (has extras)} with LAUNCH_MULTIPLE from uid 10196 (com.android.vending) (sr=215765945) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844653.679  1384 17502 I ActivityTaskManager: START u0 {act=android.content.pm.action.CONFIRM_INSTALL flg=0x2000000 xflg=0x4 pkg=com.android.packageinstaller cmp=com.android.packageinstaller/.v2.ui.InstallLaunch (has extras)} with LAUNCH_MULTIPLE from uid 10079 (com.android.packageinstaller) (sr=158466430) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844653.793  1384  1447 I ActivityTaskManager: Displayed com.android.packageinstaller/.v2.ui.InstallLaunch for user 0: +138ms
+         1782844655.483 12227 29206 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844656.614 12227  5987 W TouchBrightness: saved brightness restore failed during wake; forcing safe visible brightness: Brightness restore verification failed: mode=0 value=1 display=0.0 panel=788/3939 path=/sys/class/backlight/panel0-backlight
+         1782844657.570  1384  2816 I InputDispatcher: Channel [Gesture Monitor] swipe-up is stealing input gesture for device 4 from [24eb893 com.android.vending/com.google.android.finsky.activities.MainActivity, [Gesture Monitor] edge-swipe]
+         1782844658.484  1384  2576 W ActivityTaskManager: callingPackage for (uid=-1, pid=-1) has no WPC
+         1782844658.576 12227  5987 E TouchBrightness: touch brightness session failed
+         1782844658.576 12227  5987 E TouchBrightness: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844658.576 12227  5987 E TouchBrightness: 	at libcore.io.Linux.readBytes(Native Method)
+         1782844658.576 12227  5987 E TouchBrightness: 	at libcore.io.Linux.read(Linux.java:231)
+         1782844658.576 12227  5987 E TouchBrightness: 	at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844658.576 12227  5987 E TouchBrightness: 	at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844658.576 12227  5987 E TouchBrightness: 	at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844658.576 12227  5987 E TouchBrightness: 	at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844658.576 12227  5987 E TouchBrightness: 	at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844658.576 12227  5987 E TouchBrightness: 	at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844658.576 12227  5987 E TouchBrightness: 	at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844658.576 12227  5987 E TouchBrightness: 	at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844658.576 12227  5987 E TouchBrightness: 	at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844658.576 12227  5987 E TouchBrightness: 	at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844658.576 12227  5987 E TouchBrightness: 	at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844658.576 12227  5987 E TouchBrightness: 	at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844658.576 12227  5987 E TouchBrightness: 	at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844658.576 12227  5987 E TouchBrightness: 	at java.io.Reader.read(Reader.java:229)
+         1782844658.576 12227  5987 E TouchBrightness: 	at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844658.576 12227  5987 E TouchBrightness: 	at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844658.576 12227  5987 E TouchBrightness: 	at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844658.576 12227  5987 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootTouchMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootTouchMonitor.kt:271)
+         1782844658.576 12227  5987 E TouchBrightness: 	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844658.576 12227  5987 E TouchBrightness: 	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844658.576 12227  5987 E TouchBrightness: 	at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:111)
+         1782844658.576 12227  5987 E TouchBrightness: 	at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:99)
+         1782844658.576 12227  5987 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:584)
+         1782844658.576 12227  5987 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:811)
+         1782844658.576 12227  5987 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:715)
+         1782844658.576 12227  5987 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:702)
+         1782844658.576 12227  5987 E TouchBrightness: 	Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844658.576 12227  5987 E TouchBrightness: 		at libcore.io.Linux.readBytes(Native Method)
+         1782844658.576 12227  5987 E TouchBrightness: 		at libcore.io.Linux.read(Linux.java:231)
+         1782844658.576 12227  5987 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844658.576 12227  5987 E TouchBrightness: 		at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844658.576 12227  5987 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844658.576 12227  5987 E TouchBrightness: 		at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844658.576 12227  5987 E TouchBrightness: 		at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844658.576 12227  5987 E TouchBrightness: 		at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844658.576 12227  5987 E TouchBrightness: 		at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844658.576 12227  5987 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844658.576 12227  5987 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844658.576 12227  5987 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844658.576 12227  5987 E TouchBrightness: 		at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844658.576 12227  5987 E TouchBrightness: 		at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844658.576 12227  5987 E TouchBrightness: 		at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844658.576 12227  5987 E TouchBrightness: 		at java.io.Reader.read(Reader.java:229)
+         1782844658.576 12227  5987 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844658.576 12227  5987 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844658.576 12227  5987 E TouchBrightness: 		at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844658.576 12227  5987 E TouchBrightness: 		at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootPowerKeyMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootPowerKeyMonitor.kt:136)
+         1782844658.576 12227  5987 E TouchBrightness: 		... 8 more
+         1782844658.576 12227  5987 E TouchBrightness: 	Suppressed: java.lang.IllegalStateException: Could not set bright mode: Brightness verification failed: mode=0 value=3 display=20.0 panel=498/3939 path=/sys/class/backlight/panel0-backlight
+         1782844658.576 12227  5987 E TouchBrightness: 		at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.invokeSuspend$enterBrightTouchActive(TouchBrightnessRuntime.kt:1106)
+         1782844658.576 12227  5987 E TouchBrightness: 		at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.access$invokeSuspend$enterBrightTouchActive(Unknown Source:0)
+         1782844658.576 12227  5987 E TouchBrightness: 		at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2$enterBrightTouchActive$1.invokeSuspend(Unknown Source:36)
+         1782844658.576 12227  5987 E TouchBrightness: 		at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844658.576 12227  5987 E TouchBrightness: 		at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844658.576 12227  5987 E TouchBrightness: 		... 4 more
+         1782844658.628 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844659.759  1384  2576 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] flg=0x10000000 xflg=0x4 pkg=com.openai.chatgpt cmp=com.openai.chatgpt/.MainActivity} with LAUNCH_SINGLE_TOP from uid 10202 (com.aurora.store) (sr=79229455) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844660.593 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844660.936  1384  1447 I ActivityTaskManager: Displayed com.openai.chatgpt/.MainActivity for user 0: +1s185ms
+         1782844661.116  1384  2816 I ActivityTaskManager: START u0 {flg=0x10010000 xflg=0x4 cmp=com.openai.chatgpt/com.pairip.licensecheck.LicenseActivity (has extras)} with LAUNCH_MULTIPLE from uid 10207 (com.openai.chatgpt) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844661.140  1384  4124 W ActivityTaskManager: startActivity called from non-Activity context; forcing Intent.FLAG_ACTIVITY_NEW_TASK for: Intent { act=android.intent.action.VIEW dat=http://play.google.com/... xflg=0x4 pkg=com.android.vending cmp=com.android.vending/com.google.android.finsky.activities.MainActivity }
+         1782844661.144  1384  4124 I ActivityTaskManager: START u0 {act=android.intent.action.VIEW dat=http://play.google.com/... xflg=0x4 pkg=com.android.vending cmp=com.android.vending/com.google.android.finsky.activities.MainActivity} with LAUNCH_SINGLE_TASK from uid 10196 (com.android.vending) (realCallingUid=10207) (BAL_ALLOW_VISIBLE_WINDOW [realCaller]) result code=2
+         1782844661.146  1384  2816 W ActivityTaskManager: callingPackage for (uid=-1, pid=-1) has no WPC
+         1782844661.147  1384  2816 W ActivityTaskManager: Finishing task with all activities already finished
+         1782844661.147  1384  2816 W ActivityTaskManager: Duplicate finish request for r=ActivityRecord{247831910 u0 com.openai.chatgpt/com.pairip.licensecheck.LicenseActivity t2999 f}}
+         1782844661.228  1384  4124 I WindowManager: WIN DEATH: Window{3f08c72 u0 com.openai.chatgpt/com.openai.chatgpt.MainActivity}
+         1782844661.296  1384  1447 I ActivityTaskManager: Displayed com.android.vending/com.google.android.finsky.activities.MainActivity for user 0: +189ms
+         1782844661.642  1384  1450 W ActivityTaskManager: Activity top resumed state loss timeout for ActivityRecord{247831910 u0 com.openai.chatgpt/com.pairip.licensecheck.LicenseActivity t-1 f}}
+         1782844661.803  1384 14090 W WindowManager: Exception thrown during dispatchAppVisibility Window{3f08c72 u0 com.openai.chatgpt/com.openai.chatgpt.MainActivity EXITING}
+         1782844661.803  1384 14090 W WindowManager: android.os.DeadObjectException
+         1782844661.803  1384 14090 W WindowManager: 	at android.os.BinderProxy.transactNative(Native Method)
+         1782844661.803  1384 14090 W WindowManager: 	at android.os.BinderProxy.transact(BinderProxy.java:626)
+         1782844661.803  1384 14090 W WindowManager: 	at android.view.IWindow$Stub$Proxy.dispatchAppVisibility(IWindow.java:536)
+         1782844661.803  1384 14090 W WindowManager: 	at com.android.server.wm.WindowState.sendAppVisibilityToClients(WindowState.java:3276)
+         1782844661.803  1384 14090 W WindowManager: 	at com.android.server.wm.WindowContainer.sendAppVisibilityToClients(WindowContainer.java:1218)
+         1782844661.803  1384 14090 W WindowManager: 	at com.android.server.wm.WindowToken.setClientVisible(WindowToken.java:394)
+         1782844661.803  1384 14090 W WindowManager: 	at com.android.server.wm.ActivityRecord.commitVisibility(ActivityRecord.java:5645)
+         1782844661.803  1384 14090 W WindowManager: 	at com.android.server.wm.Transition.finishTransition(Transition.java:1500)
+         1782844661.803  1384 14090 W WindowManager: 	at com.android.server.wm.TransitionController.finishTransition(TransitionController.java:1096)
+         1782844661.803  1384 14090 W WindowManager: 	at com.android.server.wm.WindowOrganizerController.finishTransition(WindowOrganizerController.java:518)
+         1782844661.803  1384 14090 W WindowManager: 	at android.window.IWindowOrganizerController$Stub.onTransact(IWindowOrganizerController.java:270)
+         1782844661.803  1384 14090 W WindowManager: 	at com.android.server.wm.WindowOrganizerController.onTransact(WindowOrganizerController.java:233)
+         1782844661.803  1384 14090 W WindowManager: 	at android.os.Binder.execTransactInternal(Binder.java:1522)
+         1782844661.803  1384 14090 W WindowManager: 	at android.os.Binder.execTransact(Binder.java:1457)
+         1782844662.538  1384 14090 I ActivityTaskManager: START u0 {act=android.intent.action.VIEW dat=https://play.google.com/... xflg=0x4 cmp=com.android.vending/com.google.android.finsky.activities.MainActivity} with LAUNCH_SINGLE_TASK from uid 10196 (com.android.vending) (sr=215765945) (BAL_ALLOW_VISIBLE_WINDOW) result code=3
+         1782844663.827 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844665.787 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844669.015 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844670.892 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844674.260 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844676.029 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844679.481 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844681.150 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844681.155 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844681.200 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844681.209 12227 17203 D TouchBrightness: touch_brightness_debug reason=start_panel_sleep_reasserted touches=0 source=unknown power_source=unknown last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844681.429 12227 12339 D TouchBrightness: touch_brightness_debug reason=touch_source_selected touches=0 source=synaptics_tcm_touch power_source=unknown last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844681.528 12227 12339 D TouchBrightness: touch_brightness_debug reason=power_source_selected touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844684.768 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844686.330 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844687.493 12227 28471 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844690.057 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844691.512 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844693.872 12227 28471 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844695.329 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844696.697 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844700.040 12227  8261 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844700.596 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844701.878 12227 17026 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844705.923 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844706.585 12227  8261 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844707.079 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844711.142 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844711.468 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844711.523 12227 17026 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844712.264 12227 17026 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844712.469 12227 17026 D TouchBrightness: touch_brightness_debug reason=touch_count_changed touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=17ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844712.469 12227 17026 D TouchBrightness: touch_brightness_debug reason=wake_promoted_to_active_touch touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=17ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844715.830 12227 17026 W TouchBrightness: saved brightness restore failed during wake; forcing safe visible brightness: Brightness restore verification failed: mode=0 value=1 display=0.0 panel=788/3939 path=/sys/class/backlight/panel0-backlight
+         1782844716.385 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844717.416 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844718.473 12227  8261 E TouchBrightness: touch brightness session failed
+         1782844718.473 12227  8261 E TouchBrightness: java.lang.IllegalStateException: Could not set bright mode: Brightness verification failed: mode=0 value=3 display=20.0 panel=498/3939 path=/sys/class/backlight/panel0-backlight
+         1782844718.473 12227  8261 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.invokeSuspend$enterBrightTouchActive(TouchBrightnessRuntime.kt:1106)
+         1782844718.473 12227  8261 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.access$invokeSuspend$enterBrightTouchActive(Unknown Source:0)
+         1782844718.473 12227  8261 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2$enterBrightTouchActive$1.invokeSuspend(Unknown Source:36)
+         1782844718.473 12227  8261 E TouchBrightness: 	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844718.473 12227  8261 E TouchBrightness: 	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844718.473 12227  8261 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:584)
+         1782844718.473 12227  8261 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:811)
+         1782844718.473 12227  8261 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:715)
+         1782844718.473 12227  8261 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:702)
+         1782844718.473 12227  8261 E TouchBrightness: 	Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844718.473 12227  8261 E TouchBrightness: 		at libcore.io.Linux.readBytes(Native Method)
+         1782844718.473 12227  8261 E TouchBrightness: 		at libcore.io.Linux.read(Linux.java:231)
+         1782844718.473 12227  8261 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844718.473 12227  8261 E TouchBrightness: 		at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844718.473 12227  8261 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844718.473 12227  8261 E TouchBrightness: 		at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844718.473 12227  8261 E TouchBrightness: 		at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844718.473 12227  8261 E TouchBrightness: 		at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844718.473 12227  8261 E TouchBrightness: 		at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844718.473 12227  8261 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844718.473 12227  8261 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844718.473 12227  8261 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844718.473 12227  8261 E TouchBrightness: 		at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844718.473 12227  8261 E TouchBrightness: 		at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844718.473 12227  8261 E TouchBrightness: 		at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844718.473 12227  8261 E TouchBrightness: 		at java.io.Reader.read(Reader.java:229)
+         1782844718.473 12227  8261 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844718.473 12227  8261 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844718.473 12227  8261 E TouchBrightness: 		at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844718.473 12227  8261 E TouchBrightness: 		at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootTouchMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootTouchMonitor.kt:271)
+         1782844718.473 12227  8261 E TouchBrightness: 		at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844718.473 12227  8261 E TouchBrightness: 		at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844718.473 12227  8261 E TouchBrightness: 		at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:111)
+         1782844718.473 12227  8261 E TouchBrightness: 		at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:99)
+         1782844718.473 12227  8261 E TouchBrightness: 		... 4 more
+         1782844718.473 12227  8261 E TouchBrightness: 		Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844718.473 12227  8261 E TouchBrightness: 			at libcore.io.Linux.readBytes(Native Method)
+         1782844718.473 12227  8261 E TouchBrightness: 			at libcore.io.Linux.read(Linux.java:231)
+         1782844718.473 12227  8261 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844718.473 12227  8261 E TouchBrightness: 			at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844718.473 12227  8261 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844718.473 12227  8261 E TouchBrightness: 			at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844718.473 12227  8261 E TouchBrightness: 			at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844718.473 12227  8261 E TouchBrightness: 			at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844718.473 12227  8261 E TouchBrightness: 			at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844718.473 12227  8261 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844718.473 12227  8261 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844718.473 12227  8261 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844718.473 12227  8261 E TouchBrightness: 			at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844718.473 12227  8261 E TouchBrightness: 			at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844718.473 12227  8261 E TouchBrightness: 			at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844718.473 12227  8261 E TouchBrightness: 			at java.io.Reader.read(Reader.java:229)
+         1782844718.473 12227  8261 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844718.473 12227  8261 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844718.474 12227  8261 E TouchBrightness: 			at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844718.474 12227  8261 E TouchBrightness: 			at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootPowerKeyMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootPowerKeyMonitor.kt:136)
+         1782844718.474 12227  8261 E TouchBrightness: 			... 8 more
+         1782844721.663 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844722.541 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844726.884 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844727.643 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844732.139 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844732.765 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844737.400 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844737.963 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844740.050  1384  2771 I InputDispatcher: Channel [Gesture Monitor] swipe-up is stealing input gesture for device 4 from [6a626d3 com.android.vending/com.google.android.finsky.activities.MainActivity, [Gesture Monitor] edge-swipe]
+         1782844740.434 12227 17202 D TouchBrightness: touch_brightness_debug reason=start_panel_sleep_reasserted touches=0 source=unknown power_source=unknown last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844740.530 12227 32668 D TouchBrightness: touch_brightness_debug reason=power_source_selected touches=0 source=unknown power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844740.569 12227   663 D TouchBrightness: touch_brightness_debug reason=touch_source_selected touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844741.731 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844741.773 12227   663 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844742.661 12227   663 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844743.146 12227   663 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844745.295 12227 29206 D TouchBrightness: touch_brightness_debug reason=touch_count_changed touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=23ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844745.299 12227 29206 D TouchBrightness: touch_brightness_debug reason=wake_promoted_to_active_touch touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=24ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844748.007 12227 29206 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844748.034  1384  2771 I ActivityTaskManager: START u0 {act=android.intent.action.UNINSTALL_PACKAGE dat=package: xflg=0x4 cmp=com.android.packageinstaller/.UninstallerActivity (has extras)} with LAUNCH_MULTIPLE from uid 10196 (com.android.vending) (sr=215765945) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844748.060  1384 25879 I ActivityTaskManager: START u0 {act=android.intent.action.UNINSTALL_PACKAGE dat=package: flg=0x800000 cmp=com.android.packageinstaller/.v2.ui.UninstallLaunch (has extras)} with LAUNCH_MULTIPLE from uid 10079 (com.android.packageinstaller) (sr=84076102) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844748.142  1384  1447 I ActivityTaskManager: Displayed com.android.packageinstaller/.v2.ui.UninstallLaunch for user 0: +101ms
+         1782844748.295 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844748.887 12227 12339 W TouchBrightness: saved brightness restore failed during wake; forcing safe visible brightness: Brightness restore verification failed: mode=0 value=1 display=0.0 panel=788/3939 path=/sys/class/backlight/panel0-backlight
+         1782844751.067 12227 17026 E TouchBrightness: touch brightness session failed
+         1782844751.067 12227 17026 E TouchBrightness: java.lang.IllegalStateException: Could not set bright mode: Brightness verification failed: mode=0 value=3 display=20.0 panel=498/3939 path=/sys/class/backlight/panel0-backlight
+         1782844751.067 12227 17026 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.invokeSuspend$enterBrightTouchActive(TouchBrightnessRuntime.kt:1106)
+         1782844751.067 12227 17026 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.access$invokeSuspend$enterBrightTouchActive(Unknown Source:0)
+         1782844751.067 12227 17026 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2$enterBrightTouchActive$1.invokeSuspend(Unknown Source:36)
+         1782844751.067 12227 17026 E TouchBrightness: 	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844751.067 12227 17026 E TouchBrightness: 	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844751.067 12227 17026 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:584)
+         1782844751.067 12227 17026 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:811)
+         1782844751.067 12227 17026 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:715)
+         1782844751.067 12227 17026 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:702)
+         1782844751.067 12227 17026 E TouchBrightness: 	Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844751.067 12227 17026 E TouchBrightness: 		at libcore.io.Linux.readBytes(Native Method)
+         1782844751.067 12227 17026 E TouchBrightness: 		at libcore.io.Linux.read(Linux.java:231)
+         1782844751.067 12227 17026 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844751.067 12227 17026 E TouchBrightness: 		at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844751.067 12227 17026 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844751.067 12227 17026 E TouchBrightness: 		at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844751.067 12227 17026 E TouchBrightness: 		at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844751.067 12227 17026 E TouchBrightness: 		at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844751.067 12227 17026 E TouchBrightness: 		at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844751.067 12227 17026 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844751.067 12227 17026 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844751.067 12227 17026 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844751.067 12227 17026 E TouchBrightness: 		at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844751.067 12227 17026 E TouchBrightness: 		at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844751.067 12227 17026 E TouchBrightness: 		at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844751.067 12227 17026 E TouchBrightness: 		at java.io.Reader.read(Reader.java:229)
+         1782844751.067 12227 17026 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844751.067 12227 17026 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844751.067 12227 17026 E TouchBrightness: 		at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844751.067 12227 17026 E TouchBrightness: 		at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootPowerKeyMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootPowerKeyMonitor.kt:136)
+         1782844751.067 12227 17026 E TouchBrightness: 		at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844751.067 12227 17026 E TouchBrightness: 		at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844751.067 12227 17026 E TouchBrightness: 		at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:111)
+         1782844751.067 12227 17026 E TouchBrightness: 		at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:99)
+         1782844751.067 12227 17026 E TouchBrightness: 		... 4 more
+         1782844751.067 12227 17026 E TouchBrightness: 		Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844751.067 12227 17026 E TouchBrightness: 			at libcore.io.Linux.readBytes(Native Method)
+         1782844751.067 12227 17026 E TouchBrightness: 			at libcore.io.Linux.read(Linux.java:231)
+         1782844751.067 12227 17026 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844751.067 12227 17026 E TouchBrightness: 			at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844751.067 12227 17026 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844751.067 12227 17026 E TouchBrightness: 			at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844751.067 12227 17026 E TouchBrightness: 			at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844751.067 12227 17026 E TouchBrightness: 			at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844751.067 12227 17026 E TouchBrightness: 			at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844751.067 12227 17026 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844751.067 12227 17026 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844751.067 12227 17026 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844751.067 12227 17026 E TouchBrightness: 			at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844751.067 12227 17026 E TouchBrightness: 			at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844751.067 12227 17026 E TouchBrightness: 			at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844751.067 12227 17026 E TouchBrightness: 			at java.io.Reader.read(Reader.java:229)
+         1782844751.067 12227 17026 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844751.067 12227 17026 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844751.068 12227 17026 E TouchBrightness: 			at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844751.068 12227 17026 E TouchBrightness: 			at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootTouchMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootTouchMonitor.kt:271)
+         1782844751.068 12227 17026 E TouchBrightness: 			... 8 more
+         1782844753.250 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844753.393 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844758.503 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844758.560 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844760.464  1384 14090 I ActivityTaskManager: START u0 {act=android.content.pm.action.CONFIRM_INSTALL xflg=0x4 pkg=com.android.packageinstaller cmp=com.android.packageinstaller/.InstallStart (has extras)} with LAUNCH_MULTIPLE from uid 10196 (com.android.vending) (sr=215765945) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844760.484  1384 14090 I ActivityTaskManager: START u0 {act=android.content.pm.action.CONFIRM_INSTALL flg=0x2000000 xflg=0x4 pkg=com.android.packageinstaller cmp=com.android.packageinstaller/.v2.ui.InstallLaunch (has extras)} with LAUNCH_MULTIPLE from uid 10079 (com.android.packageinstaller) (sr=109039406) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844760.559  1384  1447 I ActivityTaskManager: Displayed com.android.packageinstaller/.v2.ui.InstallLaunch for user 0: +91ms
+         1782844763.682 12227 29206 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844763.727 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844768.793 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844768.975 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844772.047 12227 29206 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844772.103 12227 17202 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844772.850 12227   664 D TouchBrightness: touch_brightness_debug reason=start_panel_sleep_reasserted touches=0 source=unknown power_source=unknown last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844773.099 12227 17202 D TouchBrightness: touch_brightness_debug reason=touch_source_selected touches=0 source=synaptics_tcm_touch power_source=unknown last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844773.172 12227 17202 D TouchBrightness: touch_brightness_debug reason=power_source_selected touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844773.983 12227 29206 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844774.208 12227 17202 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844777.913 12227 29206 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844779.144 12227 17026 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844779.395 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844783.488 12227 16942 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844784.297 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844784.636 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844785.083 12227 12278 D TouchBrightness: touch_brightness_debug reason=touch_count_changed touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=7ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844785.083 12227 12278 D TouchBrightness: touch_brightness_debug reason=wake_promoted_to_active_touch touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=8ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844788.355 12227 12278 W TouchBrightness: saved brightness restore failed during wake; forcing safe visible brightness: Brightness restore verification failed: mode=0 value=1 display=0.0 panel=0/3939 path=/sys/class/backlight/panel0-backlight
+         1782844789.408 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844789.864 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844790.938 12227 28471 E TouchBrightness: touch brightness session failed
+         1782844790.938 12227 28471 E TouchBrightness: java.lang.IllegalStateException: Could not set bright mode: Brightness verification failed: mode=0 value=3 display=20.0 panel=498/3939 path=/sys/class/backlight/panel0-backlight
+         1782844790.938 12227 28471 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.invokeSuspend$enterBrightTouchActive(TouchBrightnessRuntime.kt:1106)
+         1782844790.938 12227 28471 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.access$invokeSuspend$enterBrightTouchActive(Unknown Source:0)
+         1782844790.938 12227 28471 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2$enterBrightTouchActive$1.invokeSuspend(Unknown Source:36)
+         1782844790.938 12227 28471 E TouchBrightness: 	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844790.938 12227 28471 E TouchBrightness: 	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844790.938 12227 28471 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:584)
+         1782844790.938 12227 28471 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:811)
+         1782844790.938 12227 28471 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:715)
+         1782844790.938 12227 28471 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:702)
+         1782844790.938 12227 28471 E TouchBrightness: 	Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844790.938 12227 28471 E TouchBrightness: 		at libcore.io.Linux.readBytes(Native Method)
+         1782844790.938 12227 28471 E TouchBrightness: 		at libcore.io.Linux.read(Linux.java:231)
+         1782844790.938 12227 28471 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844790.938 12227 28471 E TouchBrightness: 		at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844790.938 12227 28471 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844790.938 12227 28471 E TouchBrightness: 		at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844790.938 12227 28471 E TouchBrightness: 		at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844790.938 12227 28471 E TouchBrightness: 		at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844790.938 12227 28471 E TouchBrightness: 		at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844790.938 12227 28471 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844790.938 12227 28471 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844790.938 12227 28471 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844790.938 12227 28471 E TouchBrightness: 		at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844790.938 12227 28471 E TouchBrightness: 		at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844790.938 12227 28471 E TouchBrightness: 		at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844790.938 12227 28471 E TouchBrightness: 		at java.io.Reader.read(Reader.java:229)
+         1782844790.938 12227 28471 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844790.938 12227 28471 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844790.938 12227 28471 E TouchBrightness: 		at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844790.938 12227 28471 E TouchBrightness: 		at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootPowerKeyMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootPowerKeyMonitor.kt:136)
+         1782844790.938 12227 28471 E TouchBrightness: 		at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844790.938 12227 28471 E TouchBrightness: 		at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844790.938 12227 28471 E TouchBrightness: 		at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:111)
+         1782844790.938 12227 28471 E TouchBrightness: 		at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:99)
+         1782844790.938 12227 28471 E TouchBrightness: 		... 4 more
+         1782844790.938 12227 28471 E TouchBrightness: 		Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844790.938 12227 28471 E TouchBrightness: 			at libcore.io.Linux.readBytes(Native Method)
+         1782844790.938 12227 28471 E TouchBrightness: 			at libcore.io.Linux.read(Linux.java:231)
+         1782844790.938 12227 28471 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844790.938 12227 28471 E TouchBrightness: 			at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844790.938 12227 28471 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844790.938 12227 28471 E TouchBrightness: 			at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844790.938 12227 28471 E TouchBrightness: 			at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844790.938 12227 28471 E TouchBrightness: 			at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844790.938 12227 28471 E TouchBrightness: 			at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844790.938 12227 28471 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844790.938 12227 28471 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844790.938 12227 28471 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844790.938 12227 28471 E TouchBrightness: 			at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844790.938 12227 28471 E TouchBrightness: 			at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844790.938 12227 28471 E TouchBrightness: 			at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844790.938 12227 28471 E TouchBrightness: 			at java.io.Reader.read(Reader.java:229)
+         1782844790.938 12227 28471 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844790.938 12227 28471 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844790.942 12227 28471 E TouchBrightness: 			at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844790.942 12227 28471 E TouchBrightness: 			at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootTouchMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootTouchMonitor.kt:271)
+         1782844790.942 12227 28471 E TouchBrightness: 			... 8 more
+         1782844794.515 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844795.058 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844799.659 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844800.259 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844802.326 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844802.385 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844804.791 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844805.499 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844809.369  1384 14090 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] flg=0x10000000 xflg=0x4 pkg=com.openai.chatgpt cmp=com.openai.chatgpt/.MainActivity} with LAUNCH_SINGLE_TOP from uid 10196 (com.android.vending) (sr=215765945) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844809.438  1384 14090 W WindowManager: Cannot find window which accessibility connection is added to
+         1782844809.920 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844810.123  1384  1818 W InputDispatcher: Not sending touch gesture to 7d6e7e5 ActivityRecordInputSink com.openai.chatgpt/.MainActivity because it has config NO_INPUT_CHANNEL
+         1782844810.399  1384  1447 I ActivityTaskManager: Displayed com.openai.chatgpt/.MainActivity for user 0: +1s44ms
+         1782844810.730 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844810.791  1384  1791 W WindowManager: Cannot find window which accessibility connection is added to
+         1782844810.794  1384  1791 W WindowManager: Failed looking up window session=Session{de228b 2253:u0a10145} callers=com.android.server.wm.WindowManagerService.removeClientToken:2221 com.android.server.wm.Session.remove:283 android.view.IWindowSession$Stub.onTransact:639 
+         1782844812.809 12227 12278 D TouchBrightness: touch_brightness_debug reason=start_panel_sleep_reasserted touches=0 source=unknown power_source=unknown last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844813.027 12227 16942 D TouchBrightness: touch_brightness_debug reason=power_source_selected touches=0 source=unknown power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844813.093 12227 16942 D TouchBrightness: touch_brightness_debug reason=touch_source_selected touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844815.074 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844816.091 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844819.140 12227  6291 D TouchBrightness: touch_brightness_debug reason=touch_count_changed touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=6ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844819.141 12227  6291 D TouchBrightness: touch_brightness_debug reason=wake_promoted_to_active_touch touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=11ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844819.179 12227 29206 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=49ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844820.240 12227 17026 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844821.376 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844823.039 12227 29206 W TouchBrightness: saved brightness restore failed during wake; forcing safe visible brightness: Brightness restore verification failed: mode=0 value=1 display=0.0 panel=788/3939 path=/sys/class/backlight/panel0-backlight
+         1782844825.440 12227   663 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844825.777 12227 17203 E TouchBrightness: touch brightness session failed
+         1782844825.777 12227 17203 E TouchBrightness: java.lang.IllegalStateException: Could not set bright mode: Brightness verification failed: mode=0 value=2 display=20.0 panel=271/3939 path=/sys/class/backlight/panel0-backlight
+         1782844825.777 12227 17203 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.invokeSuspend$enterBrightTouchActive(TouchBrightnessRuntime.kt:1106)
+         1782844825.777 12227 17203 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.access$invokeSuspend$enterBrightTouchActive(Unknown Source:0)
+         1782844825.777 12227 17203 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2$enterBrightTouchActive$1.invokeSuspend(Unknown Source:36)
+         1782844825.777 12227 17203 E TouchBrightness: 	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844825.777 12227 17203 E TouchBrightness: 	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844825.777 12227 17203 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:584)
+         1782844825.777 12227 17203 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:811)
+         1782844825.777 12227 17203 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:715)
+         1782844825.777 12227 17203 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:702)
+         1782844825.777 12227 17203 E TouchBrightness: 	Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844825.777 12227 17203 E TouchBrightness: 		at libcore.io.Linux.readBytes(Native Method)
+         1782844825.777 12227 17203 E TouchBrightness: 		at libcore.io.Linux.read(Linux.java:231)
+         1782844825.777 12227 17203 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844825.777 12227 17203 E TouchBrightness: 		at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844825.777 12227 17203 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844825.777 12227 17203 E TouchBrightness: 		at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844825.777 12227 17203 E TouchBrightness: 		at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844825.777 12227 17203 E TouchBrightness: 		at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844825.777 12227 17203 E TouchBrightness: 		at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844825.777 12227 17203 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844825.777 12227 17203 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844825.777 12227 17203 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844825.777 12227 17203 E TouchBrightness: 		at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844825.777 12227 17203 E TouchBrightness: 		at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844825.777 12227 17203 E TouchBrightness: 		at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844825.777 12227 17203 E TouchBrightness: 		at java.io.Reader.read(Reader.java:229)
+         1782844825.777 12227 17203 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844825.777 12227 17203 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844825.777 12227 17203 E TouchBrightness: 		at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844825.777 12227 17203 E TouchBrightness: 		at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootTouchMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootTouchMonitor.kt:271)
+         1782844825.777 12227 17203 E TouchBrightness: 		at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844825.777 12227 17203 E TouchBrightness: 		at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844825.777 12227 17203 E TouchBrightness: 		at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:111)
+         1782844825.777 12227 17203 E TouchBrightness: 		at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:99)
+         1782844825.777 12227 17203 E TouchBrightness: 		... 4 more
+         1782844825.777 12227 17203 E TouchBrightness: 		Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844825.777 12227 17203 E TouchBrightness: 			at libcore.io.Linux.readBytes(Native Method)
+         1782844825.777 12227 17203 E TouchBrightness: 			at libcore.io.Linux.read(Linux.java:231)
+         1782844825.777 12227 17203 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844825.777 12227 17203 E TouchBrightness: 			at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844825.777 12227 17203 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844825.777 12227 17203 E TouchBrightness: 			at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844825.777 12227 17203 E TouchBrightness: 			at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844825.777 12227 17203 E TouchBrightness: 			at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844825.777 12227 17203 E TouchBrightness: 			at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844825.777 12227 17203 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844825.777 12227 17203 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844825.777 12227 17203 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844825.777 12227 17203 E TouchBrightness: 			at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844825.777 12227 17203 E TouchBrightness: 			at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844825.777 12227 17203 E TouchBrightness: 			at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844825.777 12227 17203 E TouchBrightness: 			at java.io.Reader.read(Reader.java:229)
+         1782844825.777 12227 17203 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844825.777 12227 17203 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844825.779 12227 17203 E TouchBrightness: 			at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844825.779 12227 17203 E TouchBrightness: 			at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootPowerKeyMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootPowerKeyMonitor.kt:136)
+         1782844825.779 12227 17203 E TouchBrightness: 			... 8 more
+         1782844826.633  1384 17502 I ActivityTaskManager: START u0 {flg=0x4000000 xflg=0x4 cmp=com.openai.chatgpt/com.auth0.android.provider.AuthenticationActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 10208 (com.openai.chatgpt) (sr=21410490) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844826.640 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844826.692  1384  1447 I ActivityTaskManager: Displayed com.openai.chatgpt/com.auth0.android.provider.AuthenticationActivity for user 0: +66ms
+         1782844826.945  1384  1413 I ActivityTaskManager: START u0 {act=android.intent.action.VIEW dat=https://auth.openai.com/... xflg=0x4 pkg=app.vanadium.browser cmp=app.vanadium.browser/com.google.android.apps.chrome.IntentDispatcher (has extras)} with LAUNCH_MULTIPLE from uid 10208 (com.openai.chatgpt) (sr=202178379) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844827.657  1384 13309 I ActivityTaskManager: START u0 {act=android.intent.action.VIEW dat=https://auth.openai.com/... flg=0x2800000 xflg=0x4 pkg=app.vanadium.browser cmp=app.vanadium.browser/org.chromium.chrome.browser.customtabs.CustomTabActivity (has extras)} with LAUNCH_MULTIPLE from uid 10128 (app.vanadium.browser) (sr=72719649) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844827.800  1384  1447 I ActivityTaskManager: Displayed app.vanadium.browser/org.chromium.chrome.browser.customtabs.CustomTabActivity for user 0: +975ms
+         1782844830.605 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844831.875 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844832.637 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844832.695 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844834.970  1384 13309 I ActivityTaskManager: START u0 {flg=0x4000000 xflg=0x4 cmp=com.openai.chatgpt/com.auth0.android.provider.AuthenticationActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 10208 (com.openai.chatgpt) (sr=21410490) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844835.010  1384  1447 I ActivityTaskManager: Displayed com.openai.chatgpt/com.auth0.android.provider.AuthenticationActivity for user 0: +44ms
+         1782844835.021  1384  6111 I ActivityTaskManager: START u0 {act=android.intent.action.VIEW dat=https://auth.openai.com/... xflg=0x4 pkg=app.vanadium.browser cmp=app.vanadium.browser/com.google.android.apps.chrome.IntentDispatcher (has extras)} with LAUNCH_MULTIPLE from uid 10208 (com.openai.chatgpt) (sr=48733099) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844835.114  1384 13309 I ActivityTaskManager: START u0 {act=android.intent.action.VIEW dat=https://auth.openai.com/... flg=0x2800000 xflg=0x4 pkg=app.vanadium.browser cmp=app.vanadium.browser/org.chromium.chrome.browser.customtabs.CustomTabActivity (has extras)} with LAUNCH_MULTIPLE from uid 10128 (app.vanadium.browser) (sr=173342029) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844835.198  1384  1447 I ActivityTaskManager: Displayed app.vanadium.browser/org.chromium.chrome.browser.customtabs.CustomTabActivity for user 0: +177ms
+         1782844835.739 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844837.135 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844837.634  1384  2771 I InputDispatcher: Channel [Gesture Monitor] edge-swipe is stealing input gesture for device 4 from [74c643f app.vanadium.browser/org.chromium.chrome.browser.customtabs.CustomTabActivity, [Gesture Monitor] swipe-up]
+         1782844840.862 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844842.341 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844846.014 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844847.591 12227   663 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844848.949 12227  6291 D TouchBrightness: touch_brightness_debug reason=start_panel_sleep_reasserted touches=0 source=unknown power_source=unknown last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844849.208 12227 28471 D TouchBrightness: touch_brightness_debug reason=touch_source_selected touches=0 source=synaptics_tcm_touch power_source=unknown last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844849.288 12227  8261 D TouchBrightness: touch_brightness_debug reason=power_source_selected touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844851.182 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844852.857 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844855.198 12227 29206 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844856.343 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844857.257 12227   663 D TouchBrightness: touch_brightness_debug reason=touch_count_changed touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=3ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844857.257 12227   663 D TouchBrightness: touch_brightness_debug reason=wake_promoted_to_active_touch touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=3ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844858.183 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844860.882 12227  5987 W TouchBrightness: saved brightness restore failed during wake; forcing safe visible brightness: Brightness restore verification failed: mode=0 value=1 display=0.0 panel=0/3939 path=/sys/class/backlight/panel0-backlight
+         1782844861.505 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844862.946 12227 29206 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844862.958 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844863.432 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844863.724 12227 28471 E TouchBrightness: touch brightness session failed
+         1782844863.724 12227 28471 E TouchBrightness: java.lang.IllegalStateException: Could not set bright mode: Brightness verification failed: mode=0 value=2 display=20.0 panel=271/3939 path=/sys/class/backlight/panel0-backlight
+         1782844863.724 12227 28471 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.invokeSuspend$enterBrightTouchActive(TouchBrightnessRuntime.kt:1106)
+         1782844863.724 12227 28471 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.access$invokeSuspend$enterBrightTouchActive(Unknown Source:0)
+         1782844863.724 12227 28471 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2$enterBrightTouchActive$1.invokeSuspend(Unknown Source:36)
+         1782844863.724 12227 28471 E TouchBrightness: 	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844863.724 12227 28471 E TouchBrightness: 	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844863.724 12227 28471 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:584)
+         1782844863.724 12227 28471 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:811)
+         1782844863.724 12227 28471 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:715)
+         1782844863.724 12227 28471 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:702)
+         1782844863.724 12227 28471 E TouchBrightness: 	Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844863.724 12227 28471 E TouchBrightness: 		at libcore.io.Linux.readBytes(Native Method)
+         1782844863.724 12227 28471 E TouchBrightness: 		at libcore.io.Linux.read(Linux.java:231)
+         1782844863.724 12227 28471 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844863.724 12227 28471 E TouchBrightness: 		at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844863.724 12227 28471 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844863.724 12227 28471 E TouchBrightness: 		at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844863.724 12227 28471 E TouchBrightness: 		at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844863.724 12227 28471 E TouchBrightness: 		at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844863.724 12227 28471 E TouchBrightness: 		at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844863.724 12227 28471 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844863.724 12227 28471 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844863.724 12227 28471 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844863.724 12227 28471 E TouchBrightness: 		at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844863.724 12227 28471 E TouchBrightness: 		at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844863.724 12227 28471 E TouchBrightness: 		at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844863.724 12227 28471 E TouchBrightness: 		at java.io.Reader.read(Reader.java:229)
+         1782844863.724 12227 28471 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844863.724 12227 28471 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844863.724 12227 28471 E TouchBrightness: 		at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844863.724 12227 28471 E TouchBrightness: 		at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootPowerKeyMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootPowerKeyMonitor.kt:136)
+         1782844863.724 12227 28471 E TouchBrightness: 		at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844863.724 12227 28471 E TouchBrightness: 		at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844863.724 12227 28471 E TouchBrightness: 		at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:111)
+         1782844863.724 12227 28471 E TouchBrightness: 		at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:99)
+         1782844863.724 12227 28471 E TouchBrightness: 		... 4 more
+         1782844863.724 12227 28471 E TouchBrightness: 		Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844863.724 12227 28471 E TouchBrightness: 			at libcore.io.Linux.readBytes(Native Method)
+         1782844863.724 12227 28471 E TouchBrightness: 			at libcore.io.Linux.read(Linux.java:231)
+         1782844863.724 12227 28471 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844863.724 12227 28471 E TouchBrightness: 			at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844863.724 12227 28471 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844863.724 12227 28471 E TouchBrightness: 			at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844863.724 12227 28471 E TouchBrightness: 			at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844863.724 12227 28471 E TouchBrightness: 			at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844863.724 12227 28471 E TouchBrightness: 			at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844863.724 12227 28471 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844863.724 12227 28471 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844863.724 12227 28471 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844863.724 12227 28471 E TouchBrightness: 			at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844863.724 12227 28471 E TouchBrightness: 			at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844863.724 12227 28471 E TouchBrightness: 			at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844863.724 12227 28471 E TouchBrightness: 			at java.io.Reader.read(Reader.java:229)
+         1782844863.724 12227 28471 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844863.724 12227 28471 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844863.725 12227 28471 E TouchBrightness: 			at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844863.725 12227 28471 E TouchBrightness: 			at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootTouchMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootTouchMonitor.kt:271)
+         1782844863.725 12227 28471 E TouchBrightness: 			... 8 more
+         1782844866.714 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844868.634 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844871.854 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844873.851 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844877.015 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844879.120 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844882.207 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844884.328 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844886.358 12227 12278 D TouchBrightness: touch_brightness_debug reason=start_panel_sleep_reasserted touches=0 source=unknown power_source=unknown last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844886.644 12227 12339 D TouchBrightness: touch_brightness_debug reason=touch_source_selected touches=0 source=synaptics_tcm_touch power_source=unknown last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844886.698 12227 12339 D TouchBrightness: touch_brightness_debug reason=power_source_selected touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844887.379 12227   663 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844889.163 12227 17026 D TouchBrightness: touch_brightness_debug reason=touch_count_changed touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=7ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844889.166 12227 17026 D TouchBrightness: touch_brightness_debug reason=wake_promoted_to_active_touch touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=9ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844889.596 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844892.560 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844892.956 12227 17026 W TouchBrightness: saved brightness restore failed during wake; forcing safe visible brightness: Brightness restore verification failed: mode=0 value=1 display=0.0 panel=788/3939 path=/sys/class/backlight/panel0-backlight
+         1782844893.229 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844893.268 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844894.846 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844895.508 12227  5987 E TouchBrightness: touch brightness session failed
+         1782844895.508 12227  5987 E TouchBrightness: java.lang.IllegalStateException: Could not set bright mode: Brightness verification failed: mode=0 value=2 display=20.0 panel=271/3939 path=/sys/class/backlight/panel0-backlight
+         1782844895.508 12227  5987 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.invokeSuspend$enterBrightTouchActive(TouchBrightnessRuntime.kt:1106)
+         1782844895.508 12227  5987 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.access$invokeSuspend$enterBrightTouchActive(Unknown Source:0)
+         1782844895.508 12227  5987 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2$enterBrightTouchActive$1.invokeSuspend(Unknown Source:36)
+         1782844895.508 12227  5987 E TouchBrightness: 	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844895.508 12227  5987 E TouchBrightness: 	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844895.508 12227  5987 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:584)
+         1782844895.508 12227  5987 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:811)
+         1782844895.508 12227  5987 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:715)
+         1782844895.508 12227  5987 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:702)
+         1782844895.508 12227  5987 E TouchBrightness: 	Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844895.508 12227  5987 E TouchBrightness: 		at libcore.io.Linux.readBytes(Native Method)
+         1782844895.508 12227  5987 E TouchBrightness: 		at libcore.io.Linux.read(Linux.java:231)
+         1782844895.508 12227  5987 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844895.508 12227  5987 E TouchBrightness: 		at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844895.508 12227  5987 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844895.508 12227  5987 E TouchBrightness: 		at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844895.508 12227  5987 E TouchBrightness: 		at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844895.508 12227  5987 E TouchBrightness: 		at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844895.508 12227  5987 E TouchBrightness: 		at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844895.508 12227  5987 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844895.508 12227  5987 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844895.508 12227  5987 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844895.508 12227  5987 E TouchBrightness: 		at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844895.508 12227  5987 E TouchBrightness: 		at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844895.508 12227  5987 E TouchBrightness: 		at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844895.508 12227  5987 E TouchBrightness: 		at java.io.Reader.read(Reader.java:229)
+         1782844895.508 12227  5987 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844895.508 12227  5987 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844895.508 12227  5987 E TouchBrightness: 		at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844895.508 12227  5987 E TouchBrightness: 		at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootTouchMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootTouchMonitor.kt:271)
+         1782844895.508 12227  5987 E TouchBrightness: 		at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844895.508 12227  5987 E TouchBrightness: 		at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844895.508 12227  5987 E TouchBrightness: 		at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:111)
+         1782844895.508 12227  5987 E TouchBrightness: 		at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:99)
+         1782844895.508 12227  5987 E TouchBrightness: 		... 4 more
+         1782844895.508 12227  5987 E TouchBrightness: 		Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844895.508 12227  5987 E TouchBrightness: 			at libcore.io.Linux.readBytes(Native Method)
+         1782844895.508 12227  5987 E TouchBrightness: 			at libcore.io.Linux.read(Linux.java:231)
+         1782844895.508 12227  5987 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844895.508 12227  5987 E TouchBrightness: 			at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844895.508 12227  5987 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844895.508 12227  5987 E TouchBrightness: 			at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844895.508 12227  5987 E TouchBrightness: 			at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844895.508 12227  5987 E TouchBrightness: 			at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844895.508 12227  5987 E TouchBrightness: 			at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844895.508 12227  5987 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844895.508 12227  5987 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844895.508 12227  5987 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844895.508 12227  5987 E TouchBrightness: 			at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844895.508 12227  5987 E TouchBrightness: 			at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844895.508 12227  5987 E TouchBrightness: 			at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844895.508 12227  5987 E TouchBrightness: 			at java.io.Reader.read(Reader.java:229)
+         1782844895.508 12227  5987 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844895.508 12227  5987 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844895.509 12227  5987 E TouchBrightness: 			at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844895.509 12227  5987 E TouchBrightness: 			at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootPowerKeyMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootPowerKeyMonitor.kt:136)
+         1782844895.509 12227  5987 E TouchBrightness: 			... 8 more
+         1782844897.736 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844900.100 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844902.918 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844904.142  1384 13309 I ActivityTaskManager: START u0 {act=android.content.pm.action.REQUEST_PERMISSIONS xflg=0x4 pkg=com.android.permissioncontroller cmp=com.android.permissioncontroller/.permission.ui.GrantPermissionsActivity (has extras)} with LAUNCH_MULTIPLE from uid 10208 (com.openai.chatgpt) (rr=21410490) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+         1782844904.390  1384  1447 I ActivityTaskManager: Displayed com.android.permissioncontroller/.permission.ui.GrantPermissionsActivity for user 0: +249ms
+         1782844905.362 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844908.074 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844910.599 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844913.269 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844915.870 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844918.194 12227 23348 D TouchBrightness: touch_brightness_debug reason=start_panel_sleep_reasserted touches=0 source=unknown power_source=unknown last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844918.437 12227  5987 D TouchBrightness: touch_brightness_debug reason=power_source_selected touches=0 source=unknown power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844918.468 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844918.611 12227  5987 D TouchBrightness: touch_brightness_debug reason=touch_source_selected touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844921.113 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844923.564 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844923.584 12227  8261 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844923.612 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844924.337 12227  5987 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844926.377 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844928.741 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844930.708 12227   663 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844931.651 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844933.914 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844936.906 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844937.182 12227   664 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844939.124 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844942.186 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844943.540 12227   664 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844944.336 12227 29206 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844947.472 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844949.512 12227   663 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844950.088 12227 29206 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844952.752 12227   663 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844953.854 12227   663 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844953.902 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844954.695 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844956.467 12227 29206 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844958.028 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844959.891 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844963.001 12227 29206 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844963.325 12227 29206 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844965.047 12227 29206 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844968.575 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844968.677 12227  6291 D TouchBrightness: touch_brightness_debug reason=touch_count_changed touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=4ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844968.677 12227  6291 D TouchBrightness: touch_brightness_debug reason=wake_promoted_to_active_touch touches=1 source=synaptics_tcm_touch power_source=gpio_keys last_raw=4ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=true,slots=0,tool=false) hold=true
+         1782844970.206 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844972.043 12227  5987 W TouchBrightness: saved brightness restore failed during wake; forcing safe visible brightness: Brightness restore verification failed: mode=0 value=1 display=0.0 panel=788/3939 path=/sys/class/backlight/panel0-backlight
+         1782844973.809 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844974.694 12227 28471 E TouchBrightness: touch brightness session failed
+         1782844974.694 12227 28471 E TouchBrightness: java.lang.IllegalStateException: Could not set bright mode: Brightness verification failed: mode=0 value=2 display=20.0 panel=271/3939 path=/sys/class/backlight/panel0-backlight
+         1782844974.694 12227 28471 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.invokeSuspend$enterBrightTouchActive(TouchBrightnessRuntime.kt:1106)
+         1782844974.694 12227 28471 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2.access$invokeSuspend$enterBrightTouchActive(Unknown Source:0)
+         1782844974.694 12227 28471 E TouchBrightness: 	at lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntime$runSession$2$enterBrightTouchActive$1.invokeSuspend(Unknown Source:36)
+         1782844974.694 12227 28471 E TouchBrightness: 	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844974.694 12227 28471 E TouchBrightness: 	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844974.694 12227 28471 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:584)
+         1782844974.694 12227 28471 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:811)
+         1782844974.694 12227 28471 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:715)
+         1782844974.694 12227 28471 E TouchBrightness: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:702)
+         1782844974.694 12227 28471 E TouchBrightness: 	Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844974.694 12227 28471 E TouchBrightness: 		at libcore.io.Linux.readBytes(Native Method)
+         1782844974.694 12227 28471 E TouchBrightness: 		at libcore.io.Linux.read(Linux.java:231)
+         1782844974.694 12227 28471 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844974.694 12227 28471 E TouchBrightness: 		at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844974.694 12227 28471 E TouchBrightness: 		at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844974.694 12227 28471 E TouchBrightness: 		at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844974.694 12227 28471 E TouchBrightness: 		at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844974.694 12227 28471 E TouchBrightness: 		at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844974.694 12227 28471 E TouchBrightness: 		at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844974.694 12227 28471 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844974.694 12227 28471 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844974.694 12227 28471 E TouchBrightness: 		at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844974.694 12227 28471 E TouchBrightness: 		at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844974.694 12227 28471 E TouchBrightness: 		at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844974.694 12227 28471 E TouchBrightness: 		at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844974.694 12227 28471 E TouchBrightness: 		at java.io.Reader.read(Reader.java:229)
+         1782844974.694 12227 28471 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844974.694 12227 28471 E TouchBrightness: 		at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844974.694 12227 28471 E TouchBrightness: 		at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844974.694 12227 28471 E TouchBrightness: 		at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootPowerKeyMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootPowerKeyMonitor.kt:136)
+         1782844974.694 12227 28471 E TouchBrightness: 		at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+         1782844974.694 12227 28471 E TouchBrightness: 		at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:104)
+         1782844974.694 12227 28471 E TouchBrightness: 		at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:111)
+         1782844974.694 12227 28471 E TouchBrightness: 		at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:99)
+         1782844974.694 12227 28471 E TouchBrightness: 		... 4 more
+         1782844974.694 12227 28471 E TouchBrightness: 		Suppressed: java.io.InterruptedIOException: read interrupted by close() on another thread
+         1782844974.694 12227 28471 E TouchBrightness: 			at libcore.io.Linux.readBytes(Native Method)
+         1782844974.694 12227 28471 E TouchBrightness: 			at libcore.io.Linux.read(Linux.java:231)
+         1782844974.694 12227 28471 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844974.694 12227 28471 E TouchBrightness: 			at libcore.io.BlockGuardOs.read(BlockGuardOs.java:325)
+         1782844974.694 12227 28471 E TouchBrightness: 			at libcore.io.ForwardingOs.read(ForwardingOs.java:624)
+         1782844974.694 12227 28471 E TouchBrightness: 			at libcore.io.IoBridge.read(IoBridge.java:621)
+         1782844974.694 12227 28471 E TouchBrightness: 			at java.io.FileInputStream.read(FileInputStream.java:353)
+         1782844974.694 12227 28471 E TouchBrightness: 			at java.io.BufferedInputStream.read1(BufferedInputStream.java:277)
+         1782844974.694 12227 28471 E TouchBrightness: 			at java.io.BufferedInputStream.read(BufferedInputStream.java:338)
+         1782844974.694 12227 28471 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:309)
+         1782844974.694 12227 28471 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:373)
+         1782844974.694 12227 28471 E TouchBrightness: 			at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:183)
+         1782844974.694 12227 28471 E TouchBrightness: 			at java.io.InputStreamReader.read(InputStreamReader.java:177)
+         1782844974.694 12227 28471 E TouchBrightness: 			at java.io.BufferedReader.read1(BufferedReader.java:221)
+         1782844974.694 12227 28471 E TouchBrightness: 			at java.io.BufferedReader.read(BufferedReader.java:298)
+         1782844974.694 12227 28471 E TouchBrightness: 			at java.io.Reader.read(Reader.java:229)
+         1782844974.694 12227 28471 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo(ReadWrite.kt:128)
+         1782844974.694 12227 28471 E TouchBrightness: 			at kotlin.io.TextStreamsKt.copyTo$default(ReadWrite.kt:125)
+         1782844974.695 12227 28471 E TouchBrightness: 			at kotlin.io.TextStreamsKt.readText(ReadWrite.kt:112)
+         1782844974.695 12227 28471 E TouchBrightness: 			at lv.jolkins.pixelorchestrator.app.phoneautomation.AndroidRootTouchMonitor$monitorDevice$2$stderrJob$1.invokeSuspend(RootTouchMonitor.kt:271)
+         1782844974.695 12227 28471 E TouchBrightness: 			... 8 more
+         1782844975.408 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844979.048 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844980.136  1384 13309 W ActivityTaskManager: callingPackage for (uid=2000, pid=13210) has no WPC
+         1782844980.156  1384 13309 I ActivityTaskManager: START u0 {flg=0x10000000 xflg=0x5 cmp=com.openai.chatgpt/.MainActivity} with LAUNCH_SINGLE_TOP from uid 2000 (com.android.shell) (BAL_ALLOW_PERMISSION) result code=3
+         1782844980.567 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844984.336 12227 28471 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844984.347 12227   663 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844984.441 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844985.736 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844989.725 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844990.912 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844994.977 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844996.086 12227   663 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782844997.387 12227 28471 D TouchBrightness: touch_brightness_debug reason=start_panel_sleep_reasserted touches=0 source=unknown power_source=unknown last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844997.576 12227  8261 D TouchBrightness: touch_brightness_debug reason=power_source_selected touches=0 source=unknown power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782844997.660 12227  6291 D TouchBrightness: touch_brightness_debug reason=touch_source_selected touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845000.231 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845001.263 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845003.955 12227 12339 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845005.575 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845006.576 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845010.401 12227 12339 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845010.849 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845011.738 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845014.691 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845014.736 12227 17026 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845016.132 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845016.629 12227 17203 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845016.914 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845021.425 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845022.090 12227 12339 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845023.096 12227 17203 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845026.653 12227 17026 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845027.263 12227 17026 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845029.852 12227 17203 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845031.911 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845032.503 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845036.419 12227 12339 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845037.174 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845037.649 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845042.263 12227  6291 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845042.518 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845042.750 12227  6291 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845045.062 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845045.096 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845047.765 12227 18356 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845047.895 12227 18356 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845048.589 12227 18342 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845053.046 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845053.053 12227 18342 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845055.038 12227 16942 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845058.166 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845058.308 12227 17203 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845061.227 12227 23348 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845063.308 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845063.564 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845067.502 12227  5988 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845068.539 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845068.868 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845073.701 12227 17026 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845073.953 12227 16942 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845074.155 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845075.389 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845075.420 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845078.883 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845079.420 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845080.305 12227 17026 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845084.094 12227 18356 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845084.652 12227 18356 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845086.280 12227 12278 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845089.280 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845089.887 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845092.432 12227 23348 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845094.449 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845095.153 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845097.941 12227 23348 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845099.660 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845100.401 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845103.881 12227 18342 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845104.796 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845105.680 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845105.733 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845105.873 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845109.914 12227 18342 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845109.998 12227   664 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845110.972 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845115.117 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845116.154 12227 18356 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845116.227 12227 18356 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845120.280 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845121.481 12227 17026 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845122.710 12227 17026 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845125.455 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845126.731 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845128.639 12227 18356 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845130.647 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845131.954 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845135.015 12227 18356 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845135.795 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845136.044 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845136.159 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845137.201 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845140.963 12227 18356 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845141.485 12227 12278 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845142.473 12227 18356 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845146.117 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845147.885 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845148.011 12227   664 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845151.289 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845153.152 12227 18356 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845154.380 12227 32668 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845156.461 12227 18356 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845158.433 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845160.641 12227 12278 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845161.628 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845163.707 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845166.319 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845166.435 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845166.792 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845167.094 12227 12278 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845168.981 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845171.974 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845173.681 12227 12278 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845174.262 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845177.154 12227 18342 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845179.532 12227 18342 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845180.158 12227 16942 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845182.361 12227 17026 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845184.819 12227 17026 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845186.718 12227 16942 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845187.547 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845190.052 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845192.588 12227  5988 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845192.783 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845195.294 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845196.638 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845196.765 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845197.960 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845198.623 12227 32668 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845200.535 12227 32667 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845203.084 12227 32667 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845204.043  1384  1818 W InputDispatcher: channel '[Gesture Monitor] clipboard overlay' ~ Consumer closed input channel or an error occurred.  events=0x9
+         1782845204.043  1384  1818 E InputDispatcher: channel '[Gesture Monitor] clipboard overlay' ~ Channel is unrecoverably broken and will be disposed!
+         1782845204.369 12227 32668 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845205.776 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845208.245 12227  5988 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845210.722 12227 32667 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845211.059 12227 32667 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845213.408 12227 32667 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845216.303 12227 17026 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845216.972 12227 16942 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845218.512 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845221.569 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845223.218 12227 32668 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845223.679 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845226.938 12227 17026 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845227.019 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845227.064 12227 32667 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845228.853 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845229.783 12227 18342 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845232.219 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845234.017 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845236.131 12227 18342 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845237.486 12227 17026 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845239.169 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845242.710 12227 18342 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845242.730 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845244.346 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845248.052 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845249.445 12227 23348 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845249.515 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845253.322 12227 18342 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845254.690 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845255.683 12227  5987 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845257.338 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845257.370 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845258.616 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845259.870 12227   664 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845262.321 12227 23348 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845263.890 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845265.011 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845268.587 12227 16942 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845269.149 12227 32667 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845270.199 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845274.409 12227 18342 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845274.906 12227 12278 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845275.357 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845279.640 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845280.522 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845281.251 12227 16942 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845284.982 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845285.701 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845287.694 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845287.704 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845288.018 12227 12278 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845290.214 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845290.987 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845294.589 12227 12278 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845295.502 12227 18342 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845296.164 12227 32667 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845300.779 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845301.256 12227 12278 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845301.322 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845306.042 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845306.486 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845307.700 12227 32668 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845311.331 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845311.663 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845314.131 12227 16942 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845316.695 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845316.829 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845318.035 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845318.088 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845320.702 12227 18342 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845321.932 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845322.020 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845327.123 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845327.271 12227 18342 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845327.390 12227 18342 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845332.295 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845332.692 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845333.297 12227 15041 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845337.434 12227 32667 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845337.995 12227 32667 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845339.399 12227  5987 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845342.626 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845343.296 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845345.927 12227 15041 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845347.782 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845348.452 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845348.529 12227 15041 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845348.593 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845352.291 12227 15042 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845352.942 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845353.865 12227 16942 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845358.143 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845358.675 12227 32667 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845359.154 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845363.322 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845364.378 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845365.129 12227 32667 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845369.641 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845371.499 12227 23348 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845373.693 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845374.899 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845377.643 12227 18342 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845378.786 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845378.843 12227 15043 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845378.877 12227 32667 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845380.157 12227 15043 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845384.009 12227 15043 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845384.232 12227 18342 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845385.436 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845389.187 12227 32667 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845390.717 12227 32667 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845390.786 12227 18342 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845394.364 12227 15041 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845395.988 12227 15041 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845397.251 12227 12278 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845399.536 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845401.291 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845403.910 12227 12278 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845404.727 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845406.566 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845409.119 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845409.275 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845409.906 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845410.468 12227 15041 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845411.849 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845415.077 12227 15041 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845416.722 12227 15041 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845417.130 12227 15043 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845420.331 12227 15041 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845422.393 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845423.455 12227 15041 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845425.508 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845427.664 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845429.807 12227  5987 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845430.691 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845432.955 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845435.872 12227 15042 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845436.207 12227  5987 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845438.220 12227 15042 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845439.470 12227 15042 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845439.587 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845441.053 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845442.593 12227 12278 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845443.447 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845446.235 12227 15042 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845448.676 12227 15042 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845449.004 12227  5987 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845451.405 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845453.959 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845455.661 12227 12278 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845456.561 12227 15042 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845459.251 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845461.742 12227 18342 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845461.885 12227 18342 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845464.536 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845466.948 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845468.349 12227  5987 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845469.808 12227 12278 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845469.848 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845469.891 12227 32668 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845472.120 12227 15041 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845474.786 12227 15042 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845475.082 12227 15042 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845477.315 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845480.334 12227 28715 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845481.109 12227 15042 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845482.551 12227 28967 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845485.578 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845486.860 12227 18342 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=n/a timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782845487.721 12227 23348 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782845490.851 12227  5987 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=

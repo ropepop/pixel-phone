@@ -10,6 +10,7 @@
     <package android:name="dev.imranr.obtainium" />
     <package android:name="org.zwanoo.android.speedtest" />
     <package android:name="cellmapper.net.cellmapper" />
+    <package android:name="com.openai.chatgpt" />
     <intent>
       <action android:name="android.intent.action.MAIN" />
       <category android:name="android.intent.category.LAUNCHER" />

@@ -340,26 +340,21 @@ internal class AndroidTouchBrightnessDeviceController(
         )}
       """.trimIndent()
     } else {
-      ScreenBrightnessControl.buildSetPercentScript(targetPercent)
-    }
-    val result = rootExecutor.runScript(script)
-    if (!result.ok) {
-      return PhoneAutomationActionResult(
-        success = false,
-        detail = result.stderr.ifBlank { result.stdout.ifBlank { "brightness command failed" } }
+      ScreenBrightnessControl.buildSetPercentScript(
+        percent = targetPercent,
+        panelHoldMillis = VISIBLE_HOLD_MILLIS,
+        panelHoldIntervalMillis = DIM_HOLD_INTERVAL_MILLIS
       )
     }
-
-    delay(BRIGHTNESS_SETTLE_DELAY_MILLIS)
-    val after = readBrightnessStateForVerification(panelOnly)
-    return when {
-      after == null -> PhoneAutomationActionResult(true, "Brightness set to $targetPercent%")
-      !after.matchesTargetLenient(targetPercent, panelOnly = panelOnly) -> PhoneAutomationActionResult(
-        success = false,
-        detail = after.verificationFailureDetail("Brightness verification failed")
-      )
-      else -> PhoneAutomationActionResult(true, "Brightness set to $targetPercent%")
-    }
+    return runBrightnessCommandUntilVerified(
+      scriptFactory = { script },
+      panelOnly = panelOnly,
+      attempts = if (panelOnly) 1 else VISIBLE_RESTORE_ATTEMPTS,
+      commandFailureDetail = "brightness command failed",
+      verificationFailurePrefix = "Brightness verification failed",
+      successDetail = "Brightness set to $targetPercent%",
+      matches = { it.matchesTargetLenient(targetPercent, panelOnly = panelOnly) }
+    )
   }
 
   override suspend fun restoreBrightnessState(state: ScreenBrightnessState): PhoneAutomationActionResult {
@@ -378,28 +373,62 @@ internal class AndroidTouchBrightnessDeviceController(
         holdIntervalMillis = DIM_HOLD_INTERVAL_MILLIS
       )
     }
-    val script = """
-      ${ScreenBrightnessControl.buildRestoreScript(restoreState)}
-      $fallbackPanelScript
-    """.trimIndent()
-    val result = rootExecutor.runScript(script)
-    if (!result.ok) {
-      return PhoneAutomationActionResult(
-        success = false,
-        detail = result.stderr.ifBlank { result.stdout.ifBlank { "brightness restore failed" } }
-      )
+    return runBrightnessCommandUntilVerified(
+      scriptFactory = {
+        """
+          ${ScreenBrightnessControl.buildRestoreScript(
+          state = restoreState,
+          panelHoldMillis = VISIBLE_HOLD_MILLIS,
+          panelHoldIntervalMillis = DIM_HOLD_INTERVAL_MILLIS
+        )}
+          $fallbackPanelScript
+        """.trimIndent()
+      },
+      panelOnly = panelOnly,
+      attempts = VISIBLE_RESTORE_ATTEMPTS,
+      commandFailureDetail = "brightness restore failed",
+      verificationFailurePrefix = "Brightness restore verification failed",
+      successDetail = "Brightness restored",
+      matches = { it.matchesRestoredStateLenient(restoreState, panelOnly = panelOnly) }
+    )
+  }
+
+  private suspend fun runBrightnessCommandUntilVerified(
+    scriptFactory: () -> String,
+    panelOnly: Boolean,
+    attempts: Int,
+    commandFailureDetail: String,
+    verificationFailurePrefix: String,
+    successDetail: String,
+    matches: (ScreenBrightnessState) -> Boolean
+  ): PhoneAutomationActionResult {
+    val totalAttempts = attempts.coerceAtLeast(1)
+    var lastState: ScreenBrightnessState? = null
+    repeat(totalAttempts) { attemptIndex ->
+      val result = rootExecutor.runScript(scriptFactory())
+      if (!result.ok) {
+        return PhoneAutomationActionResult(
+          success = false,
+          detail = result.stderr.ifBlank { result.stdout.ifBlank { commandFailureDetail } }
+        )
+      }
+
+      delay(BRIGHTNESS_SETTLE_DELAY_MILLIS)
+      val after = readBrightnessStateForVerification(panelOnly)
+      if (after == null || matches(after)) {
+        return PhoneAutomationActionResult(true, successDetail)
+      }
+      lastState = after
+      if (attemptIndex < totalAttempts - 1) {
+        delay(VISIBLE_RESTORE_RETRY_DELAY_MILLIS)
+      }
     }
 
-    delay(BRIGHTNESS_SETTLE_DELAY_MILLIS)
-    val after = readBrightnessStateForVerification(panelOnly)
-    return when {
-      after == null -> PhoneAutomationActionResult(true, "Brightness restored")
-      !after.matchesRestoredStateLenient(restoreState, panelOnly = panelOnly) -> PhoneAutomationActionResult(
-        success = false,
-        detail = after.verificationFailureDetail("Brightness restore verification failed")
-      )
-      else -> PhoneAutomationActionResult(true, "Brightness restored")
-    }
+    return PhoneAutomationActionResult(
+      success = false,
+      detail = lastState?.verificationFailureDetail("$verificationFailurePrefix after $totalAttempts attempts")
+        ?: "$verificationFailurePrefix after $totalAttempts attempts"
+    )
   }
 
   private suspend fun readBrightnessStateForVerification(panelOnly: Boolean): ScreenBrightnessState? {
@@ -578,7 +607,9 @@ internal class AndroidTouchBrightnessDeviceController(
     private const val PANEL_SLEEP_TARGET_PERCENT = 0
     private const val PANEL_SLEEP_HOLD_MILLIS = 1_500L
     private const val DIM_HOLD_INTERVAL_MILLIS = 50L
-    private const val VISIBLE_HOLD_MILLIS = 500L
+    private const val VISIBLE_HOLD_MILLIS = 1_500L
+    private const val VISIBLE_RESTORE_RETRY_DELAY_MILLIS = 250L
+    private const val VISIBLE_RESTORE_ATTEMPTS = 4
     private const val VISIBLE_PANEL_FALLBACK_PERCENT = 20
     private const val DISPLAY_PERCENT_TOLERANCE = 0.5f
     private const val PANEL_PERCENT_TOLERANCE = 1.0f

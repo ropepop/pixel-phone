@@ -650,6 +650,13 @@ private class ScriptedAccessibilityHost : PhoneAutomationAccessibilityHost {
     timeoutMillis: Long
   ): Boolean = false
 
+  override suspend fun tapScreenRatio(
+    expectedPackageName: String,
+    xRatio: Double,
+    yRatio: Double,
+    timeoutMillis: Long
+  ): Boolean = false
+
   override suspend fun performBack(): Boolean = false
 }
 
