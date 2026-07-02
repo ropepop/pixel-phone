@@ -377,10 +377,10 @@ internal class AndroidTouchBrightnessDeviceController(
       scriptFactory = {
         """
           ${ScreenBrightnessControl.buildRestoreScript(
-          state = restoreState,
-          panelHoldMillis = VISIBLE_HOLD_MILLIS,
-          panelHoldIntervalMillis = DIM_HOLD_INTERVAL_MILLIS
-        )}
+            state = restoreState,
+            panelHoldMillis = VISIBLE_HOLD_MILLIS,
+            panelHoldIntervalMillis = DIM_HOLD_INTERVAL_MILLIS
+          )}
           $fallbackPanelScript
         """.trimIndent()
       },

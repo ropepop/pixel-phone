@@ -1,0 +1,27 @@
+{
+  "counts": {
+    "brightness_verification_failed": 0,
+    "panel_sleep_guard": 30,
+    "restore_verification_failed": 0,
+    "retry_after_4": 0,
+    "saved_brightness_restore_failed": 0,
+    "session_failed": 0,
+    "start_panel_sleep_reasserted": 0,
+    "touch_active": 0,
+    "touch_count_changed": 0,
+    "visible_idle": 0,
+    "wake_promoted_to_active_touch": 0
+  },
+  "display_max_seen": 0.0,
+  "display_nonzero_samples": 0,
+  "first_utc": "2026-06-30T22:25:34.053074Z",
+  "getevent_gpio_lines": 0,
+  "getevent_touch_lines": 0,
+  "last_utc": "2026-06-30T22:28:33.873056Z",
+  "log_lines": 35,
+  "outdir": "observations/brightness-touch-strict-restore-focused-20260630T222532Z",
+  "panel_max_seen": 0,
+  "panel_nonzero_samples": 0,
+  "records": 164,
+  "screen_max_seen": 1
+}

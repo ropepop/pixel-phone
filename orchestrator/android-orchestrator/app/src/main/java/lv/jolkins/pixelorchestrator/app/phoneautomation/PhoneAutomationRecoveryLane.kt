@@ -16,7 +16,7 @@ internal fun PhoneAutomationSettingsSnapshot.isSpeedtestRecoveryOwningLane(): Bo
     runtimeState in SPEEDTEST_RECOVERY_LANE_STATES
 }
 
-internal fun shouldDeferPhoneAutomationPrerequisiteRecovery(
+fun shouldDeferPhoneAutomationPrerequisiteRecovery(
   settingsSnapshot: PhoneAutomationSettingsSnapshot,
   issue: PhoneAutomationPrerequisiteIssue
 ): Boolean {

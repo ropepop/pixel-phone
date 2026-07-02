@@ -403,3 +403,495 @@
          1782857488.048 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
          1782857488.753 20371  8889 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=94707ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
          1782857489.489 20371  8889 I TicketStreamService: ticket_event event=fast_visible_hierarchy_ready detail=reason=active_guard:foreground_guard package=com.pv.vivi nodes=28 duration_ms=41 hierarchy_len=6017
+         1782857490.672 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857491.963 20371 20418 I TicketStreamService: ticket_event event=fast_visible_hierarchy_ready detail=reason=active_guard:foreground_guard package=com.pv.vivi nodes=28 duration_ms=39 hierarchy_len=6017
+         1782857493.545 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857494.260 20371  7984 I TicketStreamService: ticket_event event=fast_visible_hierarchy_ready detail=reason=active_guard:foreground_guard package=com.pv.vivi nodes=28 duration_ms=15 hierarchy_len=6017
+         1782857494.722 20371 20449 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=100676ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857496.052 20371  7984 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857496.712 20371 20419 I TicketStreamService: ticket_event event=fast_visible_hierarchy_ready detail=reason=active_guard:foreground_guard package=com.pv.vivi nodes=28 duration_ms=44 hierarchy_len=6017
+         1782857498.820 20371 20419 I TicketStreamService: ticket_event event=fast_visible_hierarchy_ready detail=reason=active_guard:foreground_guard package=com.pv.vivi nodes=28 duration_ms=14 hierarchy_len=6017
+         1782857499.146 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857500.571 20371 20424 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=106525ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857501.318 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857501.768 20371 20418 I TicketStreamService: ticket_event event=fast_visible_hierarchy_ready detail=reason=active_guard:foreground_guard package=com.pv.vivi nodes=28 duration_ms=18 hierarchy_len=6017
+         1782857504.713 20371 20449 I TicketStreamService: ticket_event event=fast_visible_hierarchy_ready detail=reason=active_guard:foreground_guard package=com.pv.vivi nodes=28 duration_ms=7 hierarchy_len=6017
+         1782857504.846 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857506.553 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857506.579 20371  7984 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=112533ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857506.789 20371 28259 I TicketStreamService: ticket_event event=fast_visible_hierarchy_ready detail=reason=active_guard:foreground_guard package=com.pv.vivi nodes=28 duration_ms=16 hierarchy_len=6017
+         1782857508.016 20371  7984 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857508.068 20371 28259 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857508.188 20371 28259 I TicketStreamService: ticket_event event=client_detached detail=browser_left_ticket_screen
+         1782857508.188 20371 28259 I TicketStreamService: ticket_event event=stream_epoch_reset detail=client_detached_browser_left_ticket_screen
+         1782857509.801 20371 28259 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857511.805 20371 20451 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857512.647 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=118601ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857513.133 20371 20424 I TicketStreamService: secure_window_capture_bypass_disabled
+         1782857513.319 20371 20424 I TicketStreamService: ticket_notification_lockdown_disabled reason=browser_left_ticket_screen
+         1782857513.328 20371 20424 I TicketStreamService: ticket_event event=root_capture_ready_waiting detail=client_detached_browser_left_ticket_screen
+         1782857513.442 20371 20371 I SupervisorService: phone_automation_sync trigger=lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION decision=STARTED enabled=false setup=unknown runtime=disabled touch_enabled=true touch_runtime=panel_sleep
+         1782857513.464 20371 20371 I SupervisorService: cpu_frequency_sync trigger=lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION enabled=false suspended=false runtime=disabled
+         1782857513.473 20371 20424 I SupervisorService: action=lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION command_action= component= success=true message=Phone automation refreshed
+         1782857515.146 20371 21331 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857515.187 20371 20371 I SupervisorService: phone_automation_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER decision=STARTED enabled=false setup=unknown runtime=disabled touch_enabled=true touch_runtime=panel_sleep
+         1782857515.209 20371 20371 I SupervisorService: cpu_frequency_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER enabled=false suspended=false runtime=disabled
+         1782857515.218 20371 20962 I SupervisorService: action=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER command_action=ticket_start_server component= success=true message=Ticket remote server start requested
+         1782857517.062 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857518.276 20371 20962 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=124230ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857520.710 20371  8817 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857522.333 20371  8817 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857524.514 20371 20962 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=130468ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857526.450 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857527.650 20371  7670 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857530.763 20371 21331 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=136717ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857531.766 20371 21331 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857533.018 20371  8817 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857536.793 20371  7670 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=142747ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857537.284 20371  7670 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857538.411 20371  7670 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857538.413 20371  7984 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857538.572 20371  7670 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857539.063 20371 28259 I SupervisorService: ticket_service_ensure reason=lv.jolkins.pixelorchestrator.action.REFRESH_PHONE_AUTOMATION enabled=true state=ready local=true tunnel=true component=running detail=Local ticket server and tunnel are ready
+         1782857542.856 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=148809ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857543.099 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857543.699 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857548.835 20371 28259 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857548.988 20371  9970 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857549.205 20371 10214 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=155159ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857554.261 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857554.440 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857555.367 20371 21331 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=161321ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857559.523 20371 28259 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857559.874 20371 28259 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857561.587 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=167541ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857564.800 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857565.097 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857567.816 20371 20449 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=173770ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857568.768 20371 21331 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857568.809 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857570.074 20371  9970 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857570.318 20371  9970 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857573.861 20371 10214 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=179815ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857575.342 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857575.822 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857580.078 20371  9970 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=186032ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857580.591 20371  9970 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857581.478 20371  9970 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857585.919 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857586.421 20371 10214 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=192374ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857587.165 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857591.181 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857592.563 20371 21331 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=198516ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857592.714 20371 21331 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857596.408 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857598.117 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857598.690 20371 20962 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=204644ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857599.350 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857599.373 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857601.779 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857603.752 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857604.905 20371 10214 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=210858ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857607.054 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857609.648 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857611.235 20371 21331 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=217188ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857612.312 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857615.121 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857617.571 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857617.656 20371  8817 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=223610ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857620.629 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857622.843 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857623.995 20371 21331 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=229949ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857626.370 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857628.052 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857629.681 20371 21331 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857629.727 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857630.444 20371 28259 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=236398ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857631.988 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857633.322 20371 21331 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857636.484 20371  9970 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=242437ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857637.366 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857638.630 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857642.738 20371  9970 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=248692ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857642.962 20371  9970 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857643.892 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857648.612 20371 28259 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857648.773 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=254726ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857649.161 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857654.431 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857654.444 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857655.008 20371 10214 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=260962ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857659.735 20371  7566 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857660.088 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857660.252 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857660.255 20371  7565 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857660.787 20371 20371 I SupervisorService: phone_automation_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER decision=STARTED enabled=false setup=unknown runtime=disabled touch_enabled=true touch_runtime=panel_sleep
+         1782857660.805 20371 20371 I SupervisorService: cpu_frequency_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER enabled=false suspended=false runtime=disabled
+         1782857660.815 20371  7695 I SupervisorService: action=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER command_action=ticket_start_server component= success=true message=Ticket remote server start requested
+         1782857661.143 20371 10214 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=267097ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857665.133 20371  7816 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857666.063 20371  7566 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857666.993 20371 10214 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=272947ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857670.388 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857671.285 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857672.969 20371 10214 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=278923ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857675.753 20371  7816 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857676.678 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857679.283 20371 20962 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=285237ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857681.017 20371  7816 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857682.390 20371  7816 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857684.509 20371 20449 I SupervisorService: ticket_service_ensure reason=periodic enabled=true state=ready local=true tunnel=true component=running detail=Local ticket server and tunnel are ready
+         1782857685.619 20371  7695 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=291572ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857686.271 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857687.710 20371  7816 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857690.519 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857690.583 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857691.521 20371  7816 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857691.828 20371 20449 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=297782ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857693.524 20371  7816 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857696.780 20371  7816 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857698.164 20371  7816 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=304118ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857699.318 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857702.043 20371  7565 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857704.424 20371  7695 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=310378ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857705.181 20371  7816 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857707.311 20371  7816 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857710.646 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=316600ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857710.804 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857712.564 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857716.513 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857716.875 20371 20962 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=322828ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857717.799 20371  7565 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857720.918 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857720.919 20371  7816 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857722.276 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857723.068 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857723.113 20371  7565 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=329067ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857727.798 20371  7816 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857728.341 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857729.433 20371 21331 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=335387ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857733.150 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857733.568 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857735.658 20371  7565 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=341612ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857738.344 20371 21331 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857739.070 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857742.032 20371  7565 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=347986ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857743.857 20371  7816 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857744.342 20371  7816 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857748.225 20371 20449 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=354179ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857749.267 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857749.611 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857751.267 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857751.337 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857754.240 20371  7816 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=360194ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857754.764 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857754.955 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857760.213 20371  7565 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857760.270 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857760.347 20371  7565 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=366301ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857765.522 20371 21331 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857765.628 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857766.473 20371  7695 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=372427ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857770.950 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857772.008 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857772.510 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=378464ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857776.236 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857777.574 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857778.742 20371  7695 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=384696ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857781.520 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857781.607 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857781.709 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857783.130 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857784.848 20371 20962 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=390802ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857786.734 20371 21331 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857788.387 20371 21331 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857790.996 20371 20424 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=396950ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857792.008 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857793.918 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857797.239 20371 20449 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=403193ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857797.280 20371 21331 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857799.689 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857802.527 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857803.395 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=409349ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857805.064 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857806.457 20371 20371 I SupervisorService: phone_automation_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER decision=STARTED enabled=false setup=unknown runtime=disabled touch_enabled=true touch_runtime=panel_sleep
+         1782857806.478 20371 20371 I SupervisorService: cpu_frequency_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER enabled=false suspended=false runtime=disabled
+         1782857806.494 20371 17078 I SupervisorService: action=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER command_action=ticket_start_server component= success=true message=Ticket remote server start requested
+         1782857807.780 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857808.909 20371 20424 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=414863ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857811.193 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857811.865 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857811.999 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857813.079 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857814.847 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=420801ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857816.892 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857818.293 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857820.847 20371 17079 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=426800ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857822.530 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857823.572 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857827.006 20371  7565 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=432960ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857828.270 20371  7565 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857828.825 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857830.076 20371  7695 I SupervisorService: ticket_service_ensure reason=periodic enabled=true state=ready local=true tunnel=true component=running detail=Local ticket server and tunnel are ready
+         1782857833.238 20371 20489 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=439192ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857833.750 20371 20489 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857834.035 20371 20489 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857838.959 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857839.291 20371 20489 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857839.349 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=445303ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857842.210 20371  7565 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857842.342 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857844.516 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857844.770 20371  7565 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857845.475 20371  7695 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=451429ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857849.793 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857850.265 20371  7565 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857851.829 20371 10214 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=457782ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857855.057 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857855.909 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857858.170 20371  7565 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=464124ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857860.340 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857861.258 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857864.514 20371 10214 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=470468ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857865.613 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857866.517 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857870.780 20371 20489 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=476734ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857870.890 20371 20489 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857872.392 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857872.600 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857872.647 20371  7565 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857876.167 20371  7565 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857877.021 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=482975ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857878.201 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857881.463 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857882.846 20371 10214 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=488800ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857883.678 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857886.764 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857889.152 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857889.270 20371 10214 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=495224ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857892.044 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857894.818 20371 20449 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857895.514 20371 10214 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=501468ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857897.316 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857900.195 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857901.660 20371 10214 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=507614ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857902.561 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857902.922 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857902.961 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857905.733 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857907.789 20371 20424 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=513743ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857907.812 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857911.096 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857913.124 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857913.904 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=519858ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857916.708 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857918.395 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857920.256 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=526210ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857922.130 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857923.649 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857926.207 20371  7565 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=532161ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857927.764 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857928.907 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857932.421 20371 17079 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=538375ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857933.161 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857933.249 20371  7565 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857933.617 20371  7565 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857934.175 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857938.468 20371 17079 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=544421ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857939.266 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857939.430 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857944.388 20371 20962 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=550342ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857944.689 20371 20489 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857944.845 20371 20489 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857949.907 20371 10214 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857950.226 20371 20962 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=556180ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857950.249 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857951.969 20371 20371 I SupervisorService: phone_automation_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER decision=STARTED enabled=false setup=unknown runtime=disabled touch_enabled=true touch_runtime=panel_sleep
+         1782857951.990 20371 20371 I SupervisorService: cpu_frequency_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER enabled=false suspended=false runtime=disabled
+         1782857952.001 20371 20418 I SupervisorService: action=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER command_action=ticket_start_server component= success=true message=Ticket remote server start requested
+         1782857955.169 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857955.204 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857955.779 20371 10214 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=561733ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857960.413 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857960.823 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857962.081 20371 20424 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=568035ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857963.793 20371  2279 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857963.819 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857965.631 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857966.486 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857968.410 20371 20424 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=574364ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857970.893 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857971.320 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857974.445 20371 17079 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=580398ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857976.135 20371 20485 I SupervisorService: ticket_service_ensure reason=periodic enabled=true state=ready local=true tunnel=true component=running detail=Local ticket server and tunnel are ready
+         1782857976.169 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857976.767 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857980.180 20371  7695 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=586134ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857981.436 20371  2279 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857982.161 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857986.443 20371 20485 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=592397ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857986.707 20371  2279 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857987.797 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857992.008 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857992.677 20371  2279 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=598631ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782857993.093 20371  2279 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857994.141 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857994.174 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857997.294 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782857998.537 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782857998.902 20371 20962 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=604856ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858002.541 20371 20489 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858004.298 20371 20489 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858004.959 20371 20962 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=610913ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858007.844 20371  1228 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858009.817 20371  1228 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858011.195 20371  1228 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=617149ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858013.121 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858015.581 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858017.510 20371  2279 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=623464ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858018.356 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858020.778 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858023.571 20371  2279 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=629525ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858023.872 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858024.468 20371  2279 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858024.518 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858025.982 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858029.077 20371  2279 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858029.732 20371  2279 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=635686ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858031.538 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858034.323 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858035.552 20371  2279 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=641506ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858037.030 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858039.559 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858041.795 20371 20424 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=647749ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858042.791 20371  2279 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858044.836 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858047.955 20371 20424 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=653909ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858048.562 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858050.089 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858054.185 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=660139ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858054.406 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858054.804 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858054.852 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858055.352 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858059.642 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858060.103 20371 20485 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=666057ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858060.552 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858065.091 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858065.826 20371  2279 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858066.351 20371 20485 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=672304ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858070.712 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858071.104 20371 20424 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858072.583 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=678536ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858076.082 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858076.396 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858078.705 20371 17079 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=684659ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858081.668 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858081.731 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858084.740 20371  1228 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=690694ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858085.170 20371  1228 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858085.199 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858086.939 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858087.167 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858091.068 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=697022ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858092.194 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858092.761 20371  1228 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858097.416 20371  1228 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858097.491 20371 20485 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=703444ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858098.165 20371 20371 I SupervisorService: phone_automation_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER decision=STARTED enabled=false setup=unknown runtime=disabled touch_enabled=true touch_runtime=panel_sleep
+         1782858098.191 20371 20371 I SupervisorService: cpu_frequency_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER enabled=false suspended=false runtime=disabled
+         1782858098.201 20371 20489 I SupervisorService: action=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER command_action=ticket_start_server component= success=true message=Ticket remote server start requested
+         1782858098.307 20371 13624 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858102.666 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858103.440 20371  1228 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=709393ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858103.690 20371  1228 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858107.921 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858109.367 20371  1228 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858109.765 20371 17079 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=715719ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858113.188 20371 13625 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858114.406 20371 13625 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858115.517 20371  1228 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858115.562 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858116.025 20371  7695 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=721979ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858118.459 20371 13624 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858120.021 20371 13624 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858121.926 20371 15254 I SupervisorService: ticket_service_ensure reason=periodic enabled=true state=ready local=true tunnel=true component=running detail=Local ticket server and tunnel are ready
+         1782858121.975 20371 20485 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=727929ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858123.750 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858125.456 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858128.051 20371 15254 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=734005ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858128.972 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858131.083 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858134.204 20371 13624 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=740158ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858134.230 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858136.777 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858139.485 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858140.626 20371  2279 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=746580ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858142.487 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858144.784 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858145.882 20371  2279 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858145.961 20371 15254 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858147.154 20371 13624 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=753108ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858147.713 20371 20418 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858150.117 20371  2279 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858153.399 20371 13624 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=759353ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858153.467 20371 13624 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858155.374 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858158.908 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858159.622 20371 20962 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=765576ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858160.641 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858164.577 20371 15254 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858165.960 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858166.064 20371 13624 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=772018ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858169.979 20371 15254 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858171.229 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858172.594 20371  7695 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=778548ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858175.585 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858176.224 20371  2279 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858176.274 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858176.560 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858178.405 20371 15254 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=784359ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858181.046 20371  2279 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858181.795 20371  2279 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858184.845 20371 15254 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=790799ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858186.615 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858187.050 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858190.891 20371  7695 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=796845ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858192.222 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858192.424 20371  2279 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858197.144 20371 17079 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=803098ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858197.695 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858197.948 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858202.969 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858203.489 20371 13624 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=809443ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858203.524 20371 13624 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858206.609 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858206.634 20371 13625 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858208.338 20371 13624 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858209.392 20371 17079 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858209.731 20371 13624 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=815684ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858213.599 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858214.722 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858216.069 20371 20962 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=822022ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858218.955 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858220.300 20371 13624 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858222.213 20371 20962 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=828167ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858224.225 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858225.973 20371 20485 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858228.356 20371 20962 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=834310ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858229.434 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858231.567 20371  7695 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858234.685 20371 13625 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858234.701 20371  2279 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=840655ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858236.542 20371 13624 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858236.948 20371 13624 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858236.984 20371 20962 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858239.976 20371 13625 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858241.021 20371 20418 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=846975ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858242.257 20371 24551 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=
+         1782858243.923 20371 20371 I SupervisorService: phone_automation_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER decision=STARTED enabled=false setup=unknown runtime=disabled touch_enabled=true touch_runtime=panel_sleep
+         1782858243.951 20371 20371 I SupervisorService: cpu_frequency_sync trigger=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER enabled=false suspended=false runtime=disabled
+         1782858243.966 20371 27539 I SupervisorService: action=lv.jolkins.pixelorchestrator.action.TICKET_START_SERVER command_action=ticket_start_server component= success=true message=Ticket remote server start requested
+         1782858245.272 20371 27656 I TicketStreamService: ticket_http_request method=GET path=/api/v1/health upgrade=
+         1782858246.845 20371 27539 D TouchBrightness: touch_brightness_debug reason=panel_sleep_guard touches=0 source=synaptics_tcm_touch power_source=gpio_keys last_raw=852799ms timer=none panel_target=0 power_rebound=none overlay=0 raw(btn=false,slots=0,tool=false) hold=true
+         1782858247.199 20371 24547 I TicketStreamService: ticket_http_request method=GET path=/health upgrade=

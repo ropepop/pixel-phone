@@ -68,6 +68,25 @@ class TicketViviPageEnforcerTest {
   }
 
   @Test
+  fun summarizesTicketCardSelectionForOperationalEvents() {
+    val currentRange = currentTicketDateRange()
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="Manas biļetes" bounds="[288,158][792,270]" />
+        <node package="com.pv.vivi" content-desc="Olaine - Rīga&#10;30 dienu biļete&#10;DERĪGA POSMĀ&#10;Cena - Rīga&#10;DERĪGA&#10;$currentRange&#10;B&#10;A" clickable="true" bounds="[0,536][1080,1011]" />
+        <node package="com.pv.vivi" content-desc="Tickets&#10;2. cilne no 4" clickable="true" selected="true" bounds="[270,2209][540,2361]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val summary = TicketViviPageEnforcer.ticketCardSelectionSummaryForHierarchy(xml)
+
+    assertTrue(summary.contains("card_count=1"))
+    assertTrue(summary.contains("priority=open_fresh_time_ticket_card"))
+    assertTrue(summary.contains("label=Olaine"))
+    assertFalse(summary.contains("&#10;"))
+  }
+
+  @Test
   fun detectsViviLoginScreenAndTargetsLoginControls() {
     val xml = loginScreenXml()
 

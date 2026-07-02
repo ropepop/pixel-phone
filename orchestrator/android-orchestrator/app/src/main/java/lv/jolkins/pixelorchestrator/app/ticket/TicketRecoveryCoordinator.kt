@@ -2,7 +2,6 @@ package lv.jolkins.pixelorchestrator.app.ticket
 
 import android.content.Context
 import android.os.SystemClock
-import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -54,7 +53,6 @@ internal class TicketRecoveryCoordinator(
       if (active?.isActive == true) {
         pendingReason = reason
         pendingMode = mode
-        Log.i(TAG, "ticket_recovery_coalesced reason=$reason mode=$mode current=$currentReason")
         return
       }
       currentReason = reason
@@ -132,7 +130,6 @@ internal class TicketRecoveryCoordinator(
   }
 
   private suspend fun run(reason: String, mode: TicketRecoveryMode): String {
-    Log.i(TAG, "ticket_recovery_start reason=$reason mode=$mode")
     val fresh = mode == TicketRecoveryMode.FRESH_RESET
     val result = autopilot.driveToTicketDetail(
       reason = "recovery:$reason",
@@ -146,11 +143,9 @@ internal class TicketRecoveryCoordinator(
       onStep = { step -> lastStep = step }
     )
     return if (result.success) {
-      Log.i(TAG, "ticket_recovery_succeeded reason=$reason mode=$mode step=${result.step}")
       RESULT_SUCCEEDED
     } else {
       lastStep = result.step
-      Log.w(TAG, "ticket_recovery_failed reason=$reason mode=$mode state=${result.state} step=${result.step}")
       if (fresh) {
         returnToOrchestrator()
       }
@@ -159,7 +154,6 @@ internal class TicketRecoveryCoordinator(
   }
 
   private companion object {
-    private const val TAG = "TicketRecoveryCoordinator"
     private const val STATE_IDLE = "idle"
     private const val STATE_RUNNING = "running"
     private const val STATE_SUCCEEDED = "succeeded"

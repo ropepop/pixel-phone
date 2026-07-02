@@ -71,6 +71,10 @@ data class TicketStreamHealth(
   val lastSessionReuseReason: String? = null,
   val lastSessionReuseDurationMillis: Long? = null,
   val lastSessionReuseAgoMillis: Long? = null,
+  val latestTicketReselect: TicketLatestTicketReselectHealth = TicketLatestTicketReselectHealth(),
+  val viviState: TicketViviStateHealth = TicketViviStateHealth(),
+  val ticketState: TicketControlStateHealth = TicketControlStateHealth(),
+  val streamPipeline: TicketStreamPipeline,
   val serviceReadiness: TicketServiceReadinessHealth = TicketServiceReadinessHealth(),
   val inputGate: TicketInputGateHealth = TicketInputGateHealth(),
   val controlCodeSnap: TicketControlCodeSnapHealth = TicketControlCodeSnapHealth(),
@@ -89,9 +93,6 @@ data class TicketStreamHealth(
   val hardwareH264: TicketHardwareH264Health = TicketHardwareH264Health(),
   val startupTrace: TicketStartupTraceHealth = TicketStartupTraceHealth(),
   val recovery: TicketRecoveryHealth = TicketRecoveryHealth(),
-  val ticketState: TicketControlStateHealth = TicketControlStateHealth(),
-  val viviState: TicketViviStateHealth = TicketViviStateHealth(),
-  val streamPipeline: TicketStreamPipeline,
   val pixelTicketStateEvent: TicketPixelStateEventHealth = TicketPixelStateEventHealth(),
   val recentClientTelemetry: List<TicketClientTelemetry> = emptyList(),
   val recentEvents: List<TicketSessionEvent> = emptyList(),
@@ -432,6 +433,17 @@ data class TicketControlCodeRequestHealth(
 )
 
 @Serializable
+data class TicketLatestTicketReselectHealth(
+  val status: String = "idle",
+  val active: Boolean = false,
+  val reason: String = "",
+  val commandId: String = "",
+  val startedAgoMillis: Long? = null,
+  val completedAgoMillis: Long? = null,
+  val freshFrameAgoMillis: Long? = null
+)
+
+@Serializable
 data class TicketRigasSatiksmeBatchHealth(
   val batchId: String? = null,
   val status: String = "idle",
@@ -520,6 +532,18 @@ data class TicketRecoveryHealth(
   val pendingMode: String? = null,
   val lastResult: String = "none",
   val lastStep: String = "idle",
+  val streamStage: String = "idle",
+  val lastWatchdogAction: String = "none",
+  val lastStreamRecoveryResult: String = "none",
+  val lastStreamRecoveryReason: String? = null,
+  val lastStreamRecoveryAgoMillis: Long? = null,
+  val lastStreamRecoveryFailureReason: String? = null,
+  val desiredRecoveryStage: String = "idle",
+  val lastDesiredRecoveryAction: String = "none",
+  val lastDesiredRecoveryResult: String = "none",
+  val lastDesiredRecoveryAgoMillis: Long? = null,
+  val lastDesiredRecoveryFailureReason: String? = null,
+  val lastDesiredRecoveryProbeResult: String? = null,
   val startedAgoMillis: Long? = null,
   val completedAgoMillis: Long? = null
 )

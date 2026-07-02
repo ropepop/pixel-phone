@@ -3,7 +3,6 @@ package lv.jolkins.pixelorchestrator.app.ticket
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
-import android.util.Log
 import kotlinx.coroutines.delay
 import lv.jolkins.pixelorchestrator.rootexec.RootResult
 import kotlin.math.roundToInt
@@ -51,17 +50,14 @@ internal class TicketAutopilot(
     timeoutMillis: Long = OVERALL_TIMEOUT_MILLIS,
     onStep: (String) -> Unit = {}
   ): TicketAutopilotResult {
-    Log.i(TAG, "ticket_autopilot_start reason=$reason force_fresh=$forceFreshLaunch restart_policy=$restartPolicy")
     onStep("start")
     if (!forceFreshLaunch) {
       recentSafeTicketDetail()?.let { recent ->
-        Log.i(TAG, "ticket_autopilot_memory_fast_succeeded reason=$reason source=${recent.source}")
         onStep("memory_fast_ticket_detail")
         return TicketAutopilotResult(true, recent.state, "memory_fast_ticket_detail")
       }
       observeFastState("fast_start_$reason")?.let { fast ->
         if (fast.state == TicketViviRecoveryState.TICKET_DETAIL) {
-          Log.i(TAG, "ticket_autopilot_fast_succeeded reason=$reason state=${fast.state}")
           onStep("fast_ticket_detail")
           return TicketAutopilotResult(true, fast.state, "fast_ticket_detail")
         }
@@ -98,17 +94,14 @@ internal class TicketAutopilot(
       lastState = state
       lastStep = "step_${step}_${state.name.lowercase()}"
       onStep(lastStep)
-      Log.i(TAG, "ticket_autopilot_step reason=$reason step=$step state=$state")
 
       when (state) {
         TicketViviRecoveryState.TICKET_DETAIL -> {
-          Log.i(TAG, "ticket_autopilot_succeeded reason=$reason steps=$step")
           return TicketAutopilotResult(true, state, lastStep, firstActionState)
         }
 
         TicketViviRecoveryState.CONTROL_CODE_POPUP -> {
           if (allowControlCodePopup) {
-            Log.i(TAG, "ticket_autopilot_holding_control_code reason=$reason steps=$step")
             return TicketAutopilotResult(true, state, lastStep, firstActionState)
           }
           firstActionState = firstActionState ?: state
@@ -221,20 +214,16 @@ internal class TicketAutopilot(
       if (stuckActions >= STUCK_ACTION_LIMIT) {
         if (restartPolicy == TicketAutopilotRestartPolicy.NEVER) {
           onStep("uncertain_hold")
-          Log.w(TAG, "ticket_autopilot_uncertain_hold reason=$reason state=$state")
           return TicketAutopilotResult(false, state, "uncertain_hold")
         }
         if (restartPolicy == TicketAutopilotRestartPolicy.SOFT_RECOVERY && !usedSoftRelaunch) {
           usedSoftRelaunch = true
           onStep("stuck_soft_relaunch")
-          Log.w(TAG, "ticket_autopilot_stuck_soft_relaunch reason=$reason state=$state")
         } else if (restartPolicy == TicketAutopilotRestartPolicy.SOFT_RECOVERY) {
           onStep("soft_recovery_needs_attention")
-          Log.w(TAG, "ticket_autopilot_soft_recovery_needs_attention reason=$reason state=$state")
           return TicketAutopilotResult(false, state, "soft_recovery_needs_attention")
         } else {
           onStep("stuck_hard_relaunch")
-          Log.w(TAG, "ticket_autopilot_stuck_hard_relaunch reason=$reason state=$state")
           forceStopVivi("stuck_$reason", onStep)
         }
         launchVivi("stuck_$reason", onStep)
@@ -245,10 +234,8 @@ internal class TicketAutopilot(
 
     val finalObservation = observeState(reason)
     if (finalObservation.state == TicketViviRecoveryState.TICKET_DETAIL) {
-      Log.i(TAG, "ticket_autopilot_succeeded reason=$reason final=true")
       return TicketAutopilotResult(true, TicketViviRecoveryState.TICKET_DETAIL, "final_ticket_detail", firstActionState)
     }
-    Log.w(TAG, "ticket_autopilot_failed reason=$reason state=$lastState step=$lastStep")
     return TicketAutopilotResult(false, lastState, lastStep)
   }
 
@@ -276,10 +263,7 @@ internal class TicketAutopilot(
   private suspend fun forceStopVivi(reason: String, onStep: (String) -> Unit) {
     onStep("force_stop_vivi")
     onHardReset(reason)
-    val forceStop = rootExecutor.run("am force-stop ${TicketScreenConfig.VIVI_PACKAGE}", 1_500.milliseconds)
-    if (!forceStop.ok) {
-      Log.w(TAG, "ticket_autopilot_force_stop_failed reason=$reason stderr=${forceStop.stderr}")
-    }
+    rootExecutor.run("am force-stop ${TicketScreenConfig.VIVI_PACKAGE}", 1_500.milliseconds)
     delay(FRESH_RELAUNCH_DELAY_MILLIS)
   }
 
@@ -287,7 +271,6 @@ internal class TicketAutopilot(
     onStep("launch_vivi")
     val launchIntent = context.packageManager.getLaunchIntentForPackage(TicketScreenConfig.VIVI_PACKAGE)
     if (launchIntent == null) {
-      Log.w(TAG, "ticket_autopilot_launch_intent_missing reason=$reason")
       return
     }
     runCatching {
@@ -295,17 +278,12 @@ internal class TicketAutopilot(
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
       )
       scheduleBrightnessGuard("ticket_autopilot")
-    }.onFailure { error ->
-      Log.w(TAG, "ticket_autopilot_launch_failed reason=$reason", error)
     }
-    val rootLaunch = rootExecutor.run(
+    rootExecutor.run(
       "am start -n ${TicketScreenConfig.VIVI_LAUNCH_ACTIVITY} " +
         "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER",
       1_500.milliseconds
     )
-    if (!rootLaunch.ok) {
-      Log.w(TAG, "ticket_autopilot_root_launch_failed reason=$reason stderr=${rootLaunch.stderr}")
-    }
   }
 
   private suspend fun dumpHierarchy(): RootResult {
@@ -387,9 +365,6 @@ internal class TicketAutopilot(
 
   private suspend fun goBack(reason: String): Boolean {
     val result = runInput("input keyevent KEYCODE_BACK", "ticket_autopilot:$reason")
-    if (!result.ok) {
-      Log.w(TAG, "ticket_autopilot_back_failed reason=$reason stderr=${result.stderr}")
-    }
     return result.ok
   }
 
@@ -398,9 +373,6 @@ internal class TicketAutopilot(
       return goBack(reason)
     }
     val result = runInput("input tap $x $y", "ticket_autopilot:$reason")
-    if (!result.ok) {
-      Log.w(TAG, "ticket_autopilot_tap_failed reason=$reason stderr=${result.stderr}")
-    }
     return result.ok
   }
 
@@ -429,7 +401,6 @@ internal class TicketAutopilot(
   )
 
   private companion object {
-    private const val TAG = "TicketAutopilot"
     private const val FRESH_RELAUNCH_DELAY_MILLIS = 300L
     private const val SOFT_LAUNCH_TICKETS_TAB_SETTLE_MILLIS = 1_200L
     private const val SOFT_LAUNCH_TICKET_STEP_SETTLE_MILLIS = 650L

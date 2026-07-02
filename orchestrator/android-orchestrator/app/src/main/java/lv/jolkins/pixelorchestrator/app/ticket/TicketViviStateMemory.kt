@@ -74,6 +74,20 @@ internal class TicketViviStateMemory(
     return next
   }
 
+  fun clear(source: String, reason: String): TicketViviStateMemorySnapshot {
+    val next = TicketViviStateMemorySnapshot(
+      state = TicketViviRecoveryState.UNKNOWN_VIVI,
+      ticketId = null,
+      observedAtMillis = SystemClock.elapsedRealtime(),
+      source = source,
+      reason = reason
+    )
+    snapshot = next
+    lastTicketDetailSnapshot = TicketViviStateMemorySnapshot()
+    onRecord(next)
+    return next
+  }
+
   fun current(): TicketViviStateMemorySnapshot = snapshot
 
   fun recentTicketDetailWithin(maxAgeMillis: Long): TicketViviStateMemorySnapshot? {

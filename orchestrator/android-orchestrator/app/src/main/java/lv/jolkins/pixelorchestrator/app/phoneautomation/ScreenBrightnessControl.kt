@@ -48,10 +48,10 @@ internal object ScreenBrightnessControl {
         settings put system screen_brightness $targetSystemValue
       fi
       ${buildSetPanelPercentScript(
-      percent = targetPercent,
-      holdMillis = panelHoldMillis,
-      holdIntervalMillis = panelHoldIntervalMillis
-    )}
+        percent = targetPercent,
+        holdMillis = panelHoldMillis,
+        holdIntervalMillis = panelHoldIntervalMillis
+      )}
     """.trimIndent()
   }
 
@@ -128,10 +128,10 @@ internal object ScreenBrightnessControl {
     return """
       $systemRestore
       ${buildRestorePanelScript(
-      state = state,
-      holdMillis = panelHoldMillis,
-      holdIntervalMillis = panelHoldIntervalMillis
-    )}
+        state = state,
+        holdMillis = panelHoldMillis,
+        holdIntervalMillis = panelHoldIntervalMillis
+      )}
     """.trimIndent()
   }
 

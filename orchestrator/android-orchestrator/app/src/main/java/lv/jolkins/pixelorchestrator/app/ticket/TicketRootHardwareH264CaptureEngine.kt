@@ -1,7 +1,6 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
 import android.os.SystemClock
-import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -104,13 +103,25 @@ class TicketRootHardwareH264CaptureEngine(
     } else {
       rootExecutor.run("command -v app_process >/dev/null 2>&1", timeout = 5.seconds)
     }
-    if (!helper.ok) {
+    if (sourceWidth != null && sourceHeight != null) {
+      helper.stderr.lineSequence()
+        .filter { it.isNotBlank() }
+        .forEach(::appendStderr)
+    }
+    val visibilityBlocked = sourceWidth != null &&
+      sourceHeight != null &&
+      lastVisibilityCheckResult != "visible"
+    if (!helper.ok || visibilityBlocked) {
       available = false
-      captureHelperAvailable = false
-      captureHelperState = "unavailable"
-      captureHelperMessage = helper.stderr.trim().ifBlank {
-        helper.stdout.trim().ifBlank { "Root hardware H.264 helper is unavailable" }
-      }.takeLast(240)
+      captureHelperAvailable = helper.ok
+      captureHelperState = if (visibilityBlocked) "capture_blocked" else "unavailable"
+      captureHelperMessage = if (visibilityBlocked) {
+        "Root hardware H.264 helper probe did not produce visible pixels"
+      } else {
+        helper.stderr.trim().ifBlank {
+          helper.stdout.trim().ifBlank { "Root hardware H.264 helper is unavailable" }
+        }.takeLast(240)
+      }
       state = "unavailable"
       message = captureHelperMessage
       publish()
@@ -194,7 +205,6 @@ class TicketRootHardwareH264CaptureEngine(
     } else {
       "Hardware H.264 capture restart requested"
     }
-    Log.i(TAG, "ticket_root_hardware_h264_capture_config_changed reason=$reason active=$activeStartRequest desired=$desiredStartRequest")
     publish()
     stopProcesses()
   }
@@ -217,7 +227,6 @@ class TicketRootHardwareH264CaptureEngine(
   }
 
   fun requestKeyFrame(reason: String) {
-    Log.i(TAG, "ticket_hardware_h264_keyframe_requested reason=$reason")
     if (!writeHardwareKeyFrameRequest(reason)) {
       synchronized(keyFrameRequestLock) {
         pendingKeyFrameReason = reason
@@ -226,12 +235,10 @@ class TicketRootHardwareH264CaptureEngine(
   }
 
   fun requestBurst(reason: String) {
-    Log.i(TAG, "ticket_hardware_h264_burst_requested reason=$reason")
     writeHardwareCommand("burst\n", "burst", reason)
   }
 
   fun requestControlCodeVisualProbe(reason: String) {
-    Log.i(TAG, "ticket_hardware_h264_control_code_visual_probe_requested reason=$reason")
     lastControlCodeVisualProbeResult = "requested"
     lastControlCodeVisualProbeReason = reason
     writeHardwareCommand("control_code_visual_probe\n", "control_code_visual_probe", reason)
@@ -258,7 +265,6 @@ class TicketRootHardwareH264CaptureEngine(
     val process = encoderProcess
     val outputStream = encoderProcess?.outputStream
     if (process == null || !process.isAlive || outputStream == null) {
-      Log.w(TAG, "ticket_hardware_h264_${label}_skipped reason=$reason state=$state")
       return false
     }
     return try {
@@ -268,7 +274,6 @@ class TicketRootHardwareH264CaptureEngine(
       }
       true
     } catch (error: IOException) {
-      Log.w(TAG, "ticket_hardware_h264_${label}_failed reason=$reason", error)
       false
     }
   }
@@ -279,7 +284,6 @@ class TicketRootHardwareH264CaptureEngine(
       pendingKeyFrameReason = null
       value
     } ?: return
-    Log.i(TAG, "ticket_hardware_h264_pending_keyframe_flush reason=$reason pending=$pending")
     if (!writeHardwareKeyFrameRequest("$reason:$pending")) {
       synchronized(keyFrameRequestLock) {
         pendingKeyFrameReason = pending
@@ -423,7 +427,6 @@ class TicketRootHardwareH264CaptureEngine(
             recordRestart("failure")
             state = "restarting"
             message = "Hardware H.264 capture failed: ${error.message ?: error::class.java.simpleName}"
-            Log.w(TAG, "ticket_hardware_h264_capture_failed", error)
             publish()
             delay(RESTART_DELAY_MILLIS)
           }
@@ -546,9 +549,13 @@ class TicketRootHardwareH264CaptureEngine(
   }
 
   private fun appendStderr(line: String) {
-    parseHelperDiagnostic(line)
-    stderrTail = (stderrTail + "\n" + line).trim().takeLast(STDERR_TAIL_CHARS)
-    Log.w(TAG, "ticket_hardware_h264_stderr $line")
+    val cleanLine = sanitizeStderrLine(line)
+    parseHelperDiagnostic(cleanLine)
+    stderrTail = (stderrTail + "\n" + cleanLine).trim().takeLast(STDERR_TAIL_CHARS)
+  }
+
+  private fun sanitizeStderrLine(line: String): String {
+    return line.filter { ch -> ch == '\t' || ch >= ' ' }.take(STDERR_LINE_CHARS)
   }
 
   private fun parseHelperDiagnostic(line: String) {
@@ -619,7 +626,6 @@ class TicketRootHardwareH264CaptureEngine(
     val counts = HardwareProcessCounts(encoderProcessCount = 0, wrapperProcessCount = 0)
     updateProcessCounts(counts, expectedEncoderProcesses = 0)
     lastCaptureCleanupResult = "start_cleanup_reused_clean_stop:${counts.summary()}"
-    Log.i(TAG, "ticket_hardware_h264_fast_start_reused_clean_stop")
     return true
   }
 
@@ -800,7 +806,6 @@ class TicketRootHardwareH264CaptureEngine(
     restartCount += 1
     lastExitReason = reason
     lastExitAtMillis = SystemClock.elapsedRealtime()
-    Log.i(TAG, "ticket_hardware_h264_restart reason=$reason restarts=$restartCount")
   }
 
   private fun publish() {
@@ -812,10 +817,10 @@ class TicketRootHardwareH264CaptureEngine(
   }
 
   private companion object {
-    private const val TAG = "TicketHardwareH264"
     private const val RESTART_DELAY_MILLIS = 600L
     private const val BITRATE_WINDOW_MILLIS = 1_000L
     private const val STDERR_TAIL_CHARS = 4_000
+    private const val STDERR_LINE_CHARS = 800
     private const val DIRECT_CLEANUP_WAIT_MILLIS = 700L
     private const val POST_START_PROCESS_SANITY_DELAY_MILLIS = 250L
   }

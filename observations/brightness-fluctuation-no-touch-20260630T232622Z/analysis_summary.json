@@ -1,0 +1,76 @@
+{
+  "action_records": 434,
+  "all_input_snapshots_report_no_display_touch": true,
+  "capture_end_utc": "2026-07-01T00:06:31.539258Z",
+  "capture_start_utc": "2026-06-30T23:26:22.653771Z",
+  "chatgpt_launch_count": 8,
+  "chatgpt_launch_times_utc": [
+    "2026-06-30T23:39:57.097000Z",
+    "2026-06-30T23:40:35.065000Z",
+    "2026-06-30T23:41:35.687000Z",
+    "2026-06-30T23:42:35.737000Z",
+    "2026-06-30T23:43:37.482000Z",
+    "2026-06-30T23:53:25.301000Z",
+    "2026-06-30T23:57:23.646000Z",
+    "2026-07-01T00:01:07.141000Z"
+  ],
+  "duration_seconds": 2405,
+  "final_snapshot": "panel_path=/sys/class/backlight/panel0-backlight\npanel_brightness=0\npanel_actual_brightness=0\npanel_max_brightness=3939\nscreen_brightness_mode=0\nscreen_brightness=0\ndisplay_percentage=0.0\npower_summary=  mWakefulness=Awake;  mWakeLockSummary=0x25;  mHoldingDisplaySuspendBlocker=true;Display Power: com.android.server.power.PowerManagerService$1@56f892e;mWakeLockSummary=0x25;mWakefulness=1;\n",
+  "first_sample_utc": "2026-06-30T23:26:26.284358Z",
+  "health_ok_records": 0,
+  "health_records": 218,
+  "last_sample_utc": "2026-07-01T00:06:25.853635Z",
+  "log_counts": {
+    "boot_recover": 4,
+    "chatgpt_launch": 8,
+    "panel_sleep_guard": 384,
+    "phone_automation_refresh": 20,
+    "power_source_selected": 6,
+    "restore_failed": 0,
+    "service_create": 6,
+    "session_failed": 0,
+    "start_panel_sleep_reasserted": 6,
+    "ticket_service_ready": 23,
+    "ticket_start_server": 25,
+    "touch_count_changed": 0,
+    "touch_source_selected": 6,
+    "wake_promoted_to_active_touch": 0
+  },
+  "log_line_count": 555,
+  "max_actual": 0,
+  "max_display": 0.0,
+  "max_panel": 0,
+  "max_screen_setting": 0,
+  "median_interval_ms": 1143,
+  "nonzero_sample_count": 0,
+  "nonzero_segment_count": 0,
+  "outdir": "observations/brightness-fluctuation-no-touch-20260630T232622Z",
+  "panel_guard_count": 384,
+  "panel_sleep_reassert_count": 6,
+  "raw_input_line_counts": {
+    "getevent_gpio.log": 0,
+    "getevent_gpio.stderr.log": 0,
+    "getevent_touch.log": 0,
+    "getevent_touch.stderr.log": 0
+  },
+  "refresh_count": 20,
+  "samples": 1752,
+  "ticket_ready_count": 23,
+  "ticket_start_count": 25,
+  "top_focus": [
+    [
+      "mCurrentFocus=Window{3cd57a9 u0 com.openai.chatgpt/com.openai.chatgpt.MainActivity};  mFocusedApp=ActivityRecord{209962529 u0 com.openai.chatgpt/.MainActivity t3013};",
+      399
+    ],
+    [
+      "mCurrentFocus=Window{57a5e87 u0 com.openai.chatgpt/com.openai.chatgpt.MainActivity};  mFocusedApp=ActivityRecord{209962529 u0 com.openai.chatgpt/.MainActivity t3013};",
+      35
+    ]
+  ],
+  "top_resumed": [
+    [
+      "topResumedActivity=ActivityRecord{209962529 u0 com.openai.chatgpt/.MainActivity t3013};  ResumedActivity: ActivityRecord{209962529 u0 com.openai.chatgpt/.MainActivity t3013};",
+      434
+    ]
+  ]
+}

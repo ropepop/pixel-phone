@@ -1,0 +1,5 @@
+panel_path=
+panel_brightness=panel_actual_brightness=panel_max_brightness=screen_brightness_mode=0
+screen_brightness=1
+display_percentage=0.0
+power_summary=  mWakefulness=Awake;  mHoldingDisplaySuspendBlocker=true;Display Power: com.android.server.power.PowerManagerService$1@56f892e;mWakefulness=1;

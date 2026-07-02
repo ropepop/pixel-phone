@@ -1,6 +1,6 @@
 package lv.jolkins.pixelorchestrator.app.phoneautomation
 
-internal data class PhoneAutomationPrerequisiteSnapshot(
+data class PhoneAutomationPrerequisiteSnapshot(
   val accessibilityGloballyEnabled: Boolean,
   val accessibilityServiceEnabled: Boolean,
   val notificationListenerEnabled: Boolean,
@@ -17,7 +17,7 @@ internal data class PhoneAutomationPrerequisiteSnapshot(
     get() = notificationListenerEnabled
 }
 
-internal data class PhoneAutomationPrerequisiteIssue(
+data class PhoneAutomationPrerequisiteIssue(
   val reasonKey: String,
   val detail: String,
   val recoverAutomation: Boolean,
@@ -25,7 +25,7 @@ internal data class PhoneAutomationPrerequisiteIssue(
   val connectionOnly: Boolean
 )
 
-internal fun PhoneAutomationPrerequisiteSnapshot.issueFor(
+fun PhoneAutomationPrerequisiteSnapshot.issueFor(
   settings: PhoneAutomationSettingsSnapshot
 ): PhoneAutomationPrerequisiteIssue? {
   val recoverAutomation = settings.enabled

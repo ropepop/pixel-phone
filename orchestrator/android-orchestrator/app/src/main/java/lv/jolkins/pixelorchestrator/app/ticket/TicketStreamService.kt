@@ -4,6 +4,8 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -14,7 +16,6 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Base64
-import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CancellationException
@@ -32,6 +33,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
@@ -51,6 +53,7 @@ import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationAccessibi
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationPreferencesStore
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationServiceBridge
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationVisibleNode
+import lv.jolkins.pixelorchestrator.app.phoneautomation.PhonePortraitLock
 import lv.jolkins.pixelorchestrator.app.phoneautomation.ScreenBrightnessControl
 import lv.jolkins.pixelorchestrator.app.phoneautomation.ScreenBrightnessState
 import lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntimeState
@@ -235,8 +238,19 @@ class TicketStreamService : Service() {
   private val wakeRootExecutor = TicketRootCommandWorker()
   private val foregroundRootExecutor = TicketRootCommandWorker()
   private val runtimeStateStore = TicketRuntimeStateStore(rootExecutor, json)
-  private val chatgptRunner by lazy { ChatGPTPhoneRunner(this, shellInput = ChatGPTRootShellInput(inputRootExecutor)) }
+  private val chatgptRunner by lazy {
+    ChatGPTPhoneRunner(
+      this,
+      shellInput = ChatGPTRootShellInput(
+        rootExecutor = inputRootExecutor,
+        clipboardTextSetter = ::setChatGptClipboardText
+      )
+    )
+  }
   private var chatgptSpacetimeWorker: ChatGPTSpacetimeWorker? = null
+  private var ticketSpacetimeWorker: TicketSpacetimeWorker? = null
+  private val ticketSpacetimePhoneMessages = ArrayDeque<String>()
+  private val ticketSpacetimePhoneMessagesLock = Object()
   private val serverMutex = Mutex()
   private val controlClients = Collections.synchronizedSet(mutableSetOf<TicketWebSocket>())
   private val protectedControlClients = Collections.synchronizedSet(mutableSetOf<TicketWebSocket>())
@@ -248,6 +262,14 @@ class TicketStreamService : Service() {
   private val recentTicketEvents = ArrayDeque<Triple<Long, String, String>>()
   private val encoderLock = Any()
   private val sessionMutex = Mutex()
+
+  private fun setChatGptClipboardText(text: String): Boolean {
+    return runCatching {
+      val clipboard = getSystemService(ClipboardManager::class.java)
+      clipboard.setPrimaryClip(ClipData.newPlainText("chatgpt-broker", text))
+      true
+    }.getOrDefault(false)
+  }
   private val controlCodeRequestMutex = Mutex()
   private val controlCodeBrowserCaptureLock = Object()
   private val running = AtomicBoolean(false)
@@ -314,6 +336,7 @@ class TicketStreamService : Service() {
   private var ticketScreenWakeLockUsesTouchBrightnessOwner: Boolean? = null
   private val viviStateMemory = TicketViviStateMemory(::persistViviStateMemory)
   private lateinit var ticketRecoveryCoordinator: TicketRecoveryCoordinator
+  private var streamWatchdogJob: Job? = null
   @Volatile private var viviForegroundGraceUntilMillis: Long = 0L
   @Volatile private var lastViviPageEnforceAtMillis: Long = 0L
   @Volatile private var cachedForegroundViolationReason: String? = null
@@ -344,6 +367,18 @@ class TicketStreamService : Service() {
   @Volatile private var lastPublishedRootHardwareH264HealthSignature: String = ""
   @Volatile private var rootH264BlankProbeRecoveries: Long = 0L
   @Volatile private var rootH264BlankProbeFailures: Long = 0L
+  @Volatile private var streamWatchdogStage: String = "idle"
+  @Volatile private var lastStreamWatchdogAction: String = "none"
+  @Volatile private var lastStreamWatchdogReason: String? = null
+  @Volatile private var lastStreamRecoveryResult: String = "none"
+  @Volatile private var lastStreamRecoveryFailureReason: String? = null
+  @Volatile private var lastStreamRecoveryAtMillis: Long = 0L
+  @Volatile private var spacetimeDesiredRecoveryStage: String = "idle"
+  @Volatile private var lastSpacetimeDesiredRecoveryAction: String = "none"
+  @Volatile private var lastSpacetimeDesiredRecoveryResult: String = "none"
+  @Volatile private var lastSpacetimeDesiredRecoveryFailureReason: String? = null
+  @Volatile private var lastSpacetimeDesiredRecoveryProbeResult: String? = null
+  @Volatile private var lastSpacetimeDesiredRecoveryAtMillis: Long = 0L
   @Volatile private var inputGateAllowed: Boolean = false
   @Volatile private var inputGateReason: String = "no_active_control"
   @Volatile private var inputGateChangedAtMillis: Long = 0L
@@ -377,6 +412,7 @@ class TicketStreamService : Service() {
   @Volatile private var lastForegroundRecoveryAtMillis: Long = 0L
   @Volatile private var lastForegroundGuardRecentTicketDetailSkipAtMillis: Long = 0L
   @Volatile private var lastForegroundGuardInconclusiveAtMillis: Long = 0L
+  @Volatile private var lastActiveGuardRecoverySessionRetryAtMillis: Long = 0L
   @Volatile private var lastTicketScreenWakeAtMillis: Long = 0L
   @Volatile private var lastMessage: String = "Ticket server is starting"
   @Volatile private var lastEncoderStartAtMillis: Long = 0L
@@ -436,6 +472,14 @@ class TicketStreamService : Service() {
   @Volatile private var lastControlCodeCommandOwner: String? = null
   @Volatile private var lastControlCodeCommandApp: String? = null
   @Volatile private var lastControlCodeCommandFlow: String? = null
+  @Volatile private var latestTicketReselectStatus: String = "idle"
+  @Volatile private var latestTicketReselectReason: String = ""
+  @Volatile private var latestTicketReselectCommandId: String = ""
+  @Volatile private var latestTicketReselectStartedAtMillis: Long = 0L
+  @Volatile private var latestTicketReselectCompletedAtMillis: Long = 0L
+  @Volatile private var latestTicketReselectFreshFrameAtMillis: Long = 0L
+  private var latestTicketReselectRecoveryJob: Job? = null
+  private var latestTicketReselectSettleJob: Job? = null
   @Volatile private var lastRejectedControlCodeCommandOwner: String? = null
   @Volatile private var lastRejectedControlCodeCommandApp: String? = null
   @Volatile private var lastRejectedControlCodeCommandFlow: String? = null
@@ -521,7 +565,7 @@ class TicketStreamService : Service() {
       context = this,
       scope = serviceScope,
       rootExecutor = wakeRootExecutor,
-      runInput = ::runNonTouchInput,
+      runInput = ::runFastNonTouchInput,
       collapseSystemUi = { reason -> collapseNotificationShade(reason) },
       scheduleBrightnessGuard = ::scheduleTicketBrightnessGuard,
       stateMemory = viviStateMemory,
@@ -533,6 +577,10 @@ class TicketStreamService : Service() {
     restoreViviStateMemory()
     ensureNotificationChannel()
     serviceScope.launch(Dispatchers.IO) {
+      PhonePortraitLock.force(inputRootExecutor)
+      if (!PhonePortraitLock.verify(inputRootExecutor)) {
+        recordTicketEvent("phone_portrait_lock_unverified", "startup")
+      }
       rootHardwareH264CaptureEngine.cleanupStaleProcesses()
       rootHardwareH264CaptureEngine.probe()
     }
@@ -541,6 +589,13 @@ class TicketStreamService : Service() {
       rootExecutor = inputRootExecutor,
       runner = chatgptRunner,
       ticketPriorityActive = ::chatgptTicketPriorityActive
+    ).also { worker ->
+      worker.start()
+    }
+    ticketSpacetimeWorker = TicketSpacetimeWorker(
+      scope = serviceScope,
+      rootExecutor = inputRootExecutor,
+      service = this
     ).also { worker ->
       worker.start()
     }
@@ -569,6 +624,8 @@ class TicketStreamService : Service() {
     clientDisconnectStopJob = null
     chatgptSpacetimeWorker?.stop()
     chatgptSpacetimeWorker = null
+    ticketSpacetimeWorker?.stop()
+    ticketSpacetimeWorker = null
     rootH264BlankProbeJob?.cancel()
     rootH264BlankProbeJob = null
     cancelInactivityTimer()
@@ -643,7 +700,7 @@ class TicketStreamService : Service() {
         } catch (error: Throwable) {
           running.set(false)
           lastMessage = "Ticket server failed to start: ${error.message ?: error::class.java.simpleName}"
-          Log.e(TAG, "ticket_server_start_failed", error)
+          recordTicketEvent("ticket_server_start_failed", safeErrorDetail(error))
         } finally {
           runCatching { serverSocket?.close() }
           serverSocket = null
@@ -684,7 +741,6 @@ class TicketStreamService : Service() {
           headers[line.substring(0, separator).trim().lowercase()] = line.substring(separator + 1).trim()
         }
       }
-      Log.i(TAG, "ticket_http_request method=$method path=$path upgrade=${headers["upgrade"].orEmpty()}")
       if (headers["upgrade"]?.equals("websocket", ignoreCase = true) == true &&
         (path == "/api/v1/session" || path == "/api/v1/stream")
       ) {
@@ -712,11 +768,11 @@ class TicketStreamService : Service() {
           sendText(output, 410, "chatgpt phone http control disabled; use spacetime queue")
         }
         method == "POST" && path == "/api/v1/session/start" -> sendJson(output, startTicketSession())
+        method == "POST" && path == "/api/v1/session/recover" -> sendJson(output, recoverTicketSession(bodyText))
         method == "POST" && path == "/api/v1/session/stop" -> sendJson(output, handleBrowserStopRequest(bodyText))
         method == "POST" && path == "/api/v1/client-log" -> {
           val message = bodyText.take(MAX_CLIENT_LOG_BYTES)
           recordClientTelemetry(message)
-          Log.i(TAG, "ticket_client_log $message")
           sendJsonPayload(output, """{"ok":true}""")
         }
         method == "POST" && path == "/api/v1/rs/login/start" -> {
@@ -734,7 +790,12 @@ class TicketStreamService : Service() {
         else -> sendText(output, 404, "not found")
       }
     }.onFailure { error ->
-      Log.w(TAG, "http_request_failed", error)
+      recordTicketEvent("http_request_failed", safeErrorDetail(error))
+      runCatching {
+        if (!socket.isClosed) {
+          sendText(output, 500, "internal error: ${safeErrorDetail(error)}")
+        }
+      }
     }
     if (!socket.isClosed) {
       runCatching { socket.close() }
@@ -765,8 +826,6 @@ class TicketStreamService : Service() {
     )
     output.flush()
     socket.soTimeout = 0
-    Log.i(TAG, "ticket_websocket_open kind=${if (video) "video" else "control"} clients=${totalClientCount() + 1}")
-
     lateinit var client: TicketWebSocket
     val info = TicketClientInfo(
       video = video,
@@ -799,7 +858,6 @@ class TicketStreamService : Service() {
         synchronized(videoSendStates) {
           videoSendStates.remove(client)
         }
-        Log.i(TAG, "ticket_websocket_close kind=${if (video) "video" else "control"} clients=${totalClientCount()}")
         if (totalClientCount() == 0) {
           scheduleClientDisconnectGrace()
         }
@@ -838,6 +896,7 @@ class TicketStreamService : Service() {
       }
     }
     ensureEncoderIfPossible()
+    scheduleStreamWatchdog("client_connected")
     client.readLoop()
   }
 
@@ -994,6 +1053,11 @@ class TicketStreamService : Service() {
         handleControlCodeBrowserCapture(requestId, ok, reason, frameEpoch, frameSequence)
       }
       "keyframe" -> requestKeyFrame(element["reason"]?.jsonPrimitive?.contentOrNull ?: "browser_request")
+      "recover_stream" -> {
+        val reason = element["reason"]?.jsonPrimitive?.contentOrNull ?: "control_recover_stream"
+        recoverTicketSession("""{"reason":${json.encodeToString(reason)}}""")
+        sendStatus(client)
+      }
       "restart_stream" -> {
         restartActiveStream("browser_restart_stream")
         sendStatus(client)
@@ -1028,6 +1092,500 @@ class TicketStreamService : Service() {
     }
   }
 
+  internal suspend fun handleTicketSpacetimeCommand(command: TicketSpacetimeCommand): TicketSpacetimeCommandResult {
+    val payload = runCatching { json.parseToJsonElement(command.payloadJson).jsonObject }.getOrNull()
+    val reason = payload?.stringValue("reason")
+      ?: payload?.stringValue("acceptedReason")
+      ?: command.reason.ifBlank { command.commandType }
+    return try {
+      when (command.commandType) {
+        "start" -> startTicketSession().toTicketSpacetimeCommandResult(reason)
+        "activity" -> {
+          markViewerInput(reason.ifBlank { "spacetime_activity" })
+          TicketSpacetimeCommandResult(ok = true, reason = "activity_recorded", streamState = ticketSpacetimeStreamState())
+        }
+        "keyframe" -> {
+          requestKeyFrame(reason.ifBlank { "spacetime_keyframe" })
+          TicketSpacetimeCommandResult(ok = true, reason = "keyframe_requested", streamState = ticketSpacetimeStreamState())
+        }
+        "recover_stream" -> recoverTicketSession(
+          """{"reason":${json.encodeToString(reason.ifBlank { "spacetime_recover_stream" })}}"""
+        ).toTicketSpacetimeCommandResult(reason)
+        "force_ticket_reselect" -> forceLatestTicketReselect(
+          reason = reason.ifBlank { "admin_force_latest_ticket_reselect" },
+          commandId = command.id
+        )
+        "prepare_control_code" -> {
+          val owner = payload?.stringValue("owner").orEmpty()
+          val app = payload?.stringValue("app").orEmpty()
+          val flow = payload?.stringValue("flow").orEmpty()
+          if (!controlCodeCommandEnvelopeMatches(owner, app, flow, TicketScreenConfig.TICKET_QR_OWNER_TICKET, TicketScreenConfig.TICKET_QR_APP_VIVI, TicketScreenConfig.TICKET_QR_FLOW_CONTROL_CODE)) {
+            recordRejectedControlCodeCommand("", owner, app, flow, "wrong_command_owner")
+            TicketSpacetimeCommandResult(ok = false, reason = "wrong_command_owner", streamState = ticketSpacetimeStreamState())
+          } else {
+            handlePrepareControlCode(reason.ifBlank { "spacetime_prepare_control_code" })
+            TicketSpacetimeCommandResult(ok = true, reason = "prepare_control_code_done", streamState = ticketSpacetimeStreamState())
+          }
+        }
+        "generate_control_code" -> {
+          serviceScope.launch {
+            handleGenerateControlCode(
+              replyClient = null,
+              requestId = payload?.stringValue("requestId").orEmpty(),
+              digits = payload?.stringValue("digits").orEmpty(),
+              owner = payload?.stringValue("owner").orEmpty(),
+              app = payload?.stringValue("app").orEmpty(),
+              flow = payload?.stringValue("flow").orEmpty(),
+              resultImage = payload?.booleanValue("resultImage") == true,
+              queueHint = payload?.jsonObjectValue("rsQueueHint")?.let { hint ->
+                RigasSatiksmeQueueHint(
+                  pendingAfterThis = hint["pendingAfterThis"]?.jsonPrimitive?.intOrNull ?: 0,
+                  ticketPriorityActive = hint["ticketPriorityActive"]?.jsonPrimitive?.booleanOrNull == true
+                )
+              } ?: RigasSatiksmeQueueHint()
+            )
+          }
+          TicketSpacetimeCommandResult(ok = true, reason = "generate_control_code_started", streamState = ticketSpacetimeStreamState())
+        }
+        "control_code_browser_capture" -> {
+          handleControlCodeBrowserCapture(
+            requestId = payload?.stringValue("requestId").orEmpty(),
+            ok = payload?.booleanValue("ok") == true || payload?.booleanValue("accepted") == true,
+            reason = reason.ifBlank { "browser_capture_confirmed" },
+            frameEpoch = payload?.longValue("candidateFrameEpoch") ?: 0L,
+            frameSequence = payload?.longValue("candidateFrameSequence") ?: 0L
+          )
+          TicketSpacetimeCommandResult(ok = true, reason = "browser_capture_recorded", streamState = ticketSpacetimeStreamState())
+        }
+        "control_code_result_ack" -> {
+          recordTicketEvent("control_code_result_ack_spacetime", reason.ifBlank { command.id })
+          TicketSpacetimeCommandResult(ok = true, reason = "control_code_result_ack_ignored_direct", streamState = ticketSpacetimeStreamState())
+        }
+        "control_exit" -> {
+          scheduleControlExitSoftSettle(reason.ifBlank { "spacetime_control_exit" })
+          TicketSpacetimeCommandResult(ok = true, reason = "control_exit_scheduled", streamState = ticketSpacetimeStreamState())
+        }
+        else -> {
+          recordTicketEvent("spacetime_command_unsupported", "${command.commandType}:${command.id}")
+          TicketSpacetimeCommandResult(ok = false, reason = "unsupported_command", streamState = ticketSpacetimeStreamState())
+        }
+      }
+    } catch (cancelled: CancellationException) {
+      throw cancelled
+    } catch (error: Throwable) {
+      recordTicketEvent("spacetime_command_failed", "${command.commandType}:${safeErrorDetail(error)}")
+      TicketSpacetimeCommandResult(ok = false, reason = safeErrorDetail(error).ifBlank { "command_failed" }, streamState = ticketSpacetimeStreamState())
+    }
+  }
+
+  internal suspend fun handleTicketSpacetimeDesiredActive(reason: String): TicketSpacetimeCommandResult {
+    val cleanReason = reason.ifBlank { "spacetime_desired_active" }
+    if (streamActive && ticketSessionState in setOf(TICKET_SESSION_STARTING, TICKET_SESSION_LIVE, TICKET_SESSION_CONTROL_ACTIVE, TICKET_SESSION_CONTROL_TRANSITION)) {
+      ensureEncoderIfPossible()
+      return TicketSpacetimeCommandResult(ok = true, reason = "already_active", streamState = ticketSpacetimeStreamState())
+    }
+    if (shouldRunTicketSpacetimeDesiredRecovery(SystemClock.elapsedRealtime())) {
+      return recoverTicketSpacetimeDesiredStream(cleanReason)
+    }
+    return startTicketSession().toTicketSpacetimeCommandResult(cleanReason)
+  }
+
+  internal fun ticketSpacetimeStreamActive(): Boolean = streamActive
+
+  internal fun ticketSpacetimeDirectRecoveryPending(): Boolean =
+    shouldRunTicketSpacetimeDesiredRecovery(SystemClock.elapsedRealtime())
+
+  internal fun ticketSpacetimeStreamState(): String = when {
+    streamActive && ticketSessionState == TICKET_SESSION_LIVE -> "streaming"
+    streamActive && ticketSessionState == TICKET_SESSION_STARTING -> "starting"
+    streamActive -> ticketSessionState
+    else -> ticketSessionState
+  }
+
+  internal fun ticketSpacetimeHealthJson(): String = json.encodeToString(health())
+
+  internal fun drainTicketSpacetimePhoneMessages(): List<String> {
+    synchronized(ticketSpacetimePhoneMessagesLock) {
+      if (ticketSpacetimePhoneMessages.isEmpty()) {
+        return emptyList()
+      }
+      val messages = ticketSpacetimePhoneMessages.toList()
+      ticketSpacetimePhoneMessages.clear()
+      return messages
+    }
+  }
+
+  private fun enqueueTicketSpacetimePhoneMessage(message: String) {
+    if (message.isBlank()) {
+      return
+    }
+    synchronized(ticketSpacetimePhoneMessagesLock) {
+      ticketSpacetimePhoneMessages.addLast(message)
+      while (ticketSpacetimePhoneMessages.size > TICKET_SPACETIME_PHONE_MESSAGE_LIMIT) {
+        ticketSpacetimePhoneMessages.removeFirst()
+      }
+    }
+  }
+
+  private fun TicketSessionResponse.toTicketSpacetimeCommandResult(reason: String): TicketSpacetimeCommandResult {
+    return TicketSpacetimeCommandResult(
+      ok = ok,
+      reason = if (ok) state else reason.ifBlank { state }.ifBlank { message },
+      streamState = ticketSpacetimeStreamState()
+    )
+  }
+
+  private fun shouldRunTicketSpacetimeDesiredRecovery(nowMillis: Long): Boolean {
+    if (streamActive) {
+      return false
+    }
+    if (
+      lastSpacetimeDesiredRecoveryAtMillis > 0L &&
+      nowMillis - lastSpacetimeDesiredRecoveryAtMillis < SPACETIME_DESIRED_RECOVERY_COOLDOWN_MILLIS
+    ) {
+      return false
+    }
+    if (ticketSessionState == TICKET_SESSION_UNAVAILABLE || hardwareMarkedUnreliable()) {
+      return true
+    }
+    if (ticketSessionState != TICKET_SESSION_NEEDS_ATTENTION) {
+      return false
+    }
+    if (lastRootH264BlankProbeResult != "secure_capture_blocked") {
+      return false
+    }
+    val blockedAgeMillis = ageMillis(lastRootH264BlankProbeAtMillis, nowMillis) ?: return true
+    return blockedAgeMillis >= SPACETIME_DESIRED_RECOVERY_STALE_BLOCK_MILLIS
+  }
+
+  private suspend fun recoverTicketSpacetimeDesiredStream(reason: String): TicketSpacetimeCommandResult {
+    val startedAtMillis = SystemClock.elapsedRealtime()
+    lastSpacetimeDesiredRecoveryAtMillis = startedAtMillis
+    spacetimeDesiredRecoveryStage = "cleanup"
+    lastSpacetimeDesiredRecoveryAction = "cleanup_stale_hardware_capture"
+    lastSpacetimeDesiredRecoveryResult = "started"
+    lastSpacetimeDesiredRecoveryFailureReason = null
+    lastSpacetimeDesiredRecoveryProbeResult = null
+    recordTicketEvent(
+      "spacetime_desired_recovery_started",
+      "reason=$reason state=$ticketSessionState probe=$lastRootH264BlankProbeResult"
+    )
+    rootH264BlankProbeJob?.cancel()
+    rootH264BlankProbeJob = null
+    streamWatchdogJob?.cancel()
+    streamWatchdogJob = null
+    streamWatchdogStage = "idle"
+    rootHardwareH264CaptureEngine.stop("spacetime_desired_recovery:$reason")
+    rootHardwareH264CaptureEngine.cleanupStaleProcesses()
+
+    val sourceSize = currentDisplaySize()
+    spacetimeDesiredRecoveryStage = "probe"
+    lastSpacetimeDesiredRecoveryAction = "root_h264_helper_probe"
+    val probeOk = rootHardwareH264CaptureEngine.probe(sourceSize.first, sourceSize.second)
+    val probeSnapshot = rootHardwareH264CaptureEngine.snapshot()
+    val probeResult = probeSnapshot.lastVisibilityCheckResult
+    lastSpacetimeDesiredRecoveryProbeResult = probeResult.ifBlank { probeSnapshot.captureHelperState }
+    if (!probeOk || probeResult != "visible") {
+      val failureReason = when {
+        probeResult == "blocked" || probeSnapshot.captureHelperState == "capture_blocked" -> "secure_capture_blocked"
+        !probeSnapshot.available -> "hardware_h264_unavailable:${probeSnapshot.captureHelperState}"
+        else -> "hardware_h264_probe_unverified:${probeResult.ifBlank { probeSnapshot.captureHelperState }}"
+      }
+      spacetimeDesiredRecoveryStage = "failed"
+      lastSpacetimeDesiredRecoveryAction = "root_h264_helper_probe"
+      lastSpacetimeDesiredRecoveryResult = "failed"
+      lastSpacetimeDesiredRecoveryFailureReason = failureReason
+      lastStreamRecoveryResult = "failed"
+      lastStreamRecoveryFailureReason = failureReason
+      lastStreamRecoveryAtMillis = SystemClock.elapsedRealtime()
+      streamActive = false
+      hardwareCaptureVerified = false
+      hardwareFrameBroadcastAllowed = false
+      activeCaptureMode = CAPTURE_MODE_IDLE
+      fallbackReason = failureReason
+      if (failureReason == "secure_capture_blocked") {
+        lastRootH264BlankProbeAtMillis = SystemClock.elapsedRealtime()
+        lastRootH264BlankProbeResult = "secure_capture_blocked"
+        rootH264BlankProbeFailures += 1L
+        updateTicketSessionState(TICKET_SESSION_NEEDS_ATTENTION, "secure_capture_blocked")
+        lastMessage = "ViVi is protected from capture; stream was not restarted"
+      } else {
+        updateTicketSessionState(TICKET_SESSION_UNAVAILABLE, "spacetime_desired_recovery_probe_failed")
+        lastMessage = "Hardware H.264 ticket stream is unavailable; stream was not restarted"
+      }
+      recordTicketEvent(
+        "spacetime_desired_recovery_failed",
+        "reason=$reason failure=$failureReason probe_ok=$probeOk probe=$probeResult helper=${probeSnapshot.captureHelperState}"
+      )
+      broadcastStatus()
+      persistRuntimeState("spacetime_desired_recovery_failed")
+      return TicketSpacetimeCommandResult(ok = false, reason = failureReason, streamState = ticketSpacetimeStreamState())
+    }
+
+    hardwareReliabilityFailures = 0
+    hardwareMarkedUnreliableAtMillis = 0L
+    hardwareUnreliableReason = null
+    fallbackReason = null
+    lastRootH264BlankProbeAtMillis = SystemClock.elapsedRealtime()
+    lastRootH264BlankProbeResult = "visible"
+    lastRootH264VisibleProbePassedAtMillis = lastRootH264BlankProbeAtMillis
+    rootH264BlankProbeRecoveries += 1L
+    lastStreamRecoveryResult = "started"
+    lastStreamRecoveryFailureReason = null
+    lastStreamRecoveryAtMillis = lastRootH264BlankProbeAtMillis
+    updateTicketSessionState(TICKET_SESSION_IDLE, "spacetime_desired_recovery_probe_visible")
+    recordTicketEvent(
+      "spacetime_desired_recovery_probe_visible",
+      "reason=$reason helper=${probeSnapshot.captureHelperState} probe=$probeResult"
+    )
+
+    spacetimeDesiredRecoveryStage = "restart"
+    lastSpacetimeDesiredRecoveryAction = "start_stream_after_probe"
+    val response = startTicketSession()
+    val result = response.toTicketSpacetimeCommandResult(
+      if (response.ok) "spacetime_desired_recovery_succeeded" else response.state.ifBlank { reason }
+    )
+    if (result.ok) {
+      spacetimeDesiredRecoveryStage = "started"
+      lastSpacetimeDesiredRecoveryResult = "succeeded"
+      lastSpacetimeDesiredRecoveryFailureReason = null
+      recordTicketEvent("spacetime_desired_recovery_succeeded", "reason=$reason stream_state=${result.streamState}")
+    } else {
+      spacetimeDesiredRecoveryStage = "failed"
+      lastSpacetimeDesiredRecoveryResult = "failed"
+      lastSpacetimeDesiredRecoveryFailureReason = result.reason
+      recordTicketEvent("spacetime_desired_recovery_failed", "reason=$reason failure=${result.reason}")
+    }
+    broadcastStatus()
+    persistRuntimeState("spacetime_desired_recovery_${lastSpacetimeDesiredRecoveryResult}")
+    return result
+  }
+
+  private fun forceLatestTicketReselect(reason: String, commandId: String): TicketSpacetimeCommandResult {
+    val cleanReason = reason.ifBlank { "admin_force_latest_ticket_reselect" }
+    val cleanCommandId = commandId.ifBlank { "unknown" }
+    if (controlSensitiveWindowActive()) {
+      recordTicketEvent(
+        "latest_ticket_reselect_blocked",
+        "reason=control_code_active command=$cleanCommandId state=$ticketSessionState"
+      )
+      return TicketSpacetimeCommandResult(
+        ok = false,
+        reason = "control_code_active",
+        streamState = ticketSpacetimeStreamState()
+      )
+    }
+    markLatestTicketReselectStarted(cleanReason, cleanCommandId)
+    recordTicketEvent("latest_ticket_reselect_command_received", "reason=$cleanReason command=$cleanCommandId")
+    clearViviStateMemory("force_ticket_reselect:$cleanCommandId")
+    recordTicketEvent(
+      "latest_ticket_reselect_memory_cleared",
+      "command=$cleanCommandId stale_memory_bypass=true"
+    )
+    recordTicketEvent("latest_ticket_reselect_requested", "reason=$cleanReason command=$cleanCommandId")
+    scheduleLatestTicketReselectRecovery(cleanReason, cleanCommandId)
+    if (streamActive) {
+      requestKeyFrame("latest_ticket_reselect_requested")
+    }
+    return TicketSpacetimeCommandResult(
+      ok = true,
+      reason = "latest_ticket_reselect_scheduled",
+      streamState = ticketSpacetimeStreamState()
+    )
+  }
+
+  private fun markLatestTicketReselectStarted(reason: String, commandId: String) {
+    latestTicketReselectRecoveryJob?.cancel()
+    latestTicketReselectRecoveryJob = null
+    latestTicketReselectSettleJob?.cancel()
+    latestTicketReselectSettleJob = null
+    val nowMillis = SystemClock.elapsedRealtime()
+    latestTicketReselectStatus = "pending"
+    latestTicketReselectReason = reason
+    latestTicketReselectCommandId = commandId
+    latestTicketReselectStartedAtMillis = nowMillis
+    latestTicketReselectCompletedAtMillis = 0L
+    latestTicketReselectFreshFrameAtMillis = 0L
+    broadcastStatus()
+  }
+
+  private fun scheduleLatestTicketReselectRecovery(reason: String, commandId: String) {
+    latestTicketReselectRecoveryJob?.cancel()
+    latestTicketReselectRecoveryJob = serviceScope.launch {
+      runLatestTicketReselectRecovery(reason, commandId)
+      latestTicketReselectRecoveryJob = null
+    }
+  }
+
+  private suspend fun runLatestTicketReselectRecovery(reason: String, commandId: String) {
+    val recoveryStartedAtMillis = SystemClock.elapsedRealtime()
+    val recoveryReason = "latest_ticket_reselect:${commandId.takeLast(12)}"
+    if (streamActive) {
+      updateTicketSessionState(TICKET_SESSION_STARTING, "latest_ticket_reselect_recovery_started")
+    }
+    recordTicketEvent("latest_ticket_reselect_vivi_opening", "reason=$reason command=$commandId")
+    recordViviHardReset("recovery:$reason")
+    wakeRootExecutor.run("am force-stop ${TicketScreenConfig.VIVI_PACKAGE}", 1_500.milliseconds)
+    delay(LATEST_TICKET_RESELECT_RELAUNCH_DELAY_MILLIS)
+    launchViviForWake(recoveryReason)
+    recordTicketEvent("latest_ticket_reselect_vivi_opened", "reason=$reason command=$commandId")
+    val result = observeTicketDetailForWakeWithRoot(
+      reason = recoveryReason,
+      wakeStartedAtMillis = recoveryStartedAtMillis,
+      budgetMillis = LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS,
+      maxRecoveryActions = LATEST_TICKET_RESELECT_MAX_RECOVERY_ACTIONS
+    )
+    markWakeReadyIfNeeded(recoveryStartedAtMillis, result)
+    recordTicketEvent(
+      "latest_ticket_reselect_recovery_result",
+      "${result.state}:${result.step}:success=${result.success} reason=$reason"
+    )
+    if (result.success) {
+      recordTicketEvent(
+        "latest_ticket_reselect_ticket_detail_observed",
+        "state=${result.state.name} step=${result.step} command=$commandId"
+      )
+      if (streamActive) {
+        updateTicketSessionState(TICKET_SESSION_LIVE, "latest_ticket_reselect_ticket_detail_ready")
+        cacheForegroundViolation(null)
+        startForegroundGuard()
+        restartActiveStreamEngine("latest_ticket_reselect")
+        requestKeyFrame("latest_ticket_reselect_ticket_detail_ready")
+      } else {
+        startTicketSession()
+      }
+      scheduleLatestTicketReselectSettle(
+        successReason = "latest_ticket_reselect_succeeded",
+        failureReason = "latest_ticket_reselect_stream_unstable"
+      )
+    } else {
+      recordTicketEvent(
+        "latest_ticket_reselect_failed",
+        "state=${result.state.name} step=${result.step} command=$commandId"
+      )
+      if (streamActive) {
+        updateTicketSessionState(TICKET_SESSION_NEEDS_ATTENTION, "latest_ticket_reselect_${result.state.name.lowercase()}")
+      }
+      scheduleLatestTicketReselectSettle(
+        successReason = "latest_ticket_reselect_succeeded_after_recovery",
+        failureReason = "latest_ticket_reselect_failed"
+      )
+    }
+    broadcastStatus()
+  }
+
+  private fun markLatestTicketReselectFinished(reason: String, success: Boolean) {
+    val nowMillis = SystemClock.elapsedRealtime()
+    latestTicketReselectStatus = if (success) "succeeded" else "failed"
+    latestTicketReselectReason = reason
+    latestTicketReselectCompletedAtMillis = nowMillis
+    latestTicketReselectFreshFrameAtMillis = 0L
+    markLatestTicketReselectFreshIfReady(nowMillis)
+    recordTicketEvent(
+      "latest_ticket_reselect_finished",
+      "status=${latestTicketReselectStatus} reason=$reason command=$latestTicketReselectCommandId"
+    )
+    broadcastStatus()
+  }
+
+  private fun scheduleLatestTicketReselectSettle(successReason: String, failureReason: String) {
+    latestTicketReselectSettleJob?.cancel()
+    latestTicketReselectSettleJob = serviceScope.launch {
+      val deadlineMillis = SystemClock.elapsedRealtime() + LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS
+      while (SystemClock.elapsedRealtime() < deadlineMillis) {
+        if (completeLatestTicketReselectIfFresh(successReason)) {
+          latestTicketReselectSettleJob = null
+          return@launch
+        }
+        delay(CONTROL_CODE_RECOVERY_QUEUE_POLL_MILLIS)
+      }
+      if (completeLatestTicketReselectIfFresh(successReason)) {
+        latestTicketReselectSettleJob = null
+        return@launch
+      }
+      markLatestTicketReselectFinished(failureReason, success = false)
+      latestTicketReselectSettleJob = null
+    }
+  }
+
+  private fun completeLatestTicketReselectIfFresh(reason: String): Boolean {
+    val nowMillis = SystemClock.elapsedRealtime()
+    if (!latestTicketReselectRecent(nowMillis)) {
+      return false
+    }
+    if (!noteLatestTicketReselectFreshStreamReady(nowMillis)) {
+      return false
+    }
+    latestTicketReselectStatus = "succeeded"
+    latestTicketReselectReason = reason
+    latestTicketReselectCompletedAtMillis = nowMillis
+    recordTicketEvent(reason, "fresh_frame_ready=true")
+    broadcastStatus()
+    return true
+  }
+
+  private fun latestTicketReselectActive(nowMillis: Long): Boolean {
+    val startedAtMillis = latestTicketReselectStartedAtMillis
+    if (startedAtMillis <= 0L) {
+      return false
+    }
+    val ageMillis = nowMillis - startedAtMillis
+    return latestTicketReselectStatus == "pending" &&
+      ageMillis in 0..LATEST_TICKET_RESELECT_ACTIVE_WINDOW_MILLIS
+  }
+
+  private fun latestTicketReselectRecent(nowMillis: Long): Boolean {
+    val startedAtMillis = latestTicketReselectStartedAtMillis
+    return startedAtMillis > 0L &&
+      nowMillis - startedAtMillis in 0..LATEST_TICKET_RESELECT_ACTIVE_WINDOW_MILLIS
+  }
+
+  private fun markLatestTicketReselectFreshIfReady(nowMillis: Long = SystemClock.elapsedRealtime()): Boolean {
+    if (!latestTicketReselectRecent(nowMillis) || latestTicketReselectStatus != "succeeded") {
+      return latestTicketReselectFreshFrameAtMillis > 0L
+    }
+    return noteLatestTicketReselectFreshStreamReady(nowMillis)
+  }
+
+  private fun noteLatestTicketReselectFreshStreamReady(nowMillis: Long = SystemClock.elapsedRealtime()): Boolean {
+    if (
+      !streamActive ||
+      activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264 ||
+      !hardwareCaptureVerified ||
+      ticketSessionState != TICKET_SESSION_LIVE
+    ) {
+      return false
+    }
+    val frameAgeMillis = ageMillis(lastFrameSentAtMillis, nowMillis) ?: return false
+    if (frameAgeMillis > LIVE_FRAME_MAX_AGE_MILLIS) {
+      return false
+    }
+    val current = viviStateMemory.current()
+    val currentAgeMillis = ageMillis(current.observedAtMillis, nowMillis) ?: return false
+    if (
+      current.state != TicketViviRecoveryState.TICKET_DETAIL ||
+      currentAgeMillis > CONTROL_CODE_RESELECT_FRESH_TICKET_MAX_AGE_MILLIS
+    ) {
+      return false
+    }
+    if (latestTicketReselectFreshFrameAtMillis == 0L) {
+      latestTicketReselectFreshFrameAtMillis = nowMillis
+      recordTicketEvent(
+        "latest_ticket_reselect_fresh_stream_ready",
+        "frame_age_ms=$frameAgeMillis ticket_age_ms=$currentAgeMillis"
+      )
+    }
+    return true
+  }
+
+  private fun JsonObject.stringValue(key: String): String = this[key]?.jsonPrimitive?.contentOrNull.orEmpty()
+
+  private fun JsonObject.booleanValue(key: String): Boolean? = this[key]?.jsonPrimitive?.booleanOrNull
+
+  private fun JsonObject.longValue(key: String): Long? = this[key]?.jsonPrimitive?.longOrNull
+
+  private fun JsonObject.jsonObjectValue(key: String): JsonObject? = runCatching { this[key]?.jsonObject }.getOrNull()
+
   private suspend fun startTicketSession(): TicketSessionResponse {
     return withTimeoutOrNull(SESSION_START_TIMEOUT_MILLIS) {
       sessionMutex.withLock {
@@ -1046,6 +1604,16 @@ class TicketStreamService : Service() {
 
   private suspend fun startTicketSessionLocked(): TicketSessionResponse {
     beginStartupTrace("session_start")
+    PhonePortraitLock.force(inputRootExecutor)
+    if (!PhonePortraitLock.verify(inputRootExecutor)) {
+      recordTicketEvent("phone_portrait_lock_unverified", "session_start")
+      recordStartupTracePhase("portrait_lock_failed", "session_start", complete = true)
+      return TicketSessionResponse(
+        ok = false,
+        state = "portrait_lock_failed",
+        message = "Phone portrait lock could not be verified"
+      )
+    }
     if (!TicketPackageSupport.isInstalled(this, TicketScreenConfig.VIVI_PACKAGE)) {
       recordStartupTracePhase("vivi_missing", "package=${TicketScreenConfig.VIVI_PACKAGE}", complete = true)
       return TicketSessionResponse(
@@ -1117,6 +1685,7 @@ class TicketStreamService : Service() {
       rootHardwareH264CaptureEngine.probe()
       hardwareCapture = rootHardwareH264CaptureEngine.snapshot()
     }
+    hardwareCapture = refreshHardwareReliabilityIfProbePasses(sourceSize.first, sourceSize.second, hardwareCapture)
     val hardwareUnavailableReason = when {
       !hardwareCapture.available -> "hardware_h264_unavailable:${hardwareCapture.state}"
       hardwareMarkedUnreliable() -> hardwareUnreliableReason ?: "hardware_h264_unreliable"
@@ -1260,6 +1829,34 @@ class TicketStreamService : Service() {
     }
   }
 
+  private suspend fun refreshHardwareReliabilityIfProbePasses(
+    sourceWidth: Int,
+    sourceHeight: Int,
+    current: TicketHardwareH264Health
+  ): TicketHardwareH264Health {
+    if (!hardwareMarkedUnreliable()) {
+      return current
+    }
+    val previousReason = hardwareUnreliableReason ?: "hardware_h264_unreliable"
+    val probeOk = rootHardwareH264CaptureEngine.probe(sourceWidth, sourceHeight)
+    val refreshed = rootHardwareH264CaptureEngine.snapshot()
+    if (!probeOk || !refreshed.available || !refreshed.captureHelperAvailable || refreshed.captureHelperState != "ready") {
+      recordTicketEvent(
+        "hardware_reliability_probe_still_blocked",
+        "previous_reason=$previousReason probe_ok=$probeOk state=${refreshed.state} helper=${refreshed.captureHelperState}"
+      )
+      return refreshed
+    }
+    hardwareReliabilityFailures = 0
+    hardwareMarkedUnreliableAtMillis = 0L
+    hardwareUnreliableReason = null
+    recordTicketEvent(
+      "hardware_reliability_probe_recovered",
+      "previous_reason=$previousReason state=${refreshed.state} helper=${refreshed.captureHelperState}"
+    )
+    return refreshed
+  }
+
   private fun hardwareMarkedUnreliable(): Boolean {
     return hardwareMarkedUnreliableAtMillis > 0L ||
       hardwareReliabilityFailures >= HARDWARE_RELIABILITY_FAILURE_THRESHOLD
@@ -1290,6 +1887,35 @@ class TicketStreamService : Service() {
     }
   }
 
+  private suspend fun recoverTicketSession(body: String): TicketSessionResponse {
+    val reason = recoverTicketSessionReason(body)
+    recordTicketEvent("session_recover_requested", reason)
+    if (streamActive && activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264) {
+      lastSessionStopReason = null
+      markViewerInput("session_recover_$reason")
+      lastMessage = "Recovering the active H.264 ticket stream"
+      updateTicketSessionState(TICKET_SESSION_STARTING, "session_recover_$reason")
+      startForegroundGuard()
+      scheduleTicketBrightnessGuard("session_recover:$reason")
+      restartActiveStreamEngine("remote_$reason")
+      broadcastStatus()
+      persistRuntimeState("session_recover_$reason")
+      return TicketSessionResponse(ok = true, state = "recovering", message = lastMessage)
+    }
+    return startTicketSession()
+  }
+
+  private fun recoverTicketSessionReason(body: String): String {
+    val parsed = runCatching {
+      json.parseToJsonElement(body).jsonObject["reason"]?.jsonPrimitive?.contentOrNull
+    }.getOrNull()
+    val reason = (parsed ?: body).trim()
+      .replace(Regex("[^A-Za-z0-9_.:-]+"), "_")
+      .trim('_')
+      .take(96)
+    return reason.ifBlank { "remote_recover_stream" }
+  }
+
   private suspend fun noteClientDetached(reason: String): TicketSessionResponse {
     recordTicketEvent("client_detached", reason)
     if (ticketSessionOpen() || ticketSessionState in setOf(TICKET_SESSION_STARTING, TICKET_SESSION_LIVE, TICKET_SESSION_NEEDS_ATTENTION)) {
@@ -1301,6 +1927,9 @@ class TicketStreamService : Service() {
       activeCaptureMode = CAPTURE_MODE_IDLE
       rootH264BlankProbeJob?.cancel()
       rootH264BlankProbeJob = null
+      streamWatchdogJob?.cancel()
+      streamWatchdogJob = null
+      streamWatchdogStage = "idle"
       resetFrameEpoch("client_detached_$reason", active = false)
       cancelInactivityTimer()
       cancelForegroundGuard()
@@ -1333,6 +1962,9 @@ class TicketStreamService : Service() {
       activeCaptureMode = CAPTURE_MODE_IDLE
       rootH264BlankProbeJob?.cancel()
       rootH264BlankProbeJob = null
+      streamWatchdogJob?.cancel()
+      streamWatchdogJob = null
+      streamWatchdogStage = "idle"
       updateTicketSessionState(TICKET_SESSION_STOPPED, "session_stop_$reason")
       resetFrameEpoch("session_stop_$reason", active = false)
       cancelInactivityTimer()
@@ -1359,7 +1991,7 @@ class TicketStreamService : Service() {
     if (TicketSessionStopPolicy.shouldResetViviToTicket(reason)) {
       val stoppedState = observeRootViviState("session_stop_$reason")
       if (stoppedState.state == TicketViviRecoveryState.TICKET_DETAIL) {
-        Log.i(TAG, "ticket_recovery_skipped_ticket_detail reason=$reason")
+        recordTicketEvent("ticket_recovery_skipped_ticket_detail", reason)
         broadcastStatus()
       } else {
         recordTicketEvent("session_stop_root_not_ticket_detail", stoppedState.state.name)
@@ -1379,7 +2011,6 @@ class TicketStreamService : Service() {
       controlCodeRequestActive() ||
       ticketSessionState in setOf(
         TICKET_SESSION_STARTING,
-        TICKET_SESSION_LIVE,
         TICKET_SESSION_CONTROL_TRANSITION,
         TICKET_SESSION_CONTROL_ACTIVE,
         TICKET_SESSION_CONTROL_EXIT,
@@ -1455,7 +2086,6 @@ class TicketStreamService : Service() {
       holdTicketScreenAwake("viewer_input_$reason")
       ensureInactivityTimer()
       broadcastInactivityStatus()
-      Log.d(TAG, "ticket_viewer_input reason=$reason")
     }
   }
 
@@ -1525,7 +2155,7 @@ class TicketStreamService : Service() {
           if (oldLock.isHeld) {
             oldLock.release()
           }
-        }.onFailure { error -> Log.w(TAG, "ticket_screen_wake_recreate_release_failed", error) }
+        }.onFailure { error -> recordTicketEvent("ticket_screen_wake_recreate_release_failed", safeErrorDetail(error)) }
       }
       val flags = if (touchBrightnessOwner) {
         PowerManager.PARTIAL_WAKE_LOCK
@@ -1539,7 +2169,7 @@ class TicketStreamService : Service() {
       }
     }
     runCatching { lock.acquire(TICKET_SCREEN_WAKE_HOLD_MILLIS) }
-      .onFailure { error -> Log.w(TAG, "ticket_screen_wake_hold_failed reason=$reason", error) }
+      .onFailure { error -> recordTicketEvent("ticket_screen_wake_hold_failed", "reason=$reason error=${safeErrorDetail(error)}") }
   }
 
   private fun releaseTicketScreenAwake() {
@@ -1550,7 +2180,7 @@ class TicketStreamService : Service() {
       if (lock.isHeld) {
         lock.release()
       }
-    }.onFailure { error -> Log.w(TAG, "ticket_screen_wake_release_failed", error) }
+    }.onFailure { error -> recordTicketEvent("ticket_screen_wake_release_failed", safeErrorDetail(error)) }
   }
 
   private fun ticketScreenInteractive(): Boolean {
@@ -1568,6 +2198,7 @@ class TicketStreamService : Service() {
       startupTracePhases.clear()
       addStartupTracePhaseLocked("phone_session_start_received", reason.take(500), nowMillis, once = false)
     }
+    recordTicketEvent("startup_phase_phone_session_start_received", reason.take(500))
   }
 
   private fun recordStartupTracePhase(
@@ -1579,13 +2210,20 @@ class TicketStreamService : Service() {
     val cleanName = name.take(96)
     if (cleanName.isBlank()) return
     val nowMillis = SystemClock.elapsedRealtime()
+    var phaseAdded = false
     synchronized(startupTraceLock) {
       if (startupTraceId.isBlank()) return
       if (startupTraceCompletedAtMillis > 0L) return
-      val phaseAdded = addStartupTracePhaseLocked(cleanName, detail.take(500), nowMillis, once)
+      phaseAdded = addStartupTracePhaseLocked(cleanName, detail.take(500), nowMillis, once)
       if (complete && phaseAdded) {
         startupTraceCompletedAtMillis = nowMillis
       }
+    }
+    if (phaseAdded) {
+      recordTicketEvent(
+        "startup_phase_$cleanName",
+        if (complete) "${detail.take(460)} complete=true" else detail.take(500)
+      )
     }
   }
 
@@ -1826,7 +2464,6 @@ class TicketStreamService : Service() {
       lastForegroundViolationReason = violation
       foregroundViolationCount = 1
     }
-    Log.i(TAG, "ticket_foreground_guard_violation reason=$violation count=$foregroundViolationCount")
     recordTicketEvent("foreground_violation", "$violation count=$foregroundViolationCount")
     if (controlSensitiveWindowActive()) {
       recordTicketEvent("foreground_recovery_deferred", "$violation control_sensitive=true")
@@ -1870,7 +2507,7 @@ class TicketStreamService : Service() {
     if (result.ok) {
       return result.stdout
     }
-    Log.w(TAG, "ticket_foreground_check_failed stderr=${result.stderr}")
+    recordTicketEvent("ticket_foreground_check_failed", safeRootFailure(result))
     return null
   }
 
@@ -1946,7 +2583,6 @@ class TicketStreamService : Service() {
       resetForegroundViolationConfirmation()
       return
     }
-    Log.w(TAG, "ticket_root_active_check_failed reason=$reason state=${result.state} error=${result.error}")
     recordTicketEvent("active_guard_failed", "root:${result.state}")
     if (
       result.state == TicketViviRecoveryState.UNKNOWN_VIVI ||
@@ -1973,7 +2609,16 @@ class TicketStreamService : Service() {
     if (state == TicketViviRecoveryState.LOGIN_REQUIRED) {
       return loginViviIfNeeded(hierarchy, "active_guard:$reason")
     }
-    val action = TicketViviPageEnforcer.recoveryActionForHierarchy(hierarchy) ?: return false
+    val action = TicketViviPageEnforcer.recoveryActionForHierarchy(hierarchy)
+    if (action == null) {
+      if (state == TicketViviRecoveryState.TICKET_LIST_WITH_CARD) {
+        recordTicketEvent(
+          "ticket_card_selection_failed",
+          TicketViviPageEnforcer.ticketCardSelectionSummaryForHierarchy(hierarchy)
+        )
+      }
+      return false
+    }
     val input = if (action.x >= 0 && action.y >= 0) {
       runFastNonTouchInput("input tap ${action.x} ${action.y}", "active_guard_recovery_action:${action.reason}")
     } else {
@@ -1983,7 +2628,58 @@ class TicketStreamService : Service() {
       "active_guard_recovery_action",
       "state=${state.name} action=${action.reason} ok=${input.ok} duration_ms=${input.durationMs} reason=$reason"
     )
+    if (input.ok) {
+      scheduleSessionRetryAfterActiveGuardRecovery(action.reason, reason)
+    }
     return input.ok
+  }
+
+  private fun scheduleSessionRetryAfterActiveGuardRecovery(actionReason: String, guardReason: String) {
+    val now = SystemClock.elapsedRealtime()
+    if (streamActive || totalClientCount() == 0) {
+      return
+    }
+    if (ticketSessionState != TICKET_SESSION_NEEDS_ATTENTION) {
+      return
+    }
+    if (now - lastActiveGuardRecoverySessionRetryAtMillis < ACTIVE_GUARD_RECOVERY_SESSION_RETRY_COOLDOWN_MILLIS) {
+      return
+    }
+    lastActiveGuardRecoverySessionRetryAtMillis = now
+    recordTicketEvent(
+      "active_guard_recovery_session_retry_scheduled",
+      "action=$actionReason reason=$guardReason clients=${totalClientCount()}"
+    )
+    serviceScope.launch {
+      delay(ACTIVE_GUARD_RECOVERY_SESSION_RETRY_DELAY_MILLIS)
+      retrySessionAfterActiveGuardRecovery(actionReason, guardReason)
+    }
+  }
+
+  private suspend fun retrySessionAfterActiveGuardRecovery(actionReason: String, guardReason: String) {
+    if (streamActive || totalClientCount() == 0 || controlSensitiveWindowActive()) {
+      return
+    }
+    if (ticketSessionState != TICKET_SESSION_NEEDS_ATTENTION) {
+      return
+    }
+    val fast = observeFastViviState("active_guard_recovery_retry:$guardReason")
+    val observed = fast ?: observeRootViviState(
+      reason = "active_guard_recovery_retry:$guardReason",
+      timeoutMillis = TICKET_ROOT_HIERARCHY_DUMP_TIMEOUT_MILLIS
+    )
+    if (observed.state != TicketViviRecoveryState.TICKET_DETAIL) {
+      recordTicketEvent(
+        "active_guard_recovery_session_retry_skipped",
+        "action=$actionReason reason=$guardReason state=${observed.state.name}"
+      )
+      return
+    }
+    recordTicketEvent(
+      "active_guard_recovery_session_retry",
+      "action=$actionReason reason=$guardReason clients=${totalClientCount()}"
+    )
+    startTicketSession()
   }
 
   private suspend fun loginViviIfNeeded(hierarchy: String, reason: String): Boolean {
@@ -2415,7 +3111,7 @@ class TicketStreamService : Service() {
             nowMillis = SystemClock.elapsedRealtime()
           )
         ) {
-          Log.i(TAG, "ticket_inactivity_timeout")
+          recordTicketEvent("ticket_inactivity_timeout")
           inactivityJob = null
           serviceScope.launch {
             stopTicketSession("viewer_inactivity_timeout")
@@ -2440,9 +3136,7 @@ class TicketStreamService : Service() {
   private suspend fun hideBlackoutOverlay() {
     runCatching {
       PhoneAutomationServiceBridge.setBlackoutOverlayVisible(false)
-    }.onFailure { error ->
-      Log.w(TAG, "blackout_overlay_hide_failed", error)
-    }
+    }.onFailure { error -> recordTicketEvent("blackout_overlay_hide_failed", safeErrorDetail(error)) }
   }
 
   private fun ticketServiceEnabled(): Boolean {
@@ -2480,11 +3174,11 @@ class TicketStreamService : Service() {
     if (!result.ok) {
       secureWindowCaptureBypassActive = false
       secureWindowCaptureBypassMessage = "Secure-window capture bypass enable failed"
-      Log.w(TAG, "secure_window_capture_bypass_enable_failed stderr=${result.stderr}")
+      recordTicketEvent("secure_window_capture_bypass_enable_failed", safeRootFailure(result))
     } else {
       secureWindowCaptureBypassActive = true
       secureWindowCaptureBypassMessage = "Secure-window capture bypass is active"
-      Log.i(TAG, "secure_window_capture_bypass_enabled")
+      recordTicketEvent("secure_window_capture_bypass_enabled")
     }
   }
 
@@ -2518,11 +3212,11 @@ class TicketStreamService : Service() {
     val result = runSecureWindowCaptureBypassScript(script)
     if (!result.ok) {
       secureWindowCaptureBypassMessage = "Secure-window capture bypass disable failed"
-      Log.w(TAG, "secure_window_capture_bypass_disable_failed stderr=${result.stderr}")
+      recordTicketEvent("secure_window_capture_bypass_disable_failed", safeRootFailure(result))
     } else {
       secureWindowCaptureBypassActive = false
       secureWindowCaptureBypassMessage = "Secure-window capture bypass is inactive"
-      Log.i(TAG, "secure_window_capture_bypass_disabled")
+      recordTicketEvent("secure_window_capture_bypass_disabled")
     }
   }
 
@@ -2547,9 +3241,9 @@ class TicketStreamService : Service() {
           durationMs = SystemClock.elapsedRealtime() - start
         )
         if (!fallback.ok) {
-          Log.w(
-            TAG,
-            "secure_window_capture_bypass_direct_root_failed primary=${primary.stderr} fallback=${fallback.stderr}"
+          recordTicketEvent(
+            "secure_window_capture_bypass_direct_root_failed",
+            "primary=${safeRootFailure(primary)} fallback=${safeRootFailure(fallback)}"
           )
         }
         fallback
@@ -2571,11 +3265,11 @@ class TicketStreamService : Service() {
     if (result.ok) {
       notificationLockdownActive = true
       notificationLockdownReason = "active:$reason"
-      Log.i(TAG, "ticket_notification_lockdown_enabled reason=$reason")
+      recordTicketEvent("ticket_notification_lockdown_enabled", reason)
     } else {
       notificationLockdownActive = false
       notificationLockdownReason = "enable_failed:$reason"
-      Log.w(TAG, "ticket_notification_lockdown_enable_failed reason=$reason stderr=${result.stderr}")
+      recordTicketEvent("ticket_notification_lockdown_enable_failed", "reason=$reason ${safeRootFailure(result)}")
     }
   }
 
@@ -2585,17 +3279,17 @@ class TicketStreamService : Service() {
     if (result.ok) {
       notificationLockdownActive = false
       notificationLockdownReason = "inactive:$reason"
-      Log.i(TAG, "ticket_notification_lockdown_disabled reason=$reason")
+      recordTicketEvent("ticket_notification_lockdown_disabled", reason)
     } else {
       notificationLockdownReason = "disable_failed:$reason"
-      Log.w(TAG, "ticket_notification_lockdown_disable_failed reason=$reason stderr=${result.stderr}")
+      recordTicketEvent("ticket_notification_lockdown_disable_failed", "reason=$reason ${safeRootFailure(result)}")
     }
   }
 
   private suspend fun collapseNotificationShade(reason: String) {
     val result = rootExecutor.runScript(TicketNotificationLockdown.collapseScript())
     if (!result.ok) {
-      Log.w(TAG, "ticket_notification_shade_collapse_failed reason=$reason stderr=${result.stderr}")
+      recordTicketEvent("ticket_notification_shade_collapse_failed", "reason=$reason ${safeRootFailure(result)}")
     }
   }
 
@@ -2644,7 +3338,7 @@ class TicketStreamService : Service() {
       )
       hardwareCaptureSnapshot = rootHardwareH264CaptureEngine.snapshot()
       recordStartupTracePhase("root_capture_start_requested", "width=${size.width} height=${size.height} fps=${TicketScreenConfig.ROOT_HARDWARE_H264_FPS}", once = true)
-      Log.i(TAG, "ticket_root_hardware_h264_capture_requested width=${size.width} height=${size.height} bitrate=${TicketScreenConfig.ROOT_HARDWARE_H264_BITRATE} video_clients=${videoClients.size}")
+      scheduleStreamWatchdog("root_capture_start_requested")
     }
   }
 
@@ -2685,8 +3379,10 @@ class TicketStreamService : Service() {
     }
     when (reason) {
       "hardware_encoder_exit_0",
-      "hardware_encoder_exit_143",
       "capture_config_changed" -> return false
+    }
+    if (reason == "hardware_encoder_exit_143") {
+      return streamActive && activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264 && videoClients.isNotEmpty()
     }
     return true
   }
@@ -2745,6 +3441,11 @@ class TicketStreamService : Service() {
     if (!streamActive) {
       return
     }
+    lastStreamWatchdogAction = "restart_capture_engine"
+    lastStreamWatchdogReason = reason
+    lastStreamRecoveryResult = "started"
+    lastStreamRecoveryFailureReason = null
+    lastStreamRecoveryAtMillis = SystemClock.elapsedRealtime()
     recordTicketEvent("active_stream_engine_restart", "mode=$activeCaptureMode reason=$reason")
     resetFrameEpoch("active_stream_engine_restart_$reason", active = true)
     streamSize?.let(::broadcastConfig)
@@ -2755,7 +3456,76 @@ class TicketStreamService : Service() {
         ensureRootHardwareH264CaptureIfPossible()
       }
     }
+    scheduleStreamWatchdog("engine_restart:$reason")
     broadcastStatus()
+  }
+
+  private fun scheduleStreamWatchdog(reason: String) {
+    if (!streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264 || videoClients.isEmpty()) {
+      return
+    }
+    if (streamWatchdogJob?.isActive == true) {
+      return
+    }
+    streamWatchdogStage = "watching"
+    streamWatchdogJob = serviceScope.launch {
+      while (streamWatchdogShouldRun()) {
+        delay(STREAM_WATCHDOG_POLL_MILLIS)
+        evaluateStreamWatchdog(reason)
+      }
+      streamWatchdogStage = "idle"
+      streamWatchdogJob = null
+    }
+  }
+
+  private fun streamWatchdogShouldRun(): Boolean {
+    return streamActive &&
+      activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264 &&
+      videoClients.isNotEmpty() &&
+      ticketSessionState != TICKET_SESSION_NEEDS_ATTENTION &&
+      lastRootH264BlankProbeResult != "secure_capture_blocked"
+  }
+
+  private fun evaluateStreamWatchdog(trigger: String) {
+    if (!streamWatchdogShouldRun()) {
+      return
+    }
+    val nowMillis = SystemClock.elapsedRealtime()
+    val frameAgeMillis = ageMillis(lastFrameSentAtMillis, nowMillis)
+    if (frameAgeMillis != null && frameAgeMillis <= LIVE_FRAME_MAX_AGE_MILLIS) {
+      streamWatchdogStage = "healthy"
+      if (lastStreamRecoveryResult == "started") {
+        lastStreamRecoveryResult = "succeeded"
+        lastStreamRecoveryFailureReason = null
+      }
+      return
+    }
+    val encoderStartAgeMillis = ageMillis(lastEncoderStartAtMillis, nowMillis)
+    if (encoderStartAgeMillis == null || encoderStartAgeMillis < STREAM_WATCHDOG_NO_ENCODER_RESTART_MILLIS) {
+      streamWatchdogStage = "waiting_startup"
+      return
+    }
+    val health = rootHardwareH264CaptureEngine.snapshot(nowMillis)
+    val recoveryReason = when {
+      !health.active -> "watchdog_no_encoder"
+      lastFrameSentAtMillis == 0L && encoderStartAgeMillis >= STREAM_WATCHDOG_NO_FRAME_RESTART_MILLIS -> "watchdog_no_first_frame"
+      frameAgeMillis != null && frameAgeMillis >= STREAM_WATCHDOG_STALE_FRAME_RESTART_MILLIS -> "watchdog_stale_visible_frame"
+      else -> null
+    }
+    if (recoveryReason == null) {
+      streamWatchdogStage = if (health.active) "waiting_frame" else "waiting_encoder"
+      return
+    }
+    if (lastStreamRecoveryAtMillis > 0L && nowMillis - lastStreamRecoveryAtMillis < STREAM_WATCHDOG_RECOVERY_COOLDOWN_MILLIS) {
+      streamWatchdogStage = "cooldown"
+      return
+    }
+    streamWatchdogStage = "recovering"
+    recordTicketEvent(
+      "stream_watchdog_recovery_started",
+      "reason=$recoveryReason trigger=$trigger encoder_active=${health.active} frame_age_ms=${frameAgeMillis ?: -1} encoder_start_age_ms=$encoderStartAgeMillis"
+    )
+    restartActiveStreamEngine(recoveryReason)
   }
 
   private fun configMessage(size: TicketStreamSize): String {
@@ -2780,7 +3550,6 @@ class TicketStreamService : Service() {
     val message = configMessage(size)
     lastConfigSentAtMillis = SystemClock.elapsedRealtime()
     recordStartupTracePhase("stream_config_sent", "width=${size.width} height=${size.height} clients=${videoClients.size}", once = true)
-    Log.i(TAG, "ticket_stream_config_sent width=${size.width} height=${size.height} video_clients=${videoClients.size}")
     videoClientSnapshot().forEach { client ->
       client.sendText(message)
     }
@@ -2808,7 +3577,6 @@ class TicketStreamService : Service() {
       ageMillis != null &&
       ageMillis <= ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS
     ) {
-      Log.i(TAG, "ticket_cached_keyframe_sent age_ms=$ageMillis epoch=$latestKeyFrameStreamEpoch sequence=$latestKeyFrameSequence timestamp_us=$latestKeyFrameTimestampUs")
       sentFrames += 1
       lastFrameSentAtMillis = SystemClock.elapsedRealtime()
       sendVideoFrame(client, frame, keyFrame = true)
@@ -2976,6 +3744,13 @@ class TicketStreamService : Service() {
     hardwareCaptureSnapshot = rootHardwareH264CaptureEngine.snapshot()
     if (hardwareCaptureVerified) {
       recordStartupTracePhase("first_visible_frame_sent", "sequence=$frameSequence keyframe=${frame.keyFrame}", once = true, complete = true)
+      if (lastStreamRecoveryResult == "started") {
+        lastStreamRecoveryResult = "succeeded"
+        lastStreamRecoveryFailureReason = null
+        lastStreamRecoveryAtMillis = SystemClock.elapsedRealtime()
+        streamWatchdogStage = "healthy"
+        recordTicketEvent("stream_watchdog_recovery_succeeded", lastStreamWatchdogReason.orEmpty())
+      }
     }
     if ((firstVisibleFrame || ticketSessionState == TICKET_SESSION_STARTING) && hardwareCaptureVerified) {
       updateTicketSessionState(TICKET_SESSION_LIVE, "root_hardware_h264_first_visible_frame")
@@ -3024,6 +3799,12 @@ class TicketStreamService : Service() {
       }
       rootH264BlankProbeFailures += 1L
       lastRootH264BlankProbeResult = "secure_capture_blocked"
+      streamWatchdogStage = "blocked"
+      lastStreamWatchdogAction = "secure_capture_blocked"
+      lastStreamWatchdogReason = reason
+      lastStreamRecoveryResult = "failed"
+      lastStreamRecoveryFailureReason = "secure_capture_blocked"
+      lastStreamRecoveryAtMillis = SystemClock.elapsedRealtime()
       rootHardwareH264CaptureEngine.stop("secure_capture_blocked:$reason")
       rootHardwareH264CaptureEngine.cleanupStaleProcesses()
       streamActive = false
@@ -3067,7 +3848,7 @@ class TicketStreamService : Service() {
     if (!streamActive || activeCaptureMode == CAPTURE_MODE_IDLE || videoClients.isEmpty()) {
       return false
     }
-    if (hardwareStartupStillPreparing()) {
+    if (hardwareStartupStillPreparing(nowMillis)) {
       return false
     }
     val lastFrameAge = ageMillis(lastFrameSentAtMillis, nowMillis)
@@ -3080,9 +3861,18 @@ class TicketStreamService : Service() {
       configAge > STREAM_STALE_ENGINE_RESTART_MILLIS
   }
 
-  private fun hardwareStartupStillPreparing(): Boolean {
-    return activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264 &&
-      (ticketSessionState == TICKET_SESSION_STARTING || !hardwareCaptureVerified || encodedFrames == 0L)
+  private fun hardwareStartupStillPreparing(nowMillis: Long = SystemClock.elapsedRealtime()): Boolean {
+    if (activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264) {
+      return false
+    }
+    if (ticketSessionState == TICKET_SESSION_STARTING || !hardwareCaptureVerified) {
+      return true
+    }
+    if (lastFrameSentAtMillis == 0L) {
+      val encoderStartAgeMillis = ageMillis(lastEncoderStartAtMillis, nowMillis)
+      return encoderStartAgeMillis == null || encoderStartAgeMillis < STREAM_WATCHDOG_NO_FRAME_RESTART_MILLIS
+    }
+    return encodedFrames == 0L
   }
 
   private fun sendStatus(client: TicketWebSocket) {
@@ -3231,13 +4021,87 @@ class TicketStreamService : Service() {
   }
 
   private fun recordTicketEvent(event: String, detail: String = "") {
+    val cleanEvent = event.take(96)
+    val cleanDetail = detail.take(MAX_TICKET_EVENT_DETAIL_BYTES)
     synchronized(recentTicketEvents) {
-      recentTicketEvents.addLast(Triple(SystemClock.elapsedRealtime(), event, detail.take(MAX_TICKET_EVENT_DETAIL_BYTES)))
+      recentTicketEvents.addLast(Triple(SystemClock.elapsedRealtime(), cleanEvent, cleanDetail))
       while (recentTicketEvents.size > RECENT_TICKET_EVENT_LIMIT) {
         recentTicketEvents.removeFirst()
       }
     }
-    Log.i(TAG, "ticket_event event=$event detail=${detail.take(MAX_TICKET_EVENT_DETAIL_BYTES)}")
+    enqueueTicketSpacetimeTraceEvent(cleanEvent, cleanDetail)
+  }
+
+  private fun enqueueTicketSpacetimeTraceEvent(event: String, detail: String) {
+    if (!shouldPublishTicketTraceEvent(event)) {
+      return
+    }
+    val traceId = synchronized(startupTraceLock) { startupTraceId }
+    val message = buildJsonObject {
+      put("type", "ticket_trace_event")
+      put("event", event)
+      put(
+        "level",
+        if (
+          event.contains("failed") ||
+          event.contains("failure") ||
+          event.contains("blocked") ||
+          event.contains("unavailable") ||
+          event.contains("exit") ||
+          event.contains("restart")
+        ) {
+          "warn"
+        } else {
+          "info"
+        },
+      )
+      put("detail", detail)
+      put("traceId", traceId)
+      put("correlationId", traceId)
+      put("streamState", ticketSpacetimeStreamState())
+      put("sessionState", ticketSessionState)
+      put("streamActive", streamActive)
+      put("captureMode", activeCaptureMode)
+      put("videoClients", videoClients.size.toString())
+      put("frameSequence", frameSequence.toString())
+      put("sentFrames", sentFrames.toString())
+      put("timestampMillis", System.currentTimeMillis().toString())
+    }.toString()
+    enqueueTicketSpacetimePhoneMessage(message)
+  }
+
+  private fun shouldPublishTicketTraceEvent(event: String): Boolean {
+    return event.startsWith("session_") ||
+      event.startsWith("spacetime_") ||
+      event.startsWith("startup_phase_") ||
+      event.startsWith("hardware_") ||
+      event.startsWith("stream_") ||
+      event.startsWith("root_hardware") ||
+      event.startsWith("root_capture") ||
+      event.startsWith("loading_") ||
+      event.startsWith("client_") ||
+      event.startsWith("keyframe") ||
+      event.startsWith("latest_ticket_reselect_") ||
+      event.startsWith("control_code_") ||
+      event.startsWith("ticket_control_code_") ||
+      event.startsWith("ticket_card_") ||
+      event == "ticket_state_event" ||
+      event == "vivi_hard_reset" ||
+      event == "secure_capture_blocked"
+  }
+
+  private fun safeErrorDetail(error: Throwable): String {
+    return (error.message ?: error::class.java.simpleName)
+      .split(Regex("\\s+"))
+      .joinToString(" ")
+      .take(MAX_TICKET_EVENT_DETAIL_BYTES)
+  }
+
+  private fun safeRootFailure(result: RootResult): String {
+    return (result.stderr.ifBlank { result.stdout }.ifBlank { "exit_code=${result.exitCode}" })
+      .split(Regex("\\s+"))
+      .joinToString(" ")
+      .take(MAX_TICKET_EVENT_DETAIL_BYTES)
   }
 
   private fun recentClientTelemetrySnapshot(nowMillis: Long): List<TicketClientTelemetry> {
@@ -3301,7 +4165,7 @@ class TicketStreamService : Service() {
     )
     serviceScope.launch {
       runCatching { runtimeStateStore.save(snapshot) }
-        .onFailure { error -> Log.w(TAG, "ticket_runtime_state_persist_failed", error) }
+        .onFailure { error -> recordTicketEvent("ticket_runtime_state_persist_failed", safeErrorDetail(error)) }
     }
   }
 
@@ -3320,6 +4184,25 @@ class TicketStreamService : Service() {
         .putLong(KEY_VIVI_MEMORY_TICKET_WALL_MILLIS, System.currentTimeMillis())
     }
     editor.commit()
+  }
+
+  private fun clearViviStateMemory(reason: String) {
+    viviStateMemory.clear(
+      source = "force_ticket_reselect",
+      reason = reason
+    )
+    getSharedPreferences(TICKET_VIVI_MEMORY_PREFS, Context.MODE_PRIVATE).edit()
+      .remove(KEY_VIVI_MEMORY_CURRENT_STATE)
+      .remove(KEY_VIVI_MEMORY_CURRENT_TICKET_ID)
+      .remove(KEY_VIVI_MEMORY_CURRENT_SOURCE)
+      .remove(KEY_VIVI_MEMORY_CURRENT_REASON)
+      .remove(KEY_VIVI_MEMORY_CURRENT_WALL_MILLIS)
+      .remove(KEY_VIVI_MEMORY_TICKET_ID)
+      .remove(KEY_VIVI_MEMORY_TICKET_SOURCE)
+      .remove(KEY_VIVI_MEMORY_TICKET_REASON)
+      .remove(KEY_VIVI_MEMORY_TICKET_WALL_MILLIS)
+      .commit()
+    recordTicketEvent("vivi_ticket_detail_memory_cleared", reason)
   }
 
   private fun restoreViviStateMemory() {
@@ -3538,7 +4421,20 @@ class TicketStreamService : Service() {
       CAPTURE_MODE_ROOT_HARDWARE_H264 -> TicketScreenConfig.ROOT_HARDWARE_H264_CODEC_STRING
       else -> ""
     }
-    val recoverySnapshot = ticketRecoveryCoordinator.snapshot(nowMillis)
+    val recoverySnapshot = ticketRecoveryCoordinator.snapshot(nowMillis).copy(
+      streamStage = streamWatchdogStage,
+      lastWatchdogAction = lastStreamWatchdogAction,
+      lastStreamRecoveryResult = lastStreamRecoveryResult,
+      lastStreamRecoveryReason = lastStreamWatchdogReason,
+      lastStreamRecoveryAgoMillis = ageMillis(lastStreamRecoveryAtMillis, nowMillis),
+      lastStreamRecoveryFailureReason = lastStreamRecoveryFailureReason,
+      desiredRecoveryStage = spacetimeDesiredRecoveryStage,
+      lastDesiredRecoveryAction = lastSpacetimeDesiredRecoveryAction,
+      lastDesiredRecoveryResult = lastSpacetimeDesiredRecoveryResult,
+      lastDesiredRecoveryAgoMillis = ageMillis(lastSpacetimeDesiredRecoveryAtMillis, nowMillis),
+      lastDesiredRecoveryFailureReason = lastSpacetimeDesiredRecoveryFailureReason,
+      lastDesiredRecoveryProbeResult = lastSpacetimeDesiredRecoveryProbeResult
+    )
     val rawViviHealth = viviStateMemory.health(nowMillis)
     val viviHealth = effectiveViviHealthForPublicStream(rawViviHealth, nowMillis, hardwareCapture)
     val effectiveSessionState = if (
@@ -3638,6 +4534,15 @@ class TicketStreamService : Service() {
         duplicateResults = duplicateControlCodeResultCount,
         lastDuplicateRequestId = lastDuplicateControlCodeRequestId,
         lastDuplicateAgoMillis = ageMillis(lastDuplicateControlCodeResultAtMillis, nowMillis)
+      ),
+      latestTicketReselect = TicketLatestTicketReselectHealth(
+        status = latestTicketReselectStatus,
+        active = latestTicketReselectActive(nowMillis),
+        reason = latestTicketReselectReason,
+        commandId = latestTicketReselectCommandId.takeLast(24),
+        startedAgoMillis = ageMillis(latestTicketReselectStartedAtMillis, nowMillis),
+        completedAgoMillis = ageMillis(latestTicketReselectCompletedAtMillis, nowMillis),
+        freshFrameAgoMillis = ageMillis(latestTicketReselectFreshFrameAtMillis, nowMillis)
       ),
       rigasSatiksmeBatch = TicketRigasSatiksmeBatchHealth(
         batchId = lastRigasSatiksmeBatchId,
@@ -3893,7 +4798,7 @@ class TicketStreamService : Service() {
   private suspend fun launchViviUnlessFastTicketDetail(reason: String) {
     val rootState = observeRootViviState("launch_check:$reason", timeoutMillis = TICKET_WAKE_FAST_ROOT_DUMP_TIMEOUT_MILLIS)
     if (rootState.state == TicketViviRecoveryState.TICKET_DETAIL) {
-      Log.i(TAG, "ticket_launch_skipped_root_ticket_detail reason=$reason")
+      recordTicketEvent("ticket_launch_skipped_root_ticket_detail", reason)
       scheduleTicketBrightnessGuard("vivi_fast_ticket_detail")
       return
     }
@@ -4196,6 +5101,12 @@ class TicketStreamService : Service() {
       return false
     }
     val action = TicketViviPageEnforcer.recoveryActionForHierarchy(hierarchy) ?: return false
+    if (state == TicketViviRecoveryState.TICKET_LIST_WITH_CARD || action.reason.contains("ticket_card")) {
+      recordTicketEvent(
+        "ticket_card_selection_decision",
+        "${TicketViviPageEnforcer.ticketCardSelectionSummaryForHierarchy(hierarchy)} action=${action.reason}"
+      )
+    }
     val input = if (action.x >= 0 && action.y >= 0) {
       runFastNonTouchInput("input tap ${action.x} ${action.y}", "wake_recovery_action:${action.reason}")
     } else {
@@ -4516,6 +5427,24 @@ class TicketStreamService : Service() {
       if (success) "recovery_succeeded" else "recovery_failed",
       "$reason mode=$mode"
     )
+    if (reason.startsWith("admin_force_latest_ticket_reselect")) {
+      scheduleLatestTicketReselectSettle(
+        successReason = if (success) {
+          "latest_ticket_reselect_succeeded"
+        } else {
+          "latest_ticket_reselect_succeeded_after_recovery"
+        },
+        failureReason = if (success) {
+          "latest_ticket_reselect_stream_unstable"
+        } else {
+          "latest_ticket_reselect_failed"
+        }
+      )
+      recordTicketEvent(
+        if (success) "latest_ticket_reselect_ticket_detail_ready" else "latest_ticket_reselect_waiting_for_recovery",
+        "$reason mode=$mode"
+      )
+    }
     if (streamActive) {
       val currentViviState = viviStateMemory.current().state
       updateTicketSessionState(
@@ -4540,7 +5469,7 @@ class TicketStreamService : Service() {
     if (result.ok) {
       return
     }
-    Log.w(TAG, "ticket_return_orchestrator_root_launch_failed stderr=${result.stderr}")
+    recordTicketEvent("ticket_return_orchestrator_root_launch_failed", safeRootFailure(result))
     val intent = Intent(this, MainActivity::class.java)
       .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
     markTicketNonTouchAction("return_orchestrator:fallback")
@@ -4574,11 +5503,11 @@ class TicketStreamService : Service() {
       if (result.ok) {
         ScreenBrightnessControl.parseState(result.stdout)
       } else {
-        Log.w(TAG, "ticket_brightness_read_failed stderr=${result.stderr}")
+        recordTicketEvent("ticket_brightness_read_failed", safeRootFailure(result))
         null
       }
     }.getOrElse { error ->
-      Log.w(TAG, "ticket_brightness_read_failed", error)
+      recordTicketEvent("ticket_brightness_read_failed", safeErrorDetail(error))
       null
     }
   }
@@ -4722,18 +5651,17 @@ class TicketStreamService : Service() {
         ticketBrightnessGuardLastEnforcedAtMillis = SystemClock.elapsedRealtime()
         ticketBrightnessGuardLastReason = reason
         ticketBrightnessGuardLastMessage = "Ticket brightness guard enforced safe dim brightness"
-        Log.i(TAG, "ticket_brightness_safe_dim_set reason=$reason percent=$TICKET_SAFE_DIM_PERCENT")
       } else {
         ticketBrightnessGuardFailures += 1
         ticketBrightnessGuardLastReason = reason
         ticketBrightnessGuardLastMessage = "Ticket brightness guard failed: ${result.stderr.ifBlank { result.stdout }.take(96)}"
-        Log.w(TAG, "ticket_brightness_safe_dim_failed reason=$reason stderr=${result.stderr}")
+        recordTicketEvent("ticket_brightness_safe_dim_failed", "reason=$reason ${safeRootFailure(result)}")
       }
     }.onFailure { error ->
       ticketBrightnessGuardFailures += 1
       ticketBrightnessGuardLastReason = reason
       ticketBrightnessGuardLastMessage = "Ticket brightness guard failed: ${error.message ?: error::class.java.simpleName}"
-      Log.w(TAG, "ticket_brightness_safe_dim_failed reason=$reason", error)
+      recordTicketEvent("ticket_brightness_safe_dim_failed", "reason=$reason error=${safeErrorDetail(error)}")
     }
   }
 
@@ -4743,9 +5671,7 @@ class TicketStreamService : Service() {
         Intent(this, SupervisorService::class.java)
           .setAction(SupervisorService.ACTION_REFRESH_PHONE_AUTOMATION)
       )
-    }.onFailure { error ->
-      Log.w(TAG, "ticket_phone_automation_refresh_failed", error)
-    }
+    }.onFailure { error -> recordTicketEvent("ticket_phone_automation_refresh_failed", safeErrorDetail(error)) }
   }
 
   private suspend fun restoreTicketBrightness(reason: String) {
@@ -4767,12 +5693,9 @@ class TicketStreamService : Service() {
       ticketBrightnessGuardLastEnforcedAtMillis = SystemClock.elapsedRealtime()
       ticketBrightnessGuardLastReason = reason
       ticketBrightnessGuardLastMessage = "Ticket brightness guard restored saved brightness"
-      Log.i(
-        TAG,
-        "ticket_brightness_restored reason=$reason mode=${state.mode} value=${state.value} display=${state.displayPercentage} panel=${state.panelActualBrightness ?: state.panelBrightness}/${state.panelMaxBrightness}"
-      )
+      recordTicketEvent("ticket_brightness_restored", "reason=$reason")
     } else {
-      Log.w(TAG, "ticket_brightness_restore_failed reason=$reason stderr=${result.stderr}")
+      recordTicketEvent("ticket_brightness_restore_failed", "reason=$reason ${safeRootFailure(result)}")
     }
   }
 
@@ -4788,7 +5711,6 @@ class TicketStreamService : Service() {
     }
     val violation = cachedForegroundViolation() ?: return true
     recordInputGateDecision(allowed = false, reason = violation)
-    Log.i(TAG, "ticket_remote_input_blocked reason=$violation")
     return false
   }
 
@@ -4801,7 +5723,6 @@ class TicketStreamService : Service() {
     val reason = "vivi_not_foreground_for_tap:$violation"
     recordInputGateDecision(allowed = false, reason = reason)
     recordTicketEvent("remote_tap_blocked", reason)
-    Log.i(TAG, "ticket_remote_tap_blocked reason=$reason")
     return false
   }
 
@@ -4911,7 +5832,7 @@ class TicketStreamService : Service() {
         reason = fallback.reason
       )
       recordInputGateDecision(allowed = false, reason = fallback.reason)
-      Log.w(TAG, "ticket_control_code_snap_failed ${fallback.reason} stderr=${dump.stderr}")
+      recordTicketEvent("ticket_control_code_snap_failed", "${fallback.reason} ${safeRootFailure(dump)}")
       scheduleTicketRecovery(fallback.reason, TicketRecoveryMode.ACTIVE_SOFT)
       return null
     }
@@ -4954,7 +5875,7 @@ class TicketStreamService : Service() {
       reason = "control_code_snap_not_ticket_detail:${state.name}"
     )
     recordInputGateDecision(allowed = false, reason = "control_code_snap_not_ticket_detail")
-    Log.i(TAG, "ticket_control_code_snap_failed state=$state")
+    recordTicketEvent("ticket_control_code_snap_failed", "state=$state")
     scheduleTicketRecovery("control_code_snap_${state.name.lowercase()}", TicketRecoveryMode.ACTIVE_SOFT)
     return null
   }
@@ -5047,7 +5968,7 @@ class TicketStreamService : Service() {
 
   private fun controlCodeRequestActive(): Boolean {
     val status = lastControlCodeRequestStatus
-    return status == "running"
+    return status == "running" || status == "queued"
   }
 
   private fun markControlCodeModeEntered(reason: String) {
@@ -5068,7 +5989,6 @@ class TicketStreamService : Service() {
     controlCodeModeEntryId += 1
     controlCodeModeEnteredAtMillis = SystemClock.elapsedRealtime()
     updateTicketSessionState(TICKET_SESSION_CONTROL_ACTIVE, reason)
-    Log.i(TAG, "ticket_control_code_mode_entered reason=$reason entry=$controlCodeModeEntryId")
     recordTicketEvent("control_code_entered", reason)
     broadcastStatus()
   }
@@ -5090,7 +6010,6 @@ class TicketStreamService : Service() {
     if (streamActive && !reason.startsWith("session_stop_") && reason != "foreground_guard_cancelled") {
       updateTicketSessionState(TICKET_SESSION_CONTROL_EXIT, reason)
     }
-    Log.i(TAG, "ticket_control_code_mode_reset reason=$reason entry=$controlCodeModeEntryId")
     recordTicketEvent("control_code_reset", reason)
     if (broadcast) {
       broadcastStatus()
@@ -5833,7 +6752,6 @@ class TicketStreamService : Service() {
   }
 
   private fun ignoreProtectedRemoteInput(reason: String) {
-    Log.i(TAG, "ticket_remote_input_ignored reason=$reason")
     markViewerInput(reason)
   }
 
@@ -6218,8 +7136,106 @@ class TicketStreamService : Service() {
     return true
   }
 
+  private suspend fun waitForControlCodeRecoveryWindow(
+    requestId: String,
+    phases: MutableMap<String, Long>,
+    requestStartedAtMillis: Long
+  ): String? {
+    var waitingReason = controlCodeRecoveryBlockReason()
+    if (waitingReason == null) {
+      return null
+    }
+    sendControlCodeProgress(
+      requestId = requestId,
+      status = "queued",
+      reason = waitingReason,
+      startedAtMillis = requestStartedAtMillis,
+      phases = phases
+    )
+    recordTicketEvent(
+      "control_code_request_queued",
+      "request=$requestId reason=$waitingReason timeout_ms=$CONTROL_CODE_RECOVERY_QUEUE_TIMEOUT_MILLIS"
+    )
+    val deadlineMillis = SystemClock.elapsedRealtime() + CONTROL_CODE_RECOVERY_QUEUE_TIMEOUT_MILLIS
+    while (true) {
+      val nowMillis = SystemClock.elapsedRealtime()
+      if (nowMillis >= deadlineMillis) {
+        break
+      }
+      delay(minOf(CONTROL_CODE_RECOVERY_QUEUE_POLL_MILLIS, (deadlineMillis - nowMillis).coerceAtLeast(1L)))
+      val currentReason = controlCodeRecoveryBlockReason()
+      if (currentReason == null) {
+        markControlCodeRequestPhase(phases, "recovery_queue_wait", requestStartedAtMillis)
+        sendControlCodeProgress(
+          requestId = requestId,
+          status = "running",
+          reason = "recovery_ready",
+          startedAtMillis = requestStartedAtMillis,
+          phases = phases
+        )
+        recordTicketEvent("control_code_request_unblocked", "request=$requestId reason=recovery_ready")
+        return null
+      }
+      if (currentReason != waitingReason) {
+        waitingReason = currentReason
+        sendControlCodeProgress(
+          requestId = requestId,
+          status = "queued",
+          reason = waitingReason,
+          startedAtMillis = requestStartedAtMillis,
+          phases = phases
+        )
+        recordTicketEvent("control_code_request_queue_reason_changed", "request=$requestId reason=$waitingReason")
+      }
+    }
+    markControlCodeRequestPhase(phases, "recovery_queue_timeout", requestStartedAtMillis)
+    recordTicketEvent("control_code_request_queue_timeout", "request=$requestId reason=$waitingReason")
+    return waitingReason
+  }
+
+  private fun controlCodeRecoveryBlockReason(nowMillis: Long = SystemClock.elapsedRealtime()): String? {
+    if (latestTicketReselectRecent(nowMillis)) {
+      when (latestTicketReselectStatus) {
+        "pending" -> return "waiting_for_ticket_reselect"
+        "failed" -> return "control_code_stream_unstable"
+        "succeeded" -> {
+          if (!markLatestTicketReselectFreshIfReady(nowMillis)) {
+            return "waiting_for_stream_recovery"
+          }
+        }
+      }
+    }
+    if (hardwareMarkedUnreliable()) {
+      return "control_code_stream_unstable"
+    }
+    if (!streamActive) {
+      return null
+    }
+    if (
+      ticketSessionState in setOf(
+        TICKET_SESSION_STARTING,
+        TICKET_SESSION_SOFT_RECOVERY,
+        TICKET_SESSION_NEEDS_ATTENTION,
+        TICKET_SESSION_CONTROL_EXIT
+      )
+    ) {
+      return "waiting_for_stream_recovery"
+    }
+    if (lastStreamRecoveryResult == "started" || streamWatchdogStage in setOf("recovering", "waiting_frame", "waiting_startup", "waiting_encoder", "cooldown")) {
+      return "waiting_for_stream_recovery"
+    }
+    if (activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264 || !hardwareCaptureVerified) {
+      return "waiting_for_stream_recovery"
+    }
+    val frameAgeMillis = ageMillis(lastFrameSentAtMillis, nowMillis) ?: return "waiting_for_stream_recovery"
+    if (frameAgeMillis > LIVE_FRAME_MAX_AGE_MILLIS) {
+      return "waiting_for_stream_recovery"
+    }
+    return null
+  }
+
   private suspend fun handleGenerateControlCode(
-    replyClient: TicketWebSocket,
+    replyClient: TicketWebSocket?,
     requestId: String,
     digits: String,
     owner: String,
@@ -6234,6 +7250,10 @@ class TicketStreamService : Service() {
     val requestedApp = app.trim()
     val requestedFlow = flow.trim()
     recordControlCodeCommandEnvelope(requestedOwner, requestedApp, requestedFlow)
+    recordTicketEvent(
+      "control_code_request_received",
+      "request=$cleanRequestId owner=$requestedOwner app=$requestedApp flow=$requestedFlow digit_count=${cleanDigits.length}"
+    )
     if (cleanRequestId.isBlank()) {
       recordRejectedControlCodeCommand(cleanRequestId, requestedOwner, requestedApp, requestedFlow, "missing_request_id")
       sendControlCodeResult("", false, "missing_request_id", "", 0L, emptyMap(), cleanupPending = false)
@@ -6281,7 +7301,9 @@ class TicketStreamService : Service() {
     if (sendCachedControlCodeResult(cleanRequestId)) {
       return
     }
-    protectedControlClients.add(replyClient)
+    if (replyClient != null) {
+      protectedControlClients.add(replyClient)
+    }
     try {
       controlCodeRequestMutex.withLock {
         if (sendCachedControlCodeResult(cleanRequestId)) {
@@ -6297,6 +7319,7 @@ class TicketStreamService : Service() {
         lastControlCodeRequestPhases = emptyMap()
         lastControlCodeRequestCompletedAtMillis = 0L
         broadcastStatus()
+        recordTicketEvent("control_code_request_running", "request=$cleanRequestId")
 
         var ok = false
         var reason = "failed"
@@ -6305,7 +7328,14 @@ class TicketStreamService : Service() {
 
         try {
           phases["phone_command_received"] = 0L
-          if (!ensureTicketSessionForControlCodeRequest(phases, startedAtMillis)) {
+          val recoveryBlockReason = waitForControlCodeRecoveryWindow(cleanRequestId, phases, startedAtMillis)
+          if (recoveryBlockReason != null) {
+            reason = when (recoveryBlockReason) {
+              "waiting_for_ticket_reselect" -> "control_code_recovery_queue_timeout"
+              "waiting_for_stream_recovery" -> "control_code_recovery_queue_timeout"
+              else -> recoveryBlockReason
+            }
+          } else if (!ensureTicketSessionForControlCodeRequest(phases, startedAtMillis)) {
             reason = "control_code_request_session_unavailable"
           } else if (!measureInputPhase(phases, "gate") { canForwardRemoteInput() }) {
             reason = inputGateReason
@@ -6323,7 +7353,9 @@ class TicketStreamService : Service() {
               lastControlCodeRequestPhases = phases.toMap()
               lastControlCodeRequestCompletedAtMillis = SystemClock.elapsedRealtime()
               val totalDurationMillis = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+              recordTicketEvent("control_code_generated", "request=$cleanRequestId duration_ms=$totalDurationMillis")
               beginControlCodeBrowserCaptureWait(cleanRequestId)
+              recordTicketEvent("control_code_browser_capture_wait_started", "request=$cleanRequestId")
               sendTicketStateEvent(
                 ticketState = TICKET_PIXEL_STATE_GENERATED_RESULT,
                 reason = "generated",
@@ -6349,20 +7381,35 @@ class TicketStreamService : Service() {
               lastControlCodeRequestDurationMillis = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
               lastControlCodeRequestPhases = phases.toMap()
               clearControlCodeBrowserCaptureWait(cleanRequestId)
+              recordTicketEvent(
+                "control_code_browser_capture_result",
+                "request=$cleanRequestId ok=${browserCapture.ok} reason=${browserCapture.reason}"
+              )
               val cleanupReason = if (browserCapture.ok) "browser_capture_confirmed" else browserCapture.reason
+              recordTicketEvent("control_code_cleanup_started", "request=$cleanRequestId reason=$cleanupReason")
               val cleanupSucceeded = returnControlCodeSurfaceToRawTicket(
                 generatedHierarchy = delivery.generatedHierarchy,
                 reason = cleanupReason,
                 phases = phases,
                 requestStartedAtMillis = startedAtMillis
               )
+              val recoveredAfterCleanup = cleanupSucceeded || recoverTicketDetailForControlCodeRequest(
+                phases = phases,
+                requestStartedAtMillis = startedAtMillis,
+                reason = "control_code_success_cleanup_recover"
+              )
               sendControlCodeCleanup(
                 requestId = cleanRequestId,
-                ok = cleanupSucceeded,
-                reason = if (cleanupSucceeded) "ticket_detail" else "control_code_cleanup_attention_needed",
+                ok = recoveredAfterCleanup,
+                reason = if (recoveredAfterCleanup) "ticket_detail" else "control_code_cleanup_attention_needed",
                 startedAtMillis = startedAtMillis
               )
+              recordTicketEvent(
+                "control_code_cleanup_result",
+                "request=$cleanRequestId ok=$recoveredAfterCleanup"
+              )
             } else if (delivery.cleanupRequired) {
+              recordTicketEvent("control_code_cleanup_started", "request=$cleanRequestId reason=failed_delivery")
               val cleanupSucceeded = returnControlCodeSurfaceToRawTicket(
                 generatedHierarchy = delivery.generatedHierarchy,
                 reason = "control_code_request_failed_return_raw",
@@ -6385,13 +7432,18 @@ class TicketStreamService : Service() {
                 reason = if (cleanupSucceeded) "ticket_detail" else "control_code_cleanup_attention_needed",
                 startedAtMillis = startedAtMillis
               )
+              recordTicketEvent(
+                "control_code_cleanup_result",
+                "request=$cleanRequestId ok=$cleanupSucceeded"
+              )
             }
           }
         } catch (cancelled: CancellationException) {
           throw cancelled
         } catch (error: Throwable) {
           reason = "control_code_request_failed"
-          Log.w(TAG, "ticket_control_code_request_failed request=$cleanRequestId", error)
+          recordTicketEvent("ticket_control_code_request_failed", "request=$cleanRequestId error=${safeErrorDetail(error)}")
+          recordTicketEvent("control_code_cleanup_started", "request=$cleanRequestId reason=exception")
           val cleanupSucceeded = returnControlCodeSurfaceToRawTicket(
             generatedHierarchy = "",
             reason = "control_code_request_exception_return_raw",
@@ -6414,6 +7466,10 @@ class TicketStreamService : Service() {
             reason = if (cleanupSucceeded) "ticket_detail" else "control_code_cleanup_attention_needed",
             startedAtMillis = startedAtMillis
           )
+          recordTicketEvent(
+            "control_code_cleanup_result",
+            "request=$cleanRequestId ok=$cleanupSucceeded"
+          )
         }
 
         if (!resultSent) {
@@ -6429,13 +7485,15 @@ class TicketStreamService : Service() {
         }
       }
     } finally {
-      protectedControlClients.remove(replyClient)
+      if (replyClient != null) {
+        protectedControlClients.remove(replyClient)
+      }
     }
   }
 
 
   private suspend fun handleGenerateRigasSatiksmeMonthlyTicketQr(
-    replyClient: TicketWebSocket,
+    replyClient: TicketWebSocket?,
     cleanRequestId: String,
     cleanDigits: String,
     queueHint: RigasSatiksmeQueueHint
@@ -6444,7 +7502,9 @@ class TicketStreamService : Service() {
       return
     }
     val reusePreviousRigasSatiksmeQr = cancelPendingRigasSatiksmeReturnCleanup("new_rs_monthly_ticket_request")
-    protectedControlClients.add(replyClient)
+    if (replyClient != null) {
+      protectedControlClients.add(replyClient)
+    }
     var pendingImmediateCleanup: PendingRigasSatiksmeReturnCleanup? = null
     try {
       controlCodeRequestMutex.withLock {
@@ -6559,7 +7619,9 @@ class TicketStreamService : Service() {
         }
       }
     } finally {
-      protectedControlClients.remove(replyClient)
+      if (replyClient != null) {
+        protectedControlClients.remove(replyClient)
+      }
     }
     pendingImmediateCleanup?.let { cleanup ->
       val cleanupSucceeded = returnRigasSatiksmeMonthlyTicketFlowToViviTicket(
@@ -8382,6 +9444,9 @@ class TicketStreamService : Service() {
   }
 
   private fun controlCodeImmediateStartDecision(): ControlCodeImmediateStartDecision {
+    controlCodeRecoveryBlockReason()?.let { reason ->
+      return ControlCodeImmediateStartDecision(false, reason)
+    }
     if (!streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264) {
       return ControlCodeImmediateStartDecision(false, "control_code_immediate_stream_inactive")
     }
@@ -9085,7 +10150,7 @@ class TicketStreamService : Service() {
     val hierarchy = controlCodeRequestHierarchy()
     if (hierarchy.isNullOrBlank()) {
       recordInputGateDecision(allowed = false, reason = "control_code_popup_check_failed")
-      Log.w(TAG, "ticket_remote_key_blocked reason=control_code_popup_check_failed")
+      recordTicketEvent("ticket_remote_key_blocked", "control_code_popup_check_failed")
       return false
     }
     if (!TicketViviPageEnforcer.isControlCodePopup(hierarchy)) {
@@ -9099,20 +10164,20 @@ class TicketStreamService : Service() {
       if (state != TicketViviRecoveryState.CONTROL_CODE_RESULT) {
         resetControlCodeMode("control_code_popup_not_visible")
       }
-      Log.i(TAG, "ticket_remote_key_blocked reason=$reason")
+      recordTicketEvent("ticket_remote_key_blocked", reason)
       return false
     }
     if (!TicketViviPageEnforcer.isControlCodeInputFocused(hierarchy)) {
       val action = TicketViviPageEnforcer.controlCodeInputActionForHierarchy(hierarchy)
       if (action == null) {
         recordInputGateDecision(allowed = false, reason = "control_code_input_missing")
-        Log.i(TAG, "ticket_remote_key_blocked reason=control_code_input_missing")
+        recordTicketEvent("ticket_remote_key_blocked", "control_code_input_missing")
         return false
       }
       val tap = runFastNonTouchInput("input tap ${action.x} ${action.y}", "control_code_input_focus")
       if (!tap.ok) {
         recordInputGateDecision(allowed = false, reason = "control_code_input_focus_failed")
-        Log.w(TAG, "ticket_remote_key_blocked reason=control_code_input_focus_failed stderr=${tap.stderr}")
+        recordTicketEvent("ticket_remote_key_blocked", "control_code_input_focus_failed ${safeRootFailure(tap)}")
         return false
       }
       delay(CONTROL_CODE_INPUT_FOCUS_SETTLE_MILLIS)
@@ -9320,7 +10385,7 @@ class TicketStreamService : Service() {
     val hierarchy = controlExitHierarchy()
     if (hierarchy.isNullOrBlank()) {
       recordInputGateDecision(allowed = false, reason = "control_code_popup_check_failed")
-      Log.w(TAG, "ticket_control_code_close_failed reason=$reason hierarchy_unavailable")
+      recordTicketEvent("ticket_control_code_close_failed", "reason=$reason hierarchy_unavailable")
       return runControlExitCleanup(reason)
     }
     val detectedState = TicketViviPageEnforcer.classifyForRecovery(hierarchy)
@@ -9336,7 +10401,7 @@ class TicketStreamService : Service() {
     val action = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(hierarchy)
     if (action == null) {
       recordInputGateDecision(allowed = false, reason = "control_code_close_missing")
-      Log.i(TAG, "ticket_control_code_close_blocked reason=control_code_close_missing")
+      recordTicketEvent("ticket_control_code_close_blocked", "control_code_close_missing")
       return runControlExitCleanup(reason)
     }
     val tap = runFastNonTouchInput("input tap ${action.x} ${action.y}", reason)
@@ -9348,7 +10413,7 @@ class TicketStreamService : Service() {
       }
     } else {
       recordInputGateDecision(allowed = false, reason = "control_code_close_failed")
-      Log.w(TAG, "ticket_control_code_close_failed reason=$reason stderr=${tap.stderr}")
+      recordTicketEvent("ticket_control_code_close_failed", "reason=$reason ${safeRootFailure(tap)}")
       false
     }
   }
@@ -9370,7 +10435,7 @@ class TicketStreamService : Service() {
     val tap = runFastNonTouchInput("input tap ${action.x} ${action.y}", reason)
     if (!tap.ok) {
       recordInputGateDecision(allowed = false, reason = "control_code_popup_close_tap_failed")
-      Log.w(TAG, "ticket_control_code_close_tap_failed stderr=${tap.stderr}")
+      recordTicketEvent("ticket_control_code_close_tap_failed", safeRootFailure(tap))
       return false
     }
     return verifyAndCompleteControlExitCleanup(reason, detectedState.name, action.reason, startedAtMillis).also { closed ->
@@ -9514,7 +10579,7 @@ class TicketStreamService : Service() {
         refreshControlCodeModeAfterRemoteTap()
         return@launch
       }
-      Log.i(TAG, "ticket_post_tap_foreground_violation reason=$violation")
+      recordTicketEvent("ticket_post_tap_foreground_violation", violation)
     }.also { postRemoteTapForegroundCheckJob = it }
   }
 
@@ -9657,6 +10722,7 @@ class TicketStreamService : Service() {
       put("totalDurationMillis", totalDurationMillis)
       put("phases", phaseJson)
     }.toString()
+    enqueueTicketSpacetimePhoneMessage(message)
     controlClientSnapshot().forEach { client -> client.sendText(message) }
     recordTicketEvent(
       "ticket_state_event",
@@ -9872,15 +10938,60 @@ class TicketStreamService : Service() {
     if (ok) {
       rememberControlCodeResult(requestId, message)
     }
+    enqueueTicketSpacetimePhoneMessage(message)
     controlClientSnapshot().forEach { client -> client.sendText(message) }
     recordTicketEvent(
       "control_code_result",
       "$requestId ok=$ok reason=$reason value=${value.ifBlank { "empty" }} duration_ms=$totalDurationMillis"
     )
+    recordTicketEvent(
+      "control_code_final_state",
+      "request=$requestId status=${if (ok) "succeeded" else "failed"} reason=$reason duration_ms=$totalDurationMillis value_present=${value.isNotBlank()} cleanup_pending=$cleanupPending"
+    )
     if (!ok && !cleanupPending && streamActive) {
       recordTicketEvent("foreground_guard_resumed_after_control_code_failure", reason)
       startForegroundGuard()
     }
+    broadcastStatus()
+  }
+
+  private fun sendControlCodeProgress(
+    requestId: String,
+    status: String,
+    reason: String,
+    startedAtMillis: Long,
+    phases: Map<String, Long>
+  ) {
+    val nowMillis = SystemClock.elapsedRealtime()
+    val totalDurationMillis = if (startedAtMillis > 0L) {
+      (nowMillis - startedAtMillis).coerceAtLeast(0L)
+    } else {
+      0L
+    }
+    lastControlCodeRequestId = requestId.takeIf { it.isNotBlank() }
+    lastControlCodeRequestStatus = status
+    lastControlCodeRequestReason = reason
+    lastControlCodeRequestValue = null
+    lastControlCodeRequestDurationMillis = totalDurationMillis
+    lastControlCodeRequestPhases = phases.toMap()
+    val phaseJson = buildJsonObject {
+      phases.forEach { (name, duration) -> put(name, duration) }
+    }
+    val message = buildJsonObject {
+      put("type", "control_code_progress")
+      put("requestId", requestId)
+      put("status", status)
+      put("reason", reason)
+      put("totalDurationMillis", totalDurationMillis)
+      put("cleanupPending", false)
+      put("phases", phaseJson)
+    }.toString()
+    enqueueTicketSpacetimePhoneMessage(message)
+    controlClientSnapshot().forEach { client -> client.sendText(message) }
+    recordTicketEvent(
+      "control_code_progress",
+      "$requestId status=$status reason=$reason duration_ms=$totalDurationMillis"
+    )
     broadcastStatus()
   }
 
@@ -9931,6 +11042,7 @@ class TicketStreamService : Service() {
     if (accepted) {
       rememberControlCodeResult(requestId, message)
     }
+    enqueueTicketSpacetimePhoneMessage(message)
     controlClientSnapshot().forEach { client -> client.sendText(message) }
     recordTicketEvent(
       "rigassatiksme_qr_result",
@@ -9971,10 +11083,15 @@ class TicketStreamService : Service() {
       put("reason", reason)
       put("totalDurationMillis", totalDurationMillis)
     }.toString()
+    enqueueTicketSpacetimePhoneMessage(message)
     controlClientSnapshot().forEach { client -> client.sendText(message) }
     recordTicketEvent(
       "control_code_cleanup_complete",
       "$requestId ok=$ok reason=$reason duration_ms=$totalDurationMillis"
+    )
+    recordTicketEvent(
+      "control_code_cleanup_final_state",
+      "request=$requestId status=${if (ok) "succeeded" else "failed"} reason=$reason duration_ms=$totalDurationMillis"
     )
     broadcastStatus()
   }
@@ -10553,8 +11670,8 @@ class TicketStreamService : Service() {
   // back to the broker as `rigassatiksme_login_result { state, failureReason? }`.
   //
   // Safety contract (mirrors the broker side):
-  //   * The SMS code is never logged, never written to disk, never echoed in
-  //     any `recordTicketEvent` or `Log.*` call.
+  //   * The SMS code is never logged, never written to disk, and never echoed
+  //     in any runtime diagnostic event.
   //   * The phone is persisted only as `phoneLast4`.
   //   * Exactly one SMS attempt per `rigassatiksme_login_start`.
   //   * A running RS QR job is preempted by the broker; the Pixel does not
@@ -11266,7 +12383,6 @@ class TicketStreamService : Service() {
   }
 
   companion object {
-    private const val TAG = "TicketStreamService"
     private const val CHANNEL_ID = "ticket_screen_guard"
     private const val NOTIFICATION_ID = 9388
     private const val SERVER_BACKLOG = 4
@@ -11275,8 +12391,9 @@ class TicketStreamService : Service() {
     private const val MAX_CLIENT_LOG_BYTES = 2_048
     private const val RECENT_CLIENT_TELEMETRY_LIMIT = 80
     private const val RECENT_TICKET_EVENT_LIMIT = 80
+    private const val TICKET_SPACETIME_PHONE_MESSAGE_LIMIT = 80
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
-    private const val SESSION_START_TIMEOUT_MILLIS = 12_000L
+    private const val SESSION_START_TIMEOUT_MILLIS = 70_000L
     const val SERVER_VERSION = "ticket-stream-2026-05-23-priority-rs-vivi-v235"
     private const val CONTROL_CODE_MARKER_RESULT_HIERARCHY = "__marker_control_code_result__"
     private const val FRAME_ENVELOPE_VERSION = "tsf2"
@@ -11306,6 +12423,13 @@ class TicketStreamService : Service() {
     private const val LIVE_FRAME_MAX_AGE_MILLIS = 2_000L
     private const val ACTIVE_STREAM_REUSE_TICKET_DETAIL_MAX_AGE_MILLIS = 30_000L
     private const val STREAM_STALE_ENGINE_RESTART_MILLIS = 4_000L
+    private const val STREAM_WATCHDOG_POLL_MILLIS = 500L
+    private const val STREAM_WATCHDOG_NO_ENCODER_RESTART_MILLIS = 4_000L
+    private const val STREAM_WATCHDOG_NO_FRAME_RESTART_MILLIS = 10_000L
+    private const val STREAM_WATCHDOG_STALE_FRAME_RESTART_MILLIS = 8_000L
+    private const val STREAM_WATCHDOG_RECOVERY_COOLDOWN_MILLIS = 3_000L
+    private const val SPACETIME_DESIRED_RECOVERY_COOLDOWN_MILLIS = 20_000L
+    private const val SPACETIME_DESIRED_RECOVERY_STALE_BLOCK_MILLIS = 15_000L
     private const val HARDWARE_RELIABILITY_FAILURE_THRESHOLD = 3
     private const val STARTUP_MAINTENANCE_DEFER_MILLIS = 1_200L
     private const val STARTUP_MAINTENANCE_POLL_MILLIS = 40L
@@ -11385,6 +12509,8 @@ class TicketStreamService : Service() {
     private const val FOREGROUND_GUARD_INCONCLUSIVE_BACKOFF_MILLIS = 30_000L
     private const val FOREGROUND_GUARD_RECENT_WAKE_READY_ROOTLESS_MILLIS = 30_000L
     private const val FOREGROUND_GUARD_RECENT_TICKET_DETAIL_SKIP_MAX_AGE_MILLIS = 3_000L
+    private const val ACTIVE_GUARD_RECOVERY_SESSION_RETRY_DELAY_MILLIS = 650L
+    private const val ACTIVE_GUARD_RECOVERY_SESSION_RETRY_COOLDOWN_MILLIS = 3_000L
     private const val TICKET_WAKE_RECENT_DETAIL_FAST_READY_MAX_AGE_MILLIS = TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS
     private const val TICKET_SCREEN_WAKE_HOLD_MILLIS = 30_000L
     private const val TICKET_SCREEN_WAKE_REQUEST_COOLDOWN_MILLIS = 2_000L
@@ -11413,6 +12539,15 @@ class TicketStreamService : Service() {
     private const val CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS = 18_000L
     private const val CONTROL_CODE_BROWSER_CAPTURE_ACK_POLL_MILLIS = 40L
     private const val CONTROL_CODE_BROWSER_CAPTURE_ACK_TIMEOUT_MILLIS = 10_000L
+    private const val CONTROL_CODE_RECOVERY_QUEUE_TIMEOUT_MILLIS = 20_000L
+    private const val CONTROL_CODE_RECOVERY_QUEUE_POLL_MILLIS = 250L
+    private const val CONTROL_CODE_RESELECT_FRESH_TICKET_MAX_AGE_MILLIS = 5_000L
+    private const val LATEST_TICKET_RESELECT_RELAUNCH_DELAY_MILLIS = 300L
+    private const val LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS = TICKET_WAKE_RECOVERY_BUDGET_MILLIS
+    private const val LATEST_TICKET_RESELECT_MAX_RECOVERY_ACTIONS = TICKET_WAKE_RECOVERY_MAX_ACTIONS
+    private const val LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS = 20_000L
+    private const val LATEST_TICKET_RESELECT_ACTIVE_WINDOW_MILLIS =
+      LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS + LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS + 5_000L
     private const val CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 0L
     private const val CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS = 250L
     private const val CONTROL_CODE_VISUAL_STATE_POLL_MILLIS = 40L

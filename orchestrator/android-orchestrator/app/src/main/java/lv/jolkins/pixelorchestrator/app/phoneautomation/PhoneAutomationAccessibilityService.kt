@@ -3,6 +3,8 @@ package lv.jolkins.pixelorchestrator.app.phoneautomation
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
@@ -281,6 +283,15 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
       PhoneAutomationServiceBridge.markNonTouchInput("accessibility_back")
       performGlobalAction(GLOBAL_ACTION_BACK)
     }
+  }
+
+  override fun setClipboardText(text: String): Boolean {
+    return runCatching {
+      val clipboard = getSystemService(ClipboardManager::class.java)
+      clipboard.setPrimaryClip(ClipData.newPlainText("chatgpt-broker", text))
+      PhoneAutomationServiceBridge.markNonTouchInput("accessibility_clipboard_set")
+      true
+    }.getOrElse { false }
   }
 
   private fun rootForPackage(expectedPackageName: String): AccessibilityNodeInfo? {

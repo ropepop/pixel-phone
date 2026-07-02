@@ -1,0 +1,8 @@
+panel_path=/sys/class/backlight/panel0-backlight
+panel_brightness=0
+panel_actual_brightness=0
+panel_max_brightness=3939
+screen_brightness_mode=0
+screen_brightness=0
+display_percentage=0.0
+power_summary=  mWakefulness=Awake;  mWakeLockSummary=0x25;  mHoldingDisplaySuspendBlocker=true;Display Power: com.android.server.power.PowerManagerService$1@56f892e;mWakeLockSummary=0x25;mWakefulness=1;

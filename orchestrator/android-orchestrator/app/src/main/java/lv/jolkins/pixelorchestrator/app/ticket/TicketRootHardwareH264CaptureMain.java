@@ -799,10 +799,10 @@ public final class TicketRootHardwareH264CaptureMain {
       if (bitmap != null) {
         bitmap.recycle();
       }
+      closeScreenCaptureResult(result);
       if (hardwareBuffer != null && !hardwareBuffer.isClosed()) {
         hardwareBuffer.close();
       }
-      closeScreenCaptureResult(result);
     }
   }
 
@@ -874,8 +874,10 @@ public final class TicketRootHardwareH264CaptureMain {
       ColorSpace colorSpace = (ColorSpace) getColorSpace.invoke(value);
       Bitmap bitmap = Bitmap.wrapHardwareBuffer(buffer, colorSpace);
       if (bitmap == null) {
-        buffer.close();
         closeScreenCaptureResult(value);
+        if (!buffer.isClosed()) {
+          buffer.close();
+        }
         return null;
       }
       return new CapturedFrame(bitmap, value, buffer);

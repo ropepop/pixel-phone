@@ -46,4 +46,36 @@ class SupervisorServiceDecisionTest {
     assertTrue(probeBlock.contains("timeout 1 tr '\\000' ' '"))
     assertTrue(!probeBlock.contains("\n            tr '\\000' ' '"))
   }
+
+  @Test
+  fun supervisorContinuouslyMaintainsPortraitLock() {
+    val sourcePath = listOf(
+      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/SupervisorService.kt"),
+      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/SupervisorService.kt")
+    ).first(Files::exists)
+    val source = String(Files.readAllBytes(sourcePath))
+    val onCreate = source.substringBetween("override fun onCreate()", "override fun onStartCommand")
+    val onDestroy = source.substringBetween("override fun onDestroy()", "override fun onTimeout")
+    val maintenance = source.substringBetween("private fun startPortraitLockMaintenance()", "  companion object")
+
+    assertTrue(source.contains("private var portraitLockMaintenanceJob: Job? = null"))
+    assertTrue(onCreate.contains("startPortraitLockMaintenance()"))
+    assertTrue(onDestroy.contains("portraitLockMaintenanceJob?.cancel()"))
+    assertTrue(maintenance.contains("while (isActive)"))
+    assertTrue(maintenance.contains("PhonePortraitLock.force(executor)"))
+    assertTrue(maintenance.contains("PhonePortraitLock.verify(executor)"))
+    assertTrue(maintenance.contains("delay(PORTRAIT_LOCK_MAINTENANCE_INTERVAL_MILLIS)"))
+    assertTrue(source.contains("private const val PORTRAIT_LOCK_MAINTENANCE_INTERVAL_MILLIS = 10_000L"))
+    assertTrue(!source.contains("USER_ROTATION_FREE"))
+    assertTrue(!source.contains("accelerometer_rotation 1"))
+    assertTrue(!source.contains("set-ignore-orientation-request false"))
+  }
+
+  private fun String.substringBetween(startNeedle: String, endNeedle: String): String {
+    val start = indexOf(startNeedle)
+    assertTrue("missing start needle: $startNeedle", start >= 0)
+    val end = indexOf(endNeedle, start + startNeedle.length)
+    assertTrue("missing end needle: $endNeedle", end >= 0)
+    return substring(start, end)
+  }
 }

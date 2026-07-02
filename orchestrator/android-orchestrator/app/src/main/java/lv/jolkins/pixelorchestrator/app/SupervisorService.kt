@@ -57,6 +57,7 @@ import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationServicePe
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationSettingsSnapshot
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationSettingsStore
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationSupervisorController
+import lv.jolkins.pixelorchestrator.app.phoneautomation.PhonePortraitLock
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationWakeReason
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationWakeScheduleAction
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationWakeScheduler
@@ -89,6 +90,7 @@ class SupervisorService : Service() {
   private lateinit var prerequisiteMonitor: PhoneAutomationPrerequisiteMonitor
   private var prerequisiteMonitorJob: Job? = null
   private var ticketServiceMonitorJob: Job? = null
+  private var portraitLockMaintenanceJob: Job? = null
   private val ticketServiceEnsureMutex = Mutex()
   private val ticketReadinessRootExecutor = SuRootExecutor()
   private var deferredTouchBrightnessResumeRequested: Boolean = false
@@ -138,6 +140,7 @@ class SupervisorService : Service() {
       )
       prerequisiteMonitor = PhoneAutomationPrerequisiteMonitor(this)
       NotificationHelper.ensureChannel(this)
+      startPortraitLockMaintenance()
       promoteToForeground()
       WeeklyCleanupScheduler(this).scheduleNext(reason = "service_create")
       reschedulePhoneAutomationWake(reason = "service_create", force = true)
@@ -299,7 +302,9 @@ class SupervisorService : Service() {
   override fun onDestroy() {
     prerequisiteMonitorJob?.cancel()
     ticketServiceMonitorJob?.cancel()
+    portraitLockMaintenanceJob?.cancel()
     ticketServiceMonitorJob = null
+    portraitLockMaintenanceJob = null
     if (this::cpuFrequencyRuntime.isInitialized) {
       cpuFrequencyRuntime.stop(
         reason = "service_destroyed",
@@ -342,6 +347,20 @@ class SupervisorService : Service() {
       FacadeOperationResult(false, "$failurePrefix: ${error.message ?: error::class.java.simpleName}")
     }
 
+  private fun startPortraitLockMaintenance() {
+    portraitLockMaintenanceJob?.cancel()
+    portraitLockMaintenanceJob = serviceScope.launch(Dispatchers.IO) {
+      while (isActive) {
+        val executor = SuRootExecutor()
+        PhonePortraitLock.force(executor)
+        if (!PhonePortraitLock.verify(executor)) {
+          Log.w(TAG, "phone portrait lock was not verified")
+        }
+        delay(PORTRAIT_LOCK_MAINTENANCE_INTERVAL_MILLIS)
+      }
+    }
+  }
+
   companion object {
     private const val TAG = "SupervisorService"
     private const val PREFS_NAME = "supervisor_service"
@@ -380,6 +399,7 @@ class SupervisorService : Service() {
     private const val FOREGROUND_NOTIFICATION_ID = 4001
     private const val CONNECTION_DROP_DEBOUNCE_MILLIS = 2_000L
     private const val DEFERRED_TOUCH_BRIGHTNESS_RESUME_TRIGGER = "deferred_touch_brightness_resume"
+    private const val PORTRAIT_LOCK_MAINTENANCE_INTERVAL_MILLIS = 10_000L
     private const val TICKET_SERVICE_COMPONENT = "ticket_screen"
     private const val TICKET_SERVICE_MONITOR_INTERVAL_MILLIS = 30_000L
     private const val TICKET_SERVICE_STABLE_RECHECK_MILLIS = 2 * 60 * 1_000L

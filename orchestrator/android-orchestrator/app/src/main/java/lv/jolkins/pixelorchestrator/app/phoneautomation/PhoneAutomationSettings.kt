@@ -202,7 +202,7 @@ data class PhoneAutomationSettingsSnapshot(
   }
 }
 
-internal fun PhoneAutomationSettingsSnapshot.isProtectedSpeedtestHandoffInProgress(): Boolean {
+fun PhoneAutomationSettingsSnapshot.isProtectedSpeedtestHandoffInProgress(): Boolean {
   return enabled &&
     protectedHandoffStartedAtMillis > 0L &&
     (runtimeState == PhoneAutomationRuntimeState.STARTING ||
@@ -222,7 +222,7 @@ internal fun PhoneAutomationSettingsSnapshot.hasReachedReadyState(): Boolean {
   return lastReadyAtMillis > 0L
 }
 
-internal fun PhoneAutomationSettingsSnapshot.hasQueuedPendingRecovery(): Boolean {
+fun PhoneAutomationSettingsSnapshot.hasQueuedPendingRecovery(): Boolean {
   return pendingRecoveryAction != PhoneAutomationPendingRecoveryAction.NONE &&
     pendingRecoveryPhase == PhoneAutomationPendingRecoveryPhase.QUEUED_RETRY &&
     pendingRecoveryNotBeforeAtMillis > 0L
