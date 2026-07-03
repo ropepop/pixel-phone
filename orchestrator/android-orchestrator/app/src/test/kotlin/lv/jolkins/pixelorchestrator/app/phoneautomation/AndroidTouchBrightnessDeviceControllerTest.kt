@@ -248,7 +248,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
   }
 
   @Test
-  fun setBrightnessPercentZeroStillRunsPanelHoldWhenPanelAlreadyReadsZero() = runTest {
+  fun setBrightnessPercentZeroUsesShortPanelHoldWhenPanelAlreadyReadsZero() = runTest {
     val rootExecutor = QueuedRootExecutor(
       scriptResults = ArrayDeque(
         listOf(
@@ -291,7 +291,8 @@ class AndroidTouchBrightnessDeviceControllerTest {
       "reasserting an already-sleeping panel must not touch Android brightness settings because that can rebound the panel",
       rootExecutor.scripts[1].contains("screen_brightness")
     )
-    assertTrue(rootExecutor.scripts[1].contains("panel_writes=$(( (1500 + 50 - 1) / 50 ))"))
+    assertTrue(rootExecutor.scripts[1].contains("panel_writes=$(( (250 + 50 - 1) / 50 ))"))
+    assertFalse(rootExecutor.scripts[1].contains("panel_writes=$(( (1500 + 50 - 1) / 50 ))"))
     assertFalse(rootExecutor.scripts[1].contains("if [ \"${'$'}panel_current\" = \"${'$'}panel_target\" ]"))
   }
 
@@ -335,6 +336,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
 
     assertTrue(result.success)
     assertTrue(rootExecutor.scripts[1].contains("screen_brightness 0"))
+    assertTrue(rootExecutor.scripts[1].contains("panel_writes=${'$'}(( (1500 + 50 - 1) / 50 ))"))
     assertTrue(
       "initial panel-sleep writes must clamp the real backlight before Android brightness settings can rebound it",
       rootExecutor.scripts[1].indexOf("echo \"${'$'}panel_target\" > \"${'$'}panel_dir/brightness\"") <

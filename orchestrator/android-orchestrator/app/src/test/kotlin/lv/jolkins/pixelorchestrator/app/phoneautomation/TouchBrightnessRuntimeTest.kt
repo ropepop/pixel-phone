@@ -750,7 +750,7 @@ class TouchBrightnessRuntimeTest {
   }
 
   @Test
-  fun panelSleepGuardReassertsDimWithinHalfSecond() = runTest {
+  fun panelSleepGuardSkipsWriteWhenPanelIsAlreadyDark() = runTest {
     val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
     val deviceController = FakeTouchBrightnessDeviceController()
     val eventSource = FakeTouchBrightnessEventSource(
@@ -774,12 +774,48 @@ class TouchBrightnessRuntimeTest {
     runCurrent()
     assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
 
-    advanceTimeBy(499L)
+    val startupReads = deviceController.readBrightnessStateCalls
+
+    advanceTimeBy(TouchBrightnessRuntime.PANEL_DIM_GUARD_INTERVAL_MILLIS - 1L)
     runCurrent()
     assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
+    assertEquals(startupReads, deviceController.readBrightnessStateCalls)
 
     advanceTimeBy(1L)
     runCurrent()
+    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
+    assertEquals(startupReads + 1, deviceController.readBrightnessStateCalls)
+  }
+
+  @Test
+  fun panelSleepGuardReassertsDimWhenPanelDriftsBright() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val deviceController = FakeTouchBrightnessDeviceController()
+    val eventSource = FakeTouchBrightnessEventSource(
+      interactive = true,
+      activeTouchCount = 0,
+      source = touchSource,
+      powerSource = powerSource
+    )
+    val runtime = buildRuntime(
+      backgroundScope,
+      store,
+      deviceController,
+      FakeBlackoutOverlayController(),
+      eventSource,
+      dimGuardEnabled = true
+    ) {
+      testScheduler.currentTime
+    }
+
+    runtime.start()
+    runCurrent()
+    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
+
+    deviceController.currentBrightnessState = ScreenBrightnessState(mode = 0, value = 127, displayPercentage = 50f)
+    advanceTimeBy(TouchBrightnessRuntime.PANEL_DIM_GUARD_INTERVAL_MILLIS)
+    runCurrent()
+
     assertEquals(listOf(0, 0), deviceController.setBrightnessPercentCalls)
   }
 
@@ -817,7 +853,7 @@ class TouchBrightnessRuntimeTest {
 
     assertTrue(powerController.wakeHoldActive)
     assertEquals("panel_sleep_guard", powerController.holdReasons.last())
-    assertEquals(listOf(0, 0), deviceController.setBrightnessPercentCalls)
+    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
   }
 
   @Test
@@ -843,27 +879,29 @@ class TouchBrightnessRuntimeTest {
 
     runtime.start()
     runCurrent()
-    deviceController.setBrightnessResult = PhoneAutomationActionResult(false, "panel still bright")
+    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
 
-    eventSource.emit(
-      TouchBrightnessEvent.NonTouchInput(
-        reason = "ticket:wake_recovery_action:open_ticket_card",
-        observedAtUptimeMillis = testScheduler.currentTime,
-        suppressedUntilUptimeMillis = testScheduler.currentTime + 2_000L
-      )
-    )
+    deviceController.setBrightnessResult = PhoneAutomationActionResult(false, "panel still bright")
+    deviceController.currentBrightnessState = ScreenBrightnessState(mode = 0, value = 127, displayPercentage = 50f)
+    advanceTimeBy(TouchBrightnessRuntime.PANEL_DIM_GUARD_INTERVAL_MILLIS)
     runCurrent()
 
+    val callsAfterFailedGuard = deviceController.setBrightnessPercentCalls.size
     assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
     assertTrue(store.load().touchBrightnessDetail.contains("Panel sleep retrying"))
 
     deviceController.setBrightnessResult = PhoneAutomationActionResult(true, "set")
-    advanceTimeBy(TouchBrightnessRuntime.PANEL_DIM_GUARD_INTERVAL_MILLIS)
+    deviceController.currentBrightnessState = ScreenBrightnessState(mode = 0, value = 127, displayPercentage = 50f)
+    advanceTimeBy(TouchBrightnessRuntime.PANEL_DIM_GUARD_RETRY_INTERVAL_MILLIS - 1L)
+    runCurrent()
+    assertEquals(callsAfterFailedGuard, deviceController.setBrightnessPercentCalls.size)
+
+    advanceTimeBy(1L)
     runCurrent()
 
     assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
     assertFalse(store.load().touchBrightnessDetail.contains("Touch brightness error"))
-    assertTrue(deviceController.setBrightnessPercentCalls.size >= 3)
+    assertTrue(deviceController.setBrightnessPercentCalls.size > callsAfterFailedGuard)
   }
 
   @Test
@@ -1077,12 +1115,16 @@ private class FakeTouchBrightnessDeviceController : TouchBrightnessDeviceControl
   var currentBrightnessState = ScreenBrightnessState(mode = 1, value = 127)
   var setBrightnessResult = PhoneAutomationActionResult(true, "set")
   var restoreBrightnessResult = PhoneAutomationActionResult(true, "restored")
+  var readBrightnessStateCalls = 0
   val setBrightnessPercentCalls = mutableListOf<Int>()
   val restoreBrightnessStateCalls = mutableListOf<ScreenBrightnessState>()
 
   override suspend fun prepare(): PhoneAutomationPreparationResult = prepareResult
 
-  override suspend fun readBrightnessState(): ScreenBrightnessState? = currentBrightnessState
+  override suspend fun readBrightnessState(): ScreenBrightnessState? {
+    readBrightnessStateCalls += 1
+    return currentBrightnessState
+  }
 
   override suspend fun setBrightnessPercent(percent: Int): PhoneAutomationActionResult {
     setBrightnessPercentCalls += percent

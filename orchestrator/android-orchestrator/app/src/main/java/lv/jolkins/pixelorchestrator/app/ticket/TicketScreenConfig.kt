@@ -29,7 +29,7 @@ object TicketScreenConfig {
   const val ROOT_HARDWARE_H264_QUALITY_PROFILE = "hardware_h264_light_marker_low_latency"
   const val ROOT_HARDWARE_H264_CODEC_STRING = "avc1.42C028"
   const val ROOT_HARDWARE_H264_FPS = 8
-  const val ROOT_HARDWARE_H264_STEADY_FPS = 4
+  const val ROOT_HARDWARE_H264_STEADY_FPS = 1
   const val ROOT_HARDWARE_H264_BURST_HOLD_MILLIS = 6_000L
   const val ROOT_HARDWARE_H264_BITRATE = 1_200_000
   const val ROOT_HARDWARE_H264_TARGET_WIDTH = 720
@@ -333,6 +333,10 @@ data class TicketHardwareH264Health(
   val height: Int? = null,
   val bitrate: Int? = null,
   val fps: Int? = null,
+  val steadyFpsTarget: Int? = null,
+  val burstFpsTarget: Int? = null,
+  val intervalMode: String = "",
+  val currentIntervalMillis: Long? = null,
   val colorCorrection: String = TicketScreenConfig.ROOT_HARDWARE_H264_COLOR_CORRECTION,
   val colorStandard: String = TicketScreenConfig.ROOT_HARDWARE_H264_COLOR_STANDARD,
   val frames: Long = 0L,
@@ -644,7 +648,9 @@ object TicketStreamSizing {
 
 internal object TicketInactivityPolicy {
   const val TIMEOUT_MILLIS = 10 * 60 * 1_000L
-  const val TICK_MILLIS = 1_000L
+  const val SERVER_BROADCAST_MILLIS = 5_000L
+  const val URGENT_BROADCAST_MILLIS = 1_000L
+  const val URGENT_WINDOW_MILLIS = 60_000L
 
   fun remainingMillis(
     lastInputAtMillis: Long,
@@ -665,6 +671,14 @@ internal object TicketInactivityPolicy {
       nowMillis = nowMillis,
       timeoutMillis = timeoutMillis
     ) <= 0L
+  }
+
+  fun nextTickMillis(remainingMillis: Long): Long {
+    return if (remainingMillis <= URGENT_WINDOW_MILLIS) {
+      URGENT_BROADCAST_MILLIS
+    } else {
+      SERVER_BROADCAST_MILLIS
+    }
   }
 }
 

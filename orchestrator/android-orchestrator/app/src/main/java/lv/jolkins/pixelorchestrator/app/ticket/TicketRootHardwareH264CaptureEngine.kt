@@ -316,6 +316,10 @@ class TicketRootHardwareH264CaptureEngine(
       height = height,
       bitrate = bitrate,
       fps = fps,
+      steadyFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS,
+      burstFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_FPS,
+      intervalMode = hardwareIntervalMode(),
+      currentIntervalMillis = hardwareFrameIntervalMillis(),
       colorCorrection = TicketScreenConfig.ROOT_HARDWARE_H264_COLOR_CORRECTION,
       colorStandard = TicketScreenConfig.ROOT_HARDWARE_H264_COLOR_STANDARD,
       frames = frames,
@@ -606,6 +610,20 @@ class TicketRootHardwareH264CaptureEngine(
     bitrateWindowBytes += bytes.toLong()
     val elapsed = (nowMillis - bitrateWindowStartedAtMillis).coerceAtLeast(1L)
     estimatedBitrate = (bitrateWindowBytes * 8_000L) / elapsed
+  }
+
+  private fun hardwareIntervalMode(): String {
+    val currentFps = fps ?: return ""
+    return if (currentFps >= TicketScreenConfig.ROOT_HARDWARE_H264_FPS) {
+      "burst"
+    } else {
+      "steady"
+    }
+  }
+
+  private fun hardwareFrameIntervalMillis(): Long? {
+    val currentFps = fps?.takeIf { it > 0 } ?: return null
+    return kotlin.math.round(1000.0 / currentFps).toLong().coerceAtLeast(1L)
   }
 
   private fun stopProcesses() {

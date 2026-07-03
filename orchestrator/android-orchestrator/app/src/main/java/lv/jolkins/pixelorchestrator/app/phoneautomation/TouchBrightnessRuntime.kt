@@ -313,7 +313,7 @@ internal class AndroidTouchBrightnessDeviceController(
     val script = if (targetPercent == PANEL_SLEEP_TARGET_PERCENT && panelAlreadySleeping) {
       ScreenBrightnessControl.buildSetPanelPercentScript(
         percent = targetPercent,
-        holdMillis = PANEL_SLEEP_HOLD_MILLIS,
+        holdMillis = PANEL_SLEEP_REASSERT_HOLD_MILLIS,
         holdIntervalMillis = DIM_HOLD_INTERVAL_MILLIS
       )
     } else if (targetPercent == PANEL_SLEEP_TARGET_PERCENT) {
@@ -606,6 +606,7 @@ internal class AndroidTouchBrightnessDeviceController(
     private const val BRIGHTNESS_SETTLE_DELAY_MILLIS = 250L
     private const val PANEL_SLEEP_TARGET_PERCENT = 0
     private const val PANEL_SLEEP_HOLD_MILLIS = 1_500L
+    private const val PANEL_SLEEP_REASSERT_HOLD_MILLIS = 250L
     private const val DIM_HOLD_INTERVAL_MILLIS = 50L
     private const val VISIBLE_HOLD_MILLIS = 1_500L
     private const val VISIBLE_RESTORE_RETRY_DELAY_MILLIS = 250L
@@ -913,13 +914,22 @@ internal class TouchBrightnessRuntime(
       panelSleepReassertBurstJob = null
     }
 
+    suspend fun panelSleepBrightnessStillDark(): Boolean {
+      return deviceController.readBrightnessState()?.isPanelSleepBrightnessState() == true
+    }
+
     fun ensurePanelSleepGuardJob() {
       if (!dimGuardEnabled || panelSleepGuardJob?.isActive == true) {
         return
       }
       panelSleepGuardJob = launch {
         while (true) {
-          delay(PANEL_DIM_GUARD_INTERVAL_MILLIS)
+          val guardDelayMillis = if (panelSleepGuardFailureCount > 0) {
+            PANEL_DIM_GUARD_RETRY_INTERVAL_MILLIS
+          } else {
+            PANEL_DIM_GUARD_INTERVAL_MILLIS
+          }
+          delay(guardDelayMillis)
           if (
             internalMode != InternalTouchBrightnessMode.PANEL_SLEEP ||
             !interactive ||
@@ -930,6 +940,12 @@ internal class TouchBrightnessRuntime(
             return@launch
           }
           powerController.holdScreen("panel_sleep_guard")
+          if (panelSleepBrightnessStillDark()) {
+            panelSleepGuardFailureCount = 0
+            publishDebugState()
+            logTouchState("panel_sleep_guard_verified")
+            continue
+          }
           val brightness = deviceController.setBrightnessPercent(PANEL_SLEEP_PERCENT)
           if (!brightness.success) {
             panelSleepGuardFailureCount += 1
@@ -1537,7 +1553,8 @@ internal class TouchBrightnessRuntime(
     internal const val IDLE_PANEL_SLEEP_DELAY_MILLIS = 120_000L
     internal const val POWER_BUTTON_REBOUND_WINDOW_MILLIS = 2_000L
     internal const val POWER_BUTTON_REBOUND_POLL_MILLIS = 150L
-    internal const val PANEL_DIM_GUARD_INTERVAL_MILLIS = 500L
+    internal const val PANEL_DIM_GUARD_INTERVAL_MILLIS = 30_000L
+    internal const val PANEL_DIM_GUARD_RETRY_INTERVAL_MILLIS = 500L
     private val NON_TOUCH_PANEL_REASSERT_DELAYS_MILLIS = longArrayOf(100L, 250L, 500L, 1_000L, 1_500L)
     internal const val PANEL_DIM_GUARD_FAILURE_LIMIT = 5
     internal const val SESSION_RETRY_INITIAL_DELAY_MILLIS = 1_000L

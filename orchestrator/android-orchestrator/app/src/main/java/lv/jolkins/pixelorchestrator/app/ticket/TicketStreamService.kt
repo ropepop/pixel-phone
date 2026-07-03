@@ -2117,7 +2117,7 @@ class TicketStreamService : Service() {
           resetForegroundViolationConfirmation()
           enforceViviTicketPageIfNeeded("foreground_guard")
         }
-        delay(VIVI_FOREGROUND_CHECK_MILLIS)
+        delay(foregroundGuardDelayMillis(violation))
       }
       foregroundGuardJob = null
     }
@@ -2920,6 +2920,21 @@ class TicketStreamService : Service() {
     return true
   }
 
+  private fun foregroundGuardDelayMillis(violation: String?): Long {
+    if (violation != null || controlSensitiveWindowActive() || isBudgetedTicketState(ticketSessionState)) {
+      return VIVI_FOREGROUND_CHECK_MILLIS
+    }
+    if (!streamActive || !hardwareCaptureVerified || ticketSessionState != TICKET_SESSION_LIVE) {
+      return VIVI_FOREGROUND_CHECK_MILLIS
+    }
+    val current = viviStateMemory.current()
+    return if (current.state == TicketViviRecoveryState.TICKET_DETAIL) {
+      VIVI_STABLE_FOREGROUND_CHECK_MILLIS
+    } else {
+      VIVI_FOREGROUND_CHECK_MILLIS
+    }
+  }
+
   private fun foregroundGuardCanTrustLiveTicketDetailWithoutRoot(nowMillis: Long): Boolean {
     if (!streamActive || !hardwareCaptureVerified || ticketSessionState != TICKET_SESSION_LIVE) {
       return false
@@ -3098,7 +3113,7 @@ class TicketStreamService : Service() {
     }
     inactivityJob = serviceScope.launch {
       while (true) {
-        delay(TicketInactivityPolicy.TICK_MILLIS)
+        delay(TicketInactivityPolicy.nextTickMillis(inactivityRemainingMillis()))
         if (!ticketSessionOpen()) {
           inactivityJob = null
           broadcastInactivityStatus()
@@ -12502,9 +12517,10 @@ class TicketStreamService : Service() {
     private const val STARTUP_CLIENT_DISCONNECT_GRACE_MILLIS = 5_000L
     private const val CLIENT_DISCONNECT_IDLE_GRACE_MILLIS = 30_000L
     private const val VIVI_FOREGROUND_INITIAL_DELAY_MILLIS = 1_500L
-    private const val VIVI_FOREGROUND_CHECK_MILLIS = 750L
+    private const val VIVI_FOREGROUND_CHECK_MILLIS = 1_500L
+    private const val VIVI_STABLE_FOREGROUND_CHECK_MILLIS = 5_000L
     private const val VIVI_FOREGROUND_GRACE_MILLIS = 8_000L
-    private const val VIVI_PAGE_ENFORCE_INTERVAL_MILLIS = 2_000L
+    private const val VIVI_PAGE_ENFORCE_INTERVAL_MILLIS = 5_000L
     private const val FOREGROUND_GUARD_RECENT_TICKET_LOG_INTERVAL_MILLIS = 30_000L
     private const val FOREGROUND_GUARD_INCONCLUSIVE_BACKOFF_MILLIS = 30_000L
     private const val FOREGROUND_GUARD_RECENT_WAKE_READY_ROOTLESS_MILLIS = 30_000L
@@ -12822,6 +12838,8 @@ internal fun browserPage(): String {
     let reconnectTimer = null;
     let selfHealTimer = null;
     let streamWatchdogTimer = null;
+    let idleStatusSnapshot = null;
+    let idleTimerTick = null;
     let selfHealInFlight = false;
     let videoRecoveryInFlight = false;
     let startupReconnectAttempts = 0;
@@ -13045,16 +13063,40 @@ internal fun browserPage(): String {
       const seconds = totalSeconds % 60;
       return `${'$'}{minutes}:${'$'}{String(seconds).padStart(2, '0')}`;
     }
-    function updateIdleTimer(status) {
-      if (!status || !status.active || !desiredActive) {
+    function stopIdleTimerTick() {
+      if (idleTimerTick) clearInterval(idleTimerTick);
+      idleTimerTick = null;
+    }
+    function currentIdleRemainingMillis() {
+      if (!idleStatusSnapshot) return 0;
+      return Math.max(0, idleStatusSnapshot.remainingMillis - (Date.now() - idleStatusSnapshot.receivedAt));
+    }
+    function renderIdleTimer() {
+      if (!idleStatusSnapshot || !idleStatusSnapshot.active || !desiredActive) {
         idleTimerEl.hidden = true;
         idleTimerEl.classList.remove('urgent');
         return;
       }
-      const remaining = Number(status.remainingMillis || 0);
+      const remaining = currentIdleRemainingMillis();
       idleTimerEl.textContent = formatRemaining(remaining);
       idleTimerEl.classList.toggle('urgent', remaining <= 60_000);
       idleTimerEl.hidden = false;
+    }
+    function updateIdleTimer(status) {
+      if (!status || !status.active || !desiredActive) {
+        idleStatusSnapshot = null;
+        stopIdleTimerTick();
+        renderIdleTimer();
+        return;
+      }
+      idleStatusSnapshot = {
+        active: true,
+        remainingMillis: Number(status.remainingMillis || 0),
+        timeoutMillis: Number(status.timeoutMillis || 0),
+        receivedAt: Date.now()
+      };
+      renderIdleTimer();
+      if (!idleTimerTick) idleTimerTick = setInterval(renderIdleTimer, 1000);
     }
     function cleanDigits(value) {
       return String(value || '').replace(/\D/g, '').slice(0, 9);

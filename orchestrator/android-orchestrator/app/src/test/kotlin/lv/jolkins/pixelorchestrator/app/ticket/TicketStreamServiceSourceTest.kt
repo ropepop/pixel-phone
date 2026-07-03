@@ -322,7 +322,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_TARGET_WIDTH = 720"))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_QUALITY_PROFILE = \"hardware_h264_light_marker_low_latency\""))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_FPS = 8"))
-    assertTrue(config.contains("const val ROOT_HARDWARE_H264_STEADY_FPS = 4"))
+    assertTrue(config.contains("const val ROOT_HARDWARE_H264_STEADY_FPS = 1"))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_BURST_HOLD_MILLIS = 6_000L"))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_BITRATE = 1_200_000"))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_KEYFRAME_INTERVAL_MILLIS = 1000"))
@@ -353,6 +353,10 @@ class TicketStreamServiceSourceTest {
     assertTrue(helper.contains("fps_target="))
     assertTrue(helper.contains("cmd.equals(\"burst\")"))
     assertTrue(engine.contains("fields[\"fps_target\"]"))
+    assertTrue(engine.contains("steadyFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS"))
+    assertTrue(engine.contains("burstFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_FPS"))
+    assertTrue(engine.contains("intervalMode = hardwareIntervalMode()"))
+    assertTrue(engine.contains("currentIntervalMillis = hardwareFrameIntervalMillis()"))
     assertTrue(engine.contains("\"burst\\n\""))
     assertFalse(source.contains("hardware_h264_non_key_frame_dropped"))
     assertTrue(source.contains("hardware_h264_waiting_initial_key_frame"))
@@ -389,6 +393,28 @@ class TicketStreamServiceSourceTest {
     assertTrue(companion.contains("private const val LIVE_FRAME_MAX_AGE_MILLIS = 2_000L"))
     assertTrue(companion.contains("private const val VIDEO_CLIENT_PENDING_MAX_AGE_MILLIS = 150L"))
     assertTrue(companion.contains("private const val VIDEO_CLIENT_SLOW_CLOSE_MILLIS = 250L"))
+  }
+
+  @Test
+  fun inactivityCountdownIsRenderedLocallyWithoutOneSecondPhoneBroadcasts() {
+    val source = ticketStreamServiceSource()
+    val config = ticketScreenConfigSource()
+    val policy = config.substringBetween("internal object TicketInactivityPolicy", "internal object TicketSessionStopPolicy")
+    val timer = source.substringBetween("private fun ensureInactivityTimer()", "private fun cleanupInactiveClientsIfNeeded")
+    val browserIdle = source.substringBetween("function formatRemaining(ms)", "function cleanDigits(value)")
+
+    assertTrue(policy.contains("const val SERVER_BROADCAST_MILLIS = 5_000L"))
+    assertTrue(policy.contains("const val URGENT_BROADCAST_MILLIS = 1_000L"))
+    assertTrue(policy.contains("const val URGENT_WINDOW_MILLIS = 60_000L"))
+    assertTrue(policy.contains("fun nextTickMillis(remainingMillis: Long): Long"))
+    assertFalse(policy.contains("const val TICK_MILLIS = 1_000L"))
+    assertTrue(timer.contains("delay(TicketInactivityPolicy.nextTickMillis(inactivityRemainingMillis()))"))
+    assertFalse(timer.contains("delay(TicketInactivityPolicy.TICK_MILLIS)"))
+    assertTrue(source.contains("let idleStatusSnapshot = null;"))
+    assertTrue(source.contains("let idleTimerTick = null;"))
+    assertTrue(browserIdle.contains("remainingMillis - (Date.now() - idleStatusSnapshot.receivedAt)"))
+    assertTrue(browserIdle.contains("setInterval(renderIdleTimer, 1000)"))
+    assertTrue(browserIdle.contains("stopIdleTimerTick()"))
   }
 
   @Test
@@ -1691,7 +1717,11 @@ class TicketStreamServiceSourceTest {
   fun foregroundGuardRequiresCheapCurrentUiProofBeforeSkippingRootProbe() {
     val source = ticketStreamServiceSource()
     val guard = source.substringBetween("private suspend fun enforceViviTicketPageIfNeeded", "private suspend fun dumpViviHierarchy")
+    val guardDelay = source.substringBetween("private fun foregroundGuardDelayMillis", "private fun foregroundGuardCanTrustLiveTicketDetailWithoutRoot")
 
+    assertTrue(source.contains("private const val VIVI_FOREGROUND_CHECK_MILLIS = 1_500L"))
+    assertTrue(source.contains("private const val VIVI_STABLE_FOREGROUND_CHECK_MILLIS = 5_000L"))
+    assertTrue(source.contains("private const val VIVI_PAGE_ENFORCE_INTERVAL_MILLIS = 5_000L"))
     assertTrue(guard.contains("recentForegroundGuardTicketDetailStillFresh(now)"))
     assertTrue(guard.contains("shouldLogForegroundGuardRecentTicketDetailSkip(now)"))
     assertTrue(guard.contains("active_guard_recent_ticket_detail"))
@@ -1719,6 +1749,11 @@ class TicketStreamServiceSourceTest {
       "stale TICKET_DETAIL memory must not suppress active-guard root checks forever",
       recentProof.contains("return nowMillis >= current.observedAtMillis")
     )
+    assertTrue(guardDelay.contains("violation != null"))
+    assertTrue(guardDelay.contains("controlSensitiveWindowActive()"))
+    assertTrue(guardDelay.contains("isBudgetedTicketState(ticketSessionState)"))
+    assertTrue(guardDelay.contains("current.state == TicketViviRecoveryState.TICKET_DETAIL"))
+    assertTrue(guardDelay.contains("VIVI_STABLE_FOREGROUND_CHECK_MILLIS"))
     assertTrue(source.contains("lastForegroundGuardRecentTicketDetailSkipAtMillis"))
     assertTrue(source.contains("FOREGROUND_GUARD_RECENT_TICKET_LOG_INTERVAL_MILLIS"))
     assertTrue(source.contains("FOREGROUND_GUARD_RECENT_TICKET_DETAIL_SKIP_MAX_AGE_MILLIS"))
