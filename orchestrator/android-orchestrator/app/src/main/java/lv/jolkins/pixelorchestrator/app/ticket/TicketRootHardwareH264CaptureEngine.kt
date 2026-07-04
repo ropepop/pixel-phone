@@ -170,16 +170,17 @@ class TicketRootHardwareH264CaptureEngine(
       width = targetWidth
       height = targetHeight
       bitrate = targetBitrate
-      fps = targetFps
       wanted = true
       if (job?.isActive == true) {
         if (previousRequest != null && previousRequest != request) {
+          fps = targetFps
           requestCaptureRestartLocked("capture_config_changed")
         } else {
           publish()
         }
         return
       }
+      fps = targetFps
       job = scope.launch(Dispatchers.IO) {
         runCaptureLoop()
       }
@@ -232,10 +233,6 @@ class TicketRootHardwareH264CaptureEngine(
         pendingKeyFrameReason = reason
       }
     }
-  }
-
-  fun requestBurst(reason: String) {
-    writeHardwareCommand("burst\n", "burst", reason)
   }
 
   fun requestControlCodeVisualProbe(reason: String) {
@@ -316,8 +313,8 @@ class TicketRootHardwareH264CaptureEngine(
       height = height,
       bitrate = bitrate,
       fps = fps,
-      steadyFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS,
-      burstFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_FPS,
+      steadyFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_FPS,
+      burstFpsTarget = null,
       intervalMode = hardwareIntervalMode(),
       currentIntervalMillis = hardwareFrameIntervalMillis(),
       colorCorrection = TicketScreenConfig.ROOT_HARDWARE_H264_COLOR_CORRECTION,
@@ -510,7 +507,7 @@ class TicketRootHardwareH264CaptureEngine(
     targetBitrate: Int,
     targetFps: Int
   ): String {
-    val commonArgs = "--source-width $sourceWidth --source-height $sourceHeight --width $width --height $height --crop-top-source ${TicketScreenConfig.TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS} --fps $targetFps --steady-fps ${TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS} --burst-hold-millis ${TicketScreenConfig.ROOT_HARDWARE_H264_BURST_HOLD_MILLIS} --bitrate $targetBitrate --keyframe-interval-millis ${TicketScreenConfig.ROOT_HARDWARE_H264_KEYFRAME_INTERVAL_MILLIS}"
+    val commonArgs = "--source-width $sourceWidth --source-height $sourceHeight --width $width --height $height --crop-top-source ${TicketScreenConfig.TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS} --fps $targetFps --bitrate $targetBitrate --keyframe-interval-millis ${TicketScreenConfig.ROOT_HARDWARE_H264_KEYFRAME_INTERVAL_MILLIS}"
     return rootCaptureHelperCommand(commonArgs)
   }
 
@@ -612,14 +609,7 @@ class TicketRootHardwareH264CaptureEngine(
     estimatedBitrate = (bitrateWindowBytes * 8_000L) / elapsed
   }
 
-  private fun hardwareIntervalMode(): String {
-    val currentFps = fps ?: return ""
-    return if (currentFps >= TicketScreenConfig.ROOT_HARDWARE_H264_FPS) {
-      "burst"
-    } else {
-      "steady"
-    }
-  }
+  private fun hardwareIntervalMode(): String = if (fps != null) "fixed" else ""
 
   private fun hardwareFrameIntervalMillis(): Long? {
     val currentFps = fps?.takeIf { it > 0 } ?: return null

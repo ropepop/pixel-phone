@@ -56,8 +56,6 @@ public final class TicketRootHardwareH264CaptureMain {
     int sourceHeight = intArg(args, "--source-height", height);
     int cropTopSource = intArg(args, "--crop-top-source", 0);
     int fps = Math.max(1, intArg(args, "--fps", 10));
-    int steadyFps = Math.max(1, intArg(args, "--steady-fps", Math.max(1, fps / 2)));
-    long burstHoldMillis = Math.max(0L, longArg(args, "--burst-hold-millis", 6_000L));
     int bitrate = Math.max(500_000, intArg(args, "--bitrate", 5_000_000));
     int keyframeMillis = Math.max(1, intArg(args, "--keyframe-interval-millis", 1_000));
     int frames = intArg(args, "--frames", 0);
@@ -78,15 +76,14 @@ public final class TicketRootHardwareH264CaptureMain {
     Surface inputSurface = null;
     OutputStream output = new BufferedOutputStream(System.out, 256 * 1024);
     AtomicBoolean syncFrameRequested = new AtomicBoolean(false);
-    AtomicLong burstUntilMillis = new AtomicLong(SystemClock.elapsedRealtime() + burstHoldMillis);
     AtomicLong controlCodeVisualProbeUntilMillis = new AtomicLong(0L);
     AtomicLong controlCodeVisualProbeLastReportMillis = new AtomicLong(0L);
     AtomicReference<String> controlCodeVisualProbeReason = new AtomicReference<>("idle");
     Thread commandThread = null;
     try {
       MediaFormat format = MediaFormat.createVideoFormat("video/avc", width, height);
-      long burstFrameIntervalMillis = Math.max(1L, Math.round(1000.0 / fps));
-      boolean allKeyFrames = keyframeMillis <= burstFrameIntervalMillis + 1L;
+      long configuredFrameIntervalMillis = Math.max(1L, Math.round(1000.0 / fps));
+      boolean allKeyFrames = keyframeMillis <= configuredFrameIntervalMillis + 1L;
       format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
       format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate);
       format.setInteger(MediaFormat.KEY_FRAME_RATE, fps);
@@ -105,13 +102,13 @@ public final class TicketRootHardwareH264CaptureMain {
       encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
       inputSurface = encoder.createInputSurface();
       encoder.start();
-      commandThread = startCommandReader(syncFrameRequested, burstUntilMillis, burstHoldMillis, controlCodeVisualProbeUntilMillis, controlCodeVisualProbeLastReportMillis, controlCodeVisualProbeReason);
+      commandThread = startCommandReader(syncFrameRequested, controlCodeVisualProbeUntilMillis, controlCodeVisualProbeLastReportMillis, controlCodeVisualProbeReason);
 
       Rect sourceCrop = new Rect(0, cropTopSource, sourceWidth, sourceHeight);
       Rect destination = new Rect(0, 0, width, height);
       Paint paint = hardwareColorCorrectionPaint();
       int sent = 0;
-      int startupBurstFrames = Math.max(4, fps);
+      int startupVisibilityFrames = Math.max(1, fps);
       int startupPrimeInputs = 1;
       int blockedOrBlankFrames = 0;
       long lastMetricAt = 0L;
@@ -119,8 +116,7 @@ public final class TicketRootHardwareH264CaptureMain {
       boolean lastVisibilityVisible = true;
       while (frames <= 0 || sent < frames) {
         long started = SystemClock.elapsedRealtime();
-        int currentTargetFps = currentTargetFps(fps, steadyFps, burstUntilMillis, started);
-        long frameIntervalMillis = Math.max(1L, Math.round(1000.0 / currentTargetFps));
+        long frameIntervalMillis = Math.max(1L, Math.round(1000.0 / fps));
         boolean explicitSyncFrame = syncFrameRequested.getAndSet(false);
         if (allKeyFrames || explicitSyncFrame) {
           requestSyncFrame(encoder);
@@ -131,7 +127,7 @@ public final class TicketRootHardwareH264CaptureMain {
         if (source == null) {
           throw new IllegalStateException("ScreenCapture returned no bitmap");
         }
-        boolean shouldProbeVisibility = sent < startupBurstFrames || started - lastVisibilityProbeAt >= VISIBILITY_PROBE_INTERVAL_MILLIS;
+        boolean shouldProbeVisibility = sent < startupVisibilityFrames || started - lastVisibilityProbeAt >= VISIBILITY_PROBE_INTERVAL_MILLIS;
         boolean visible = lastVisibilityVisible;
         if (shouldProbeVisibility) {
           lastVisibilityProbeAt = started;
@@ -141,7 +137,7 @@ public final class TicketRootHardwareH264CaptureMain {
             blockedOrBlankFrames = 0;
           } else {
             blockedOrBlankFrames += 1;
-            boolean failure = sent >= startupBurstFrames && blockedOrBlankFrames >= Math.max(4, currentTargetFps / 2);
+            boolean failure = sent >= startupVisibilityFrames && blockedOrBlankFrames >= Math.max(4, fps / 2);
             System.err.println(
               "VISIBILITY result=blocked invisible_frames=" + blockedOrBlankFrames +
                 " failure=" + failure +
@@ -185,6 +181,14 @@ public final class TicketRootHardwareH264CaptureMain {
           : 10_000L;
         long encodeStarted = SystemClock.elapsedRealtime();
         int drained = drainEncoder(encoder, output, false, drainTimeoutUs);
+        if (drained == 0 && sent == 0) {
+          long remainingFrameBudgetMillis = Math.max(1L, frameIntervalMillis - (SystemClock.elapsedRealtime() - started));
+          long startupDrainDeadline = SystemClock.elapsedRealtime() + Math.min(650L, Math.max(250L, remainingFrameBudgetMillis));
+          while (drained == 0 && SystemClock.elapsedRealtime() < startupDrainDeadline) {
+            long remainingUs = Math.max(1L, (startupDrainDeadline - SystemClock.elapsedRealtime()) * 1_000L);
+            drained += drainEncoder(encoder, output, false, Math.min(120_000L, remainingUs));
+          }
+        }
         output.flush();
         long encodeFinished = SystemClock.elapsedRealtime();
         sent += inputPosts;
@@ -196,15 +200,12 @@ public final class TicketRootHardwareH264CaptureMain {
               " draw_ms=" + (drawFinished - drawStarted) +
               " encode_ms=" + (encodeFinished - encodeStarted) +
               " frame_ms=" + elapsed +
-              " fps_target=" + currentTargetFps +
+              " fps_target=" + fps +
               " visibility=" + (visible ? "visible" : "blocked") +
               " secure_layers=true protected_content=true method=secure_screen_capture"
           );
         }
         long sleep = frameIntervalMillis - elapsed;
-        if (sent <= startupBurstFrames && drained == 0) {
-          sleep = 0L;
-        }
         if (sleep > 0L) {
           Thread.sleep(sleep);
         }
@@ -227,8 +228,6 @@ public final class TicketRootHardwareH264CaptureMain {
 
   private static Thread startCommandReader(
     AtomicBoolean syncFrameRequested,
-    AtomicLong burstUntilMillis,
-    long burstHoldMillis,
     AtomicLong controlCodeVisualProbeUntilMillis,
     AtomicLong controlCodeVisualProbeLastReportMillis,
     AtomicReference<String> controlCodeVisualProbeReason
@@ -240,14 +239,10 @@ public final class TicketRootHardwareH264CaptureMain {
           String cmd = line.trim();
           if (cmd.equals("keyframe")) {
             syncFrameRequested.set(true);
-            extendBurst(burstUntilMillis, burstHoldMillis);
-          } else if (cmd.equals("burst")) {
-            extendBurst(burstUntilMillis, burstHoldMillis);
           } else if (cmd.equals("control_code_visual_probe")) {
             controlCodeVisualProbeReason.set("control_code_after_ok");
             controlCodeVisualProbeLastReportMillis.set(0L);
             controlCodeVisualProbeUntilMillis.set(SystemClock.elapsedRealtime() + CONTROL_CODE_VISUAL_PROBE_MILLIS);
-            extendBurst(burstUntilMillis, burstHoldMillis);
           }
         }
       } catch (Throwable ignored) {
@@ -257,21 +252,6 @@ public final class TicketRootHardwareH264CaptureMain {
     thread.setDaemon(true);
     thread.start();
     return thread;
-  }
-
-  private static void extendBurst(AtomicLong burstUntilMillis, long burstHoldMillis) {
-    long target = SystemClock.elapsedRealtime() + burstHoldMillis;
-    long previous;
-    do {
-      previous = burstUntilMillis.get();
-      if (previous >= target) {
-        return;
-      }
-    } while (!burstUntilMillis.compareAndSet(previous, target));
-  }
-
-  private static int currentTargetFps(int burstFps, int steadyFps, AtomicLong burstUntilMillis, long nowMillis) {
-    return nowMillis <= burstUntilMillis.get() ? burstFps : steadyFps;
   }
 
   private static void requestSyncFrame(MediaCodec encoder) {

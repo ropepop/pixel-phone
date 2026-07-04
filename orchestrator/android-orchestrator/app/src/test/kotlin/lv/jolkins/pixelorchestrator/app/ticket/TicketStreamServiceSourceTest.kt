@@ -50,6 +50,53 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
+  fun activeStreamReuseSkipsHeavyPhonePreflightWhenFresh() {
+    val source = ticketStreamServiceSource()
+    val start = source.substringBetween(
+      "private suspend fun startTicketSessionLocked()",
+      "private fun tryReuseActiveHardwareStreamBeforePreflight"
+    )
+    val preflight = source.substringBetween(
+      "private fun tryReuseActiveHardwareStreamBeforePreflight",
+      "private fun reuseActiveHardwareStream"
+    )
+    val reuse = source.substringBetween(
+      "private fun reuseActiveHardwareStream",
+      "private fun canReuseActiveHardwareStreamWithoutRootRevalidation"
+    )
+
+    assertTrue(start.contains("tryReuseActiveHardwareStreamBeforePreflight()?.let { return it }"))
+    assertTrue(start.indexOf("tryReuseActiveHardwareStreamBeforePreflight") < start.indexOf("PhonePortraitLock.force(inputRootExecutor)"))
+    assertTrue(start.indexOf("tryReuseActiveHardwareStreamBeforePreflight") < start.indexOf("TicketPackageSupport.isInstalled"))
+    assertTrue(preflight.contains("canReuseActiveHardwareStreamWithoutRootRevalidation(\"session_start_active_preflight\")"))
+    assertTrue(preflight.contains("reuseActiveHardwareStream("))
+    assertTrue(reuse.contains("updateTicketSessionState(TICKET_SESSION_LIVE, reason)"))
+    assertTrue(reuse.contains("ensureEncoderIfPossible()"))
+    assertTrue(reuse.contains("return TicketSessionResponse(ok = true, state = \"active\""))
+  }
+
+  @Test
+  fun videoReconnectsStayOnFixedCadenceAndRequestKeyframes() {
+    val source = ticketStreamServiceSource()
+    val accept = source.substringBetween("private suspend fun acceptWebSocket", "private suspend fun handleClientCommand")
+    val warmStart = source.substringBetween(
+      "private fun sendConfigAndWarmStart",
+      "private fun sendCachedKeyFrameOrRequest"
+    )
+
+    assertFalse(source.contains("lastRootH264BurstRequestedAtMillis"))
+    assertFalse(source.contains("ROOT_HARDWARE_H264_BURST_REQUEST_MIN_INTERVAL_MILLIS"))
+    assertFalse(source.contains("private fun requestRootHardwareH264Burst"))
+    assertFalse(source.contains("rootHardwareH264CaptureEngine.requestBurst"))
+    assertTrue(source.contains("private const val ACTIVE_STREAM_REUSE_TICKET_DETAIL_MAX_AGE_MILLIS = 5 * 60_000L"))
+    assertFalse(accept.contains("requestRootHardwareH264Burst(\"video_client_connected\")"))
+    assertFalse(accept.contains("rootHardwareH264CaptureEngine.requestBurst(\"video_client_connected\")"))
+    assertFalse(warmStart.contains("requestRootHardwareH264Burst(\"video_client_warm_start\")"))
+    assertFalse(warmStart.contains("rootHardwareH264CaptureEngine.requestBurst(\"video_client_warm_start\")"))
+    assertTrue(warmStart.contains("sendCachedKeyFrameOrRequest(client, \"video_client_warm_start\")"))
+  }
+
+  @Test
   fun staleHardwareUnreliableLatchClearsOnlyAfterRootProbePasses() {
     val source = ticketStreamServiceSource()
     val engine = rootHardwareH264CaptureEngineSource()
@@ -118,6 +165,50 @@ class TicketStreamServiceSourceTest {
     assertTrue(source.contains("desiredRecoveryStage = spacetimeDesiredRecoveryStage"))
     assertTrue(worker.contains("pixel_direct_desired_recovery_started"))
     assertTrue(worker.contains("pixel_direct_desired_recovery_${'$'}{if (result.ok) \"succeeded\" else \"failed\"}"))
+  }
+
+  @Test
+  fun pixelTraceEventsCarryFreshFrameAgeToSpacetime() {
+    val source = ticketStreamServiceSource()
+    val worker = ticketSpacetimeWorkerSource()
+    val streamClientDetail = source.substringBetween(
+      "private fun streamClientTraceDetail",
+      "private fun recordClientTelemetry"
+    )
+    val tracePayload = source.substringBetween(
+      "private fun enqueueTicketSpacetimeTraceEvent",
+      "private fun shouldPublishTicketTraceEvent"
+    )
+    val workerTrace = worker.substringBetween(
+      "private suspend fun publishTicketTraceEvent",
+      "private fun JsonObject.string"
+    )
+
+    assertTrue(streamClientDetail.contains("last_fresh_frame_age_ms=${'$'}frameAgeMillis"))
+    assertTrue(streamClientDetail.contains("h264_state=${'$'}{h264.state}"))
+    assertTrue(streamClientDetail.contains("h264_active=${'$'}{h264.active}"))
+    assertTrue(tracePayload.contains("val frameAgeMillis = ageMillis(lastFrameSentAtMillis, nowMillis) ?: -1L"))
+    assertTrue(tracePayload.contains("val h264 = hardwareCaptureSnapshot"))
+    assertTrue(tracePayload.contains("put(\"lastFreshFrameAgeMillis\", frameAgeMillis.toString())"))
+    assertTrue(tracePayload.contains("put(\"phoneUptimeMillis\", nowMillis.toString())"))
+    assertTrue(tracePayload.contains("put(\"hardwareH264State\", h264.state)"))
+    assertTrue(tracePayload.contains("put(\"hardwareH264Active\", h264.active.toString())"))
+    assertTrue(tracePayload.contains("put(\"hardwareH264Available\", h264.available.toString())"))
+    assertTrue(tracePayload.contains("put(\"hardwareH264Restarts\", h264.restartCount.toString())"))
+    assertTrue(tracePayload.contains("put(\"hardwareH264LastFrameAgeMillis\", h264.lastFrameAgoMillis?.toString().orEmpty())"))
+    assertTrue(tracePayload.contains("put(\"hardwareH264HelperState\", h264.captureHelperState)"))
+    assertTrue(tracePayload.contains("put(\"hardwareH264Visibility\", h264.lastVisibilityCheckResult)"))
+    assertTrue(tracePayload.contains("put(\"lastStreamRecoveryResult\", lastStreamRecoveryResult)"))
+    assertTrue(tracePayload.contains("put(\"lastStreamRecoveryAgeMillis\", ageMillis(lastStreamRecoveryAtMillis, nowMillis)?.toString().orEmpty())"))
+    assertTrue(tracePayload.contains("put(\"streamWatchdogStage\", streamWatchdogStage)"))
+    assertTrue(tracePayload.contains("put(\"lastVideoClientAgeMillis\", ageMillis(lastVideoClientConnectedAtMillis, nowMillis)?.toString().orEmpty())"))
+    assertTrue(workerTrace.contains("put(\"lastFreshFrameAgeMillis\", payload.string(\"lastFreshFrameAgeMillis\"))"))
+    assertTrue(workerTrace.contains("put(\"phoneUptimeMillis\", payload.string(\"phoneUptimeMillis\"))"))
+    assertTrue(workerTrace.contains("put(\"hardwareH264State\", payload.string(\"hardwareH264State\"))"))
+    assertTrue(workerTrace.contains("put(\"hardwareH264Restarts\", payload.string(\"hardwareH264Restarts\"))"))
+    assertTrue(workerTrace.contains("put(\"lastStreamRecoveryResult\", payload.string(\"lastStreamRecoveryResult\"))"))
+    assertTrue(workerTrace.contains("put(\"streamWatchdogStage\", payload.string(\"streamWatchdogStage\"))"))
+    assertTrue(workerTrace.contains("put(\"lastVideoClientAgeMillis\", payload.string(\"lastVideoClientAgeMillis\"))"))
   }
 
   @Test
@@ -231,6 +322,8 @@ class TicketStreamServiceSourceTest {
     assertTrue(worker.contains("pixel_direct_desired_state_observed"))
     assertTrue(worker.contains("pixel_direct_phone_report_update"))
     assertTrue(worker.contains("pixel_direct_keyframe_while_stream_inactive"))
+    assertTrue(worker.contains("safeOperationalLogId(\"pixel_ticket_direct\", event, correlationId)"))
+    assertTrue(worker.contains("private fun safeOperationalLogId("))
     assertTrue(worker.contains("if (key == lastDesiredTraceKey)"))
     assertTrue(worker.contains("if (key == lastPhoneReportTraceKey)"))
     assertFalse(worker.contains("TRACE_HEARTBEAT_MILLIS"))
@@ -321,9 +414,9 @@ class TicketStreamServiceSourceTest {
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_CAPTURE_MODE = \"root_hardware_h264\""))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_TARGET_WIDTH = 720"))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_QUALITY_PROFILE = \"hardware_h264_light_marker_low_latency\""))
-    assertTrue(config.contains("const val ROOT_HARDWARE_H264_FPS = 8"))
+    assertTrue(config.contains("const val ROOT_HARDWARE_H264_FPS = 1"))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_STEADY_FPS = 1"))
-    assertTrue(config.contains("const val ROOT_HARDWARE_H264_BURST_HOLD_MILLIS = 6_000L"))
+    assertTrue(config.contains("const val ROOT_HARDWARE_H264_BURST_HOLD_MILLIS = 0L"))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_BITRATE = 1_200_000"))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_KEYFRAME_INTERVAL_MILLIS = 1000"))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_COLOR_CORRECTION = \"red_blue_swap_gpu_paint\""))
@@ -346,18 +439,20 @@ class TicketStreamServiceSourceTest {
     assertTrue(helper.contains("MediaFormat.KEY_I_FRAME_INTERVAL"))
     assertTrue(helper.contains("allKeyFrames ? 0"))
     assertTrue(helper.contains("if (allKeyFrames || explicitSyncFrame)"))
-    assertTrue(helper.contains("--steady-fps"))
-    assertTrue(helper.contains("--burst-hold-millis"))
-    assertTrue(helper.contains("AtomicLong burstUntilMillis"))
-    assertTrue(helper.contains("currentTargetFps"))
+    assertFalse(helper.contains("--steady-fps"))
+    assertFalse(helper.contains("--burst-hold-millis"))
+    assertFalse(helper.contains("AtomicLong burstUntilMillis"))
+    assertFalse(helper.contains("currentTargetFps"))
     assertTrue(helper.contains("fps_target="))
-    assertTrue(helper.contains("cmd.equals(\"burst\")"))
+    assertFalse(helper.contains("cmd.equals(\"burst\")"))
+    assertFalse(helper.contains("extendBurst("))
     assertTrue(engine.contains("fields[\"fps_target\"]"))
-    assertTrue(engine.contains("steadyFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS"))
-    assertTrue(engine.contains("burstFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_FPS"))
+    assertTrue(engine.contains("steadyFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_FPS"))
+    assertTrue(engine.contains("burstFpsTarget = null"))
     assertTrue(engine.contains("intervalMode = hardwareIntervalMode()"))
     assertTrue(engine.contains("currentIntervalMillis = hardwareFrameIntervalMillis()"))
-    assertTrue(engine.contains("\"burst\\n\""))
+    assertTrue(engine.contains("private fun hardwareIntervalMode(): String = if (fps != null) \"fixed\" else \"\""))
+    assertFalse(engine.contains("\"burst\\n\""))
     assertFalse(source.contains("hardware_h264_non_key_frame_dropped"))
     assertTrue(source.contains("hardware_h264_waiting_initial_key_frame"))
     assertTrue(source.contains("!frame.keyFrame && latestKeyFrameEnvelope == null"))
@@ -493,7 +588,7 @@ class TicketStreamServiceSourceTest {
   fun hardwareH264HelperDrainsAfterFirstStartupInput() {
     val helper = rootHardwareH264CaptureMainSource()
 
-    assertTrue(helper.contains("int startupBurstFrames = Math.max(4, fps);"))
+    assertTrue(helper.contains("int startupVisibilityFrames = Math.max(1, fps);"))
     assertTrue(helper.contains("int startupPrimeInputs = 1;"))
     assertTrue(helper.contains("int inputPosts = sent == 0 ? startupPrimeInputs : 1;"))
     assertTrue(helper.contains("for (int post = 0; post < inputPosts; post++)"))
@@ -501,8 +596,8 @@ class TicketStreamServiceSourceTest {
     assertFalse("startup priming must not do multiple slow screen captures before first encoder output", helper.contains("for (int post = 0; post < inputPosts; post++) {\n        CapturedFrame source = capture.capture();"))
     assertTrue(helper.contains("int drained = drainEncoder(encoder, output, false, drainTimeoutUs);"))
     assertTrue(helper.indexOf("writeAnnexB(output, data);") < helper.indexOf("output.write(ACCESS_UNIT_DELIMITER);"))
-    assertTrue(helper.contains("if (sent <= startupBurstFrames && drained == 0) {"))
-    assertTrue(helper.contains("sleep = 0L;"))
+    assertFalse(helper.contains("if (sent <= startupBurstFrames && drained == 0) {"))
+    assertFalse(helper.contains("sleep = 0L;"))
   }
 
   @Test
@@ -631,7 +726,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(activeBranch.contains("activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264"))
     assertTrue(activeBranch.contains("!hardwareCaptureVerified"))
     assertTrue(activeBranch.contains("TicketSessionResponse(ok = true, state = \"starting\""))
-    assertTrue(activeBranch.indexOf("!hardwareCaptureVerified") < activeBranch.indexOf("updateTicketSessionState(TICKET_SESSION_LIVE, \"session_start_already_active\")"))
+    assertTrue(activeBranch.indexOf("!hardwareCaptureVerified") < activeBranch.indexOf("reuseActiveHardwareStream("))
     assertTrue(activeBranch.indexOf("TicketSessionResponse(ok = true, state = \"starting\"") < activeBranch.indexOf("ensureEncoderIfPossible()"))
   }
 
@@ -809,6 +904,28 @@ class TicketStreamServiceSourceTest {
     assertTrue(detach.contains("rootHardwareH264CaptureEngine.stop(reason)"))
     assertTrue(detach.contains("resetFrameEpoch(\"client_detached_${'$'}reason\", active = false)"))
     assertFalse(detach.contains("stopProjection()"))
+  }
+
+  @Test
+  fun ticketStreamPublishesPixelRecoveryEvidenceRows() {
+    val source = ticketStreamServiceSource()
+    val websocket = source.substringBetween("private suspend fun acceptWebSocket", "private suspend fun handleClientCommand")
+    val clientDetail = source.substringBetween("private fun streamClientTraceDetail", "private fun recordClientTelemetry")
+    val stateChanged = source.substringBetween("private fun handleRootHardwareH264CaptureStateChanged", "private fun unexpectedHardwareEncoderRestart")
+    val restart = source.substringBetween("private fun restartActiveStreamEngine", "private fun scheduleStreamWatchdog")
+    val watchdog = source.substringBetween("private fun evaluateStreamWatchdog", "private fun configMessage")
+    val frame = source.substringBetween("private fun handleRootHardwareH264CaptureFrame", "private fun scheduleRootHardwareSecureCaptureProbe")
+
+    assertTrue(websocket.contains("recordTicketEvent(\"stream_client_opened\", streamClientTraceDetail(info, \"opened\"))"))
+    assertTrue(websocket.contains("recordTicketEvent(\"stream_client_closed\", streamClientTraceDetail(info, \"closed\"))"))
+    assertTrue(websocket.contains("pageVersion = queryParam(query, \"pageVersion\") ?: queryParam(query, \"page_version\")"))
+    assertTrue(clientDetail.contains("frame_age_ms="))
+    assertTrue(clientDetail.contains("recovery=${'$'}lastStreamRecoveryResult"))
+    assertTrue(stateChanged.contains("recordTicketEvent(\n        \"hardware_h264_health_changed\""))
+    assertTrue(restart.contains("recordTicketEvent(\n      \"stream_recovery_started\""))
+    assertTrue(watchdog.contains("recordTicketEvent(\n          \"stream_recovery_completed\""))
+    assertTrue(source.contains("recordTicketEvent(\"stream_recovery_failed\""))
+    assertTrue(frame.contains("recordTicketEvent(\n          \"stream_recovery_completed\""))
   }
 
   @Test
@@ -1631,17 +1748,20 @@ class TicketStreamServiceSourceTest {
   fun hardwareKeyframeRequestReachesRunningEncoderHelper() {
     val engine = rootHardwareH264CaptureEngineSource()
     val helper = rootHardwareH264CaptureMainSource()
+    val keyframeBranch = helper.substringBetween("if (cmd.equals(\"keyframe\")) {", "} else if (cmd.equals(\"control_code_visual_probe\"))")
 
     assertTrue(engine.contains("private fun writeHardwareKeyFrameRequest(reason: String): Boolean"))
     assertTrue(engine.contains("encoderProcess?.outputStream"))
     assertTrue(engine.contains("\"keyframe\\n\""))
     assertTrue(engine.contains("flush()"))
     assertTrue(helper.contains("AtomicBoolean"))
-    assertTrue(helper.contains("AtomicLong burstUntilMillis"))
-    assertTrue(helper.contains("startCommandReader(syncFrameRequested, burstUntilMillis, burstHoldMillis, controlCodeVisualProbeUntilMillis, controlCodeVisualProbeLastReportMillis, controlCodeVisualProbeReason)"))
+    assertFalse(helper.contains("AtomicLong burstUntilMillis"))
+    assertTrue(helper.contains("startCommandReader(syncFrameRequested, controlCodeVisualProbeUntilMillis, controlCodeVisualProbeLastReportMillis, controlCodeVisualProbeReason)"))
     assertTrue(helper.contains("MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME"))
     assertTrue(helper.contains("encoder.setParameters(params)"))
-    assertTrue(helper.contains("extendBurst(burstUntilMillis, burstHoldMillis)"))
+    assertTrue(keyframeBranch.contains("syncFrameRequested.set(true)"))
+    assertFalse(helper.contains("cmd.equals(\"burst\")"))
+    assertFalse(helper.contains("extendBurst("))
   }
 
   @Test
@@ -1722,10 +1842,23 @@ class TicketStreamServiceSourceTest {
     assertTrue(source.contains("private const val VIVI_FOREGROUND_CHECK_MILLIS = 1_500L"))
     assertTrue(source.contains("private const val VIVI_STABLE_FOREGROUND_CHECK_MILLIS = 5_000L"))
     assertTrue(source.contains("private const val VIVI_PAGE_ENFORCE_INTERVAL_MILLIS = 5_000L"))
+    assertTrue(source.contains("private const val VIVI_STABLE_PAGE_ENFORCE_INTERVAL_MILLIS = 30_000L"))
+    assertTrue(source.contains("private const val VIVI_STABLE_PAGE_ENFORCE_MEMORY_MAX_AGE_MILLIS = 60_000L"))
+    assertTrue(guard.contains("viviPageEnforceIntervalMillis(now)"))
+    assertTrue(source.contains("private fun stableLiveTicketDetailForSlowActiveGuard(nowMillis: Long): Boolean"))
     assertTrue(guard.contains("recentForegroundGuardTicketDetailStillFresh(now)"))
     assertTrue(guard.contains("shouldLogForegroundGuardRecentTicketDetailSkip(now)"))
     assertTrue(guard.contains("active_guard_recent_ticket_detail"))
     assertTrue(guard.contains("observeFastViviState(\"active_guard:${'$'}reason\")"))
+    assertTrue(
+      "stable live ticket streaming should slow only the heavy active-guard hierarchy proof before sampling the current UI",
+      guard.indexOf("viviPageEnforceIntervalMillis(now)") < guard.indexOf("observeFastViviState(\"active_guard:${'$'}reason\")")
+    )
+    val stableProof = source.substringBetween("private fun stableLiveTicketDetailForSlowActiveGuard", "private suspend fun dumpViviHierarchy")
+    assertTrue(stableProof.contains("ticketSessionState != TICKET_SESSION_LIVE"))
+    assertTrue(stableProof.contains("controlSensitiveWindowActive()"))
+    assertTrue(stableProof.contains("current.state != TicketViviRecoveryState.TICKET_DETAIL"))
+    assertTrue(stableProof.contains("VIVI_STABLE_PAGE_ENFORCE_MEMORY_MAX_AGE_MILLIS"))
     val fastIndex = guard.indexOf("observeFastViviState(\"active_guard:${'$'}reason\")")
     val recentIndex = guard.indexOf("recentForegroundGuardTicketDetailStillFresh(now)")
     val rootIndex = guard.indexOf("observeRootViviState(")
@@ -1785,7 +1918,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(
       "the fast reuse path must be able to publish active before the fallback recovery path runs",
       active.indexOf("canReuseActiveHardwareStreamWithoutRootRevalidation(\"session_start_already_active\")") <
-        active.indexOf("updateTicketSessionState(TICKET_SESSION_LIVE, \"session_start_already_active\")")
+        active.indexOf("reuseActiveHardwareStream(")
     )
     assertTrue(reuse.contains("lastFrameSentAtMillis"))
     assertTrue(reuse.contains("LIVE_FRAME_MAX_AGE_MILLIS"))
@@ -2006,6 +2139,19 @@ class TicketStreamServiceSourceTest {
     assertTrue(keyframe.contains("rootHardwareH264CaptureEngine.requestKeyFrame(reason)"))
     assertFalse(keyframe.contains("rootFfmpegH264CaptureEngine.requestKeyFrame(reason)"))
     assertTrue(source.contains("private fun activeStreamStaleForRecovery(nowMillis: Long): Boolean"))
+  }
+
+  @Test
+  fun recoverStreamKeepsFreshHardwareStreamActive() {
+    val source = ticketStreamServiceSource()
+    val recover = source.substringBetween("private suspend fun recoverTicketSession", "private fun recoverTicketSessionReason")
+    val fresh = source.substringBetween("private fun activeHardwareStreamFreshForRecovery", "private fun recoverTicketSessionReason")
+
+    assertTrue(recover.contains("activeHardwareStreamFreshForRecovery(nowMillis)"))
+    assertTrue(recover.contains("stream_recovery_kept_active"))
+    assertTrue(recover.indexOf("activeHardwareStreamFreshForRecovery(nowMillis)") < recover.indexOf("restartActiveStreamEngine(\"remote_${'$'}reason\")"))
+    assertTrue(fresh.contains("frameAgeMillis <= LIVE_FRAME_MAX_AGE_MILLIS"))
+    assertTrue(fresh.contains("!hardwareCaptureVerified"))
   }
 
   @Test
@@ -3035,7 +3181,40 @@ class TicketStreamServiceSourceTest {
     assertTrue(
       "unsafe ViVi states should get a bounded ticket-detail recovery attempt before being reported as request failures",
       verifiedOpen.indexOf("recoverTicketDetailForControlCodeRequest(") <
-        verifiedOpen.indexOf("control_code_request_unsafe_state")
+      verifiedOpen.indexOf("control_code_request_unsafe_state")
+    )
+  }
+
+  @Test
+  fun duplicateControlCodeRequestsReuseStateInsteadOfReplayingPhoneWork() {
+    val source = ticketStreamServiceSource()
+    val handler = source.substringBetween("private suspend fun handleGenerateControlCode(", "private suspend fun handleGenerateRigasSatiksmeMonthlyTicketQr(")
+    val sender = source.substringBetween("private fun sendTicketStateEvent", "private fun sendControlCodeResult")
+    val duplicateGuard = source.substringBetween("private fun replayCachedControlCodeStateEvent", "private fun rememberControlCodeResult")
+
+    assertTrue(source.contains("recentControlCodeStateEventMessages"))
+    assertTrue(source.contains("recentControlCodeStateEventOrder"))
+    assertTrue(handler.contains("replayCachedControlCodeStateEvent(replyClient, cleanRequestId)"))
+    assertTrue(handler.contains("controlCodeRequestDuplicateActiveOrCompleted(cleanRequestId)"))
+    assertTrue(
+      "duplicate requests must be handled before taking the control-code mutex and running phone input",
+      handler.indexOf("replayCachedControlCodeStateEvent(replyClient, cleanRequestId)") <
+        handler.indexOf("controlCodeRequestMutex.withLock")
+    )
+    assertTrue(
+      "queued duplicates must be checked again after the mutex wait",
+      handler.indexOf("controlCodeRequestMutex.withLock") <
+        handler.lastIndexOf("replayCachedControlCodeStateEvent(replyClient, cleanRequestId)")
+    )
+    assertTrue(sender.contains("rememberControlCodeStateEvent(requestId, ticketState, message)"))
+    assertTrue(duplicateGuard.contains("replyClient?.sendText(message)"))
+    assertTrue(duplicateGuard.contains("lastControlCodeRequestStatus)"))
+    assertTrue(duplicateGuard.contains("\"running\" -> true"))
+    assertTrue(duplicateGuard.contains("\"succeeded\" -> completedAgeMillis in 0..CONTROL_CODE_RESULT_CACHE_TTL_MILLIS"))
+    assertTrue(duplicateGuard.contains("control_code_request_duplicate_ignored"))
+    assertFalse(
+      "a duplicate completed request should not fall through to the input delivery path",
+      duplicateGuard.contains("runFastControlCodeDeliveryForRequest")
     )
   }
 
