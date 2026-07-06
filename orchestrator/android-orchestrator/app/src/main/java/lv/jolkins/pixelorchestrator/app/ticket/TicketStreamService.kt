@@ -421,6 +421,7 @@ class TicketStreamService : Service() {
   @Volatile private var lastKeyFrameEncodedAtMillis: Long = 0L
   @Volatile private var lastFrameSentAtMillis: Long = 0L
   @Volatile private var lastKeyFrameRequestedAtMillis: Long = 0L
+  @Volatile private var pendingStartupKeyFrameReason: String? = null
   @Volatile private var lastVideoClientConnectedAtMillis: Long = 0L
   @Volatile private var secureWindowCaptureBypassActive: Boolean = false
   @Volatile private var secureWindowCaptureBypassMessage: String = "Secure-window capture bypass is inactive"
@@ -1205,6 +1206,29 @@ class TicketStreamService : Service() {
 
   internal fun ticketSpacetimeHealthJson(): String = json.encodeToString(health())
 
+  internal fun ticketSpacetimeCompactHealthJson(): String {
+    val nowMillis = SystemClock.elapsedRealtime()
+    val h264 = rootHardwareH264CaptureEngine.snapshot(nowMillis)
+    return buildJsonObject {
+      put("streamActive", streamActive)
+      put("sessionState", ticketSessionState)
+      put("streamState", ticketSpacetimeStreamState())
+      put("captureMode", activeCaptureMode)
+      put("videoClients", videoClients.size)
+      put("hardwareH264State", h264.state)
+      put("hardwareH264Active", h264.active)
+      put("hardwareH264Available", h264.available)
+      put("hardwareH264HelperState", h264.captureHelperState)
+      put("hardwareH264Visibility", h264.lastVisibilityCheckResult)
+      put("lastStreamRecoveryResult", lastStreamRecoveryResult)
+      put("streamWatchdogStage", streamWatchdogStage)
+      put("lastStreamWatchdogAction", lastStreamWatchdogAction)
+      put("desiredRecoveryStage", spacetimeDesiredRecoveryStage)
+      put("lastDesiredRecoveryResult", lastSpacetimeDesiredRecoveryResult)
+      put("controlCodeStatus", lastControlCodeRequestStatus)
+    }.toString()
+  }
+
   internal fun drainTicketSpacetimePhoneMessages(): List<String> {
     synchronized(ticketSpacetimePhoneMessagesLock) {
       if (ticketSpacetimePhoneMessages.isEmpty()) {
@@ -1924,6 +1948,24 @@ class TicketStreamService : Service() {
         persistRuntimeState("session_recover_kept_active_$reason")
         return TicketSessionResponse(ok = true, state = TICKET_SESSION_LIVE, message = lastMessage)
       }
+      if (activeHardwareStreamStartingForRecovery(nowMillis)) {
+        lastMessage = "Ticket stream is already starting"
+        updateTicketSessionState(TICKET_SESSION_STARTING, "session_recover_waiting_first_frame_$reason")
+        lastStreamWatchdogAction = "wait_first_frame"
+        lastStreamWatchdogReason = "remote_$reason"
+        lastStreamRecoveryResult = "started"
+        lastStreamRecoveryFailureReason = null
+        lastStreamRecoveryAtMillis = nowMillis
+        recordTicketEvent(
+          "stream_recovery_waiting_active",
+          "reason=remote_$reason encoder_start_age_ms=${ageMillis(lastEncoderStartAtMillis, nowMillis) ?: -1L} clients=${videoClients.size}"
+        )
+        rootHardwareH264CaptureEngine.requestKeyFrame("session_recover_waiting_first_frame:$reason")
+        ensureRootHardwareH264CaptureIfPossible()
+        broadcastStatus()
+        persistRuntimeState("session_recover_waiting_first_frame_$reason")
+        return TicketSessionResponse(ok = true, state = TICKET_SESSION_STARTING, message = lastMessage)
+      }
       lastMessage = "Recovering the active H.264 ticket stream"
       updateTicketSessionState(TICKET_SESSION_STARTING, "session_recover_$reason")
       restartActiveStreamEngine("remote_$reason")
@@ -1943,6 +1985,25 @@ class TicketStreamService : Service() {
     }
     val frameAgeMillis = ageMillis(lastFrameSentAtMillis, nowMillis) ?: return false
     return frameAgeMillis <= LIVE_FRAME_MAX_AGE_MILLIS
+  }
+
+  private fun activeHardwareStreamStartingForRecovery(nowMillis: Long): Boolean {
+    if (!streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264) {
+      return false
+    }
+    if (ticketSessionState == TICKET_SESSION_NEEDS_ATTENTION || lastRootH264BlankProbeResult == "secure_capture_blocked") {
+      return false
+    }
+    val health = rootHardwareH264CaptureEngine.snapshot(nowMillis)
+    if (!health.active && health.state != "starting" && health.state != "restarting") {
+      return false
+    }
+    val frameAgeMillis = ageMillis(lastFrameSentAtMillis, nowMillis)
+    if (frameAgeMillis != null && frameAgeMillis <= LIVE_FRAME_MAX_AGE_MILLIS) {
+      return true
+    }
+    val encoderStartAgeMillis = ageMillis(lastEncoderStartAtMillis, nowMillis)
+    return encoderStartAgeMillis == null || encoderStartAgeMillis < STREAM_WATCHDOG_NO_FRAME_RESTART_MILLIS
   }
 
   private fun recoverTicketSessionReason(body: String): String {
@@ -3424,10 +3485,17 @@ class TicketStreamService : Service() {
         targetWidth = size.width,
         targetHeight = size.height,
         targetBitrate = TicketScreenConfig.ROOT_HARDWARE_H264_BITRATE,
-        targetFps = TicketScreenConfig.ROOT_HARDWARE_H264_FPS
+        targetFps = TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS,
+        startupFps = TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FPS,
+        startupFrameCount = TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FRAMES
       )
+      val pendingStartupKeyFrame = pendingStartupKeyFrameReason
+      pendingStartupKeyFrameReason = null
+      if (!pendingStartupKeyFrame.isNullOrBlank()) {
+        rootHardwareH264CaptureEngine.requestKeyFrame("startup_pending:$pendingStartupKeyFrame")
+      }
       hardwareCaptureSnapshot = rootHardwareH264CaptureEngine.snapshot()
-      recordStartupTracePhase("root_capture_start_requested", "width=${size.width} height=${size.height} fps=${TicketScreenConfig.ROOT_HARDWARE_H264_FPS}", once = true)
+      recordStartupTracePhase("root_capture_start_requested", "width=${size.width} height=${size.height} fps=${TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS} startup_fps=${TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FPS} startup_frames=${TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FRAMES}", once = true)
       scheduleStreamWatchdog("root_capture_start_requested")
     }
   }
@@ -3938,6 +4006,11 @@ class TicketStreamService : Service() {
     lastKeyFrameRequestedAtMillis = nowMillis
     keyFrameRequests += 1
     recordStartupTracePhase("keyframe_requested", reason, once = true)
+    if (!streamActive || activeCaptureMode == CAPTURE_MODE_IDLE) {
+      pendingStartupKeyFrameReason = reason
+      recordTicketEvent("keyframe_held_for_startup", reason)
+      return
+    }
     if (activeStreamStaleForRecovery(nowMillis)) {
       restartActiveStreamEngine("stale_keyframe_request_$reason")
     } else if (reason == "viewport_changed" && activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264) {

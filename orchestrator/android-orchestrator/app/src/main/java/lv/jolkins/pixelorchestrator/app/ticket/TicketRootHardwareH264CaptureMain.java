@@ -55,7 +55,10 @@ public final class TicketRootHardwareH264CaptureMain {
     int sourceWidth = intArg(args, "--source-width", width);
     int sourceHeight = intArg(args, "--source-height", height);
     int cropTopSource = intArg(args, "--crop-top-source", 0);
-    int fps = Math.max(1, intArg(args, "--fps", 10));
+    int steadyFps = Math.max(1, intArg(args, "--fps", 10));
+    int startupFps = Math.max(steadyFps, intArg(args, "--startup-fps", steadyFps));
+    int startupFrames = Math.max(0, intArg(args, "--startup-frames", 0));
+    int encoderFps = Math.max(steadyFps, startupFrames > 0 ? startupFps : steadyFps);
     int bitrate = Math.max(500_000, intArg(args, "--bitrate", 5_000_000));
     int keyframeMillis = Math.max(1, intArg(args, "--keyframe-interval-millis", 1_000));
     int frames = intArg(args, "--frames", 0);
@@ -75,21 +78,21 @@ public final class TicketRootHardwareH264CaptureMain {
     MediaCodec encoder = MediaCodec.createEncoderByType("video/avc");
     Surface inputSurface = null;
     OutputStream output = new BufferedOutputStream(System.out, 256 * 1024);
-    AtomicBoolean syncFrameRequested = new AtomicBoolean(false);
+    AtomicBoolean syncFrameRequested = new AtomicBoolean(true);
     AtomicLong controlCodeVisualProbeUntilMillis = new AtomicLong(0L);
     AtomicLong controlCodeVisualProbeLastReportMillis = new AtomicLong(0L);
     AtomicReference<String> controlCodeVisualProbeReason = new AtomicReference<>("idle");
     Thread commandThread = null;
     try {
       MediaFormat format = MediaFormat.createVideoFormat("video/avc", width, height);
-      long configuredFrameIntervalMillis = Math.max(1L, Math.round(1000.0 / fps));
+      long configuredFrameIntervalMillis = Math.max(1L, Math.round(1000.0 / encoderFps));
       boolean allKeyFrames = keyframeMillis <= configuredFrameIntervalMillis + 1L;
       format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
       format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate);
-      format.setInteger(MediaFormat.KEY_FRAME_RATE, fps);
+      format.setInteger(MediaFormat.KEY_FRAME_RATE, encoderFps);
       format.setInteger(MediaFormat.KEY_PRIORITY, 0);
       format.setInteger(MediaFormat.KEY_LATENCY, 0);
-      format.setInteger(MediaFormat.KEY_OPERATING_RATE, fps);
+      format.setInteger(MediaFormat.KEY_OPERATING_RATE, encoderFps);
       if (supportsCbrBitrateMode(encoder)) {
         format.setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR);
       }
@@ -108,7 +111,7 @@ public final class TicketRootHardwareH264CaptureMain {
       Rect destination = new Rect(0, 0, width, height);
       Paint paint = hardwareColorCorrectionPaint();
       int sent = 0;
-      int startupVisibilityFrames = Math.max(1, fps);
+      int startupVisibilityFrames = Math.max(1, startupFrames > 0 ? startupFrames : steadyFps);
       int startupPrimeInputs = 1;
       int blockedOrBlankFrames = 0;
       long lastMetricAt = 0L;
@@ -116,9 +119,10 @@ public final class TicketRootHardwareH264CaptureMain {
       boolean lastVisibilityVisible = true;
       while (frames <= 0 || sent < frames) {
         long started = SystemClock.elapsedRealtime();
-        long frameIntervalMillis = Math.max(1L, Math.round(1000.0 / fps));
+        int currentTargetFps = startupFrames > 0 && sent < startupFrames ? startupFps : steadyFps;
+        long frameIntervalMillis = Math.max(1L, Math.round(1000.0 / currentTargetFps));
         boolean explicitSyncFrame = syncFrameRequested.getAndSet(false);
-        if (allKeyFrames || explicitSyncFrame) {
+        if (sent == 0 || allKeyFrames || explicitSyncFrame) {
           requestSyncFrame(encoder);
         }
         long captureStarted = SystemClock.elapsedRealtime();
@@ -137,7 +141,7 @@ public final class TicketRootHardwareH264CaptureMain {
             blockedOrBlankFrames = 0;
           } else {
             blockedOrBlankFrames += 1;
-            boolean failure = sent >= startupVisibilityFrames && blockedOrBlankFrames >= Math.max(4, fps / 2);
+            boolean failure = sent >= startupVisibilityFrames && blockedOrBlankFrames >= Math.max(4, currentTargetFps / 2);
             System.err.println(
               "VISIBILITY result=blocked invisible_frames=" + blockedOrBlankFrames +
                 " failure=" + failure +
@@ -176,17 +180,17 @@ public final class TicketRootHardwareH264CaptureMain {
           source.close();
         }
         long drawFinished = SystemClock.elapsedRealtime();
-        long drainTimeoutUs = sent < 3
-          ? Math.min(120_000L, Math.max(50_000L, frameIntervalMillis * 1_000L))
+        long drainTimeoutUs = sent < Math.max(3, startupFrames)
+          ? Math.min(80_000L, Math.max(25_000L, frameIntervalMillis * 1_000L))
           : 10_000L;
         long encodeStarted = SystemClock.elapsedRealtime();
         int drained = drainEncoder(encoder, output, false, drainTimeoutUs);
         if (drained == 0 && sent == 0) {
           long remainingFrameBudgetMillis = Math.max(1L, frameIntervalMillis - (SystemClock.elapsedRealtime() - started));
-          long startupDrainDeadline = SystemClock.elapsedRealtime() + Math.min(650L, Math.max(250L, remainingFrameBudgetMillis));
+          long startupDrainDeadline = SystemClock.elapsedRealtime() + Math.min(300L, Math.max(80L, remainingFrameBudgetMillis));
           while (drained == 0 && SystemClock.elapsedRealtime() < startupDrainDeadline) {
             long remainingUs = Math.max(1L, (startupDrainDeadline - SystemClock.elapsedRealtime()) * 1_000L);
-            drained += drainEncoder(encoder, output, false, Math.min(120_000L, remainingUs));
+            drained += drainEncoder(encoder, output, false, Math.min(80_000L, remainingUs));
           }
         }
         output.flush();
@@ -200,7 +204,10 @@ public final class TicketRootHardwareH264CaptureMain {
               " draw_ms=" + (drawFinished - drawStarted) +
               " encode_ms=" + (encodeFinished - encodeStarted) +
               " frame_ms=" + elapsed +
-              " fps_target=" + fps +
+              " fps_target=" + currentTargetFps +
+              " steady_fps=" + steadyFps +
+              " startup_fps=" + startupFps +
+              " startup_frames=" + startupFrames +
               " visibility=" + (visible ? "visible" : "blocked") +
               " secure_layers=true protected_content=true method=secure_screen_capture"
           );

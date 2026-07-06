@@ -97,6 +97,43 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
+  fun rootHardwareH264ColdStartUsesShortStartupBurstThenSteadyFps() {
+    val source = ticketStreamServiceSource()
+    val config = ticketScreenConfigSource()
+    val engine = rootHardwareH264CaptureEngineSource()
+    val helper = rootHardwareH264CaptureMainSource()
+    val start = source.substringBetween(
+      "private fun ensureRootHardwareH264CaptureIfPossible()",
+      "private fun streamSizeChanged"
+    )
+    val keyframe = source.substringBetween(
+      "private fun requestKeyFrame",
+      "private fun activeStreamStaleForRecovery"
+    )
+
+    assertTrue(config.contains("const val ROOT_HARDWARE_H264_STEADY_FPS = 1"))
+    assertTrue(config.contains("const val ROOT_HARDWARE_H264_STARTUP_FPS = 5"))
+    assertTrue(config.contains("const val ROOT_HARDWARE_H264_STARTUP_FRAMES = 3"))
+    assertTrue(start.contains("targetFps = TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS"))
+    assertTrue(start.contains("startupFps = TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FPS"))
+    assertTrue(start.contains("startupFrameCount = TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FRAMES"))
+    assertTrue(start.contains("startup_pending:"))
+    assertTrue(keyframe.contains("pendingStartupKeyFrameReason = reason"))
+    assertTrue(keyframe.contains("recordTicketEvent(\"keyframe_held_for_startup\""))
+    assertTrue(engine.contains("val startupFps: Int"))
+    assertTrue(engine.contains("val startupFrameCount: Int"))
+    assertTrue(engine.contains("--startup-fps ${'$'}cleanStartupFps --startup-frames ${'$'}cleanStartupFrames"))
+    assertTrue(engine.contains("\"startup_burst\""))
+    assertTrue(helper.contains("int steadyFps = Math.max(1, intArg(args, \"--fps\", 10));"))
+    assertTrue(helper.contains("int startupFps = Math.max(steadyFps, intArg(args, \"--startup-fps\", steadyFps));"))
+    assertTrue(helper.contains("int startupFrames = Math.max(0, intArg(args, \"--startup-frames\", 0));"))
+    assertTrue(helper.contains("AtomicBoolean syncFrameRequested = new AtomicBoolean(true);"))
+    assertTrue(helper.contains("int currentTargetFps = startupFrames > 0 && sent < startupFrames ? startupFps : steadyFps;"))
+    assertTrue(helper.contains("fps_target=\" + currentTargetFps"))
+    assertFalse(config.contains("ROOT_HARDWARE_H264_BURST_HOLD_MILLIS = 5 * 60"))
+  }
+
+  @Test
   fun staleHardwareUnreliableLatchClearsOnlyAfterRootProbePasses() {
     val source = ticketStreamServiceSource()
     val engine = rootHardwareH264CaptureEngineSource()
@@ -165,6 +202,66 @@ class TicketStreamServiceSourceTest {
     assertTrue(source.contains("desiredRecoveryStage = spacetimeDesiredRecoveryStage"))
     assertTrue(worker.contains("pixel_direct_desired_recovery_started"))
     assertTrue(worker.contains("pixel_direct_desired_recovery_${'$'}{if (result.ok) \"succeeded\" else \"failed\"}"))
+  }
+
+  @Test
+  fun pixelSpacetimeWorkerUsesSignalFirstReadsAndSkipsNoopReports() {
+    val worker = ticketSpacetimeWorkerSource()
+    val runCycle = worker.substringBetween(
+      "private suspend fun runCycle",
+      "private suspend fun maybeStartDesiredStream"
+    )
+    val report = worker.substringBetween(
+      "private suspend fun maybeUpdatePhoneReport",
+      "private fun details"
+    )
+    val signal = worker.substringBetween(
+      "suspend fun commandSignal",
+      "suspend fun pendingCommands"
+    )
+    val commands = worker.substringBetween(
+      "suspend fun pendingCommands",
+      "suspend fun desiredState"
+    )
+    val desired = worker.substringBetween(
+      "suspend fun desiredState",
+      "fun ack(commandId"
+    )
+
+    assertTrue(signal.contains("SELECT * FROM ticketremote_stream_command_signal WHERE id = ${'$'}{sqlLiteral(\"${'$'}{config.ticketId}:${'$'}{config.backendId}\")}"))
+    assertTrue(commands.contains("WHERE ticketId = ${'$'}{sqlLiteral(config.ticketId)} AND backendId = ${'$'}{sqlLiteral(config.backendId)} AND status = 'pending'"))
+    assertTrue(desired.contains("WHERE id = ${'$'}{sqlLiteral(\"${'$'}{config.ticketId}:${'$'}{config.backendId}\")}"))
+    assertTrue(runCycle.contains("val signal = client.commandSignal(config)"))
+    assertTrue(runCycle.contains("val signalChanged = signalKey != lastInboxSignalKey"))
+    assertTrue(runCycle.contains("lastPhoneReportWriteKey = \"\""))
+    assertTrue(runCycle.contains("if (!cachedDesiredLoaded || signalChanged)"))
+    assertTrue(runCycle.contains("cachedDesiredLoaded = true"))
+    assertTrue(runCycle.contains("commands = if ((signal?.pendingCount ?: 0) > 0) client.pendingCommands(config) else emptyList()"))
+    assertTrue(runCycle.contains("maybeUpdatePhoneReport(client, desired)"))
+    assertFalse(runCycle.contains("val refreshedDesired = client.desiredState(config)"))
+    assertTrue(report.contains("val statusJson = service.ticketSpacetimeCompactHealthJson()"))
+    assertTrue(report.contains("if (key == lastPhoneReportWriteKey)"))
+    assertTrue(report.contains("return"))
+  }
+
+  @Test
+  fun spacetimeCurrentReportUsesCompactStableHealth() {
+    val source = ticketStreamServiceSource()
+    val compact = source.substringBetween(
+      "internal fun ticketSpacetimeCompactHealthJson",
+      "internal fun drainTicketSpacetimePhoneMessages"
+    )
+
+    assertTrue(compact.contains("buildJsonObject"))
+    assertTrue(compact.contains("put(\"streamActive\", streamActive)"))
+    assertTrue(compact.contains("put(\"sessionState\", ticketSessionState)"))
+    assertTrue(compact.contains("put(\"streamState\", ticketSpacetimeStreamState())"))
+    assertTrue(compact.contains("put(\"hardwareH264State\", h264.state)"))
+    assertTrue(compact.contains("put(\"lastStreamRecoveryResult\", lastStreamRecoveryResult)"))
+    assertFalse(compact.contains("AgoMillis"))
+    assertFalse(compact.contains("AgeMillis"))
+    assertFalse(compact.contains("frameSequence"))
+    assertFalse(compact.contains("sentFrames"))
   }
 
   @Test
@@ -416,6 +513,8 @@ class TicketStreamServiceSourceTest {
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_QUALITY_PROFILE = \"hardware_h264_light_marker_low_latency\""))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_FPS = 1"))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_STEADY_FPS = 1"))
+    assertTrue(config.contains("const val ROOT_HARDWARE_H264_STARTUP_FPS = 5"))
+    assertTrue(config.contains("const val ROOT_HARDWARE_H264_STARTUP_FRAMES = 3"))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_BURST_HOLD_MILLIS = 0L"))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_BITRATE = 1_200_000"))
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_KEYFRAME_INTERVAL_MILLIS = 1000"))
@@ -438,20 +537,21 @@ class TicketStreamServiceSourceTest {
     assertTrue(helper.contains("MediaFormat.COLOR_TRANSFER_SDR_VIDEO"))
     assertTrue(helper.contains("MediaFormat.KEY_I_FRAME_INTERVAL"))
     assertTrue(helper.contains("allKeyFrames ? 0"))
-    assertTrue(helper.contains("if (allKeyFrames || explicitSyncFrame)"))
+    assertTrue(helper.contains("if (sent == 0 || allKeyFrames || explicitSyncFrame)"))
     assertFalse(helper.contains("--steady-fps"))
     assertFalse(helper.contains("--burst-hold-millis"))
     assertFalse(helper.contains("AtomicLong burstUntilMillis"))
-    assertFalse(helper.contains("currentTargetFps"))
+    assertTrue(helper.contains("int currentTargetFps = startupFrames > 0 && sent < startupFrames ? startupFps : steadyFps;"))
     assertTrue(helper.contains("fps_target="))
     assertFalse(helper.contains("cmd.equals(\"burst\")"))
     assertFalse(helper.contains("extendBurst("))
     assertTrue(engine.contains("fields[\"fps_target\"]"))
-    assertTrue(engine.contains("steadyFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_FPS"))
-    assertTrue(engine.contains("burstFpsTarget = null"))
+    assertTrue(engine.contains("steadyFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS"))
+    assertTrue(engine.contains("burstFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FPS.takeIf"))
     assertTrue(engine.contains("intervalMode = hardwareIntervalMode()"))
     assertTrue(engine.contains("currentIntervalMillis = hardwareFrameIntervalMillis()"))
-    assertTrue(engine.contains("private fun hardwareIntervalMode(): String = if (fps != null) \"fixed\" else \"\""))
+    assertTrue(engine.contains("\"startup_burst\""))
+    assertTrue(engine.contains("frames < request.startupFrameCount"))
     assertFalse(engine.contains("\"burst\\n\""))
     assertFalse(source.contains("hardware_h264_non_key_frame_dropped"))
     assertTrue(source.contains("hardware_h264_waiting_initial_key_frame"))
@@ -588,13 +688,15 @@ class TicketStreamServiceSourceTest {
   fun hardwareH264HelperDrainsAfterFirstStartupInput() {
     val helper = rootHardwareH264CaptureMainSource()
 
-    assertTrue(helper.contains("int startupVisibilityFrames = Math.max(1, fps);"))
+    assertTrue(helper.contains("int startupVisibilityFrames = Math.max(1, startupFrames > 0 ? startupFrames : steadyFps);"))
     assertTrue(helper.contains("int startupPrimeInputs = 1;"))
     assertTrue(helper.contains("int inputPosts = sent == 0 ? startupPrimeInputs : 1;"))
     assertTrue(helper.contains("for (int post = 0; post < inputPosts; post++)"))
     assertTrue(helper.indexOf("CapturedFrame source = capture.capture();") < helper.indexOf("for (int post = 0; post < inputPosts; post++)"))
     assertFalse("startup priming must not do multiple slow screen captures before first encoder output", helper.contains("for (int post = 0; post < inputPosts; post++) {\n        CapturedFrame source = capture.capture();"))
     assertTrue(helper.contains("int drained = drainEncoder(encoder, output, false, drainTimeoutUs);"))
+    assertTrue(helper.contains("if (drained == 0 && sent == 0)"))
+    assertTrue(helper.contains("startupDrainDeadline"))
     assertTrue(helper.indexOf("writeAnnexB(output, data);") < helper.indexOf("output.write(ACCESS_UNIT_DELIMITER);"))
     assertFalse(helper.contains("if (sent <= startupBurstFrames && drained == 0) {"))
     assertFalse(helper.contains("sleep = 0L;"))
@@ -661,8 +763,9 @@ class TicketStreamServiceSourceTest {
     assertFalse("normal hardware startup should not stop before first frame on a separate secure-capture probe", start.contains("secure_capture_blocked"))
     assertFalse("ticket-screen readiness failures must not mark hardware unreliable", start.contains("noteHardwareReliabilityFailure(\"secure_capture_blocked"))
     assertTrue("hardware startup frames should be allowed only after wake/root proof succeeds", start.indexOf("if (!prepareResult.success)") < start.indexOf("hardwareFrameBroadcastAllowed = true"))
-    assertTrue("hardware stream should start after wake so helper startup does not race the locked/home screen", start.indexOf("prepareViviForRootHardwareH264FastOpen(reason, wakeStartedAtMillis)") < start.indexOf("ensureEncoderIfPossible()"))
-    assertFalse("hardware stream should no longer prewarm before wake readiness", start.contains("vivi_launch_encoder_prewarm"))
+    assertTrue("hardware helper should warm while the phone proves readiness", start.indexOf("prewarmRootHardwareH264CaptureIfPossible(\"session_start_prewarm:\$reason\")") < start.indexOf("prepareViviForRootHardwareH264FastOpen(reason, wakeStartedAtMillis)"))
+    assertTrue("normal hardware startup should use the bounded root-hardware prewarm helper", source.contains("private fun prewarmRootHardwareH264CaptureIfPossible(reason: String)"))
+    assertFalse("hardware stream should not use the old launch prewarm lane", start.contains("vivi_launch_encoder_prewarm"))
     assertTrue(start.contains("hardware_h264_wake_frames_allowed"))
     assertTrue("startup frames must not mark the session live before raw-ticket proof", frame.contains("&& hardwareCaptureVerified"))
     assertTrue(start.contains("hardwareCaptureVerified = true"))
@@ -973,7 +1076,7 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun rootHardwareH264EncoderStartsOnlyAfterWakeReady() {
+  fun rootHardwareH264EncoderWarmsEarlyButFramesWaitForWakeReady() {
     val source = ticketStreamServiceSource()
     val start = source.substringBetween("private fun scheduleRootHardwareH264CaptureStart", "private suspend fun verifyRootHardwareSecureCaptureVisible")
 
@@ -981,21 +1084,19 @@ class TicketStreamServiceSourceTest {
     val prepare = start.indexOf("val prepareResult =")
     val failedPrepareGuard = start.indexOf("if (!prepareResult.success)")
     val verified = start.indexOf("hardwareCaptureVerified = true")
+    val prewarm = start.indexOf("prewarmRootHardwareH264CaptureIfPossible(\"session_start_prewarm:\$reason\")")
     val encoderStart = start.indexOf("ensureEncoderIfPossible()")
     val readyKeyframe = start.indexOf("requestKeyFrame(\"vivi_ready_encoder_start:${'$'}reason\")")
 
     assertTrue(wake >= 0)
+    assertTrue(prewarm in 0 until wake)
     assertTrue(prepare > wake)
     assertTrue(failedPrepareGuard > prepare)
     assertTrue(verified > failedPrepareGuard)
-    assertTrue("hardware encoder must start only after the wake/recovery path confirms ticket detail", encoderStart > verified)
+    assertTrue("verified encoder ensure still runs after the wake/recovery path confirms ticket detail", encoderStart > verified)
     assertTrue(readyKeyframe > encoderStart)
-    assertFalse(
-      "long-pause session start must not prewarm the encoder while the phone may still be locked/home/blank",
-      start.substring(0, failedPrepareGuard).contains("ensureRootHardwareH264CaptureIfPossible()") ||
-        start.substring(0, failedPrepareGuard).contains("ensureEncoderIfPossible()") ||
-        start.substring(0, failedPrepareGuard).contains("vivi_launch_encoder_prewarm")
-    )
+    assertTrue("early helper warmup should still keep actual frame delivery gated", start.indexOf("hardwareFrameBroadcastAllowed = true") < readyKeyframe)
+    assertFalse("early warmup must not use the removed launch prewarm lane", start.substring(0, failedPrepareGuard).contains("vivi_launch_encoder_prewarm"))
   }
 
   @Test
@@ -2214,9 +2315,11 @@ class TicketStreamServiceSourceTest {
     assertTrue(fastOpen.contains("launchViviForWake(reason, timeoutMillis = launchTimeoutMillis)"))
     assertTrue(hardwareStart.contains("prepareViviForRootHardwareH264FastOpen("))
     assertFalse("public startup must not call the long recovery prepare helper", hardwareStart.contains("prepareViviForRootHardwareH264Capture("))
+    assertTrue(hardwareStart.contains("prewarmRootHardwareH264CaptureIfPossible(\"session_start_prewarm:\$reason\")"))
     assertTrue(hardwareStart.contains("ensureEncoderIfPossible()"))
     assertTrue(hardwareStart.contains("requestKeyFrame(\"vivi_ready_encoder_start:\$reason\")"))
     assertFalse(hardwareStart.contains("vivi_launch_encoder_prewarm"))
+    assertTrue(hardwareStart.indexOf("prewarmRootHardwareH264CaptureIfPossible(\"session_start_prewarm:\$reason\")") < hardwareStart.indexOf("wakeTicketScreenForSessionStart(reason, wakeStartedAtMillis)"))
     assertTrue(hardwareStart.indexOf("wakeTicketScreenForSessionStart(reason, wakeStartedAtMillis)") < hardwareStart.indexOf("prepareViviForRootHardwareH264FastOpen("))
     assertTrue(hardwareStart.indexOf("if (!prepareResult.success)") < hardwareStart.indexOf("hardwareFrameBroadcastAllowed = true"))
     assertTrue(hardwareStart.indexOf("hardwareFrameBroadcastAllowed = true") < hardwareStart.indexOf("ensureEncoderIfPossible()"))

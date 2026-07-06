@@ -35,7 +35,9 @@ class TicketRootHardwareH264CaptureEngine(
     val targetWidth: Int,
     val targetHeight: Int,
     val targetBitrate: Int,
-    val targetFps: Int
+    val targetFps: Int,
+    val startupFps: Int,
+    val startupFrameCount: Int
   )
 
   private val startupLock = Any()
@@ -155,14 +157,25 @@ class TicketRootHardwareH264CaptureEngine(
     )
   }
 
-  fun start(sourceWidth: Int, sourceHeight: Int, targetWidth: Int, targetHeight: Int, targetBitrate: Int, targetFps: Int) {
+  fun start(
+    sourceWidth: Int,
+    sourceHeight: Int,
+    targetWidth: Int,
+    targetHeight: Int,
+    targetBitrate: Int,
+    targetFps: Int,
+    startupFps: Int = targetFps,
+    startupFrameCount: Int = 0
+  ) {
     val request = HardwareH264StartRequest(
       sourceWidth = sourceWidth,
       sourceHeight = sourceHeight,
       targetWidth = targetWidth,
       targetHeight = targetHeight,
       targetBitrate = targetBitrate,
-      targetFps = targetFps
+      targetFps = targetFps,
+      startupFps = startupFps.coerceAtLeast(targetFps),
+      startupFrameCount = startupFrameCount.coerceAtLeast(0)
     )
     synchronized(startupLock) {
       val previousRequest = desiredStartRequest
@@ -313,8 +326,10 @@ class TicketRootHardwareH264CaptureEngine(
       height = height,
       bitrate = bitrate,
       fps = fps,
-      steadyFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_FPS,
-      burstFpsTarget = null,
+      steadyFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS,
+      burstFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FPS.takeIf {
+        TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FRAMES > 0
+      },
       intervalMode = hardwareIntervalMode(),
       currentIntervalMillis = hardwareFrameIntervalMillis(),
       colorCorrection = TicketScreenConfig.ROOT_HARDWARE_H264_COLOR_CORRECTION,
@@ -384,7 +399,9 @@ class TicketRootHardwareH264CaptureEngine(
             request.targetWidth,
             request.targetHeight,
             request.targetBitrate,
-            request.targetFps
+            request.targetFps,
+            request.startupFps,
+            request.startupFrameCount
           )
         )
           .redirectErrorStream(false)
@@ -486,7 +503,7 @@ class TicketRootHardwareH264CaptureEngine(
   private suspend fun probeCaptureHelper(sourceWidth: Int, sourceHeight: Int): RootResult {
     val size = TicketStreamSizing.rootHardwareH264(sourceWidth, sourceHeight)
     return rootExecutor.run(
-      "${rootEncoderCommand(sourceWidth, sourceHeight, size.width, size.height, TicketScreenConfig.ROOT_HARDWARE_H264_BITRATE, targetFps = 1)} --frames 1 >/dev/null",
+      "${rootEncoderCommand(sourceWidth, sourceHeight, size.width, size.height, TicketScreenConfig.ROOT_HARDWARE_H264_BITRATE, targetFps = 1, startupFps = 1, startupFrameCount = 0)} --frames 1 >/dev/null",
       timeout = 8.seconds
     )
   }
@@ -505,9 +522,13 @@ class TicketRootHardwareH264CaptureEngine(
     width: Int,
     height: Int,
     targetBitrate: Int,
-    targetFps: Int
+    targetFps: Int,
+    startupFps: Int = targetFps,
+    startupFrameCount: Int = 0
   ): String {
-    val commonArgs = "--source-width $sourceWidth --source-height $sourceHeight --width $width --height $height --crop-top-source ${TicketScreenConfig.TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS} --fps $targetFps --bitrate $targetBitrate --keyframe-interval-millis ${TicketScreenConfig.ROOT_HARDWARE_H264_KEYFRAME_INTERVAL_MILLIS}"
+    val cleanStartupFps = startupFps.coerceAtLeast(targetFps)
+    val cleanStartupFrames = startupFrameCount.coerceAtLeast(0)
+    val commonArgs = "--source-width $sourceWidth --source-height $sourceHeight --width $width --height $height --crop-top-source ${TicketScreenConfig.TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS} --fps $targetFps --startup-fps $cleanStartupFps --startup-frames $cleanStartupFrames --bitrate $targetBitrate --keyframe-interval-millis ${TicketScreenConfig.ROOT_HARDWARE_H264_KEYFRAME_INTERVAL_MILLIS}"
     return rootCaptureHelperCommand(commonArgs)
   }
 
@@ -609,10 +630,22 @@ class TicketRootHardwareH264CaptureEngine(
     estimatedBitrate = (bitrateWindowBytes * 8_000L) / elapsed
   }
 
-  private fun hardwareIntervalMode(): String = if (fps != null) "fixed" else ""
+  private fun hardwareIntervalMode(): String {
+    val request = activeStartRequest ?: desiredStartRequest ?: return ""
+    return if (request.startupFrameCount > 0 && frames < request.startupFrameCount) {
+      "startup_burst"
+    } else {
+      "fixed"
+    }
+  }
 
   private fun hardwareFrameIntervalMillis(): Long? {
-    val currentFps = fps?.takeIf { it > 0 } ?: return null
+    val request = activeStartRequest ?: desiredStartRequest
+    val currentFps = when {
+      request != null && request.startupFrameCount > 0 && frames < request.startupFrameCount -> request.startupFps
+      request != null -> request.targetFps
+      else -> fps
+    }?.takeIf { it > 0 } ?: return null
     return kotlin.math.round(1000.0 / currentFps).toLong().coerceAtLeast(1L)
   }
 
