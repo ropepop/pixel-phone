@@ -444,6 +444,10 @@ data class TicketLatestTicketReselectHealth(
   val active: Boolean = false,
   val reason: String = "",
   val commandId: String = "",
+  val phase: String = "idle",
+  val ticketDetailAgoMillis: Long? = null,
+  val proofSource: String = "",
+  val proofHoldRemainingMillis: Long = 0L,
   val startedAgoMillis: Long? = null,
   val completedAgoMillis: Long? = null,
   val freshFrameAgoMillis: Long? = null

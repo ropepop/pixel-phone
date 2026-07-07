@@ -476,11 +476,17 @@ class TicketStreamService : Service() {
   @Volatile private var latestTicketReselectStatus: String = "idle"
   @Volatile private var latestTicketReselectReason: String = ""
   @Volatile private var latestTicketReselectCommandId: String = ""
+  @Volatile private var latestTicketReselectPhase: String = "idle"
   @Volatile private var latestTicketReselectStartedAtMillis: Long = 0L
+  @Volatile private var latestTicketReselectTicketDetailAtMillis: Long = 0L
   @Volatile private var latestTicketReselectCompletedAtMillis: Long = 0L
   @Volatile private var latestTicketReselectFreshFrameAtMillis: Long = 0L
+  @Volatile private var latestTicketReselectProofSource: String = ""
+  @Volatile private var latestTicketReselectProofHoldUntilMillis: Long = 0L
+  @Volatile private var latestTicketReselectLastProofNudgeAtMillis: Long = 0L
   private var latestTicketReselectRecoveryJob: Job? = null
   private var latestTicketReselectSettleJob: Job? = null
+  private var latestTicketReselectProofIdleStopJob: Job? = null
   @Volatile private var lastRejectedControlCodeCommandOwner: String? = null
   @Volatile private var lastRejectedControlCodeCommandApp: String? = null
   @Volatile private var lastRejectedControlCodeCommandFlow: String? = null
@@ -625,6 +631,12 @@ class TicketStreamService : Service() {
     ticketBrightnessGuardActive = false
     clientDisconnectStopJob?.cancel()
     clientDisconnectStopJob = null
+    latestTicketReselectRecoveryJob?.cancel()
+    latestTicketReselectRecoveryJob = null
+    latestTicketReselectSettleJob?.cancel()
+    latestTicketReselectSettleJob = null
+    latestTicketReselectProofIdleStopJob?.cancel()
+    latestTicketReselectProofIdleStopJob = null
     chatgptSpacetimeWorker?.stop()
     chatgptSpacetimeWorker = null
     ticketSpacetimeWorker?.stop()
@@ -1424,13 +1436,20 @@ class TicketStreamService : Service() {
     latestTicketReselectRecoveryJob = null
     latestTicketReselectSettleJob?.cancel()
     latestTicketReselectSettleJob = null
+    latestTicketReselectProofIdleStopJob?.cancel()
+    latestTicketReselectProofIdleStopJob = null
     val nowMillis = SystemClock.elapsedRealtime()
     latestTicketReselectStatus = "pending"
     latestTicketReselectReason = reason
     latestTicketReselectCommandId = commandId
+    latestTicketReselectPhase = "ticket_reselect_requested"
     latestTicketReselectStartedAtMillis = nowMillis
+    latestTicketReselectTicketDetailAtMillis = 0L
     latestTicketReselectCompletedAtMillis = 0L
     latestTicketReselectFreshFrameAtMillis = 0L
+    latestTicketReselectProofSource = ""
+    latestTicketReselectProofHoldUntilMillis = 0L
+    latestTicketReselectLastProofNudgeAtMillis = 0L
     broadcastStatus()
   }
 
@@ -1470,6 +1489,8 @@ class TicketStreamService : Service() {
         "latest_ticket_reselect_ticket_detail_observed",
         "state=${result.state.name} step=${result.step} command=$commandId"
       )
+      markLatestTicketReselectTicketDetailObserved(result)
+      beginLatestTicketReselectStreamProof(reason, commandId)
       if (streamActive) {
         updateTicketSessionState(TICKET_SESSION_LIVE, "latest_ticket_reselect_ticket_detail_ready")
         cacheForegroundViolation(null)
@@ -1488,6 +1509,7 @@ class TicketStreamService : Service() {
         "latest_ticket_reselect_failed",
         "state=${result.state.name} step=${result.step} command=$commandId"
       )
+      latestTicketReselectPhase = "ticket_detail_failed"
       if (streamActive) {
         updateTicketSessionState(TICKET_SESSION_NEEDS_ATTENTION, "latest_ticket_reselect_${result.state.name.lowercase()}")
       }
@@ -1504,13 +1526,18 @@ class TicketStreamService : Service() {
     latestTicketReselectStatus = if (success) "succeeded" else "failed"
     latestTicketReselectReason = reason
     latestTicketReselectCompletedAtMillis = nowMillis
-    latestTicketReselectFreshFrameAtMillis = 0L
+    if (!success) {
+      latestTicketReselectPhase = if (latestTicketReselectTicketDetailAtMillis > 0L) "stream_proof_failed" else "failed"
+      latestTicketReselectFreshFrameAtMillis = 0L
+      latestTicketReselectProofHoldUntilMillis = 0L
+    }
     markLatestTicketReselectFreshIfReady(nowMillis)
     recordTicketEvent(
       "latest_ticket_reselect_finished",
       "status=${latestTicketReselectStatus} reason=$reason command=$latestTicketReselectCommandId"
     )
     broadcastStatus()
+    scheduleLatestTicketReselectProofIdleStop("latest_ticket_reselect_finished:$reason")
   }
 
   private fun scheduleLatestTicketReselectSettle(successReason: String, failureReason: String) {
@@ -1539,13 +1566,17 @@ class TicketStreamService : Service() {
       return false
     }
     if (!noteLatestTicketReselectFreshStreamReady(nowMillis)) {
+      nudgeLatestTicketReselectStreamProof(nowMillis)
       return false
     }
     latestTicketReselectStatus = "succeeded"
     latestTicketReselectReason = reason
+    latestTicketReselectPhase = "ready"
     latestTicketReselectCompletedAtMillis = nowMillis
+    latestTicketReselectProofHoldUntilMillis = 0L
     recordTicketEvent(reason, "fresh_frame_ready=true")
     broadcastStatus()
+    scheduleLatestTicketReselectProofIdleStop("latest_ticket_reselect_succeeded")
     return true
   }
 
@@ -1566,8 +1597,11 @@ class TicketStreamService : Service() {
   }
 
   private fun markLatestTicketReselectFreshIfReady(nowMillis: Long = SystemClock.elapsedRealtime()): Boolean {
+    if (latestTicketReselectFreshFrameAtMillis > 0L) {
+      return true
+    }
     if (!latestTicketReselectRecent(nowMillis) || latestTicketReselectStatus != "succeeded") {
-      return latestTicketReselectFreshFrameAtMillis > 0L
+      return false
     }
     return noteLatestTicketReselectFreshStreamReady(nowMillis)
   }
@@ -1595,12 +1629,86 @@ class TicketStreamService : Service() {
     }
     if (latestTicketReselectFreshFrameAtMillis == 0L) {
       latestTicketReselectFreshFrameAtMillis = nowMillis
+      latestTicketReselectProofSource = if (videoClients.isEmpty()) "self_proof_root_hardware_h264" else "viewer_root_hardware_h264"
+      latestTicketReselectPhase = "stream_proof_ready"
       recordTicketEvent(
         "latest_ticket_reselect_fresh_stream_ready",
-        "frame_age_ms=$frameAgeMillis ticket_age_ms=$currentAgeMillis"
+        "frame_age_ms=$frameAgeMillis ticket_age_ms=$currentAgeMillis proof=${latestTicketReselectProofSource}"
       )
     }
     return true
+  }
+
+  private fun markLatestTicketReselectTicketDetailObserved(result: TicketAutopilotResult) {
+    latestTicketReselectPhase = "ticket_detail_observed"
+    latestTicketReselectTicketDetailAtMillis = SystemClock.elapsedRealtime()
+    recordTicketEvent(
+      "latest_ticket_reselect_ticket_detail_ready",
+      "state=${result.state.name} step=${result.step} command=$latestTicketReselectCommandId"
+    )
+  }
+
+  private fun beginLatestTicketReselectStreamProof(reason: String, commandId: String) {
+    val nowMillis = SystemClock.elapsedRealtime()
+    latestTicketReselectPhase = "stream_proof_pending"
+    latestTicketReselectProofSource = ""
+    latestTicketReselectProofHoldUntilMillis = nowMillis + LATEST_TICKET_RESELECT_PROOF_HOLD_MILLIS
+    latestTicketReselectLastProofNudgeAtMillis = 0L
+    recordTicketEvent(
+      "latest_ticket_reselect_stream_proof_started",
+      "reason=$reason command=$commandId clients=${videoClients.size} hold_ms=$LATEST_TICKET_RESELECT_PROOF_HOLD_MILLIS"
+    )
+  }
+
+  private fun latestTicketReselectProofHoldActive(nowMillis: Long = SystemClock.elapsedRealtime()): Boolean {
+    return latestTicketReselectStatus == "pending" &&
+      latestTicketReselectProofHoldUntilMillis > nowMillis &&
+      latestTicketReselectTicketDetailAtMillis > 0L
+  }
+
+  private fun streamCaptureNeededForLatestTicketReselectProof(nowMillis: Long = SystemClock.elapsedRealtime()): Boolean {
+    return videoClients.isEmpty() && latestTicketReselectProofHoldActive(nowMillis)
+  }
+
+  private fun nudgeLatestTicketReselectStreamProof(nowMillis: Long) {
+    if (!latestTicketReselectProofHoldActive(nowMillis)) {
+      return
+    }
+    if (nowMillis - latestTicketReselectLastProofNudgeAtMillis < LATEST_TICKET_RESELECT_PROOF_NUDGE_MILLIS) {
+      return
+    }
+    latestTicketReselectLastProofNudgeAtMillis = nowMillis
+    if (!streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264) {
+      recordTicketEvent("latest_ticket_reselect_stream_proof_waiting", "stream_inactive")
+      return
+    }
+    val frameAgeMillis = ageMillis(lastFrameSentAtMillis, nowMillis)
+    if (
+      hardwareCaptureVerified &&
+      frameAgeMillis != null &&
+      frameAgeMillis > STREAM_STALE_ENGINE_RESTART_MILLIS
+    ) {
+      restartActiveStreamEngine("latest_ticket_reselect_self_proof_stale")
+      return
+    }
+    if (hardwareCaptureVerified) {
+      ensureRootHardwareH264CaptureIfPossible()
+      requestKeyFrame("latest_ticket_reselect_self_proof")
+    }
+  }
+
+  private fun scheduleLatestTicketReselectProofIdleStop(reason: String) {
+    if (totalClientCount() > 0 || !streamActive) {
+      return
+    }
+    latestTicketReselectProofIdleStopJob?.cancel()
+    latestTicketReselectProofIdleStopJob = serviceScope.launch {
+      delay(LATEST_TICKET_RESELECT_PROOF_IDLE_STOP_GRACE_MILLIS)
+      latestTicketReselectProofIdleStopJob = null
+      if (totalClientCount() == 0 && streamActive) {
+        noteClientDetached(reason)
+      }
+    }
   }
 
   private fun JsonObject.stringValue(key: String): String = this[key]?.jsonPrimitive?.contentOrNull.orEmpty()
@@ -3435,7 +3543,7 @@ class TicketStreamService : Service() {
   }
 
   private fun ensureEncoderIfPossible() {
-    if (!streamActive || videoClients.isEmpty()) {
+    if (!streamActive || (videoClients.isEmpty() && !streamCaptureNeededForLatestTicketReselectProof())) {
       return
     }
     if (activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264 && hardwareCaptureVerified) {
@@ -3444,7 +3552,7 @@ class TicketStreamService : Service() {
   }
 
   private fun prewarmRootHardwareH264CaptureIfPossible(reason: String) {
-    if (!streamActive || videoClients.isEmpty()) {
+    if (!streamActive || (videoClients.isEmpty() && !streamCaptureNeededForLatestTicketReselectProof())) {
       return
     }
     if (activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264) {
@@ -3627,7 +3735,11 @@ class TicketStreamService : Service() {
   }
 
   private fun scheduleStreamWatchdog(reason: String) {
-    if (!streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264 || videoClients.isEmpty()) {
+    if (
+      !streamActive ||
+      activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264 ||
+      (videoClients.isEmpty() && !streamCaptureNeededForLatestTicketReselectProof())
+    ) {
       return
     }
     if (streamWatchdogJob?.isActive == true) {
@@ -3647,7 +3759,7 @@ class TicketStreamService : Service() {
   private fun streamWatchdogShouldRun(): Boolean {
     return streamActive &&
       activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264 &&
-      videoClients.isNotEmpty() &&
+      (videoClients.isNotEmpty() || streamCaptureNeededForLatestTicketReselectProof()) &&
       ticketSessionState != TICKET_SESSION_NEEDS_ATTENTION &&
       lastRootH264BlankProbeResult != "secure_capture_blocked"
   }
@@ -4022,7 +4134,11 @@ class TicketStreamService : Service() {
   }
 
   private fun activeStreamStaleForRecovery(nowMillis: Long): Boolean {
-    if (!streamActive || activeCaptureMode == CAPTURE_MODE_IDLE || videoClients.isEmpty()) {
+    if (
+      !streamActive ||
+      activeCaptureMode == CAPTURE_MODE_IDLE ||
+      (videoClients.isEmpty() && !streamCaptureNeededForLatestTicketReselectProof(nowMillis))
+    ) {
       return false
     }
     if (hardwareStartupStillPreparing(nowMillis)) {
@@ -4747,6 +4863,10 @@ class TicketStreamService : Service() {
         active = latestTicketReselectActive(nowMillis),
         reason = latestTicketReselectReason,
         commandId = latestTicketReselectCommandId.takeLast(24),
+        phase = latestTicketReselectPhase,
+        ticketDetailAgoMillis = ageMillis(latestTicketReselectTicketDetailAtMillis, nowMillis),
+        proofSource = latestTicketReselectProofSource,
+        proofHoldRemainingMillis = (latestTicketReselectProofHoldUntilMillis - nowMillis).coerceAtLeast(0L),
         startedAgoMillis = ageMillis(latestTicketReselectStartedAtMillis, nowMillis),
         completedAgoMillis = ageMillis(latestTicketReselectCompletedAtMillis, nowMillis),
         freshFrameAgoMillis = ageMillis(latestTicketReselectFreshFrameAtMillis, nowMillis)
@@ -12688,7 +12808,7 @@ class TicketStreamService : Service() {
     private const val TICKET_SPACETIME_PHONE_MESSAGE_LIMIT = 80
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
     private const val SESSION_START_TIMEOUT_MILLIS = 70_000L
-    const val SERVER_VERSION = "ticket-stream-2026-05-23-priority-rs-vivi-v235"
+    const val SERVER_VERSION = "ticket-stream-2026-07-07-latest-ticket-self-proof-v236"
     private const val CONTROL_CODE_MARKER_RESULT_HIERARCHY = "__marker_control_code_result__"
     private const val FRAME_ENVELOPE_VERSION = "tsf2"
     private const val FRAME_ENVELOPE_MAGIC = 0x54534632
@@ -12843,6 +12963,10 @@ class TicketStreamService : Service() {
     private const val LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS = TICKET_WAKE_RECOVERY_BUDGET_MILLIS
     private const val LATEST_TICKET_RESELECT_MAX_RECOVERY_ACTIONS = TICKET_WAKE_RECOVERY_MAX_ACTIONS
     private const val LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS = 20_000L
+    private const val LATEST_TICKET_RESELECT_PROOF_HOLD_MILLIS =
+      LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS + 5_000L
+    private const val LATEST_TICKET_RESELECT_PROOF_NUDGE_MILLIS = 1_000L
+    private const val LATEST_TICKET_RESELECT_PROOF_IDLE_STOP_GRACE_MILLIS = 2_000L
     private const val LATEST_TICKET_RESELECT_ACTIVE_WINDOW_MILLIS =
       LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS + LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS + 5_000L
     private const val CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 0L
