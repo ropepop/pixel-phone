@@ -43,6 +43,7 @@ public final class TicketRootHardwareH264CaptureMain {
   private static final int CONTROL_CODE_VISUAL_SAMPLE_WIDTH = 48;
   private static final int CONTROL_CODE_VISUAL_SAMPLE_HEIGHT = 72;
   private static final long CONTROL_CODE_VISUAL_PROBE_MILLIS = 2_500L;
+  private static final long CONTROL_CODE_VISUAL_GENERATED_HOLD_MILLIS = 1_200L;
   private static final long CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS = 150L;
   private static final String PNG_BASE64_BEGIN = "PNG_BASE64_BEGIN";
   private static final String PNG_BASE64_END = "PNG_BASE64_END";
@@ -82,6 +83,8 @@ public final class TicketRootHardwareH264CaptureMain {
     AtomicLong controlCodeVisualProbeUntilMillis = new AtomicLong(0L);
     AtomicLong controlCodeVisualProbeLastReportMillis = new AtomicLong(0L);
     AtomicReference<String> controlCodeVisualProbeReason = new AtomicReference<>("idle");
+    AtomicBoolean controlCodeVisualProbeGenerated = new AtomicBoolean(false);
+    Object frameWaitLock = new Object();
     Thread commandThread = null;
     try {
       MediaFormat format = MediaFormat.createVideoFormat("video/avc", width, height);
@@ -105,7 +108,14 @@ public final class TicketRootHardwareH264CaptureMain {
       encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
       inputSurface = encoder.createInputSurface();
       encoder.start();
-      commandThread = startCommandReader(syncFrameRequested, controlCodeVisualProbeUntilMillis, controlCodeVisualProbeLastReportMillis, controlCodeVisualProbeReason);
+      commandThread = startCommandReader(
+        syncFrameRequested,
+        controlCodeVisualProbeUntilMillis,
+        controlCodeVisualProbeLastReportMillis,
+        controlCodeVisualProbeReason,
+        controlCodeVisualProbeGenerated,
+        frameWaitLock
+      );
 
       Rect sourceCrop = new Rect(0, cropTopSource, sourceWidth, sourceHeight);
       Rect destination = new Rect(0, 0, width, height);
@@ -119,7 +129,10 @@ public final class TicketRootHardwareH264CaptureMain {
       boolean lastVisibilityVisible = true;
       while (frames <= 0 || sent < frames) {
         long started = SystemClock.elapsedRealtime();
-        int currentTargetFps = startupFrames > 0 && sent < startupFrames ? startupFps : steadyFps;
+        boolean controlCodeVisualProbeActive = started <= controlCodeVisualProbeUntilMillis.get();
+        int currentTargetFps = startupFrames > 0 && sent < startupFrames
+          ? startupFps
+          : (controlCodeVisualProbeActive ? startupFps : steadyFps);
         long frameIntervalMillis = Math.max(1L, Math.round(1000.0 / currentTargetFps));
         boolean explicitSyncFrame = syncFrameRequested.getAndSet(false);
         if (sent == 0 || allKeyFrames || explicitSyncFrame) {
@@ -156,11 +169,20 @@ public final class TicketRootHardwareH264CaptureMain {
         if (started <= controlCodeVisualProbeUntilMillis.get()) {
           String state = classifyControlCodeVisualState(source.bitmap, sourceCrop);
           if (state.equals("generated")) {
-            controlCodeVisualProbeUntilMillis.set(0L);
-            System.err.println(
-              "CONTROL_CODE_VISUAL result=generated reason=" + safeDiagnosticValue(controlCodeVisualProbeReason.get()) +
-                " method=h264_bitmap_probe"
-            );
+            if (controlCodeVisualProbeGenerated.compareAndSet(false, true)) {
+              controlCodeVisualProbeLastReportMillis.set(started);
+              extendUntil(controlCodeVisualProbeUntilMillis, started + CONTROL_CODE_VISUAL_GENERATED_HOLD_MILLIS);
+              System.err.println(
+                "CONTROL_CODE_VISUAL result=generated reason=" + safeDiagnosticValue(controlCodeVisualProbeReason.get()) +
+                  " method=h264_bitmap_probe"
+              );
+            } else if (started - controlCodeVisualProbeLastReportMillis.get() >= CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS) {
+              controlCodeVisualProbeLastReportMillis.set(started);
+              System.err.println(
+                "CONTROL_CODE_VISUAL result=generated reason=" + safeDiagnosticValue(controlCodeVisualProbeReason.get()) +
+                  " method=h264_bitmap_probe"
+              );
+            }
           } else if (started - controlCodeVisualProbeLastReportMillis.get() >= CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS) {
             controlCodeVisualProbeLastReportMillis.set(started);
             System.err.println(
@@ -214,7 +236,7 @@ public final class TicketRootHardwareH264CaptureMain {
         }
         long sleep = frameIntervalMillis - elapsed;
         if (sleep > 0L) {
-          Thread.sleep(sleep);
+          waitForNextFrame(frameWaitLock, sleep);
         }
       }
       encoder.signalEndOfInputStream();
@@ -237,7 +259,9 @@ public final class TicketRootHardwareH264CaptureMain {
     AtomicBoolean syncFrameRequested,
     AtomicLong controlCodeVisualProbeUntilMillis,
     AtomicLong controlCodeVisualProbeLastReportMillis,
-    AtomicReference<String> controlCodeVisualProbeReason
+    AtomicReference<String> controlCodeVisualProbeReason,
+    AtomicBoolean controlCodeVisualProbeGenerated,
+    Object frameWaitLock
   ) {
     Thread thread = new Thread(() -> {
       try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
@@ -246,10 +270,14 @@ public final class TicketRootHardwareH264CaptureMain {
           String cmd = line.trim();
           if (cmd.equals("keyframe")) {
             syncFrameRequested.set(true);
+            wakeFrameLoop(frameWaitLock);
           } else if (cmd.equals("control_code_visual_probe")) {
             controlCodeVisualProbeReason.set("control_code_after_ok");
             controlCodeVisualProbeLastReportMillis.set(0L);
+            controlCodeVisualProbeGenerated.set(false);
+            syncFrameRequested.set(true);
             controlCodeVisualProbeUntilMillis.set(SystemClock.elapsedRealtime() + CONTROL_CODE_VISUAL_PROBE_MILLIS);
+            wakeFrameLoop(frameWaitLock);
           }
         }
       } catch (Throwable ignored) {
@@ -259,6 +287,28 @@ public final class TicketRootHardwareH264CaptureMain {
     thread.setDaemon(true);
     thread.start();
     return thread;
+  }
+
+  private static void waitForNextFrame(Object frameWaitLock, long millis) throws InterruptedException {
+    synchronized (frameWaitLock) {
+      frameWaitLock.wait(millis);
+    }
+  }
+
+  private static void wakeFrameLoop(Object frameWaitLock) {
+    synchronized (frameWaitLock) {
+      frameWaitLock.notifyAll();
+    }
+  }
+
+  private static void extendUntil(AtomicLong value, long untilMillis) {
+    long current;
+    do {
+      current = value.get();
+      if (current >= untilMillis) {
+        return;
+      }
+    } while (!value.compareAndSet(current, untilMillis));
   }
 
   private static void requestSyncFrame(MediaCodec encoder) {

@@ -128,7 +128,9 @@ class TicketStreamServiceSourceTest {
     assertTrue(helper.contains("int startupFps = Math.max(steadyFps, intArg(args, \"--startup-fps\", steadyFps));"))
     assertTrue(helper.contains("int startupFrames = Math.max(0, intArg(args, \"--startup-frames\", 0));"))
     assertTrue(helper.contains("AtomicBoolean syncFrameRequested = new AtomicBoolean(true);"))
-    assertTrue(helper.contains("int currentTargetFps = startupFrames > 0 && sent < startupFrames ? startupFps : steadyFps;"))
+    assertTrue(helper.contains("boolean controlCodeVisualProbeActive = started <= controlCodeVisualProbeUntilMillis.get();"))
+    assertTrue(helper.contains("startupFrames > 0 && sent < startupFrames"))
+    assertTrue(helper.contains(": (controlCodeVisualProbeActive ? startupFps : steadyFps);"))
     assertTrue(helper.contains("fps_target=\" + currentTargetFps"))
     assertFalse(config.contains("ROOT_HARDWARE_H264_BURST_HOLD_MILLIS = 5 * 60"))
   }
@@ -230,6 +232,37 @@ class TicketStreamServiceSourceTest {
 
     assertTrue(signal.contains("SELECT * FROM ticketremote_stream_command_signal WHERE id = ${'$'}{sqlLiteral(\"${'$'}{config.ticketId}:${'$'}{config.backendId}\")}"))
     assertTrue(commands.contains("WHERE ticketId = ${'$'}{sqlLiteral(config.ticketId)} AND backendId = ${'$'}{sqlLiteral(config.backendId)} AND status = 'pending'"))
+    assertTrue(commands.contains("streamCommandPriority(it.commandType)"))
+    assertTrue(commands.contains("\"generate_control_code\" -> 0"))
+    assertTrue(commands.contains("\"control_code_browser_capture\", \"close_control_code\" -> 1"))
+    assertTrue(commands.contains("\"prepare_control_code\" -> 9"))
+    assertTrue(
+      "warm control-code prepare commands must sort behind real control-code generation",
+      commands.indexOf("\"generate_control_code\" -> 0") <
+        commands.indexOf("\"prepare_control_code\" -> 9")
+    )
+    assertTrue(runCycle.contains("command.commandType == \"prepare_control_code\""))
+    assertTrue(runCycle.contains("controlCodeWorkStartedThisCycle || service.ticketSpacetimeControlCodeRequestActive()"))
+    assertTrue(runCycle.contains("drainPhoneMessagesUntilControlCodeResult(config, client)"))
+    assertTrue(runCycle.contains("command.commandType == \"generate_control_code\" || command.commandType == \"control_code_browser_capture\""))
+    assertTrue(runCycle.contains("var handledCommand = false"))
+    assertTrue(runCycle.contains("handledCommand = true"))
+    assertTrue(runCycle.contains("if (deferredCommand || handledCommand)"))
+    assertTrue(
+      "the worker must refetch after each handled command so newly queued generate commands can cut ahead of stale startup/keyframe snapshots",
+      runCycle.contains("deferredCommand = true\n      break\n    }")
+    )
+    assertTrue(runCycle.contains("lastInboxSignalKey = \"\""))
+    assertTrue(worker.contains("CONTROL_CODE_RESULT_FAST_DRAIN_MILLIS = 6_000L"))
+    assertTrue(worker.contains("CONTROL_CODE_RESULT_FAST_DRAIN_POLL_MILLIS = 40L"))
+    assertTrue(worker.contains("payload != null && isControlCodeResultPayload(payload) -> 0"))
+    assertTrue(worker.contains("payload != null && isControlCodeFastStatePayload(payload) -> 1"))
+    assertTrue(worker.contains("payload.string(\"type\") == \"ticket_state_event\" && payload.string(\"ticketState\") == \"generated_result\""))
+    assertTrue(
+      "warm control-code prepare work must defer while real generation or browser capture is being flushed",
+      runCycle.indexOf("command.commandType == \"prepare_control_code\"") <
+        runCycle.indexOf("val result = service.handleTicketSpacetimeCommand(command)")
+    )
     assertTrue(desired.contains("WHERE id = ${'$'}{sqlLiteral(\"${'$'}{config.ticketId}:${'$'}{config.backendId}\")}"))
     assertTrue(runCycle.contains("val signal = client.commandSignal(config)"))
     assertTrue(runCycle.contains("val signalChanged = signalKey != lastInboxSignalKey"))
@@ -556,7 +589,9 @@ class TicketStreamServiceSourceTest {
     assertFalse(helper.contains("--steady-fps"))
     assertFalse(helper.contains("--burst-hold-millis"))
     assertFalse(helper.contains("AtomicLong burstUntilMillis"))
-    assertTrue(helper.contains("int currentTargetFps = startupFrames > 0 && sent < startupFrames ? startupFps : steadyFps;"))
+    assertTrue(helper.contains("boolean controlCodeVisualProbeActive = started <= controlCodeVisualProbeUntilMillis.get();"))
+    assertTrue(helper.contains("startupFrames > 0 && sent < startupFrames"))
+    assertTrue(helper.contains(": (controlCodeVisualProbeActive ? startupFps : steadyFps);"))
     assertTrue(helper.contains("fps_target="))
     assertFalse(helper.contains("cmd.equals(\"burst\")"))
     assertFalse(helper.contains("extendBurst("))
@@ -799,7 +834,7 @@ class TicketStreamServiceSourceTest {
     val fastOpen = source.substringBetween("private suspend fun prepareViviForRootHardwareH264FastOpen", "private suspend fun prepareViviForRootHardwareH264Capture")
 
     assertTrue(source.contains("TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS"))
-    assertTrue(fast.contains("viviStateMemory.recentTicketDetailWithin(TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS)"))
+    assertTrue(fast.contains("viviStateMemory.recentTicketDetailWithin(TICKET_WAKE_FOCUSED_TICKET_DETAIL_FAST_READY_MAX_AGE_MILLIS)"))
     assertTrue(fast.contains("focusedWindowSnapshot()"))
     assertTrue(fast.contains("focused.contains(TicketScreenConfig.VIVI_PACKAGE)"))
     assertTrue(fast.contains("wake_recent_ticket_detail_fast_ready"))
@@ -831,7 +866,7 @@ class TicketStreamServiceSourceTest {
     assertTrue("newer forced-home/empty-list observations must invalidate older TICKET_DETAIL memory before focus-only fast readiness can pass", fast.contains("current.observedAtMillis > recent.observedAtMillis"))
     assertTrue(fast.contains("currentStateInvalidatesRecentTicketDetailFastWake(current.state)"))
     assertFalse("an older non-detail observation must not poison a newer RS return proof", fast.contains("TICKET_WAKE_CURRENT_NON_DETAIL_INVALIDATION_MAX_AGE_MILLIS"))
-    assertTrue(fast.indexOf("viviStateMemory.recentTicketDetailWithin(TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS)") < fast.indexOf("val current = viviStateMemory.current()"))
+    assertTrue(fast.indexOf("viviStateMemory.recentTicketDetailWithin(TICKET_WAKE_FOCUSED_TICKET_DETAIL_FAST_READY_MAX_AGE_MILLIS)") < fast.indexOf("val current = viviStateMemory.current()"))
     assertTrue(fast.contains("wake_recent_ticket_detail_fast_ready_current_non_detail"))
   }
 
@@ -947,10 +982,11 @@ class TicketStreamServiceSourceTest {
     val secureCapture = source.substringBetween("private fun handleRootHardwareH264CaptureFrame", "private fun requestKeyFrame")
 
     assertTrue(companion.contains("private const val STREAM_WATCHDOG_POLL_MILLIS = 500L"))
-    assertTrue(companion.contains("private const val STREAM_WATCHDOG_NO_ENCODER_RESTART_MILLIS = 4_000L"))
-    assertTrue(companion.contains("private const val STREAM_WATCHDOG_NO_FRAME_RESTART_MILLIS = 10_000L"))
-    assertTrue(companion.contains("private const val STREAM_WATCHDOG_STALE_FRAME_RESTART_MILLIS = 8_000L"))
-    assertTrue(companion.contains("private const val STREAM_WATCHDOG_RECOVERY_COOLDOWN_MILLIS = 3_000L"))
+    assertTrue(companion.contains("private const val STREAM_WATCHDOG_NO_ENCODER_RESTART_MILLIS = 1_200L"))
+    assertTrue(companion.contains("private const val STREAM_WATCHDOG_NO_FRAME_RESTART_MILLIS = 2_500L"))
+    assertTrue(companion.contains("private const val STREAM_WATCHDOG_STALE_FRAME_RESTART_MILLIS = 4_000L"))
+    assertTrue(companion.contains("private const val STREAM_WATCHDOG_RECOVERY_COOLDOWN_MILLIS = 1_000L"))
+    assertTrue(source.contains("private const val CLIENT_DISCONNECT_IDLE_GRACE_MILLIS = 90_000L"))
     assertTrue(source.contains("scheduleStreamWatchdog(\"root_capture_start_requested\")"))
     assertTrue(source.contains("scheduleStreamWatchdog(\"client_connected\")"))
     assertTrue(watcher.contains("while (streamWatchdogShouldRun())"))
@@ -1014,9 +1050,16 @@ class TicketStreamServiceSourceTest {
   fun firstViewerStartsHardwareEncoderAndLastViewerStopsIt() {
     val source = ticketStreamServiceSource()
     val websocket = source.substringBetween("private suspend fun acceptWebSocket", "private suspend fun startTicketSession")
+    val immediateStart = source.substringBetween("private suspend fun startTicketSessionForVideoClientOpen", "private suspend fun handleClientCommand")
     val detach = source.substringBetween("private suspend fun noteClientDetached", "private suspend fun stopTicketSession")
 
     assertTrue(websocket.contains("if (video) {"))
+    assertTrue(websocket.contains("startTicketSessionForVideoClientOpen(info)"))
+    assertTrue(immediateStart.contains("if (streamActive)"))
+    assertTrue(immediateStart.contains("controlCodeRequestActive()"))
+    assertTrue(immediateStart.contains("recordTicketEvent(\"stream_client_immediate_start\""))
+    assertTrue(immediateStart.contains("val response = startTicketSession()"))
+    assertTrue(immediateStart.contains("recordTicketEvent(\n      \"stream_client_immediate_start_result\""))
     assertTrue(websocket.contains("ensureEncoderIfPossible()"))
     assertTrue(websocket.contains("sendConfigAndWarmStart(client, size)"))
     assertTrue(detach.contains("rootHardwareH264CaptureEngine.stop(reason)"))
@@ -1250,7 +1293,13 @@ class TicketStreamServiceSourceTest {
     assertTrue(source.contains("private suspend fun handlePrepareControlCode(reason: String)"))
     assertTrue(source.contains("control_code_prepare"))
     assertTrue(source.contains("\"generate_control_code\" -> {"))
-    assertTrue(source.contains("handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage, rsQueueHint)"))
+    assertTrue(source.contains("handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage, rsQueueHint, fastRevision)"))
+    assertTrue(source.contains("markControlCodeFastReady("))
+    assertTrue(source.contains("markControlCodeFastNotReady("))
+    assertTrue(source.contains("controlCodeFastReadyForGenerate(cleanFastRevision)"))
+    assertTrue(worker.contains("\"control_code_fast_state\" -> publishControlCodeFastState(config, client, payload)"))
+    assertTrue(worker.contains("ticketremote_update_control_code_fast_state"))
+    assertTrue(worker.contains("isControlCodeFastStatePayload(payload)"))
     assertTrue(source.contains("CONTROL_CODE_REQUEST_DIGITS_REGEX"))
     assertTrue(source.contains("controlCodeRequestMutex.withLock"))
 	    assertTrue(source.contains("sendCachedControlCodeResult(cleanRequestId)"))
@@ -1478,10 +1527,10 @@ class TicketStreamServiceSourceTest {
       "control-code generation must run off the websocket reader so browser-capture ack can still be received",
       generateBranch.contains("serviceScope.launch")
     )
-    assertTrue(generateBranch.contains("handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage, rsQueueHint)"))
+    assertTrue(generateBranch.contains("handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage, rsQueueHint, fastRevision)"))
     assertFalse(
       "websocket reader must not await the long phone automation request inline",
-      generateBranch.contains("\n        handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage, rsQueueHint)")
+      generateBranch.contains("\n        handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage, rsQueueHint, fastRevision)")
     )
   }
 
@@ -1872,10 +1921,17 @@ class TicketStreamServiceSourceTest {
     assertTrue(engine.contains("flush()"))
     assertTrue(helper.contains("AtomicBoolean"))
     assertFalse(helper.contains("AtomicLong burstUntilMillis"))
-    assertTrue(helper.contains("startCommandReader(syncFrameRequested, controlCodeVisualProbeUntilMillis, controlCodeVisualProbeLastReportMillis, controlCodeVisualProbeReason)"))
+    assertTrue(helper.contains("Object frameWaitLock = new Object();"))
+    assertTrue(helper.contains("controlCodeVisualProbeGenerated"))
+    assertTrue(helper.contains("CONTROL_CODE_VISUAL_GENERATED_HOLD_MILLIS = 1_200L"))
+    assertTrue(helper.contains("startCommandReader("))
+    assertTrue(helper.contains("waitForNextFrame(frameWaitLock, sleep)"))
+    assertTrue(helper.contains("wakeFrameLoop(frameWaitLock)"))
+    assertTrue(helper.contains("extendUntil(controlCodeVisualProbeUntilMillis"))
     assertTrue(helper.contains("MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME"))
     assertTrue(helper.contains("encoder.setParameters(params)"))
     assertTrue(keyframeBranch.contains("syncFrameRequested.set(true)"))
+    assertTrue(keyframeBranch.contains("wakeFrameLoop(frameWaitLock)"))
     assertFalse(helper.contains("cmd.equals(\"burst\")"))
     assertFalse(helper.contains("extendBurst("))
   }
@@ -2079,12 +2135,15 @@ class TicketStreamServiceSourceTest {
 
     assertTrue(fastReady.contains("val ageMillis ="))
     assertTrue(
-      "wake fast-ready still expires remembered TICKET_DETAIL proof at the long ticket-memory horizon",
-      fastReady.contains("ageMillis !in 0..TICKET_WAKE_RECENT_DETAIL_FAST_READY_MAX_AGE_MILLIS")
+      "wake fast-ready still separates the fresh ticket-memory horizon from the focused stale fallback",
+      fastReady.contains("val freshTicketDetail = ageMillis in 0..TICKET_WAKE_RECENT_DETAIL_FAST_READY_MAX_AGE_MILLIS")
     )
+    assertTrue(fastReady.contains("val focusedStaleTicketDetail = ageMillis in 0..TICKET_WAKE_FOCUSED_TICKET_DETAIL_FAST_READY_MAX_AGE_MILLIS"))
     assertTrue(fastReady.contains("focused.contains(TicketScreenConfig.VIVI_PACKAGE)"))
     assertTrue(fastReady.contains("wake_recent_ticket_detail_fast_ready_stale"))
+    assertTrue(fastReady.contains("wake_focused_stale_ticket_detail_fast_ready"))
     assertTrue(source.contains("private const val TICKET_WAKE_RECENT_DETAIL_FAST_READY_MAX_AGE_MILLIS = TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS"))
+    assertTrue(source.contains("private const val TICKET_WAKE_FOCUSED_TICKET_DETAIL_FAST_READY_MAX_AGE_MILLIS"))
   }
 
   @Test
@@ -2099,7 +2158,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(persist.contains("KEY_VIVI_MEMORY_TICKET_WALL_MILLIS"))
     assertTrue(persist.contains("snapshot.state == TicketViviRecoveryState.TICKET_DETAIL"))
     assertTrue(restore.contains("viviStateMemory.seedTicketDetail"))
-    assertTrue(restore.contains("TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS"))
+    assertTrue(restore.contains("TICKET_WAKE_FOCUSED_TICKET_DETAIL_FAST_READY_MAX_AGE_MILLIS"))
     assertTrue(restore.contains("viviStateMemory.seed("))
     assertTrue(restore.contains("currentWallMillis < ticketWallMillis"))
   }
@@ -2660,7 +2719,8 @@ class TicketStreamServiceSourceTest {
     assertTrue(dispatcher.contains("val owner = element[\"owner\"]?.jsonPrimitive?.contentOrNull.orEmpty()"))
     assertTrue(dispatcher.contains("val app = element[\"app\"]?.jsonPrimitive?.contentOrNull.orEmpty()"))
     assertTrue(dispatcher.contains("val flow = element[\"flow\"]?.jsonPrimitive?.contentOrNull.orEmpty()"))
-    assertTrue(dispatcher.contains("handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage, rsQueueHint)"))
+    assertTrue(dispatcher.contains("val fastRevision = element[\"fastRevision\"]?.jsonPrimitive?.contentOrNull.orEmpty()"))
+    assertTrue(dispatcher.contains("handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage, rsQueueHint, fastRevision)"))
     assertTrue(handle.contains("TicketScreenConfig.TICKET_QR_APP_RIGAS_SATIKSME"))
     assertTrue(handle.contains("TicketScreenConfig.TICKET_QR_FLOW_MONTHLY_TICKET"))
     assertTrue("ticket.jolkins control-code messages must declare the ticket owner", handle.contains("val requestedOwner = owner.trim()"))

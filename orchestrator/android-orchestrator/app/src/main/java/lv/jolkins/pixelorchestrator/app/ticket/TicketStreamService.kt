@@ -470,6 +470,11 @@ class TicketStreamService : Service() {
   @Volatile private var lastControlCodeRequestDurationMillis: Long? = null
   @Volatile private var lastControlCodeRequestPhases: Map<String, Long> = emptyMap()
   @Volatile private var lastControlCodeRequestCompletedAtMillis: Long = 0L
+  @Volatile private var lastControlCodeFastReadyRevision: String = ""
+  @Volatile private var lastControlCodeFastReadyAtMillis: Long = 0L
+  @Volatile private var lastControlCodeFastReadyReason: String = ""
+  @Volatile private var lastControlCodeFastReadyStreamEpoch: Long = 0L
+  @Volatile private var lastControlCodeFastReadyFrameSequence: Long = 0L
   @Volatile private var lastControlCodeCommandOwner: String? = null
   @Volatile private var lastControlCodeCommandApp: String? = null
   @Volatile private var lastControlCodeCommandFlow: String? = null
@@ -893,6 +898,9 @@ class TicketStreamService : Service() {
     }
     clientDisconnectStopJob?.cancel()
     clientDisconnectStopJob = null
+    if (video) {
+      startTicketSessionForVideoClientOpen(info)
+    }
     if (ticketSessionOpen()) {
       updateTicketSessionState(TICKET_SESSION_LIVE, "client_connected")
       recordTicketEvent(
@@ -912,6 +920,22 @@ class TicketStreamService : Service() {
     ensureEncoderIfPossible()
     scheduleStreamWatchdog("client_connected")
     client.readLoop()
+  }
+
+  private suspend fun startTicketSessionForVideoClientOpen(info: TicketClientInfo) {
+    if (streamActive) {
+      return
+    }
+    if (controlCodeRequestActive()) {
+      recordTicketEvent("stream_client_start_deferred_for_control_code", streamClientTraceDetail(info, "control_code_active"))
+      return
+    }
+    recordTicketEvent("stream_client_immediate_start", streamClientTraceDetail(info, "video_socket_open"))
+    val response = startTicketSession()
+    recordTicketEvent(
+      "stream_client_immediate_start_result",
+      "ok=${response.ok} state=${response.state} generation=${info.generation} viewer=${info.viewerId.orEmpty()}"
+    )
   }
 
   private suspend fun handleClientCommand(client: TicketWebSocket, message: String) {
@@ -1001,6 +1025,7 @@ class TicketStreamService : Service() {
         val owner = element["owner"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val app = element["app"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val flow = element["flow"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val fastRevision = element["fastRevision"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val resultImage = element["resultImage"]?.jsonPrimitive?.booleanOrNull == true
         val rsQueueHint = element["rsQueueHint"]?.jsonObject?.let { hint ->
           RigasSatiksmeQueueHint(
@@ -1009,7 +1034,7 @@ class TicketStreamService : Service() {
           )
         } ?: RigasSatiksmeQueueHint()
         serviceScope.launch {
-          handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage, rsQueueHint)
+          handleGenerateControlCode(client, requestId, digits, owner, app, flow, resultImage, rsQueueHint, fastRevision)
         }
       }
       "cancel_rigassatiksme_qr_batch" -> {
@@ -1156,7 +1181,8 @@ class TicketStreamService : Service() {
                   pendingAfterThis = hint["pendingAfterThis"]?.jsonPrimitive?.intOrNull ?: 0,
                   ticketPriorityActive = hint["ticketPriorityActive"]?.jsonPrimitive?.booleanOrNull == true
                 )
-              } ?: RigasSatiksmeQueueHint()
+              } ?: RigasSatiksmeQueueHint(),
+              fastRevision = payload?.stringValue("fastRevision").orEmpty()
             )
           }
           TicketSpacetimeCommandResult(ok = true, reason = "generate_control_code_started", streamState = ticketSpacetimeStreamState())
@@ -4534,7 +4560,7 @@ class TicketStreamService : Service() {
     val ticketWallMillis = prefs.getLong(KEY_VIVI_MEMORY_TICKET_WALL_MILLIS, 0L)
     if (ticketWallMillis > 0L) {
       val ticketAgeMillis = (nowWallMillis - ticketWallMillis).coerceAtLeast(0L)
-      if (ticketAgeMillis <= TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS) {
+      if (ticketAgeMillis <= TICKET_WAKE_FOCUSED_TICKET_DETAIL_FAST_READY_MAX_AGE_MILLIS) {
         val restored = viviStateMemory.seedTicketDetail(
           ticketId = prefs.getString(KEY_VIVI_MEMORY_TICKET_ID, "").orEmpty().ifBlank { null },
           observedAgeMillis = ticketAgeMillis,
@@ -5152,7 +5178,7 @@ class TicketStreamService : Service() {
     reason: String,
     wakeStartedAtMillis: Long
   ): TicketAutopilotResult? {
-    val recent = viviStateMemory.recentTicketDetailWithin(TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS) ?: return null
+    val recent = viviStateMemory.recentTicketDetailWithin(TICKET_WAKE_FOCUSED_TICKET_DETAIL_FAST_READY_MAX_AGE_MILLIS) ?: return null
     val ageMillis = (SystemClock.elapsedRealtime() - recent.observedAtMillis).coerceAtLeast(0L)
     val current = viviStateMemory.current()
     val currentAgeMillis = if (current.observedAtMillis > 0L) {
@@ -5170,7 +5196,9 @@ class TicketStreamService : Service() {
       )
       return null
     }
-    if (ageMillis !in 0..TICKET_WAKE_RECENT_DETAIL_FAST_READY_MAX_AGE_MILLIS) {
+    val freshTicketDetail = ageMillis in 0..TICKET_WAKE_RECENT_DETAIL_FAST_READY_MAX_AGE_MILLIS
+    val focusedStaleTicketDetail = ageMillis in 0..TICKET_WAKE_FOCUSED_TICKET_DETAIL_FAST_READY_MAX_AGE_MILLIS
+    if (!freshTicketDetail && !focusedStaleTicketDetail) {
       recordTicketEvent("wake_recent_ticket_detail_fast_ready_stale", "reason=$reason age_ms=$ageMillis")
       return null
     }
@@ -5184,8 +5212,15 @@ class TicketStreamService : Service() {
     }
     recordTicketWakePhase("vivi_foreground", wakeStartedAtMillis)
     recordTicketWakePhase("ticket_ready", wakeStartedAtMillis)
-    recordTicketEvent("wake_recent_ticket_detail_fast_ready", "reason=$reason age_ms=$ageMillis")
-    return TicketAutopilotResult(true, TicketViviRecoveryState.TICKET_DETAIL, "wake_recent_ticket_detail_fast_ready")
+    if (freshTicketDetail) {
+      recordTicketEvent("wake_recent_ticket_detail_fast_ready", "reason=$reason age_ms=$ageMillis")
+      return TicketAutopilotResult(true, TicketViviRecoveryState.TICKET_DETAIL, "wake_recent_ticket_detail_fast_ready")
+    }
+    recordTicketEvent(
+      "wake_focused_stale_ticket_detail_fast_ready",
+      "reason=$reason age_ms=$ageMillis current=${current.state.name}:${current.source}"
+    )
+    return TicketAutopilotResult(true, TicketViviRecoveryState.TICKET_DETAIL, "wake_focused_stale_ticket_detail_fast_ready")
   }
 
   private suspend fun fastWakeReadyFromRecentTicketDetailAfterLaunch(
@@ -6299,6 +6334,10 @@ class TicketStreamService : Service() {
     return status == "running" || status == "queued"
   }
 
+  internal fun ticketSpacetimeControlCodeRequestActive(): Boolean {
+    return controlCodeRequestActive()
+  }
+
   private fun markControlCodeModeEntered(reason: String) {
     val surfaceState = if (reason.contains("result", ignoreCase = true)) {
       TicketViviRecoveryState.CONTROL_CODE_RESULT
@@ -7149,17 +7188,26 @@ class TicketStreamService : Service() {
 
   private suspend fun handlePrepareControlCode(reason: String) {
     val cleanReason = reason.trim().ifBlank { "dialog_open" }
+    if (controlCodeRequestActive() || controlCodeModeActive || ticketSessionState == TICKET_SESSION_CONTROL_EXIT) {
+      markControlCodeFastNotReady("cleanup", "prepare_deferred_control_busy")
+      recordTicketEvent("control_code_prepare_deferred_control_busy", cleanReason)
+      broadcastStatus()
+      return
+    }
     if (recentControlCodePrepareTicketReady(cleanReason)) {
+      markControlCodeFastReady("recent_ticket_detail:$cleanReason")
       recordTicketEvent("control_code_prepare", "TICKET_DETAIL:recent_ticket_detail:success=true")
       broadcastStatus()
       return
     }
     if (ticketWakeInProgress()) {
+      markControlCodeFastNotReady("warming", "prepare_deferred_active_wake")
       recordTicketEvent("control_code_prepare_deferred_active_wake", cleanReason)
       recordTicketEvent("control_code_prepare", "TICKET_DETAIL:active_wake:success=true")
       broadcastStatus()
       return
     }
+    markControlCodeFastNotReady("warming", "prepare_started:$cleanReason")
     val wakeStartedAtMillis = beginTicketWake("control_code_prepare:$cleanReason")
     wakeTicketScreenForSessionStart("control_code_prepare:$cleanReason", wakeStartedAtMillis)
     launchViviForWake("control_code_prepare:$cleanReason")
@@ -7198,6 +7246,9 @@ class TicketStreamService : Service() {
     markWakeReadyIfNeeded(wakeStartedAtMillis, result)
     if (success) {
       updateTicketSessionState(TICKET_SESSION_LIVE, "control_code_prepare_ready")
+      markControlCodeFastReady("prepare:$cleanReason")
+    } else {
+      markControlCodeFastNotReady("blocked", result.step)
     }
     finishTicketWake(wakeStartedAtMillis, succeeded = success, reason = if (success) "ticket_ready" else result.step)
     recordTicketEvent("control_code_prepare", "${result.state}:${result.step}:success=${result.success}")
@@ -7250,6 +7301,108 @@ class TicketStreamService : Service() {
     recordTicketEvent(
       "control_code_command_rejected",
       "request=${requestId.trim().ifBlank { "missing" }} owner=${owner.trim().ifBlank { "missing" }} app=${app.trim().ifBlank { "missing" }} flow=${flow.trim().ifBlank { "missing" }} reason=$cleanReason"
+    )
+    broadcastStatus()
+  }
+
+  private fun controlCodeFastReadyForGenerate(expectedRevision: String): Boolean {
+    val revision = expectedRevision.trim()
+    if (revision.isBlank()) return false
+    val readyAtMillis = lastControlCodeFastReadyAtMillis
+    if (readyAtMillis <= 0L) return false
+    val nowMillis = SystemClock.elapsedRealtime()
+    if (nowMillis - readyAtMillis > CONTROL_CODE_FAST_READY_TTL_MILLIS) return false
+    if (revision != lastControlCodeFastReadyRevision) return false
+    return streamActive &&
+      hardwareCaptureVerified &&
+      ticketSessionState == TICKET_SESSION_LIVE &&
+      !controlCodeModeActive &&
+      !controlCodeRequestActive()
+  }
+
+  private fun markControlCodeFastReady(reason: String) {
+    val cleanReason = reason.trim().ifBlank { "ticket_detail" }
+    val watermark = requestFreshTicketStateFrameWatermark("control_code_fast_ready:$cleanReason")
+    val nowMillis = SystemClock.elapsedRealtime()
+    val revision = "phone:$nowMillis:${watermark.first}:${watermark.second}"
+    lastControlCodeFastReadyRevision = revision
+    lastControlCodeFastReadyAtMillis = nowMillis
+    lastControlCodeFastReadyReason = cleanReason
+    lastControlCodeFastReadyStreamEpoch = watermark.first
+    lastControlCodeFastReadyFrameSequence = watermark.second
+    controlCodeTransitionGraceUntilMillis = 0L
+    if (ticketSessionState != TICKET_SESSION_LIVE) {
+      updateTicketSessionState(TICKET_SESSION_LIVE, "control_code_fast_ready")
+    }
+    sendControlCodeFastState(
+      status = "fast_ready",
+      reason = cleanReason,
+      revision = revision,
+      streamEpochValue = watermark.first,
+      frameSequenceValue = watermark.second,
+      rawTicketConfirmed = true,
+      cleanupClear = true,
+      streamLive = streamActive && hardwareCaptureVerified
+    )
+  }
+
+  private fun markControlCodeFastNotReady(status: String, reason: String) {
+    val cleanStatus = when (status.trim()) {
+      "cleanup" -> "cleanup"
+      "blocked" -> "blocked"
+      else -> "warming"
+    }
+    val nowMillis = SystemClock.elapsedRealtime()
+    val previousRevision = lastControlCodeFastReadyRevision
+    lastControlCodeFastReadyRevision = ""
+    lastControlCodeFastReadyAtMillis = 0L
+    lastControlCodeFastReadyReason = reason.trim().ifBlank { cleanStatus }
+    lastControlCodeFastReadyStreamEpoch = 0L
+    lastControlCodeFastReadyFrameSequence = 0L
+    sendControlCodeFastState(
+      status = cleanStatus,
+      reason = reason.trim().ifBlank { cleanStatus },
+      revision = previousRevision.ifBlank { "phone:$nowMillis:$cleanStatus" },
+      streamEpochValue = streamEpoch,
+      frameSequenceValue = frameSequence,
+      rawTicketConfirmed = false,
+      cleanupClear = false,
+      streamLive = streamActive && hardwareCaptureVerified
+    )
+  }
+
+  private fun sendControlCodeFastState(
+    status: String,
+    reason: String,
+    revision: String,
+    streamEpochValue: Long,
+    frameSequenceValue: Long,
+    rawTicketConfirmed: Boolean,
+    cleanupClear: Boolean,
+    streamLive: Boolean
+  ) {
+    val cleanStatus = when (status.trim()) {
+      "fast_ready" -> "fast_ready"
+      "cleanup" -> "cleanup"
+      "blocked" -> "blocked"
+      else -> "warming"
+    }
+    val message = buildJsonObject {
+      put("type", "control_code_fast_state")
+      put("status", cleanStatus)
+      put("revision", revision.trim())
+      put("reason", reason.trim().ifBlank { cleanStatus })
+      put("streamEpoch", streamEpochValue)
+      put("frameSequence", frameSequenceValue)
+      put("rawTicketConfirmed", rawTicketConfirmed)
+      put("cleanupClear", cleanupClear)
+      put("streamLive", streamLive)
+      put("phoneUptimeMillis", SystemClock.elapsedRealtime())
+    }.toString()
+    enqueueTicketSpacetimePhoneMessage(message)
+    recordTicketEvent(
+      "control_code_fast_state",
+      "status=$cleanStatus reason=${reason.trim().ifBlank { cleanStatus }} revision=${revision.trim().ifBlank { "missing" }} stream_live=$streamLive"
     )
     broadcastStatus()
   }
@@ -7570,13 +7723,15 @@ class TicketStreamService : Service() {
     app: String,
     flow: String,
     resultImage: Boolean,
-    queueHint: RigasSatiksmeQueueHint
+    queueHint: RigasSatiksmeQueueHint,
+    fastRevision: String = ""
   ) {
     val cleanRequestId = requestId.trim()
     val cleanDigits = digits.trim()
     val requestedOwner = owner.trim()
     val requestedApp = app.trim()
     val requestedFlow = flow.trim()
+    val cleanFastRevision = fastRevision.trim()
     recordControlCodeCommandEnvelope(requestedOwner, requestedApp, requestedFlow)
     recordTicketEvent(
       "control_code_request_received",
@@ -7633,6 +7788,24 @@ class TicketStreamService : Service() {
     ) {
       return
     }
+    val fastPathRequired = replyClient == null
+    if (fastPathRequired && !controlCodeFastReadyForGenerate(cleanFastRevision)) {
+      val startedAtMillis = SystemClock.elapsedRealtime()
+      val phases = linkedMapOf<String, Long>("phone_command_received" to 0L)
+      markControlCodeFastNotReady(
+        status = if (controlCodeRequestActive() || controlSensitiveWindowActive()) "cleanup" else "warming",
+        reason = "fast_not_ready"
+      )
+      recordTicketEvent(
+        "control_code_fast_not_ready",
+        "request=$cleanRequestId expected_revision=${cleanFastRevision.ifBlank { "missing" }} current_revision=${lastControlCodeFastReadyRevision.ifBlank { "missing" }}"
+      )
+      sendControlCodeResult(cleanRequestId, false, "fast_not_ready", "", startedAtMillis, phases, cleanupPending = false)
+      serviceScope.launch(Dispatchers.IO) {
+        handlePrepareControlCode("fast_not_ready_refresh")
+      }
+      return
+    }
     if (replyClient != null) {
       protectedControlClients.add(replyClient)
     }
@@ -7656,6 +7829,7 @@ class TicketStreamService : Service() {
         lastControlCodeRequestCompletedAtMillis = 0L
         broadcastStatus()
         recordTicketEvent("control_code_request_running", "request=$cleanRequestId")
+        markControlCodeFastNotReady("cleanup", "control_code_request")
 
         var ok = false
         var reason = "failed"
@@ -7664,14 +7838,18 @@ class TicketStreamService : Service() {
 
         try {
           phases["phone_command_received"] = 0L
-          val recoveryBlockReason = waitForControlCodeRecoveryWindow(cleanRequestId, phases, startedAtMillis)
+          val recoveryBlockReason = if (fastPathRequired) {
+            null
+          } else {
+            waitForControlCodeRecoveryWindow(cleanRequestId, phases, startedAtMillis)
+          }
           if (recoveryBlockReason != null) {
             reason = when (recoveryBlockReason) {
               "waiting_for_ticket_reselect" -> "control_code_recovery_queue_timeout"
               "waiting_for_stream_recovery" -> "control_code_recovery_queue_timeout"
               else -> recoveryBlockReason
             }
-          } else if (!ensureTicketSessionForControlCodeRequest(phases, startedAtMillis)) {
+          } else if (!fastPathRequired && !ensureTicketSessionForControlCodeRequest(phases, startedAtMillis)) {
             reason = "control_code_request_session_unavailable"
           } else if (!measureInputPhase(phases, "gate") { canForwardRemoteInput() }) {
             reason = inputGateReason
@@ -7740,6 +7918,11 @@ class TicketStreamService : Service() {
                 reason = if (recoveredAfterCleanup) "ticket_detail" else "control_code_cleanup_attention_needed",
                 startedAtMillis = startedAtMillis
               )
+              if (recoveredAfterCleanup) {
+                markControlCodeFastReady("cleanup:$cleanupReason")
+              } else {
+                markControlCodeFastNotReady("blocked", "control_code_cleanup_attention_needed")
+              }
               recordTicketEvent(
                 "control_code_cleanup_result",
                 "request=$cleanRequestId ok=$recoveredAfterCleanup"
@@ -7768,6 +7951,11 @@ class TicketStreamService : Service() {
                 reason = if (cleanupSucceeded) "ticket_detail" else "control_code_cleanup_attention_needed",
                 startedAtMillis = startedAtMillis
               )
+              if (cleanupSucceeded) {
+                markControlCodeFastReady("failed_delivery_cleanup")
+              } else {
+                markControlCodeFastNotReady("blocked", "control_code_cleanup_attention_needed")
+              }
               recordTicketEvent(
                 "control_code_cleanup_result",
                 "request=$cleanRequestId ok=$cleanupSucceeded"
@@ -7802,6 +7990,11 @@ class TicketStreamService : Service() {
             reason = if (cleanupSucceeded) "ticket_detail" else "control_code_cleanup_attention_needed",
             startedAtMillis = startedAtMillis
           )
+          if (cleanupSucceeded) {
+            markControlCodeFastReady("exception_cleanup")
+          } else {
+            markControlCodeFastNotReady("blocked", "control_code_cleanup_attention_needed")
+          }
           recordTicketEvent(
             "control_code_cleanup_result",
             "request=$cleanRequestId ok=$cleanupSucceeded"
@@ -12808,7 +13001,7 @@ class TicketStreamService : Service() {
     private const val TICKET_SPACETIME_PHONE_MESSAGE_LIMIT = 80
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
     private const val SESSION_START_TIMEOUT_MILLIS = 70_000L
-    const val SERVER_VERSION = "ticket-stream-2026-07-07-latest-ticket-self-proof-v236"
+    const val SERVER_VERSION = "ticket-stream-2026-07-07-socket-immediate-open-v238"
     private const val CONTROL_CODE_MARKER_RESULT_HIERARCHY = "__marker_control_code_result__"
     private const val FRAME_ENVELOPE_VERSION = "tsf2"
     private const val FRAME_ENVELOPE_MAGIC = 0x54534632
@@ -12838,10 +13031,10 @@ class TicketStreamService : Service() {
     private const val ACTIVE_STREAM_REUSE_TICKET_DETAIL_MAX_AGE_MILLIS = 5 * 60_000L
     private const val STREAM_STALE_ENGINE_RESTART_MILLIS = 4_000L
     private const val STREAM_WATCHDOG_POLL_MILLIS = 500L
-    private const val STREAM_WATCHDOG_NO_ENCODER_RESTART_MILLIS = 4_000L
-    private const val STREAM_WATCHDOG_NO_FRAME_RESTART_MILLIS = 10_000L
-    private const val STREAM_WATCHDOG_STALE_FRAME_RESTART_MILLIS = 8_000L
-    private const val STREAM_WATCHDOG_RECOVERY_COOLDOWN_MILLIS = 3_000L
+    private const val STREAM_WATCHDOG_NO_ENCODER_RESTART_MILLIS = 1_200L
+    private const val STREAM_WATCHDOG_NO_FRAME_RESTART_MILLIS = 2_500L
+    private const val STREAM_WATCHDOG_STALE_FRAME_RESTART_MILLIS = 4_000L
+    private const val STREAM_WATCHDOG_RECOVERY_COOLDOWN_MILLIS = 1_000L
     private const val SPACETIME_DESIRED_RECOVERY_COOLDOWN_MILLIS = 20_000L
     private const val SPACETIME_DESIRED_RECOVERY_STALE_BLOCK_MILLIS = 15_000L
     private const val HARDWARE_RELIABILITY_FAILURE_THRESHOLD = 3
@@ -12903,6 +13096,7 @@ class TicketStreamService : Service() {
     private const val TICKET_WAKE_POST_LAUNCH_FAST_READY_TIMEOUT_MILLIS = 1_400L
     private const val TICKET_WAKE_POST_LAUNCH_FAST_READY_POLL_MILLIS = 120L
     private const val TICKET_WAKE_MEMORY_TICKET_DETAIL_MAX_AGE_MILLIS = 10 * 60_000L
+    private const val TICKET_WAKE_FOCUSED_TICKET_DETAIL_FAST_READY_MAX_AGE_MILLIS = 24 * 60 * 60_000L
     private const val TICKET_WAKE_GUARD_GRACE_MILLIS = 1_000L
     private const val TICKET_WAKE_FAST_POLL_MILLIS = 100L
     private const val NON_TOUCH_SCRIPT_REASSERT_INTERVAL_MILLIS = 250L
@@ -12914,7 +13108,7 @@ class TicketStreamService : Service() {
     private const val CONTROL_CODE_FAST_PANEL_SLEEP_CLAMP_POST_MILLIS = 250L
     private const val NON_TOUCH_PANEL_SLEEP_CLAMP_POST_MILLIS = 2_500L
     private const val STARTUP_CLIENT_DISCONNECT_GRACE_MILLIS = 5_000L
-    private const val CLIENT_DISCONNECT_IDLE_GRACE_MILLIS = 30_000L
+    private const val CLIENT_DISCONNECT_IDLE_GRACE_MILLIS = 90_000L
     private const val VIVI_FOREGROUND_INITIAL_DELAY_MILLIS = 1_500L
     private const val VIVI_FOREGROUND_CHECK_MILLIS = 1_500L
     private const val VIVI_STABLE_FOREGROUND_CHECK_MILLIS = 5_000L
@@ -12954,6 +13148,7 @@ class TicketStreamService : Service() {
     private const val CONTROL_CODE_FAST_POPUP_TIMEOUT_MILLIS = 2_400L
     private const val CONTROL_CODE_FAST_POPUP_VISUAL_WAIT_MILLIS = 650L
     private const val CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS = 18_000L
+    private const val CONTROL_CODE_FAST_READY_TTL_MILLIS = 12_000L
     private const val CONTROL_CODE_BROWSER_CAPTURE_ACK_POLL_MILLIS = 40L
     private const val CONTROL_CODE_BROWSER_CAPTURE_ACK_TIMEOUT_MILLIS = 10_000L
     private const val CONTROL_CODE_RECOVERY_QUEUE_TIMEOUT_MILLIS = 20_000L
