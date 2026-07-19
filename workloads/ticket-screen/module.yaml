@@ -1,6 +1,6 @@
 schema: 1
 module_id: ticket_screen
-owner: pixel-ops
+owner: pixel-phone
 runtime:
   type: service
   healthcheck: sh /data/local/pixel-stack/bin/pixel-ticket-health.sh

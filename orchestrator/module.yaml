@@ -1,6 +1,6 @@
 schema: 1
 module_id: orchestrator
-owner: pixel-ops
+owner: pixel-phone
 runtime:
   type: service
   healthcheck: orchestrator/scripts/android/deploy_orchestrator_apk.sh --action health --skip-build

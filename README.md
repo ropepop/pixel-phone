@@ -1,10 +1,10 @@
-# Pixel Ops Monorepo
+# Pixel Phone Runtime
 
-Unified operations, runtime, workload, and automation repository for Pixel-root orchestrated services.
+Sanitized public mirror of the rooted Pixel phone runtime and device-side automation.
 
 ## What It Does
 
-- Unified operations, runtime, workload, and automation repository for Pixel-root orchestrated services.
+- Rooted Pixel phone runtime and device-side automation.
 - root orchestrator code and runtime scripts,.
 - workload modules (train bot and site notifications),.
 - pihole secret artifacts (intentionally tracked per current policy),.

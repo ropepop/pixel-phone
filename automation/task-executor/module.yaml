@@ -1,6 +1,6 @@
 schema: 1
 module_id: task_executor
-owner: pixel-ops
+owner: pixel-phone
 runtime:
   type: external
   healthcheck: github_actions_workflow_status

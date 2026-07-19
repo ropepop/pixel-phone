@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd -P)"
 OUTPUT_FILE="${REPO_ROOT}/docs/reference/orchestrator/CONFIG.md"
 TEMPLATE_FILE="${REPO_ROOT}/orchestrator/templates/orchestrator/orchestrator-config-v1.example.json"
 STACK_CONFIG_FILE="${REPO_ROOT}/orchestrator/android-orchestrator/core-config/src/main/kotlin/lv/jolkins/pixelorchestrator/coreconfig/StackConfigV1.kt"

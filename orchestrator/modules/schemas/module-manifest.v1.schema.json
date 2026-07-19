@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ops.local/schemas/module-manifest.v1.schema.json",
-  "title": "Pixel Ops Module Manifest v1",
+  "title": "Pixel Phone Module Manifest v1",
   "type": "object",
   "required": ["schema", "module_id", "owner", "runtime", "components"],
   "properties": {

@@ -1,6 +1,6 @@
 schema: 1
 module_id: adguardhome
-owner: pixel-ops
+owner: pixel-phone
 runtime:
   type: external
   healthcheck: orchestrator/scripts/ops/service-availability-report.sh

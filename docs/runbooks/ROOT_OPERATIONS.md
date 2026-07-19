@@ -102,7 +102,7 @@ Use `bootstrap` only for first install, clean-room reprovisioning, or intentiona
 <a id="system-context-and-ownership-boundaries"></a>
 ## System Context and Ownership Boundaries
 
-`pixel-ops` monorepo is the orchestration source repo.
+The canonical source repo is `pixel-phone`.
 
 In-scope ownership:
 - App/APK orchestration and intent action surface

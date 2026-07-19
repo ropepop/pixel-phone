@@ -1,6 +1,6 @@
-# Pixel Ops Monorepo
+# Pixel Phone Runtime
 
-Unified operations, runtime, workload, and automation repository for Pixel-root orchestrated services.
+Rooted Pixel phone runtime and device-side automation source.
 
 ## Purpose
 
