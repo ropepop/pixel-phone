@@ -3,41 +3,98 @@
 Thumbs.db
 .vscode/
 .idea/
+*.iml
 *.swp
 *.swo
 *~
 
-# Python caches
-__pycache__/
-*.pyc
-.pytest_cache/
-.venv/
+# Local agent/browser state
+.ai/
+.browser-use/
+.codex-tmp/
+.playwright-cli/
+.playwright-mcp/
 
-# Node/build caches
+# Language and build caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
 node_modules/
+.cache/
 .gradle/
+.kotlin/
 build/
 out/
 dist/
+target/
+local.properties
+*.apk
+*.aab
 
-# Local runtime scratch
-.browser-use/
-.playwright-cli/
-.playwright-mcp/
-.tmp-rootfs/
+# Generated release/output scratch
 .artifacts/
+.tmp-rootfs/
+output/
+orchestrator/.artifacts/
+orchestrator/.tmp-rootfs/
+workloads/*/bin/
+workloads/satiksme-bot/bot
+
+# Local-first runtime mirrors and generated state. These files remain on disk,
+# but must never be swept into a source commit.
+host-mirror/
+state/
+
+# Evidence and captures can contain private app state, images, identifiers, or
+# raw device output. Sanitized durable conclusions belong in ops/reports/.
+observations/
+ops/evidence/
+security-audit-evidence/
+security-audits/
 /*.png
 /*.log
 
-# Local generated app state and data
-workloads/*/*.db
-workloads/train-bot/bin/
-workloads/satiksme-bot/bin/
-workloads/satiksme-bot/bot
+# Secrets and machine-local configuration
+**/secrets/
+**/.env
+**/.env.*
+**/.envrc
+**/*.env
+**/*.env.*
+!**/.env.example
+!**/*.example.env
+**/local.env
+**/*-session-secret
+**/*-private-key.*
+**/*private*.pem
+**/id_rsa*
+**/id_ed25519*
+**/cloudflare-token
+**/acme/
+**/*.key
+**/*.keystore
+**/*.jks
+**/*.p12
+**/*.pfx
+**/cookies*.json
+**/cookies*.txt
+
+# Runtime databases and journals
+**/*.db
+**/*.db-*
+**/*.db.*
+**/*.sqlite
+**/*.sqlite-*
+**/*.sqlite.*
+**/*.sqlite3
+**/*.sqlite3-*
+**/*.sqlite3.*
+
+# Local generated application data
 workloads/train-bot/data/schedules/*.json
 workloads/satiksme-bot/data/catalog/generated/
 workloads/satiksme-bot/data/catalog/source/*.zip
 workloads/satiksme-bot/data/catalog/source/*.txt
-
-# Keep evidence tracked by default under ops/evidence
-# Keep secrets tracked by explicit user decision.

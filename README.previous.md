@@ -1,10 +1,10 @@
 # Pixel Phone Runtime
 
-Rooted Pixel phone runtime and device-side automation source.
+Canonical source repository for the rooted Pixel phone runtime, orchestration, and device-side automation.
 
 ## Purpose
 
-This repository consolidates the production Pixel stack into a single operational workspace with:
+This repository contains the device-side half of the production stack, separate from the server-side `ops` repository, with:
 - root orchestrator code and runtime scripts,
 - workload modules (train bot and site notifications),
 - automation workflows,

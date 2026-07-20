@@ -1,98 +1,46 @@
 #!/system/bin/sh
 set -eu
 
-BASE="/data/local/pixel-stack/apps/ticket-screen"
-RUN_DIR="${BASE}/run"
-LOCK_DIR="${RUN_DIR}/ticket-screen-start-stop.lock"
-APP_PACKAGE="lv.jolkins.pixelorchestrator"
-SUPERVISOR="${APP_PACKAGE}/.app.SupervisorService"
-ACTION_TICKET_STOP="lv.jolkins.pixelorchestrator.action.TICKET_STOP_SERVER"
+DEEP=0
+for arg in "$@"; do
+  case "$arg" in
+    --deep|--full) DEEP=1 ;;
+    *) echo "unsupported ticket stop argument: $arg" >&2; exit 2 ;;
+  esac
+done
 
-mkdir -p "${RUN_DIR}"
-chcon u:object_r:shell_data_file:s0 "${BASE}" "${RUN_DIR}" 2>/dev/null || true
+STACK_ROOT="${PIXEL_STACK_ROOT:-/data/local/pixel-stack}"
+BASE="${STACK_ROOT}/apps/ticket-screen"
+CONF_ENV="${STACK_ROOT}/conf/apps/ticket-screen.env"
+RUNTIME_ENV="${BASE}/env/ticket-screen.env"
+LOCK="${BASE}/run/ticket-screen-start-stop.lock"
+APP="lv.jolkins.pixelorchestrator"
+. "${PIXEL_TICKET_LOCK_HELPER:-${STACK_ROOT}/bin/pixel-ticket-lifecycle-lock.sh}"
+for env_file in "$CONF_ENV" "$RUNTIME_ENV"; do [ ! -r "$env_file" ] || . "$env_file"; done
+: "${TICKET_SCREEN_PORT:=9388}"
 
-acquire_lock() {
-  if ! mkdir "${LOCK_DIR}" >/dev/null 2>&1; then
-    rm -rf "${LOCK_DIR}" >/dev/null 2>&1 || true
-    mkdir "${LOCK_DIR}" >/dev/null 2>&1 || return 0
-  fi
-  trap 'rmdir "${LOCK_DIR}" >/dev/null 2>&1 || true' EXIT HUP INT TERM
+listening() {
+  ss -ltn 2>/dev/null | grep -E "[:.]${TICKET_SCREEN_PORT}[[:space:]]" >/dev/null 2>&1
 }
 
-acquire_lock
+mkdir -p "${BASE}/run"
+ticket_lock_acquire "$LOCK" "${TICKET_SCREEN_STOP_LOCK_WAIT_SECONDS:-10}" || { echo "ticket start/stop lock remained active" >&2; exit 1; }
 
-reset_debuggable() {
-  value="$1"
-  if [ -x /debug_ramdisk/magisk ]; then
-    su -M -c "/debug_ramdisk/magisk resetprop ro.debuggable ${value}"
-    return "$?"
-  fi
-  if command -v resetprop >/dev/null 2>&1; then
-    su -M -c "resetprop ro.debuggable ${value}"
-    return "$?"
-  fi
-  su -M -c "/system_ext/bin/magisk resetprop ro.debuggable ${value}"
-}
-
-am start-foreground-service \
-  -n "${SUPERVISOR}" \
-  -a "${ACTION_TICKET_STOP}" \
+am start-foreground-service -n "${APP}/.app.SupervisorService" \
+  -a "lv.jolkins.pixelorchestrator.action.TICKET_STOP_SERVER" \
   --es orchestrator_action ticket_stop_server >/dev/null 2>&1 || true
-
 settings put secure disable_secure_windows 0 >/dev/null 2>&1 || true
 state_file="${BASE}/state/ro-debuggable-before-ticket"
-if [ -r "${state_file}" ]; then
-  original="$(sed -n '1p' "${state_file}" 2>/dev/null | tr -d '\r' || true)"
-  case "${original}" in
-    1) reset_debuggable 1 >/dev/null 2>&1 || true ;;
-    *) reset_debuggable 0 >/dev/null 2>&1 || true ;;
-  esac
-  rm -f "${state_file}" >/dev/null 2>&1 || true
+if [ -r "$state_file" ]; then
+  original=$(sed -n '1p' "$state_file" | tr -d '\r')
+  resetprop ro.debuggable "${original:-0}" >/dev/null 2>&1 || true
+  rm -f "$state_file"
 fi
 
-kill_pid_file() {
-  pid_file="$1"
-  [ -r "${pid_file}" ] || return 0
-  pid="$(sed -n '1p' "${pid_file}" 2>/dev/null | tr -d '\r' || true)"
-  if [ -n "${pid}" ] && kill -0 "${pid}" >/dev/null 2>&1; then
-    kill_one "-9" "${pid}"
-  fi
-  rm -f "${pid_file}" >/dev/null 2>&1 || true
-}
-
-kill_one() {
-  signal="$1"
-  pid="$2"
-  [ -n "${pid}" ] || return 0
-  if [ -n "${signal}" ]; then
-    kill "${signal}" "${pid}" >/dev/null 2>&1 || su -M -c "kill ${signal} ${pid}" >/dev/null 2>&1 || true
-  else
-    kill "${pid}" >/dev/null 2>&1 || su -M -c "kill ${pid}" >/dev/null 2>&1 || true
-  fi
-}
-
-kill_matching_with_signal() {
-  signal="$1"
-  needle="$2"
-  ps -A -o PID,ARGS 2>/dev/null | while IFS= read -r line; do
-    case "${line}" in
-      *"${needle}"*)
-        set -- ${line}
-        pid="${1:-}"
-        case "${pid}" in
-          ''|*[!0-9]*) continue ;;
-          "$$") continue ;;
-        esac
-        kill_one "${signal}" "${pid}"
-        ;;
-    esac
-  done
-}
-
-kill_pid_file "${RUN_DIR}/ticket-web-tunnel-service-loop.pid"
-kill_pid_file "${RUN_DIR}/ticket-screen-cloudflared.pid"
-kill_matching_with_signal "-9" "${BASE}/bin/ticket-web-tunnel-service-loop"
-kill_matching_with_signal "-9" "/state/ticket-screen-cloudflared.yml"
-kill_matching_with_signal "-9" "/data/local/pixel-stack/chroots/pihole/usr/bin/ffmpeg"
-kill_matching_with_signal "-9" "/usr/bin/ffmpeg -hide_banner -loglevel warning -nostats -f rawvideo"
-kill_matching_with_signal "-9" "while :; do screencap; sleep"
+attempts=25
+while [ "$attempts" -gt 0 ] && listening; do attempts=$((attempts - 1)); sleep 0.2; done
+if listening && [ "$DEEP" = 1 ]; then
+  am force-stop "$APP" >/dev/null 2>&1 || true
+  sleep 0.2
+fi
+listening && { echo "Ticket runtime did not stop cleanly" >&2; exit 1; }

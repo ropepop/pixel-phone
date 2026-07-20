@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "enabled": true,
+  "paused_reason": "",
+  "repair_mode": "disabled",
+  "public": {
+    "page_url": "https://ticket.jolkins.id.lv/",
+    "livez_url": "https://ticket.jolkins.id.lv/api/v1/livez",
+    "protected_health_url": "https://ticket.jolkins.id.lv/api/v1/health",
+    "timeout_seconds": 10
+  },
+  "ssh": {
+    "binary": "ssh",
+    "host": "kitty-gration",
+    "user": "ropepop",
+    "connect_timeout_seconds": 8,
+    "command_timeout_seconds": 12
+  },
+  "containers": [
+    {"name": "arbuzas-ticket_remote-1", "health_required": true},
+    {"name": "arbuzas-ticket_remote_spacetime_sidecar-1", "health_required": true},
+    {"name": "arbuzas-ticket_remote_tunnel-1", "health_required": false},
+    {"name": "arbuzas-ticket_phone_bridge-1", "health_required": true}
+  ],
+  "container_endpoints": [
+    {"name": "ticket_remote_livez", "container": "arbuzas-ticket_remote-1", "url": "http://127.0.0.1:9338/api/v1/livez"},
+    {"name": "spacetime_sidecar_healthz", "container": "arbuzas-ticket_remote_spacetime_sidecar-1", "url": "http://127.0.0.1:9346/healthz"},
+    {"name": "ticket_phone_bridge_health", "container": "arbuzas-ticket_phone_bridge-1", "url": "http://127.0.0.1:9388/api/v1/health"}
+  ],
+  "spacetime": {
+    "binary": "spacetime",
+    "server": "https://maincloud.spacetimedb.com",
+    "database": "ticket-remote-prod-v3",
+    "ticket_id": "vivi-default",
+    "expected_operator_identity": "c200ba2b19cf478fbb75ce99bd969ebe47cb313909a7ebf4d5f19c6bf3e325f9",
+    "timeout_seconds": 12
+  },
+  "pixel": {
+    "adb_binary": "adb",
+    "serial": "100.76.50.43:5555",
+    "timeout_seconds": 10,
+    "curl_path": "/data/local/pixel-stack/bin/curl",
+    "health_url": "http://127.0.0.1:9388/api/v1/health"
+  },
+  "thresholds": {
+    "pixel_frame_age_millis": 1500,
+    "relay_frame_age_millis": 1000,
+    "resources": {
+      "host": {
+        "memory_used_percent": {"warning": 80, "failure": 92},
+        "root_disk_used_percent": {"warning": 80, "failure": 90},
+        "container_cpu_percent": {"warning": 100, "failure": 250},
+        "container_memory_percent": {"warning": 20, "failure": 40}
+      },
+      "pixel": {
+        "battery_level_percent": {"warning_below": 25, "failure_below": 10},
+        "battery_temperature_c": {"warning": 40, "failure": 45},
+        "thermal_status": {"warning": 2, "failure": 4},
+        "memory_used_percent": {"warning": 85, "failure": 95},
+        "data_disk_used_percent": {"warning": 80, "failure": 90}
+      }
+    }
+  },
+  "reporting": {
+    "max_degraded_evidence_reports": 72
+  },
+  "standby_devices": []
+}

@@ -5,6 +5,8 @@ object OrchestratorShellCommand {
   const val EXTRA_COMPONENT = "orchestrator_component"
   const val EXTRA_PIXEL_RUN_ID = "pixel_run_id"
   const val EXTRA_DRY_RUN = "orchestrator_dry_run"
+  const val EXTRA_FAST_TICKET_REDEPLOY = "orchestrator_fast_ticket_redeploy"
+  const val EXTRA_ENABLE_TICKET_SERVICE = "orchestrator_enable_ticket_service"
 
   const val ACTION_BOOTSTRAP = "bootstrap"
   const val ACTION_START_ALL = "start_all"
@@ -22,6 +24,10 @@ object OrchestratorShellCommand {
   const val ACTION_TICKET_STOP_SERVER = "ticket_stop_server"
 
   fun normalizeAction(value: String?): String = value?.trim()?.lowercase().orEmpty()
+
+  fun permitsTicketServiceEnable(action: String?, component: String?): Boolean =
+    normalizeAction(action) == ACTION_REDEPLOY_COMPONENT &&
+      component?.trim()?.equals(TICKET_SCREEN_COMPONENT, ignoreCase = true) == true
 
   fun toSupervisorAction(action: String): String? =
     when (normalizeAction(action)) {
@@ -60,4 +66,6 @@ object OrchestratorShellCommand {
       SupervisorService.ACTION_TICKET_STOP_SERVER -> ACTION_TICKET_STOP_SERVER
       else -> null
     }
+
+  private const val TICKET_SCREEN_COMPONENT = "ticket_screen"
 }

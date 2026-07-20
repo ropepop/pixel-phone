@@ -40,6 +40,7 @@ bash "${SERVICE_REPORT}" \
   --fqdn localhost \
   --timeout 1 \
   --skip-root-checks \
+  --skip-network-checks \
   --querylog-json-file "${tmpdir}/querylog.json" \
   --expect-lan-client-ip 192.168.31.46 \
   --lan-gateway-ip 192.168.31.1 \
@@ -125,6 +126,7 @@ bash "${SERVICE_REPORT}" \
   --fqdn localhost \
   --timeout 1 \
   --skip-root-checks \
+  --skip-network-checks \
   --querylog-json-file "${tmpdir}/querylog.json" \
   --include-internal-querylog \
   --expect-lan-client-ip 192.168.31.46 \
@@ -160,6 +162,7 @@ bash "${SERVICE_REPORT}" \
   --fqdn localhost \
   --timeout 1 \
   --skip-root-checks \
+  --skip-network-checks \
   --querylog-json-file "${tmpdir}/querylog.json" \
   --expect-lan-client-ip 192.168.31.46 \
   --lan-gateway-ip 192.168.31.1 \

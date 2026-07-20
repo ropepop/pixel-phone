@@ -86,6 +86,10 @@ release_lock() {
 }
 
 cleanup() {
+  if [ -n "${child_pid:-}" ] && kill -0 "${child_pid}" >/dev/null 2>&1; then
+    kill "${child_pid}" >/dev/null 2>&1 || true
+    wait "${child_pid}" >/dev/null 2>&1 || true
+  fi
   release_lock
 }
 
@@ -101,6 +105,11 @@ rapid_count=0
 backoff="${SERVICE_BACKOFF_INITIAL_SEC}"
 
 log "${LOOP_NAME} started"
+
+if [ "${VPN_ENABLED:-0}" != "1" ]; then
+  log "vpn disabled; service loop is idle"
+  while true; do sleep 300; done
+fi
 
 while true; do
   log "starting tailscaled"

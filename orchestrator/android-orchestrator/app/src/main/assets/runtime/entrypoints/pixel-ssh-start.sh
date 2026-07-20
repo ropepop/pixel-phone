@@ -39,9 +39,13 @@ if [ ! -f "${TPL_LOOP}" ]; then
   exit 1
 fi
 
-cp "${TPL_LAUNCH}" "${LAUNCH_BIN}"
+if [ ! -f "${LAUNCH_BIN}" ] || ! cmp -s "${TPL_LAUNCH}" "${LAUNCH_BIN}"; then
+  cp "${TPL_LAUNCH}" "${LAUNCH_BIN}"
+fi
 chmod 0755 "${LAUNCH_BIN}"
-cp "${TPL_LOOP}" "${LOOP_BIN}"
+if [ ! -f "${LOOP_BIN}" ] || ! cmp -s "${TPL_LOOP}" "${LOOP_BIN}"; then
+  cp "${TPL_LOOP}" "${LOOP_BIN}"
+fi
 chmod 0755 "${LOOP_BIN}"
 
 if [ ! -x "${LOOP_BIN}" ]; then
@@ -64,7 +68,7 @@ read_pid_file() {
 pid_cmdline() {
   pid="$1"
   if [ -r "/proc/${pid}/cmdline" ]; then
-    timeout 1 tr '\000' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true
+    tr '\000' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true
     return 0
   fi
   if command -v ps >/dev/null 2>&1; then
@@ -192,16 +196,15 @@ kill_pid_and_wait() {
   kill "${pid}" >/dev/null 2>&1 || true
 
   attempts=0
-  while [ "${attempts}" -lt 10 ]; do
+  while [ "${attempts}" -lt 20 ]; do
     if ! kill -0 "${pid}" >/dev/null 2>&1; then
       return 0
     fi
     attempts=$((attempts + 1))
-    sleep 1
+    sleep 0.1
   done
 
   kill -9 "${pid}" >/dev/null 2>&1 || true
-  sleep 1
 }
 
 repair_loop_state() {
@@ -241,7 +244,14 @@ prune_duplicate_loops() {
   done
 
   if [ -n "${killed_pids}" ]; then
-    sleep 1
+    attempts=0
+    while [ "${attempts}" -lt 10 ]; do
+      alive=0
+      for loop_pid in ${killed_pids}; do pid_matches_loop "${loop_pid}" && alive=1; done
+      [ "${alive}" = "0" ] && break
+      attempts=$((attempts + 1))
+      sleep 0.1
+    done
     for loop_pid in ${killed_pids}; do
       if pid_matches_loop "${loop_pid}"; then
         kill -9 "${loop_pid}" >/dev/null 2>&1 || true
@@ -284,6 +294,34 @@ launch_loop() {
   return 1
 }
 
+wait_for_listener() {
+  attempts=0
+  while [ "${attempts}" -lt 50 ]; do
+    listener_pid="$(find_listener_pid || true)"
+    if pid_matches_dropbear "${listener_pid}"; then
+      printf '%s\n' "${listener_pid}" > "${DROPBEAR_PID_FILE}"
+      return 0
+    fi
+    if [ -n "${listener_pid}" ] && kill -0 "${listener_pid}" >/dev/null 2>&1; then
+      return 1
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+  return 1
+}
+
+launch_and_wait() {
+  launch_loop || return 1
+  if wait_for_listener; then
+    return 0
+  fi
+  loop_pid="$(read_pid_file "${PID_FILE}" || true)"
+  kill_pid_and_wait "${loop_pid}"
+  clear_runtime_state
+  return 1
+}
+
 listener_pid="$(find_listener_pid || true)"
 if pid_matches_dropbear "${listener_pid}"; then
   canonical_loop_pid="$(pid_ppid "${listener_pid}" | tr -d ' ' || true)"
@@ -297,19 +335,20 @@ if pid_matches_dropbear "${listener_pid}"; then
   prune_duplicate_loops ""
   kill_pid_and_wait "${listener_pid}"
   clear_runtime_state
-  launch_loop || exit 1
+  launch_and_wait || exit 1
   exit 0
 fi
 
 canonical_loop_pid="$(choose_canonical_loop_pid "" || true)"
 if [ -n "${canonical_loop_pid}" ]; then
-  prune_duplicate_loops "${canonical_loop_pid}"
-  repair_loop_state "${canonical_loop_pid}" || true
+  kill_pid_and_wait "${canonical_loop_pid}"
+  clear_runtime_state
+  launch_and_wait || exit 1
   exit 0
 fi
 
 prune_duplicate_loops ""
 clear_runtime_state
-launch_loop || exit 1
+launch_and_wait || exit 1
 
 exit 0

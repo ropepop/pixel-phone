@@ -168,6 +168,10 @@ release_lock() {
 }
 
 cleanup() {
+  if [ -n "${child_pid:-}" ] && kill -0 "${child_pid}" >/dev/null 2>&1; then
+    kill "${child_pid}" >/dev/null 2>&1 || true
+    wait "${child_pid}" >/dev/null 2>&1 || true
+  fi
   clear_wifi_tuning
   release_lock
 }

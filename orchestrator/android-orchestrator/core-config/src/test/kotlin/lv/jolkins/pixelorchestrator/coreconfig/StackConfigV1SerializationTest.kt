@@ -33,7 +33,8 @@ class StackConfigV1SerializationTest {
         healthPollSeconds = 15,
         networkConvergenceWindowSeconds = 180,
         networkConvergencePollSeconds = 5,
-        managementRequireWirelessDebug = false
+        managementRequireWirelessDebug = false,
+        managementRequireAuthConsistency = true
       ),
       redeploy = RedeployConfig(
         healthWaitSeconds = 240,
@@ -55,6 +56,7 @@ class StackConfigV1SerializationTest {
     assertEquals(180, decoded.supervision.networkConvergenceWindowSeconds)
     assertEquals(5, decoded.supervision.networkConvergencePollSeconds)
     assertEquals(false, decoded.supervision.managementRequireWirelessDebug)
+    assertEquals(true, decoded.supervision.managementRequireAuthConsistency)
     assertEquals(240, decoded.redeploy.healthWaitSeconds)
     assertEquals(5, decoded.redeploy.healthRetrySeconds)
     assertEquals(20, decoded.redeploy.neighborGraceSeconds)
@@ -83,5 +85,6 @@ class StackConfigV1SerializationTest {
     assertEquals(180, decoded.supervision.networkConvergenceWindowSeconds)
     assertEquals(5, decoded.supervision.networkConvergencePollSeconds)
     assertEquals(false, decoded.supervision.managementRequireWirelessDebug)
+    assertEquals(false, decoded.supervision.managementRequireAuthConsistency)
   }
 }

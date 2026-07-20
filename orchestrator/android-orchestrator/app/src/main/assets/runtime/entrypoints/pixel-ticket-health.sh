@@ -1,11 +1,19 @@
 #!/system/bin/sh
 set -eu
 
-PORT="${TICKET_SCREEN_PORT:-9388}"
-BASE="/data/local/pixel-stack/apps/ticket-screen"
-CONF_ENV="/data/local/pixel-stack/conf/apps/ticket-screen.env"
-RUNTIME_ENV="${BASE}/env/ticket-screen.env"
-RUN_DIR="${BASE}/run"
+for arg in "$@"; do
+  case "${arg}" in
+    --deep|--full) ;;
+    *)
+      echo "unsupported ticket health argument: ${arg}" >&2
+      exit 2
+      ;;
+  esac
+done
+
+STACK_ROOT="${PIXEL_STACK_ROOT:-/data/local/pixel-stack}"
+CONF_ENV="${STACK_ROOT}/conf/apps/ticket-screen.env"
+RUNTIME_ENV="${STACK_ROOT}/apps/ticket-screen/env/ticket-screen.env"
 
 if [ -r "${CONF_ENV}" ]; then
   # shellcheck disable=SC1090
@@ -16,58 +24,43 @@ if [ -r "${RUNTIME_ENV}" ]; then
   . "${RUNTIME_ENV}"
 fi
 
-local_ready=0
-if command -v ss >/dev/null 2>&1; then
-  ss -ltn 2>/dev/null | grep -E "127[.]0[.]0[.]1:${PORT}[[:space:]]" >/dev/null && local_ready=1
-  ss -ltn 2>/dev/null | grep -E "[:.]${PORT}[[:space:]]" >/dev/null && local_ready=1
-fi
+: "${TICKET_SCREEN_PORT:=9388}"
 
-if [ "${local_ready}" != "1" ] && command -v curl >/dev/null 2>&1; then
-  curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/v1/health" >/dev/null && local_ready=1
-fi
-
-if [ "${local_ready}" != "1" ]; then
-  exit 1
-fi
-
-is_true() {
+valid_port() {
   case "${1:-}" in
-    1|true|TRUE|yes|YES|on|ON) return 0 ;;
-    *) return 1 ;;
+    ''|*[!0-9]*) return 1 ;;
+    *) [ "${1}" -ge 1 ] && [ "${1}" -le 65535 ] ;;
   esac
 }
 
-if ! is_true "${TICKET_SCREEN_TUNNEL_ENABLED:-1}"; then
-  exit 0
-fi
+listener_ready() {
+  port="$1"
+  command -v ss >/dev/null 2>&1 || return 1
+  ss -ltn 2>/dev/null | grep -E "[:.]${port}[[:space:]]" >/dev/null 2>&1
+}
 
-pid_cmdline() {
-  pid="$1"
-  if [ -r "/proc/${pid}/cmdline" ]; then
-    timeout 1 tr '\000' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true
-    return 0
+http_status_ready() {
+  host="$1"
+  port="$2"
+  path="$3"
+
+  valid_port "${port}" || return 1
+  if command -v curl >/dev/null 2>&1; then
+    [ "$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 1 "http://${host}:${port}${path}" 2>/dev/null || true)" = "200" ]
+    return $?
   fi
-  ps -p "${pid}" -o ARGS= 2>/dev/null || true
+  if command -v nc >/dev/null 2>&1; then
+    if command -v timeout >/dev/null 2>&1; then
+      first_line="$(printf 'GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n' "${path}" "${host}" | timeout 2 nc -w 1 "${host}" "${port}" 2>/dev/null | sed -n '1p' | tr -d '\r' || true)"
+    else
+      first_line="$(printf 'GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n' "${path}" "${host}" | nc -w 1 "${host}" "${port}" 2>/dev/null | sed -n '1p' | tr -d '\r' || true)"
+    fi
+    case "${first_line}" in
+      HTTP/*' 200 '*) return 0 ;;
+      *) return 1 ;;
+    esac
+  fi
+  listener_ready "${port}"
 }
 
-pid_matches() {
-  pid="$1"
-  needle="$2"
-  [ -n "${pid}" ] || return 1
-  kill -0 "${pid}" >/dev/null 2>&1 || return 1
-  case "$(pid_cmdline "${pid}")" in
-    *"${needle}"*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-read_pid() {
-  [ -r "${1}" ] && sed -n '1p' "${1}" 2>/dev/null | tr -d '\r'
-}
-
-loop_pid="$(read_pid "${RUN_DIR}/ticket-web-tunnel-service-loop.pid" || true)"
-cloudflared_pid="$(read_pid "${RUN_DIR}/ticket-screen-cloudflared.pid" || true)"
-
-pid_matches "${loop_pid}" "${BASE}/bin/ticket-web-tunnel-service-loop" || exit 1
-pid_matches "${cloudflared_pid}" "/state/ticket-screen-cloudflared.yml" || exit 1
-exit 0
+http_status_ready 127.0.0.1 "${TICKET_SCREEN_PORT}" /api/v1/health

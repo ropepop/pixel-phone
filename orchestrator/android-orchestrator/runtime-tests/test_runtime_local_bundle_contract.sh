@@ -53,7 +53,7 @@ if ! rg -Fq 'suspend fun syncBundledRuntimeAssets' "${INSTALLER_FILE}"; then
   exit 1
 fi
 
-if ! rg -Fq 'suspend fun redeployComponent(component: String)' "${FACADE_FILE}"; then
+if ! rg -Fq 'suspend fun redeployComponent(' "${FACADE_FILE}"; then
   echo "FAIL: OrchestratorFacade missing redeployComponent action" >&2
   exit 1
 fi

@@ -17,6 +17,8 @@ class OrchestratorActionReceiver : BroadcastReceiver() {
     val component = intent?.getStringExtra(OrchestratorShellCommand.EXTRA_COMPONENT)?.trim().orEmpty()
     val pixelRunId = intent?.getStringExtra(OrchestratorShellCommand.EXTRA_PIXEL_RUN_ID)?.trim().orEmpty()
     val dryRun = intent?.getBooleanExtra(OrchestratorShellCommand.EXTRA_DRY_RUN, false) ?: false
+    val fastTicketRedeploy =
+      intent?.getBooleanExtra(OrchestratorShellCommand.EXTRA_FAST_TICKET_REDEPLOY, false) ?: false
     if (action.isBlank()) {
       Log.w(TAG, "command_rejected reason=missing_action component=$component run_id=$pixelRunId")
       return
@@ -27,7 +29,6 @@ class OrchestratorActionReceiver : BroadcastReceiver() {
       Log.w(TAG, "command_rejected action=$action component=$component run_id=$pixelRunId reason=unknown_action")
       return
     }
-
     Log.i(TAG, "command_accepted action=$action component=$component run_id=$pixelRunId")
     SupervisorService.start(
       context = context,
@@ -36,6 +37,7 @@ class OrchestratorActionReceiver : BroadcastReceiver() {
       pixelRunId = pixelRunId,
       commandAction = action,
       dryRun = dryRun,
+      fastTicketRedeploy = fastTicketRedeploy,
       cleanupTrigger = CleanupTrigger.MANUAL.wireValue()
     )
   }

@@ -2,8 +2,22 @@
 set -eu
 
 REPORT_MODE=0
-if [ "${1:-}" = "--report" ] || [ "${PIXEL_MANAGEMENT_HEALTH_REPORT:-0}" = "1" ]; then
+DEEP_MODE=0
+for arg in "$@"; do
+  case "${arg}" in
+    --report) REPORT_MODE=1 ;;
+    --deep|--full) DEEP_MODE=1 ;;
+    *)
+      echo "unsupported management health argument: ${arg}" >&2
+      exit 2
+      ;;
+  esac
+done
+if [ "${PIXEL_MANAGEMENT_HEALTH_REPORT:-0}" = "1" ]; then
   REPORT_MODE=1
+fi
+if [ "${PIXEL_MANAGEMENT_HEALTH_DEEP:-0}" = "1" ]; then
+  DEEP_MODE=1
 fi
 
 STACK_BIN_DIR="${PIXEL_STACK_BIN_DIR:-/data/local/pixel-stack/bin}"
@@ -70,6 +84,11 @@ listeners_have_port() {
 ssh_listener_ready() {
   if ! ssh_listener_present; then
     return 1
+  fi
+  # Local health proves that Dropbear owns a reachable non-loopback listener.
+  # The bounded network handshake stays available for explicit deep checks.
+  if [ "${DEEP_MODE}" != "1" ]; then
+    return 0
   fi
   if ssh_banner_ready; then
     return 0
@@ -408,7 +427,10 @@ if [ -z "${wireless_debug_tls_port}" ] && [ -n "${wireless_debug_live_ports}" ];
 fi
 
 ddns_published_ipv4="$(read_first_non_empty_line "${DDNS_LAST_IPV4_FILE}")"
-public_ipv4_candidate="$(discover_public_ipv4_candidate)"
+public_ipv4_candidate="${ddns_published_ipv4}"
+if [ "${DEEP_MODE}" = "1" ]; then
+  public_ipv4_candidate="$(discover_public_ipv4_candidate)"
+fi
 network_fingerprint="transport=${active_transport};wifi_enabled=${wifi_enabled};wifi_connected=${wifi_connected};wifi_ipv4=${wifi_ipv4:-none};mobile_iface=${mobile_iface:-none};mobile_ipv4=${mobile_ipv4:-none};adbd_ports=${wireless_debug_live_ports:-none};public_ipv4=${public_ipv4_candidate:-none}"
 
 wireless_debug_enabled="0"
@@ -634,6 +656,7 @@ emit "management_require_wireless_debug" "${MANAGEMENT_REQUIRE_WIRELESS_DEBUG}"
 emit "management_enabled" "${management_enabled}"
 emit "management_healthy" "${management_healthy}"
 emit "management_reason" "${management_reason}"
+emit "management_health_mode" "$( [ "${DEEP_MODE}" = "1" ] && printf deep || printf local )"
 
 if [ "${management_enabled}" != "1" ]; then
   exit 0

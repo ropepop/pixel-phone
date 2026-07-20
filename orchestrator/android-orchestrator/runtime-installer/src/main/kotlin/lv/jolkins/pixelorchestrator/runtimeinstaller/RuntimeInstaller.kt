@@ -21,7 +21,7 @@ class RuntimeInstaller(
     config: StackConfigV1,
     assets: AssetProvider,
     manifest: ArtifactManifest,
-    rootfsArtifactId: String
+    rootfsArtifactId: String?
   ): BootstrapResult {
     trace("bootstrap:start")
     val preflight = preflight()
@@ -56,18 +56,22 @@ class RuntimeInstaller(
       try {
         trace("bootstrap:artifact sync:start id=${entry.id}")
         val file = artifactSyncer.sync(entry)
-        trace("bootstrap:artifact sync:done id=${entry.id} path=${file.fileName}")
-        installed += entry.id
-        installArtifactEntry(
-          entry = entry,
-          file = file,
-          config = config,
-          releaseId = manifest.manifestVersion,
-          rootfsArtifactId = rootfsArtifactId
-        )
+        try {
+          trace("bootstrap:artifact sync:done id=${entry.id} path=${file.fileName}")
+          installed += entry.id
+          installArtifactEntry(
+            entry = entry,
+            file = file,
+            config = config,
+            releaseId = manifest.manifestVersion,
+            rootfsArtifactId = rootfsArtifactId
+          )
+        } finally {
+          artifactSyncer.release(file)
+        }
       } catch (error: Exception) {
         trace("bootstrap:artifact failure id=${entry.id} error=${error::class.java.name}:${error.message ?: "(no message)"}")
-        if (entry.id == rootfsArtifactId) {
+        if (rootfsArtifactId != null && entry.id == rootfsArtifactId) {
           trace("bootstrap:artifact rootfs fallback: attempting legacy seed from $LEGACY_PIHOLE_ROOTFS")
           if (seedRootfsFromLegacyIfAvailable(config.runtime.rootfsPath)) {
             trace("bootstrap:artifact rootfs fallback: legacy seed successful")
@@ -85,12 +89,6 @@ class RuntimeInstaller(
     trace("bootstrap:installSshCredentialSources:start")
     installSshCredentialSources(config)
     trace("bootstrap:installSshCredentialSources:done")
-    trace("bootstrap:installAppEnvSources:start")
-    installAppEnvSources(config)
-    trace("bootstrap:installAppEnvSources:done")
-    trace("bootstrap:ensureRootfsUsable:start")
-    ensureRootfsUsable(config.runtime.rootfsPath)
-    trace("bootstrap:ensureRootfsUsable:done")
 
     return BootstrapResult(
       success = true,
@@ -112,15 +110,18 @@ class RuntimeInstaller(
       orderedComponentReleaseArtifacts(component, manifest.artifacts).forEach { entry ->
         trace("component-release:artifact sync:start component=$component id=${entry.id}")
         val file = artifactSyncer.sync(entry)
-        trace("component-release:artifact sync:done component=$component id=${entry.id} path=${file.fileName}")
-        val artifactMetadata =
+        val artifactMetadata = try {
+          trace("component-release:artifact sync:done component=$component id=${entry.id} path=${file.fileName}")
           installComponentReleaseArtifact(
-          component = component,
-          entry = entry,
-          file = file,
-          config = config,
-          releaseId = manifest.releaseId
-        )
+            component = component,
+            entry = entry,
+            file = file,
+            config = config,
+            releaseId = manifest.releaseId
+          )
+        } finally {
+          artifactSyncer.release(file)
+        }
         if (artifactMetadata != null) {
           rollbackMetadata = artifactMetadata
         }
@@ -219,7 +220,7 @@ class RuntimeInstaller(
     file: Path,
     config: StackConfigV1,
     releaseId: String,
-    rootfsArtifactId: String
+    rootfsArtifactId: String?
   ) {
     when (entry.id) {
       rootfsArtifactId -> {
@@ -344,17 +345,12 @@ class RuntimeInstaller(
     val selinux = rootExecutor.run("getenforce 2>/dev/null || echo unknown")
     val probe = listOf(
       StackPaths.BASE,
-      StackPaths.CHROOT_ADGUARDHOME,
       StackPaths.CONF,
       StackPaths.RUN,
       StackPaths.LOG,
       StackPaths.SSH,
       StackPaths.VPN,
       StackPaths.APPS,
-      StackPaths.TRAIN_BOT,
-      StackPaths.SATIKSME_BOT,
-      StackPaths.SITE_NOTIFIER,
-      StackPaths.SUBSCRIPTION_BOT,
       StackPaths.BACKUPS
     )
 
@@ -375,7 +371,6 @@ class RuntimeInstaller(
   suspend fun ensureLayout() {
     val dirs = listOf(
       StackPaths.BASE,
-      StackPaths.CHROOT_ADGUARDHOME,
       StackPaths.BIN,
       StackPaths.CONF,
       StackPaths.RUN,
@@ -383,10 +378,6 @@ class RuntimeInstaller(
       StackPaths.SSH,
       StackPaths.VPN,
       StackPaths.APPS,
-      StackPaths.TRAIN_BOT,
-      StackPaths.SATIKSME_BOT,
-      StackPaths.SITE_NOTIFIER,
-      StackPaths.SUBSCRIPTION_BOT,
       StackPaths.BACKUPS
     )
     val mkdir = dirs.joinToString(" ") { ShellEscaper.singleQuote(it) }
@@ -398,13 +389,10 @@ class RuntimeInstaller(
       null -> {
         installTemplateGroups(
           assets,
-          listOf("rooted", "ssh", "vpn", "train", "satiksme", "notifier", "subscription", "ticket")
+          listOf("ssh", "vpn", "ticket")
         )
         installOrchestratorEntrypoints(assets, orchestratorEntrypoints())
-      }
-      "dns", "remote" -> {
-        installTemplateGroups(assets, listOf("rooted"))
-        installOrchestratorEntrypoints(assets, orchestratorEntrypoints("pixel-dns-start.sh", "pixel-dns-stop.sh"))
+        installTicketRootKeyboard(assets)
       }
       "ssh" -> {
         installTemplateGroups(assets, listOf("ssh"))
@@ -414,51 +402,42 @@ class RuntimeInstaller(
         installTemplateGroups(assets, listOf("vpn"))
         installOrchestratorEntrypoints(assets, orchestratorEntrypoints("pixel-vpn-start.sh", "pixel-vpn-stop.sh", "pixel-vpn-health.sh", "pixel-management-health.sh"))
       }
-      "ddns" -> {
-        installOrchestratorEntrypoints(assets, orchestratorEntrypoints("pixel-ddns-sync.sh"))
-      }
       "management" -> {
+        installOrchestratorEntrypoints(assets, orchestratorEntrypoints("pixel-management-health.sh"))
+      }
+      "runtime_cleanup" -> {
         installOrchestratorEntrypoints(assets, orchestratorEntrypoints("pixel-runtime-cleanup.sh"))
-      }
-      "train_bot" -> {
-        installTemplateGroups(assets, listOf("train"))
-        installOrchestratorEntrypoints(assets, orchestratorEntrypoints("pixel-train-start.sh", "pixel-train-stop.sh"))
-      }
-      "satiksme_bot" -> {
-        installTemplateGroups(assets, listOf("satiksme"))
-        installOrchestratorEntrypoints(assets, orchestratorEntrypoints("pixel-satiksme-start.sh", "pixel-satiksme-stop.sh", "pixel-satiksme-health.sh"))
-      }
-      "site_notifier" -> {
-        installTemplateGroups(assets, listOf("notifier"))
-        installOrchestratorEntrypoints(assets, orchestratorEntrypoints("pixel-notifier-start.sh", "pixel-notifier-stop.sh"))
-      }
-      "subscription_bot" -> {
-        installTemplateGroups(assets, listOf("subscription"))
-        installOrchestratorEntrypoints(
-          assets,
-          orchestratorEntrypoints("pixel-subscription-start.sh", "pixel-subscription-stop.sh", "pixel-subscription-health.sh")
-        )
       }
       "ticket_screen" -> {
         installTemplateGroups(assets, listOf("ticket"))
         installOrchestratorEntrypoints(
           assets,
-          orchestratorEntrypoints("pixel-ticket-start.sh", "pixel-ticket-stop.sh", "pixel-ticket-health.sh")
+          orchestratorEntrypoints(
+            "pixel-ticket-start.sh",
+            "pixel-ticket-stop.sh",
+            "pixel-ticket-health.sh",
+            "pixel-ticket-lifecycle-lock.sh"
+          )
         )
+        installTicketRootKeyboard(assets)
       }
       else -> error("Unsupported component runtime asset sync target: $component")
     }
   }
 
+  private suspend fun installTicketRootKeyboard(assets: AssetProvider) {
+    installSingleAsset(
+      assets,
+      sourceAssetPath = "ticket-root-keyboard",
+      targetPath = "${StackPaths.BIN}/pixel-ticket-root-keyboard",
+      mode = "0755"
+    )
+  }
+
   private suspend fun installTemplateGroups(assets: AssetProvider, groups: List<String>) {
     val roots = mapOf(
-      "rooted" to "${StackPaths.BASE}/templates/rooted",
       "ssh" to "${StackPaths.BASE}/templates/ssh",
       "vpn" to "${StackPaths.BASE}/templates/vpn",
-      "train" to "${StackPaths.BASE}/templates/train",
-      "satiksme" to "${StackPaths.BASE}/templates/satiksme",
-      "notifier" to "${StackPaths.BASE}/templates/notifier",
-      "subscription" to "${StackPaths.BASE}/templates/subscription",
       "ticket" to "${StackPaths.BASE}/templates/ticket"
     )
 
@@ -475,29 +454,17 @@ class RuntimeInstaller(
 
   private fun orchestratorEntrypoints(vararg names: String): Map<String, String> {
     val scripts = mapOf(
-      "runtime/entrypoints/pixel-dns-start.sh" to "${StackPaths.BIN}/pixel-dns-start.sh",
-      "runtime/entrypoints/pixel-dns-stop.sh" to "${StackPaths.BIN}/pixel-dns-stop.sh",
       "runtime/entrypoints/pixel-ssh-start.sh" to "${StackPaths.BIN}/pixel-ssh-start.sh",
       "runtime/entrypoints/pixel-ssh-stop.sh" to "${StackPaths.BIN}/pixel-ssh-stop.sh",
       "runtime/entrypoints/pixel-vpn-start.sh" to "${StackPaths.BIN}/pixel-vpn-start.sh",
       "runtime/entrypoints/pixel-vpn-stop.sh" to "${StackPaths.BIN}/pixel-vpn-stop.sh",
       "runtime/entrypoints/pixel-vpn-health.sh" to "${StackPaths.BIN}/pixel-vpn-health.sh",
       "runtime/entrypoints/pixel-management-health.sh" to "${StackPaths.BIN}/pixel-management-health.sh",
-      "runtime/entrypoints/pixel-ddns-sync.sh" to "${StackPaths.BIN}/pixel-ddns-sync.sh",
       "runtime/entrypoints/pixel-runtime-cleanup.sh" to "${StackPaths.BIN}/pixel-runtime-cleanup.sh",
-      "runtime/entrypoints/pixel-train-start.sh" to "${StackPaths.BIN}/pixel-train-start.sh",
-      "runtime/entrypoints/pixel-train-stop.sh" to "${StackPaths.BIN}/pixel-train-stop.sh",
-      "runtime/entrypoints/pixel-satiksme-start.sh" to "${StackPaths.BIN}/pixel-satiksme-start.sh",
-      "runtime/entrypoints/pixel-satiksme-stop.sh" to "${StackPaths.BIN}/pixel-satiksme-stop.sh",
-      "runtime/entrypoints/pixel-satiksme-health.sh" to "${StackPaths.BIN}/pixel-satiksme-health.sh",
-      "runtime/entrypoints/pixel-notifier-start.sh" to "${StackPaths.BIN}/pixel-notifier-start.sh",
-      "runtime/entrypoints/pixel-notifier-stop.sh" to "${StackPaths.BIN}/pixel-notifier-stop.sh",
-      "runtime/entrypoints/pixel-subscription-start.sh" to "${StackPaths.BIN}/pixel-subscription-start.sh",
-      "runtime/entrypoints/pixel-subscription-stop.sh" to "${StackPaths.BIN}/pixel-subscription-stop.sh",
-      "runtime/entrypoints/pixel-subscription-health.sh" to "${StackPaths.BIN}/pixel-subscription-health.sh",
       "runtime/entrypoints/pixel-ticket-start.sh" to "${StackPaths.BIN}/pixel-ticket-start.sh",
       "runtime/entrypoints/pixel-ticket-stop.sh" to "${StackPaths.BIN}/pixel-ticket-stop.sh",
-      "runtime/entrypoints/pixel-ticket-health.sh" to "${StackPaths.BIN}/pixel-ticket-health.sh"
+      "runtime/entrypoints/pixel-ticket-health.sh" to "${StackPaths.BIN}/pixel-ticket-health.sh",
+      "runtime/entrypoints/pixel-ticket-lifecycle-lock.sh" to "${StackPaths.BIN}/pixel-ticket-lifecycle-lock.sh"
     )
     if (names.isEmpty()) {
       return scripts
@@ -1378,20 +1345,13 @@ EOF_NOTIFIER_PYTHON
     }
   }
 
-  private fun ensureRequiredArtifactsPresent(manifest: ArtifactManifest, rootfsArtifactId: String) {
-    val requiredIds = listOf(rootfsArtifactId, DNS_RUNTIME_ASSET_ID, DROPBEAR_ARTIFACT_ID, TAILSCALE_ARTIFACT_ID)
+  private fun ensureRequiredArtifactsPresent(manifest: ArtifactManifest, rootfsArtifactId: String?) {
+    val requiredIds = listOfNotNull(rootfsArtifactId, DROPBEAR_ARTIFACT_ID, TAILSCALE_ARTIFACT_ID)
     requiredIds.forEach { requiredId ->
       val entry = manifest.artifacts.firstOrNull { it.id == requiredId }
         ?: error("Missing required artifact in manifest: $requiredId")
       if (!entry.required) {
         error("Required artifact must set required=true: $requiredId")
-      }
-    }
-    val optionalIds = listOf(TRAIN_BOT_ARTIFACT_ID, SATIKSME_BOT_ARTIFACT_ID, SITE_NOTIFIER_ARTIFACT_ID, SUBSCRIPTION_BOT_ARTIFACT_ID)
-    optionalIds.forEach { optionalId ->
-      val entry = manifest.artifacts.firstOrNull { it.id == optionalId } ?: return@forEach
-      if (!entry.required) {
-        error("Bootstrap artifact must set required=true when present: $optionalId")
       }
     }
   }

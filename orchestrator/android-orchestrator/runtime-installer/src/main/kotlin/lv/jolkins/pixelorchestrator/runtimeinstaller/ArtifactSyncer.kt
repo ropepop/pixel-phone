@@ -47,6 +47,15 @@ class ArtifactSyncer(
     return target
   }
 
+  fun release(path: Path): Boolean {
+    val normalizedCache = cacheDir.toAbsolutePath().normalize()
+    val normalizedPath = path.toAbsolutePath().normalize()
+    if (normalizedPath.parent != normalizedCache) {
+      return false
+    }
+    return runCatching { Files.deleteIfExists(normalizedPath) }.getOrDefault(false)
+  }
+
   fun sha256(path: Path): String {
     val digest = MessageDigest.getInstance("SHA-256")
     Files.newInputStream(path).use { stream ->

@@ -1,0 +1,459 @@
+package lv.jolkins.pixelorchestrator.app.ticket;
+
+/**
+ * Classifies the fixed-size, sanitized visual probe produced by the rooted ticket capture helper.
+ *
+ * <p>This class intentionally has no Android dependencies so its production thresholds can be
+ * exercised by ordinary JVM unit tests.</p>
+ */
+public final class TicketControlCodeVisualClassifier {
+  public static final int SAMPLE_WIDTH = 48;
+  public static final int SAMPLE_HEIGHT = 72;
+  public static final int SUBMIT_SAMPLE_WIDTH = 96;
+  public static final int SUBMIT_SAMPLE_HEIGHT = 144;
+
+  public static final String CONTROL_POPUP = "control_popup";
+  public static final String CONTROL_POPUP_STATIC_READY = "control_popup_static_ready";
+  public static final String CONTROL_POPUP_VALUE_READY = "control_popup_value_ready";
+  public static final String CONTROL_POPUP_KEYBOARD_READY = "control_popup_keyboard_ready";
+  public static final String GENERATED = "generated";
+  public static final String RAW_TICKET = "raw_ticket";
+  public static final String UNKNOWN = "unknown";
+
+  private TicketControlCodeVisualClassifier() {}
+
+  public static String classify(int[] pixels) {
+    if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT) {
+      return UNKNOWN;
+    }
+    if (frameHasControlCodeInputPopup(pixels)) {
+      return CONTROL_POPUP;
+    }
+    if (frameHasGeneratedControlCodeResultChip(pixels)) {
+      return GENERATED;
+    }
+    if (frameHasRawTicketCodeGraphic(pixels)) {
+      return RAW_TICKET;
+    }
+    return UNKNOWN;
+  }
+
+  /**
+   * Classifies the surface after the generated control-code row has been closed.
+   *
+   * <p>The ordinary ticket and the generated-code view share the same top header, so only the
+   * inline dark result row that owns the small close X may prove generated state. This dedicated
+   * cleanup entry point keeps that recovery contract explicit.</p>
+   */
+  public static String classifyForCleanup(int[] pixels) {
+    return classify(pixels);
+  }
+
+  /**
+   * Proves which stable popup layout and orange submit button are visible. The normal request
+   * path uses the static layout so the keyboard never needs to open; the shifted result remains
+   * distinguishable for recovery and diagnostics.
+   */
+  public static String classifySubmitLayout(int[] pixels) {
+    if (pixels == null || pixels.length != SUBMIT_SAMPLE_WIDTH * SUBMIT_SAMPLE_HEIGHT) {
+      return UNKNOWN;
+    }
+    if (submitFrameHasDarkReadyControlCodePopupWithValue(pixels)) {
+      return CONTROL_POPUP_VALUE_READY;
+    }
+    if (submitFrameHasStaticReadyControlCodePopupWithValue(pixels)) {
+      return CONTROL_POPUP_VALUE_READY;
+    }
+    if (submitFrameHasDarkReadyControlCodePopup(pixels)) {
+      return CONTROL_POPUP_STATIC_READY;
+    }
+    if (submitFrameHasStaticReadyControlCodePopup(pixels)) {
+      return CONTROL_POPUP_STATIC_READY;
+    }
+    if (submitFrameHasDarkKeyboardReadyControlCodePopup(pixels)) {
+      return CONTROL_POPUP_KEYBOARD_READY;
+    }
+    if (submitFrameHasKeyboardReadyControlCodePopup(pixels)) {
+      return CONTROL_POPUP_KEYBOARD_READY;
+    }
+    return UNKNOWN;
+  }
+
+  /**
+   * The current ViVi control-code sheet is dark: a blue action spans the lower part of the
+   * fixed popup while the entered digits are bright. The old light/orange layout remains below
+   * for devices that have not received that visual theme yet. Both layouts are deliberately
+   * recognized only in their fixed unshifted geometry.
+   */
+  private static boolean submitFrameHasDarkReadyControlCodePopup(int[] pixels) {
+    VisualStats dialog = submitVisualStats(pixels, 8, 52, 88, 86);
+    boolean darkDialogVisible = dialog.mean <= 85.0 &&
+      dialog.darkRatio >= 0.75 &&
+      dialog.lightRatio <= 0.12 &&
+      dialog.contrast <= 90.0;
+    return darkDialogVisible && submitFrameHasBlueControlCodePopupButton(pixels, 68, 78);
+  }
+
+  private static boolean submitFrameHasDarkReadyControlCodePopupWithValue(int[] pixels) {
+    if (!submitFrameHasDarkReadyControlCodePopup(pixels)) {
+      return false;
+    }
+    // This central interior excludes the title, field chrome and button. Dark-theme ViVi renders
+    // entered digits as bright strokes; its empty placeholder is muted gray. Two columns plus
+    // three pixels reject a single bright caret without inspecting or retaining the value.
+    int brightPixels = submitBrightPixelCount(pixels, 30, 60, 66, 68, 190);
+    int brightColumns = submitBrightColumnCount(pixels, 30, 60, 66, 68, 190);
+    return brightPixels >= 3 && brightColumns >= 2;
+  }
+
+  private static boolean submitFrameHasDarkKeyboardReadyControlCodePopup(int[] pixels) {
+    VisualStats shiftedDialog = submitVisualStats(pixels, 8, 24, 88, 62);
+    boolean shiftedDarkDialogVisible = shiftedDialog.mean <= 85.0 &&
+      shiftedDialog.darkRatio >= 0.75 &&
+      shiftedDialog.lightRatio <= 0.12 &&
+      shiftedDialog.contrast <= 90.0;
+    return shiftedDarkDialogVisible && submitFrameHasBlueControlCodePopupButton(pixels, 40, 56);
+  }
+
+  private static boolean submitFrameHasStaticReadyControlCodePopup(int[] pixels) {
+    VisualStats dialog = submitVisualStats(pixels, 16, 60, 80, 90);
+    boolean dialogVisible = dialog.mean >= 125.0 &&
+      dialog.lightRatio >= 0.46 &&
+      dialog.darkRatio <= 0.28 &&
+      dialog.contrast <= 95.0;
+    return dialogVisible && submitFrameHasEnabledControlCodePopupButton(pixels, 73, 82);
+  }
+
+  private static boolean submitFrameHasStaticReadyControlCodePopupWithValue(int[] pixels) {
+    if (!submitFrameHasStaticReadyControlCodePopup(pixels)) {
+      return false;
+    }
+    // The dedicated 96x144 submit probe preserves the shortest two-digit value. ViVi's empty
+    // placeholder is gray at this resolution, while entered digits retain nearly black strokes.
+    // Two independent columns plus three pixels reject the placeholder, underline and one-column
+    // caret without attempting to OCR or expose the private value.
+    int veryDarkPixels = submitDarkPixelCount(pixels, 28, 64, 68, 72, 60);
+    int veryDarkColumns = submitDarkColumnCount(pixels, 28, 64, 68, 72, 60);
+    return veryDarkPixels >= 3 && veryDarkColumns >= 2;
+  }
+
+  private static int submitDarkPixelCount(
+    int[] pixels,
+    int left,
+    int top,
+    int right,
+    int bottom,
+    int maxLuminance
+  ) {
+    int darkPixels = 0;
+    for (int x = Math.max(0, left); x < Math.min(SUBMIT_SAMPLE_WIDTH, right); x++) {
+      for (int y = Math.max(0, top); y < Math.min(SUBMIT_SAMPLE_HEIGHT, bottom); y++) {
+        if (luminance(submitPixelAt(pixels, x, y)) <= maxLuminance) {
+          darkPixels += 1;
+        }
+      }
+    }
+    return darkPixels;
+  }
+
+  private static int submitDarkColumnCount(
+    int[] pixels,
+    int left,
+    int top,
+    int right,
+    int bottom,
+    int maxLuminance
+  ) {
+    int darkColumns = 0;
+    for (int x = Math.max(0, left); x < Math.min(SUBMIT_SAMPLE_WIDTH, right); x++) {
+      boolean dark = false;
+      for (int y = Math.max(0, top); y < Math.min(SUBMIT_SAMPLE_HEIGHT, bottom); y++) {
+        if (luminance(submitPixelAt(pixels, x, y)) <= maxLuminance) {
+          dark = true;
+          break;
+        }
+      }
+      if (dark) {
+        darkColumns += 1;
+      }
+    }
+    return darkColumns;
+  }
+
+  private static int submitBrightPixelCount(
+    int[] pixels,
+    int left,
+    int top,
+    int right,
+    int bottom,
+    int minLuminance
+  ) {
+    int brightPixels = 0;
+    for (int x = Math.max(0, left); x < Math.min(SUBMIT_SAMPLE_WIDTH, right); x++) {
+      for (int y = Math.max(0, top); y < Math.min(SUBMIT_SAMPLE_HEIGHT, bottom); y++) {
+        if (luminance(submitPixelAt(pixels, x, y)) >= minLuminance) {
+          brightPixels += 1;
+        }
+      }
+    }
+    return brightPixels;
+  }
+
+  private static int submitBrightColumnCount(
+    int[] pixels,
+    int left,
+    int top,
+    int right,
+    int bottom,
+    int minLuminance
+  ) {
+    int brightColumns = 0;
+    for (int x = Math.max(0, left); x < Math.min(SUBMIT_SAMPLE_WIDTH, right); x++) {
+      boolean bright = false;
+      for (int y = Math.max(0, top); y < Math.min(SUBMIT_SAMPLE_HEIGHT, bottom); y++) {
+        if (luminance(submitPixelAt(pixels, x, y)) >= minLuminance) {
+          bright = true;
+          break;
+        }
+      }
+      if (bright) {
+        brightColumns += 1;
+      }
+    }
+    return brightColumns;
+  }
+
+  private static boolean submitFrameHasKeyboardReadyControlCodePopup(int[] pixels) {
+    VisualStats shiftedDialog = submitVisualStats(pixels, 16, 32, 80, 60);
+    boolean shiftedDialogVisible = shiftedDialog.mean >= 125.0 &&
+      shiftedDialog.lightRatio >= 0.46 &&
+      shiftedDialog.darkRatio <= 0.28 &&
+      shiftedDialog.contrast <= 95.0;
+    return shiftedDialogVisible && submitFrameHasEnabledControlCodePopupButton(pixels, 48, 58);
+  }
+
+  private static boolean submitFrameHasEnabledControlCodePopupButton(int[] pixels, int top, int bottom) {
+    int sampled = 0;
+    int chromatic = 0;
+    for (int y = top; y < bottom; y++) {
+      for (int x = 62; x < 84; x++) {
+        int pixel = submitPixelAt(pixels, x, y);
+        int red = (pixel >> 16) & 0xff;
+        int green = (pixel >> 8) & 0xff;
+        int blue = pixel & 0xff;
+        int maximum = Math.max(red, Math.max(green, blue));
+        int minimum = Math.min(red, Math.min(green, blue));
+        if (maximum >= 155 && minimum <= 95 && maximum - minimum >= 100) {
+          chromatic += 1;
+        }
+        sampled += 1;
+      }
+    }
+    return sampled > 0 && chromatic / (double) sampled >= 0.18;
+  }
+
+  private static boolean submitFrameHasBlueControlCodePopupButton(int[] pixels, int top, int bottom) {
+    int sampled = 0;
+    int blue = 0;
+    for (int y = top; y < bottom; y++) {
+      for (int x = 8; x < 88; x++) {
+        int pixel = submitPixelAt(pixels, x, y);
+        int red = (pixel >> 16) & 0xff;
+        int green = (pixel >> 8) & 0xff;
+        int blueChannel = pixel & 0xff;
+        // The live dark sheet can be dimmed by the modal scrim, so this intentionally measures
+        // the blue channel's separation instead of relying on an absolute bright Material color.
+        if (blueChannel >= 80 && blueChannel - red >= 35 && blueChannel - green >= 20) {
+          blue += 1;
+        }
+        sampled += 1;
+      }
+    }
+    return sampled > 0 && blue / (double) sampled >= 0.18;
+  }
+
+  private static boolean frameHasControlCodeInputPopup(int[] pixels) {
+    VisualStats dialog = visualStats(pixels, 8, 30, 40, 45);
+    VisualStats inputLine = visualStats(pixels, 13, 38, 36, 41);
+    VisualStats shiftedDialog = visualStats(pixels, 8, 16, 40, 30);
+    VisualStats shiftedInputLine = visualStats(pixels, 13, 21, 36, 25);
+    boolean dialogVisible = dialog.mean >= 125.0 &&
+      dialog.lightRatio >= 0.46 &&
+      dialog.darkRatio <= 0.28 &&
+      dialog.contrast <= 95.0;
+    boolean inputLineVisible = inputLine.darkRatio >= 0.08 &&
+      inputLine.contrast >= 22.0;
+    boolean shiftedDialogVisible = shiftedDialog.mean >= 125.0 &&
+      shiftedDialog.lightRatio >= 0.46 &&
+      shiftedDialog.darkRatio <= 0.28 &&
+      shiftedDialog.contrast <= 95.0;
+    boolean shiftedInputLineVisible = shiftedInputLine.darkRatio >= 0.08 &&
+      shiftedInputLine.contrast >= 22.0;
+    return (dialogVisible && (frameHasControlCodePopupOrangeOkButton(pixels) || inputLineVisible)) ||
+      (shiftedDialogVisible && (frameHasShiftedControlCodePopupOrangeOkButton(pixels) || shiftedInputLineVisible));
+  }
+
+  private static boolean frameHasControlCodePopupOrangeOkButton(int[] pixels) {
+    return frameHasOrangeControlCodePopupButton(pixels, 39, 44);
+  }
+
+  private static boolean frameHasShiftedControlCodePopupOrangeOkButton(int[] pixels) {
+    return frameHasOrangeControlCodePopupButton(pixels, 24, 29);
+  }
+
+  private static boolean frameHasOrangeControlCodePopupButton(int[] pixels, int top, int bottom) {
+    int sampled = 0;
+    int orange = 0;
+    for (int y = top; y < bottom; y++) {
+      for (int x = 31; x < 42; x++) {
+        int pixel = pixelAt(pixels, x, y);
+        int red = (pixel >> 16) & 0xff;
+        int green = (pixel >> 8) & 0xff;
+        int blue = pixel & 0xff;
+        if (red >= 155 && green >= 80 && green <= 190 && blue <= 95 && red - green >= 20 && green - blue >= 25) {
+          orange += 1;
+        }
+        sampled += 1;
+      }
+    }
+    return sampled > 0 && orange / (double) sampled >= 0.08;
+  }
+
+  private static boolean frameHasGeneratedControlCodeResultChip(int[] pixels) {
+    if (!frameHasTicketDetailBase(pixels)) return false;
+    VisualStats chip = visualStats(pixels, 7, 36, SAMPLE_WIDTH - 7, 40);
+    int chipRows = 0;
+    for (int y = 36; y < 40; y++) {
+      int rowDark = 0;
+      for (int x = 7; x < SAMPLE_WIDTH - 7; x++) {
+        if (luminance(pixelAt(pixels, x, y)) <= 80) rowDark++;
+      }
+      if (rowDark >= 30) chipRows++;
+    }
+    return chip.darkRatio >= 0.58 && chip.lightRatio >= 0.02 &&
+      chip.lightRatio <= 0.42 && chip.contrast >= 25.0 && chipRows >= 3;
+  }
+
+  private static boolean frameHasRawTicketCodeGraphic(int[] pixels) {
+    VisualStats separator = visualStats(pixels, 7, 36, 41, 40);
+    return frameHasTicketDetailBase(pixels) &&
+      separator.lightRatio >= 0.50 &&
+      separator.darkRatio >= 0.04 &&
+      separator.darkRatio <= 0.45 &&
+      separator.contrast >= 35.0;
+  }
+
+  private static boolean frameHasTicketDetailBase(int[] pixels) {
+    VisualStats code = visualStats(pixels, 8, 14, 40, 34);
+    return frameHasTicketDetailHeader(pixels) &&
+      code.darkRatio >= 0.14 &&
+      code.lightRatio >= 0.18 &&
+      code.contrast >= 45.0;
+  }
+
+  private static boolean frameHasTicketDetailHeader(int[] pixels) {
+    VisualStats label = visualStats(pixels, 2, 2, 19, 7);
+    VisualStats topBand = visualStats(pixels, 0, 0, SAMPLE_WIDTH, 10);
+    int redSamples = 0;
+    int redPixels = 0;
+    for (int y = 8; y < 15; y++) {
+      for (int x = 1; x < SAMPLE_WIDTH - 1; x++) {
+        int pixel = pixelAt(pixels, x, y);
+        int red = (pixel >> 16) & 0xff;
+        int green = (pixel >> 8) & 0xff;
+        int blue = pixel & 0xff;
+        if (red >= 135 && red - green >= 25 && red - blue >= 35 && green <= 110 && blue <= 115) {
+          redPixels += 1;
+        }
+        redSamples += 1;
+      }
+    }
+    double redRatio = redSamples == 0 ? 0.0 : redPixels / (double) redSamples;
+    boolean labelPillVisible = label.mean >= 150.0 &&
+      label.lightRatio >= 0.48 &&
+      label.darkRatio <= 0.34 &&
+      label.contrast <= 115.0;
+    boolean ticketHeaderShape = topBand.lightRatio >= 0.10 &&
+      topBand.darkRatio >= 0.10 &&
+      redRatio >= 0.24;
+    return labelPillVisible && ticketHeaderShape;
+  }
+
+  private static VisualStats visualStats(int[] pixels, int left, int top, int right, int bottom) {
+    return visualStats(pixels, SAMPLE_WIDTH, SAMPLE_HEIGHT, left, top, right, bottom);
+  }
+
+  private static VisualStats submitVisualStats(int[] pixels, int left, int top, int right, int bottom) {
+    return visualStats(pixels, SUBMIT_SAMPLE_WIDTH, SUBMIT_SAMPLE_HEIGHT, left, top, right, bottom);
+  }
+
+  private static VisualStats visualStats(
+    int[] pixels,
+    int width,
+    int height,
+    int left,
+    int top,
+    int right,
+    int bottom
+  ) {
+    int sampled = 0;
+    int dark = 0;
+    int light = 0;
+    long sum = 0L;
+    long sumSquares = 0L;
+    for (int y = Math.max(0, top); y < Math.min(height, bottom); y++) {
+      for (int x = Math.max(0, left); x < Math.min(width, right); x++) {
+        int luminance = luminance(pixels[y * width + x]);
+        sum += luminance;
+        sumSquares += (long) luminance * luminance;
+        if (luminance <= 80) {
+          dark += 1;
+        }
+        if (luminance >= 175) {
+          light += 1;
+        }
+        sampled += 1;
+      }
+    }
+    if (sampled == 0) {
+      return new VisualStats(0.0, 0.0, 0.0, 0.0);
+    }
+    double mean = sum / (double) sampled;
+    double variance = (sumSquares / (double) sampled) - (mean * mean);
+    return new VisualStats(
+      mean,
+      Math.sqrt(Math.max(0.0, variance)),
+      dark / (double) sampled,
+      light / (double) sampled
+    );
+  }
+
+  private static int pixelAt(int[] pixels, int x, int y) {
+    return pixels[y * SAMPLE_WIDTH + x];
+  }
+
+  private static int submitPixelAt(int[] pixels, int x, int y) {
+    return pixels[y * SUBMIT_SAMPLE_WIDTH + x];
+  }
+
+  private static int luminance(int pixel) {
+    int red = (pixel >> 16) & 0xff;
+    int green = (pixel >> 8) & 0xff;
+    int blue = pixel & 0xff;
+    return (red * 299 + green * 587 + blue * 114) / 1000;
+  }
+
+  private static final class VisualStats {
+    final double mean;
+    final double contrast;
+    final double darkRatio;
+    final double lightRatio;
+
+    VisualStats(double mean, double contrast, double darkRatio, double lightRatio) {
+      this.mean = mean;
+      this.contrast = contrast;
+      this.darkRatio = darkRatio;
+      this.lightRatio = lightRatio;
+    }
+  }
+}

@@ -6,7 +6,7 @@
   "artifacts": [
     {
       "id": "site-notifier-bundle",
-      "url": "/data/local/pixel-stack/conf/runtime/components/site_notifier/artifacts/site-notifier-bundle-site-notifier-20260331T092435Z.tar",
+      "url": "/data/local/pixel-stack/conf/runtime/artifacts/sha256/600cf5d7deb5e031c9e85648a60d23b46ac872b08cd383af54224d5c06a73a1c",
       "sha256": "600cf5d7deb5e031c9e85648a60d23b46ac872b08cd383af54224d5c06a73a1c",
       "fileName": "site-notifier-bundle-site-notifier-20260331T092435Z.tar",
       "sizeBytes": 631351808,

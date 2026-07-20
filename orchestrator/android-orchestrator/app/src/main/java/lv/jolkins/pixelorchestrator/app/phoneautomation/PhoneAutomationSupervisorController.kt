@@ -72,16 +72,14 @@ class PhoneAutomationSupervisorController(
     }
 
     if (snapshot.touchBrightnessEnabled) {
-      val touchBrightnessNeedsStart = snapshot.touchBrightnessState == TouchBrightnessRuntimeState.STOPPED ||
-        snapshot.touchBrightnessState == TouchBrightnessRuntimeState.ERROR
-      val shouldDeferTouchBrightnessRecovery = snapshot.isSpeedtestRecoveryOwningLane() &&
-        (deferredTouchBrightnessRecovery != null || touchBrightnessNeedsStart)
-      if (shouldDeferTouchBrightnessRecovery) {
+      val shouldDeferDestructiveRestart = snapshot.isSpeedtestRecoveryOwningLane() &&
+        deferredTouchBrightnessRecovery?.action == DeferredTouchBrightnessRecoveryAction.RESTART
+      if (shouldDeferDestructiveRestart) {
         deferTouchBrightnessRecovery(
-          action = deferredTouchBrightnessRecovery?.action ?: DeferredTouchBrightnessRecoveryAction.START,
+          action = DeferredTouchBrightnessRecoveryAction.RESTART,
           reasonKey = deferredTouchBrightnessRecovery?.reasonKey ?: trigger,
           detail = deferredTouchBrightnessRecovery?.detail
-            ?: "Touch brightness is waiting for Speedtest recovery to finish"
+            ?: "Touch brightness restart is waiting for Speedtest recovery to finish"
         )
       } else if (!resumeDeferredTouchBrightnessRecoveryIfNeeded()) {
         touchBrightnessRuntimeController.start()

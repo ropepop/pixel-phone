@@ -20,10 +20,6 @@ internal class WeeklyCleanupScheduler(
     val alarmManager = appContext.getSystemService(AlarmManager::class.java)
       ?: return failure("AlarmManager unavailable for cleanup scheduling ($reason)")
 
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-      return failure("Exact alarms unavailable for cleanup scheduling ($reason)")
-    }
-
     val nextRunMillis =
       WeeklyCleanupSchedulePolicy.nextRunAfter(
         nowMillis = System.currentTimeMillis(),
@@ -31,12 +27,27 @@ internal class WeeklyCleanupScheduler(
       )
     val pendingIntent = cleanupPendingIntent(buildRunId(nextRunMillis))
     alarmManager.cancel(pendingIntent)
-    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, nextRunMillis, pendingIntent)
+    val mode = WeeklyCleanupAlarmPolicy.mode(
+      sdkInt = Build.VERSION.SDK_INT,
+      canScheduleExactAlarms = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarmManager.canScheduleExactAlarms()
+    )
+    when (mode) {
+      CleanupScheduleMode.EXACT_IDLE ->
+        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, nextRunMillis, pendingIntent)
+      CleanupScheduleMode.APPROXIMATE_IDLE ->
+        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, nextRunMillis, pendingIntent)
+      CleanupScheduleMode.NONE -> return failure("No supported cleanup alarm mode ($reason)")
+    }
     Log.i(
       TAG,
-      "cleanup_schedule_armed reason=$reason next_run=${Instant.ofEpochMilli(nextRunMillis)} zone=${ZoneId.systemDefault().id}"
+      "cleanup_schedule_armed reason=$reason mode=${mode.name.lowercase()} next_run=${Instant.ofEpochMilli(nextRunMillis)} zone=${ZoneId.systemDefault().id}"
     )
-    return CleanupScheduleResult(success = true, scheduledAtMillis = nextRunMillis)
+    return CleanupScheduleResult(
+      success = true,
+      scheduledAtMillis = nextRunMillis,
+      mode = mode,
+      reason = if (mode == CleanupScheduleMode.APPROXIMATE_IDLE) "exact_alarm_permission_unavailable" else ""
+    )
   }
 
   private fun cleanupPendingIntent(pixelRunId: String): PendingIntent {
@@ -71,5 +82,15 @@ internal class WeeklyCleanupScheduler(
     val RUN_ID_FORMATTER: DateTimeFormatter =
       DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'", Locale.US).withZone(java.time.ZoneOffset.UTC)
     const val TAG = "WeeklyCleanupScheduler"
+  }
+}
+
+internal object WeeklyCleanupAlarmPolicy {
+  fun mode(sdkInt: Int, canScheduleExactAlarms: Boolean): CleanupScheduleMode {
+    return if (sdkInt < Build.VERSION_CODES.S || canScheduleExactAlarms) {
+      CleanupScheduleMode.EXACT_IDLE
+    } else {
+      CleanupScheduleMode.APPROXIMATE_IDLE
+    }
   }
 }

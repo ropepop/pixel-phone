@@ -250,7 +250,7 @@ class PhoneAutomationSupervisorControllerTest {
   }
 
   @Test
-  fun syncDefersStartingTouchBrightnessWhileAutomationRecoveryOwnsTheLane() {
+  fun syncStartsPersistedStoppedTouchBrightnessWhileAutomationRecoveryOwnsTheLane() {
     val store = FakeSupervisorStore(enabled = true, touchBrightnessEnabled = true).apply {
       updateRuntimeState(
         PhoneAutomationRuntimeState.WAITING_FOR_RECOVERY_RETRY,
@@ -268,18 +268,6 @@ class PhoneAutomationSupervisorControllerTest {
     controller.syncFromSettings(trigger = "activity_resume")
 
     assertEquals(1, runtime.startCalls)
-    assertEquals(0, touchBrightnessRuntime.startCalls)
-    assertFalse(controller.shouldResumeDeferredTouchBrightness(store.load()))
-
-    store.updateRuntimeState(
-      PhoneAutomationRuntimeState.WAITING_FOR_SPEEDTEST_COMPLETION,
-      "Waiting for Speedtest completion"
-    )
-
-    assertTrue(controller.shouldResumeDeferredTouchBrightness(store.load()))
-
-    controller.syncFromSettings(trigger = "deferred_touch_brightness_resume")
-
     assertEquals(1, touchBrightnessRuntime.startCalls)
     assertFalse(controller.shouldResumeDeferredTouchBrightness(store.load()))
   }

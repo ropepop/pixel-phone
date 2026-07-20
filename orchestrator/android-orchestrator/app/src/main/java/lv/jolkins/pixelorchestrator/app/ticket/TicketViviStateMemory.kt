@@ -10,9 +10,7 @@ internal data class TicketViviStateMemorySnapshot(
   val reason: String = "none"
 )
 
-internal class TicketViviStateMemory(
-  private val onRecord: (TicketViviStateMemorySnapshot) -> Unit = {}
-) {
+internal class TicketViviStateMemory {
   @Volatile private var snapshot = TicketViviStateMemorySnapshot()
   @Volatile private var lastTicketDetailSnapshot = TicketViviStateMemorySnapshot()
 
@@ -33,58 +31,12 @@ internal class TicketViviStateMemory(
     if (state == TicketViviRecoveryState.TICKET_DETAIL) {
       lastTicketDetailSnapshot = next
     }
-    onRecord(next)
-    return next
-  }
-
-  fun seedTicketDetail(
-    ticketId: String?,
-    observedAgeMillis: Long,
-    source: String,
-    reason: String
-  ): TicketViviStateMemorySnapshot {
-    return seed(
-      state = TicketViviRecoveryState.TICKET_DETAIL,
-      ticketId = ticketId,
-      observedAgeMillis = observedAgeMillis,
-      source = source,
-      reason = reason
-    )
-  }
-
-  fun seed(
-    state: TicketViviRecoveryState,
-    ticketId: String?,
-    observedAgeMillis: Long,
-    source: String,
-    reason: String
-  ): TicketViviStateMemorySnapshot {
-    val nowMillis = SystemClock.elapsedRealtime()
-    val next = TicketViviStateMemorySnapshot(
-      state = state,
-      ticketId = ticketId,
-      observedAtMillis = (nowMillis - observedAgeMillis.coerceAtLeast(0L)).coerceAtLeast(1L),
-      source = source,
-      reason = reason
-    )
-    snapshot = next
-    if (state == TicketViviRecoveryState.TICKET_DETAIL) {
-      lastTicketDetailSnapshot = next
-    }
     return next
   }
 
   fun clear(source: String, reason: String): TicketViviStateMemorySnapshot {
-    val next = TicketViviStateMemorySnapshot(
-      state = TicketViviRecoveryState.UNKNOWN_VIVI,
-      ticketId = null,
-      observedAtMillis = SystemClock.elapsedRealtime(),
-      source = source,
-      reason = reason
-    )
-    snapshot = next
+    val next = record(TicketViviRecoveryState.UNKNOWN_VIVI, null, source, reason)
     lastTicketDetailSnapshot = TicketViviStateMemorySnapshot()
-    onRecord(next)
     return next
   }
 

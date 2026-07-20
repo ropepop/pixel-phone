@@ -52,7 +52,9 @@ ROOTFS_TARBALL="${PIXEL_RUNTIME_ROOTFS_TARBALL:-}"
 
 ADB_SERIAL=""
 SCOPE="full"
+SCOPE_EXPLICIT=0
 MODE="auto"
+PROFILE="${PIXEL_REDEPLOY_PROFILE:-standard}"
 SKIP_BUILD=0
 DESTRUCTIVE_E2E=0
 MIRROR_ACTION=""
@@ -63,6 +65,7 @@ REPORT_DIR="${WORKSPACE_ROOT}/output/pixel/redeploy/${PIXEL_RUN_ID}"
 REPORT_LOG="${REPORT_DIR}/redeploy.log"
 SUMMARY_JSON="${REPORT_DIR}/summary.json"
 PLAN_TEXT="${REPORT_DIR}/plan.txt"
+TIMINGS_TSV="${REPORT_DIR}/phase-timings.tsv"
 SATIKSME_SCHEMA_PUBLISH_LOG="${REPORT_DIR}/satiksme-schema-publish.log"
 ROOTED_FRESHNESS_PRE_REPORT="${REPORT_DIR}/rooted-freshness.pre.txt"
 ROOTED_FRESHNESS_POST_REPORT="${REPORT_DIR}/rooted-freshness.post.txt"
@@ -110,9 +113,12 @@ LIVE_DNS_RUNTIME_CONVERGED=0
 PLATFORM_MUTATION_PERFORMED=0
 ROOTED_CONVERGENCE_REQUIRED=0
 APK_INSTALL_PENDING=0
+REDEPLOY_STARTED_MS=""
+TOTAL_TIMING_MS=0
 
 declare -a ACTIONS_EXECUTED=()
 declare -a VALIDATION_RESULTS=()
+declare -a PHASE_TIMINGS=()
 
 usage() {
   cat <<USAGE
@@ -123,8 +129,11 @@ Options:
   --transport MODE            transport to use (adb|ssh|auto)
   --ssh-host IP               Tailscale or SSH host/IP
   --ssh-port PORT             SSH port (default: 2222)
-  --scope full|platform|dns|train_bot|satiksme_bot|site_notifier|subscription_bot
+  --scope full|orchestrator|platform|dns|train_bot|satiksme_bot|site_notifier|subscription_bot
                               deployment scope (default: full)
+  --profile fast|standard|full
+                              fast defaults to orchestrator-only scope and reuses unchanged work;
+                              standard preserves the current default; full keeps all strict checks
   --mode auto|force-bootstrap|force-refresh|validate-only
                               deployment mode (default: auto)
   --rootfs-tarball FILE       explicit AdGuardHome rootfs tarball to package for dns/platform scopes
@@ -140,6 +149,41 @@ USAGE
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*"
+}
+
+now_ms() {
+  if [[ -n "${EPOCHREALTIME:-}" ]]; then
+    awk -v value="${EPOCHREALTIME}" 'BEGIN { printf "%.0f\n", value * 1000 }'
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import time; print(time.monotonic_ns() // 1000000)'
+  else
+    printf '%s\n' "$(( $(date +%s) * 1000 ))"
+  fi
+}
+
+record_phase_timing() {
+  local name="$1"
+  local started_ms="$2"
+  local finished_ms=""
+  local duration_ms=""
+  finished_ms="$(now_ms)"
+  duration_ms=$((finished_ms - started_ms))
+  PHASE_TIMINGS+=("${name}=${duration_ms}")
+  log "Phase timing: ${name}=${duration_ms}ms"
+}
+
+run_phase() {
+  local name="$1"
+  local started_ms=""
+  local rc=0
+  shift
+  started_ms="$(now_ms)"
+  set +e
+  "$@"
+  rc=$?
+  set -e
+  record_phase_timing "${name}" "${started_ms}"
+  return "${rc}"
 }
 
 record_action() {
@@ -270,7 +314,9 @@ pixel_mirror_affected_actions() {
   (( seen_vpn == 1 )) && actions+=("restart_component vpn")
   (( seen_ddns == 1 )) && actions+=("sync_ddns")
   (( seen_dns == 1 )) && actions+=("restart_component dns")
-  printf '%s\n' "${actions[@]}"
+  if (( ${#actions[@]} > 0 )); then
+    printf '%s\n' "${actions[@]}"
+  fi
 }
 
 pixel_mirror_deploy_config() {
@@ -318,6 +364,11 @@ while (( $# > 0 )); do
     --scope)
       shift
       SCOPE="${1:-}"
+      SCOPE_EXPLICIT=1
+      ;;
+    --profile)
+      shift
+      PROFILE="${1:-}"
       ;;
     --mode)
       shift
@@ -346,6 +397,18 @@ while (( $# > 0 )); do
   shift
 done
 
+case "${PROFILE}" in
+  fast|standard|full) ;;
+  *)
+    echo "Unsupported --profile: ${PROFILE}" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "${PROFILE}" == "fast" ]] && (( SCOPE_EXPLICIT == 0 )); then
+  SCOPE="orchestrator"
+fi
+
 if [[ -n "${MIRROR_ACTION}" ]]; then
   require_cmd python3
   require_cmd tar
@@ -371,7 +434,7 @@ if [[ -n "${MIRROR_ACTION}" ]]; then
 fi
 
 case "${SCOPE}" in
-  full|platform|dns|train_bot|satiksme_bot|site_notifier|subscription_bot) ;;
+  full|orchestrator|platform|dns|train_bot|satiksme_bot|site_notifier|subscription_bot) ;;
   *)
     echo "Unsupported --scope: ${SCOPE}" >&2
     exit 2
@@ -386,7 +449,12 @@ case "${MODE}" in
     ;;
 esac
 
-bash "${WORKSPACE_ROOT}/tools/pixel/cleanup_workspace.sh"
+REDEPLOY_STARTED_MS="$(now_ms)"
+if [[ "${PROFILE}" == "fast" ]]; then
+  log "Skipping workspace cleanup in fast profile"
+else
+  run_phase workspace_cleanup bash "${WORKSPACE_ROOT}/tools/pixel/cleanup_workspace.sh"
+fi
 mkdir -p "${REPORT_DIR}"
 exec > >(tee "${REPORT_LOG}") 2>&1
 
@@ -394,9 +462,11 @@ require_cmd python3
 require_cmd curl
 require_cmd bash
 
+connect_started_ms="$(now_ms)"
 pixel_transport_require_device >/dev/null
 adb_cmd=(pixel_transport_adb_compat)
 "${adb_cmd[@]}" get-state >/dev/null
+record_phase_timing connect_device "${connect_started_ms}"
 
 remote_sha256_file() {
   local remote_path="$1"
@@ -581,16 +651,36 @@ run_deploy() {
   local line=""
   local capture_file=""
   local rc=0
+  local action="unknown"
+  local component=""
+  local previous=""
+  local phase_name=""
+  local started_ms=""
   while IFS= read -r line; do
     [[ -n "${line}" ]] && cmd+=("${line}")
-  done < <(deploy_base_args)
+  done < <(runtime_freshness_args)
+  cmd+=(--profile "${PROFILE}" --skip-build)
+  if (( SKIP_BUILD == 0 && APK_INSTALL_PENDING == 1 )); then
+    cmd+=(--install-apk)
+  fi
   cmd+=("$@")
+  for line in "$@"; do
+    if [[ "${previous}" == "--action" ]]; then
+      action="${line}"
+    elif [[ "${previous}" == "--component" ]]; then
+      component="${line}"
+    fi
+    previous="${line}"
+  done
+  phase_name="deploy_${action}${component:+_${component}}"
   log "Running orchestrator deploy: ${cmd[*]}"
   capture_file="$(mktemp "${REPORT_DIR}/run-deploy.XXXXXX")"
+  started_ms="$(now_ms)"
   set +e
   "${cmd[@]}" 2>&1 | tee "${capture_file}"
   rc=${PIPESTATUS[0]}
   set -e
+  record_phase_timing "${phase_name}" "${started_ms}"
   if (( rc == 0 && SKIP_BUILD == 0 && APK_INSTALL_PENDING == 1 )); then
     APK_INSTALL_PENDING=0
   fi
@@ -601,13 +691,29 @@ run_deploy() {
   return "${rc}"
 }
 
+orchestrator_apk_needs_build() {
+  local apk_path="${ORCHESTRATOR_ROOT}/android-orchestrator/app/build/outputs/apk/debug/app-debug.apk"
+  [[ -f "${apk_path}" ]] || return 0
+  find "${ORCHESTRATOR_ROOT}/android-orchestrator" \
+    \( -type d \( -name build -o -name .gradle \) -prune \) -o \
+    \( -type f \
+      \( -path '*/src/*' -o -name '*.gradle' -o -name '*.gradle.kts' -o -name 'gradle.properties' -o -name 'gradle-wrapper.properties' \) \
+      -newer "${apk_path}" -print -quit \
+    \) | grep -q .
+}
+
 build_orchestrator_if_needed() {
   if (( SKIP_BUILD == 1 )); then
     log "Skipping orchestrator APK build"
     return 0
   fi
+  if [[ "${PROFILE}" == "fast" ]] && ! orchestrator_apk_needs_build; then
+    log "Skipping orchestrator APK build (fast profile: existing APK is current)"
+    record_validation "orchestrator_apk" "reused"
+    return 0
+  fi
   record_action "build_orchestrator_apk"
-  "${BUILD_SCRIPT}"
+  run_phase build_orchestrator_apk "${BUILD_SCRIPT}" --profile "${PROFILE}"
   APK_INSTALL_PENDING=1
 }
 
@@ -735,6 +841,9 @@ package_runtime_bundle() {
   local manifest_version="pixel-redeploy-${PIXEL_RUN_ID}"
   local artifact_dir="${WORKSPACE_ROOT}/.artifacts/runtime-local/${manifest_version}"
   local -a cmd=("${PACKAGE_RUNTIME_SCRIPT}" --rootfs-tarball "${ROOTFS_TARBALL}" --manifest-version "${manifest_version}" --out-dir "${artifact_dir}")
+  if [[ "${PROFILE}" == "full" ]]; then
+    cmd+=(--full)
+  fi
   if scope_includes_train; then
     [[ -n "${TRAIN_BOT_BUNDLE_PATH}" ]] && cmd+=(--train-bot-bundle "${TRAIN_BOT_BUNDLE_PATH}")
   fi
@@ -950,6 +1059,7 @@ emit_plan() {
     printf 'target=%s\n' "$(selected_target_label)"
     printf 'scope=%s\n' "${SCOPE}"
     printf 'mode=%s\n' "${MODE}"
+    printf 'profile=%s\n' "${PROFILE}"
     printf 'runtime_bundle_dir=%s\n' "${RUNTIME_BUNDLE_DIR:-none}"
     printf 'train_release_dir=%s\n' "${TRAIN_BOT_RELEASE_DIR:-none}"
     printf 'satiksme_release_dir=%s\n' "${SATIKSME_BOT_RELEASE_DIR:-none}"
@@ -1014,7 +1124,7 @@ run_component_redeploy() {
   add_optional_arg cmd "${env_flag}" "${env_file}"
   record_action "redeploy_component_${component}"
   expected_release_id="$(component_expected_release_id "${release_dir}")"
-  recovery_command="${WORKSPACE_ROOT}/tools/pixel/redeploy.sh $(transport_cli_args_string)--scope ${component} --mode auto"
+  recovery_command="${WORKSPACE_ROOT}/tools/pixel/redeploy.sh $(transport_cli_args_string)--profile ${PROFILE} --scope ${component} --mode auto"
   if run_deploy "${cmd[@]}"; then
     rc=0
   else
@@ -1374,12 +1484,15 @@ validate_scope_health() {
 write_summary_json() {
   local actions_joined=""
   local validations_joined=""
+  local timings_joined=""
   actions_joined="$(printf '%s\x1f' "${ACTIONS_EXECUTED[@]:-}")"
   validations_joined="$(printf '%s\x1f' "${VALIDATION_RESULTS[@]:-}")"
+  timings_joined="$(printf '%s\x1f' "${PHASE_TIMINGS[@]:-}")"
 
   export SUMMARY_DEVICE="$(selected_target_label)"
   export SUMMARY_SCOPE="${SCOPE}"
   export SUMMARY_MODE="${MODE}"
+  export SUMMARY_PROFILE="${PROFILE}"
   export SUMMARY_STATUS="${RUN_STATUS}"
   export SUMMARY_REPORT_DIR="${REPORT_DIR}"
   export SUMMARY_RUNTIME_BUNDLE_DIR="${RUNTIME_BUNDLE_DIR}"
@@ -1405,6 +1518,9 @@ write_summary_json() {
   export SUMMARY_LIVE_DNS_RUNTIME_CONVERGED="${LIVE_DNS_RUNTIME_CONVERGED}"
   export SUMMARY_ACTIONS="${actions_joined}"
   export SUMMARY_VALIDATIONS="${validations_joined}"
+  export SUMMARY_PHASE_TIMINGS="${timings_joined}"
+  export SUMMARY_TOTAL_TIMING_MS="${TOTAL_TIMING_MS}"
+  export SUMMARY_TIMINGS_PATH="${TIMINGS_TSV}"
   export SUMMARY_TRAIN_BOT_RESULT_SOURCE="${TRAIN_BOT_DEPLOY_RESULT_SOURCE}"
   export SUMMARY_SATIKSME_BOT_RESULT_SOURCE="${SATIKSME_BOT_DEPLOY_RESULT_SOURCE}"
   export SUMMARY_SITE_NOTIFIER_RESULT_SOURCE="${SITE_NOTIFIER_DEPLOY_RESULT_SOURCE}"
@@ -1436,12 +1552,27 @@ for item in split_field("SUMMARY_VALIDATIONS"):
         key, value = item.split("=", 1)
         validations[key] = value
 
+timing_entries = []
+timing_totals = {}
+for item in split_field("SUMMARY_PHASE_TIMINGS"):
+    if "=" not in item:
+        continue
+    name, value = item.split("=", 1)
+    duration_ms = int(value)
+    timing_entries.append({"name": name, "durationMs": duration_ms})
+    timing_totals[name] = timing_totals.get(name, 0) + duration_ms
+
 payload = {
     "device": os.environ["SUMMARY_DEVICE"],
     "scope": os.environ["SUMMARY_SCOPE"],
     "mode": os.environ["SUMMARY_MODE"],
+    "profile": os.environ["SUMMARY_PROFILE"],
     "status": os.environ["SUMMARY_STATUS"],
     "reportDir": os.environ["SUMMARY_REPORT_DIR"],
+    "timingsFile": os.environ["SUMMARY_TIMINGS_PATH"],
+    "totalTimingMs": int(os.environ.get("SUMMARY_TOTAL_TIMING_MS") or 0),
+    "timingsMs": timing_totals,
+    "timingEntries": timing_entries,
     "runtimeBundleDir": os.environ.get("SUMMARY_RUNTIME_BUNDLE_DIR") or None,
     "runtimeManifestPath": os.environ.get("SUMMARY_RUNTIME_MANIFEST_PATH") or None,
     "dnsReleaseDir": os.environ.get("SUMMARY_DNS_RELEASE_DIR") or None,
@@ -1507,12 +1638,33 @@ Path(os.environ["SUMMARY_JSON_PATH"]).write_text(json.dumps(payload, indent=2, s
 PY
 }
 
+write_phase_timings() {
+  local item=""
+  local name=""
+  local duration_ms=""
+  {
+    printf 'phase\tduration_ms\n'
+    for item in "${PHASE_TIMINGS[@]:-}"; do
+      [[ -n "${item}" ]] || continue
+      name="${item%%=*}"
+      duration_ms="${item#*=}"
+      printf '%s\t%s\n' "${name}" "${duration_ms}"
+    done
+    printf 'total\t%s\n' "${TOTAL_TIMING_MS}"
+  } > "${TIMINGS_TSV}"
+}
+
 finalize() {
   local rc=$?
+  local finished_ms=""
   if (( rc != 0 )) && [[ "${RUN_STATUS}" != "success" ]]; then
     RUN_STATUS="failed"
   fi
+  finished_ms="$(now_ms)"
+  TOTAL_TIMING_MS=$((finished_ms - REDEPLOY_STARTED_MS))
+  write_phase_timings || true
   write_summary_json || true
+  log "Total timing: pixel_redeploy=${TOTAL_TIMING_MS}ms (profile=${PROFILE}, scope=${SCOPE})"
   if (( rc == 0 )); then
     log "Summary: ${SUMMARY_JSON}"
   fi

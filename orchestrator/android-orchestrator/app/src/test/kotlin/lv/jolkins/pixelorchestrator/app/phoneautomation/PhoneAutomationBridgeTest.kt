@@ -361,6 +361,111 @@ class PhoneAutomationBridgeTest {
   }
 
   @Test
+  fun setViviControlCodeTextWithoutKeyboardDelegatesToAccessibilityHost() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    val host = FakeAccessibilityHost().apply {
+      firstEditableTextWithoutKeyboardResult = true
+    }
+    PhoneAutomationServiceBridge.bindAccessibilityService(host)
+
+    assertTrue(PhoneAutomationServiceBridge.setViviControlCodeTextWithoutKeyboard("com.pv.vivi", "5555", 650L))
+    assertEquals(listOf("com.pv.vivi" to "5555"), host.firstEditableTextWithoutKeyboardRequests)
+  }
+
+  @Test
+  fun submitViviControlCodeWithoutKeyboardDelegatesToAccessibilityHost() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    val host = FakeAccessibilityHost().apply {
+      controlCodeSubmitWithoutKeyboardResult = true
+    }
+    PhoneAutomationServiceBridge.bindAccessibilityService(host)
+
+    assertTrue(PhoneAutomationServiceBridge.submitViviControlCodeWithoutKeyboard("com.pv.vivi", "5555", 500L))
+    assertEquals(listOf("com.pv.vivi" to "5555"), host.controlCodeSubmitWithoutKeyboardRequests)
+  }
+
+  @Test
+  fun restoreViviControlCodeKeyboardModeDelegatesToAccessibilityHost() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    val host = FakeAccessibilityHost().apply {
+      restoreControlCodeKeyboardModeResult = true
+    }
+    PhoneAutomationServiceBridge.bindAccessibilityService(host)
+
+    assertTrue(PhoneAutomationServiceBridge.restoreViviControlCodeKeyboardMode("com.pv.vivi"))
+    assertEquals(listOf("com.pv.vivi"), host.restoreControlCodeKeyboardModeRequests)
+  }
+
+  @Test
+  fun keyboardFreeTextActionSuppressesImeBeforeActivatingAndSettingText() {
+    val source = readFirstExisting(
+      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
+      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
+    )
+    val method = source.substringAfter("override suspend fun setViviControlCodeTextWithoutKeyboard(")
+      .substringBefore("override suspend fun submitViviControlCodeWithoutKeyboard(")
+    val validator = source.substringAfter("private fun viviControlCodeEditableNode(")
+      .substringBefore("private fun editableFocusedNode(")
+
+    assertTrue(method.contains("viviControlCodeEditableNode(root, expectedPackageName)"))
+    assertTrue(method.contains("AccessibilityNodeInfo.ACTION_SET_TEXT"))
+    assertTrue(method.contains("suppressViviControlCodeKeyboardOnMainThread(expectedPackageName)"))
+    assertTrue(method.contains("AccessibilityNodeInfo.ACTION_CLICK"))
+    assertTrue(method.contains("AccessibilityNodeInfo.ACTION_FOCUS"))
+    assertTrue(method.indexOf("suppressViviControlCodeKeyboardOnMainThread(expectedPackageName)") < method.indexOf("AccessibilityNodeInfo.ACTION_CLICK"))
+    assertTrue(validator.contains("nodePackageMatchesExpected(node, expectedPackageName)"))
+    assertTrue(validator.contains("label.contains(\"kontroles kod\")"))
+    assertTrue(validator.contains("label.contains(\"control code\")"))
+    assertTrue(validator.contains("submitPresent"))
+    assertTrue(validator.contains("clickableEnabledNodeOrParent(node)"))
+    assertTrue(validator.contains("editables.singleOrNull()"))
+  }
+
+  @Test
+  fun keyboardFreeSubmitClicksOnlyTheExactEnabledViviSubmitNode() {
+    val source = readFirstExisting(
+      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
+      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
+    )
+    val method = source.substringAfter("override suspend fun submitViviControlCodeWithoutKeyboard(")
+      .substringBefore("override suspend fun tapScreenRatio(")
+    val validator = source.substringAfter("private fun viviControlCodeSubmitNode(")
+      .substringBefore("private fun nodeAccessibilityLabel(")
+
+    assertTrue(method.contains("viviControlCodeSubmitNode("))
+    assertTrue(method.contains("AccessibilityNodeInfo.ACTION_CLICK"))
+    assertFalse(method.contains("AccessibilityNodeInfo.ACTION_FOCUS"))
+    assertFalse(method.contains("AccessibilityNodeInfo.ACTION_SET_TEXT"))
+    assertTrue(validator.contains("input.textValue().trim() != expectedText.trim()"))
+    assertTrue(validator.contains("nodePackageMatchesExpected(node, expectedPackageName)"))
+    assertTrue(validator.contains("node.isVisibleToUser"))
+    assertTrue(validator.contains("node.isEnabled"))
+    assertTrue(validator.contains("node.isClickable"))
+    assertFalse(validator.contains("clickableEnabledNodeOrParent"))
+    assertTrue(validator.contains("singleOrNull()"))
+  }
+
+  @Test
+  fun keyboardSuppressionLeaseAlwaysAttemptsModeRestoreAndKeepsRetryStateOnFailure() {
+    val source = readFirstExisting(
+      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
+      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
+    )
+    val restore = source.substringAfter("private fun restoreViviControlCodeKeyboardModeOnMainThread(")
+      .substringBefore("private fun nodeAccessibilityLabel(")
+
+    assertTrue(source.contains("viviControlCodeKeyboardExpectedPackageName = expectedPackageName"))
+    assertTrue(restore.contains("?: viviControlCodeKeyboardExpectedPackageName"))
+    assertTrue(restore.contains("AccessibilityNodeInfo.ACTION_CLEAR_FOCUS"))
+    assertFalse(restore.contains("rootForPackage(packageToClear) ?: return false"))
+    assertFalse(restore.contains("if (!focusCleared)"))
+    assertTrue(restore.contains("val restored = softKeyboardController.setShowMode(previousMode)"))
+    assertTrue(restore.indexOf("ACTION_CLEAR_FOCUS") < restore.indexOf("softKeyboardController.setShowMode(previousMode)"))
+    assertTrue(restore.indexOf("if (restored)") < restore.indexOf("viviControlCodePreviousKeyboardShowMode = null"))
+    assertTrue(restore.indexOf("if (restored)") < restore.indexOf("viviControlCodeKeyboardExpectedPackageName = null"))
+  }
+
+  @Test
   fun openFirstEditableInputDelegatesToAccessibilityHost() = runTest {
     PhoneAutomationServiceBridge.resetForTests()
     val host = FakeAccessibilityHost().apply {
@@ -405,6 +510,12 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
   var firstEditableOpenResult = false
   val firstEditableTextRequests = mutableListOf<Pair<String, String>>()
   var firstEditableTextResult = false
+  val firstEditableTextWithoutKeyboardRequests = mutableListOf<Pair<String, String>>()
+  var firstEditableTextWithoutKeyboardResult = false
+  val controlCodeSubmitWithoutKeyboardRequests = mutableListOf<Pair<String, String>>()
+  var controlCodeSubmitWithoutKeyboardResult = false
+  val restoreControlCodeKeyboardModeRequests = mutableListOf<String>()
+  var restoreControlCodeKeyboardModeResult = true
   var backResult = false
   var backCalls = 0
 
@@ -455,6 +566,29 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
   ): Boolean {
     firstEditableTextRequests += expectedPackageName to text
     return firstEditableTextResult
+  }
+
+  override suspend fun setViviControlCodeTextWithoutKeyboard(
+    expectedPackageName: String,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean {
+    firstEditableTextWithoutKeyboardRequests += expectedPackageName to text
+    return firstEditableTextWithoutKeyboardResult
+  }
+
+  override suspend fun submitViviControlCodeWithoutKeyboard(
+    expectedPackageName: String,
+    expectedText: String,
+    timeoutMillis: Long
+  ): Boolean {
+    controlCodeSubmitWithoutKeyboardRequests += expectedPackageName to expectedText
+    return controlCodeSubmitWithoutKeyboardResult
+  }
+
+  override suspend fun restoreViviControlCodeKeyboardMode(expectedPackageName: String): Boolean {
+    restoreControlCodeKeyboardModeRequests += expectedPackageName
+    return restoreControlCodeKeyboardModeResult
   }
 
   override suspend fun openFirstEditableInput(

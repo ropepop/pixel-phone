@@ -7,7 +7,7 @@ interface RuntimeInstallerControl {
     config: StackConfigV1,
     assets: AssetProvider,
     manifest: ArtifactManifest,
-    rootfsArtifactId: String
+    rootfsArtifactId: String? = null
   ): BootstrapResult
 
   suspend fun syncBundledRuntimeAssets(assets: AssetProvider, component: String? = null): SyncResult

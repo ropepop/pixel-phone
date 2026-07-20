@@ -56,10 +56,11 @@ chmod 0755 "${START_SCRIPT}" "${TEMPLATE_DIR}/pixel-ssh-service-loop.sh"
 cat > "${TEMPLATE_DIR}/pixel-ssh-launch.sh" <<'EOF_LAUNCH'
 #!/usr/bin/env bash
 set -euo pipefail
-trap 'exit 0' TERM INT HUP
-while true; do
-  sleep 1
-done
+"${PIXEL_SSH_ROOT}/bin/dropbear" &
+child_pid="$!"
+printf 'LISTEN 0 128 0.0.0.0:2222 0.0.0.0:* users:(("dropbear",pid=%s,fd=3))\n' "${child_pid}" > "${SS_OUTPUT_FILE}"
+trap 'kill "${child_pid}" >/dev/null 2>&1 || true; wait "${child_pid}" >/dev/null 2>&1 || true; exit 0' TERM INT HUP
+wait "${child_pid}"
 EOF_LAUNCH
 chmod 0755 "${TEMPLATE_DIR}/pixel-ssh-launch.sh"
 
@@ -137,6 +138,7 @@ cat > "${SS_OUTPUT_FILE}" <<EOF_LISTENER
 LISTEN 0 128 0.0.0.0:2222 0.0.0.0:* users:(("dropbear",pid=${orphan_dropbear_pid},fd=3))
 EOF_LISTENER
 
+export SS_OUTPUT_FILE
 PATH="${FAKE_BIN_DIR}:${PATH}" /bin/sh "${START_SCRIPT}"
 
 for _ in $(seq 1 20); do

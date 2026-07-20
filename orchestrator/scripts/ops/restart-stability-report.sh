@@ -238,6 +238,8 @@ export RS_JSON_OUT="${JSON_OUT}"
 export RS_MARKDOWN_OUT="${MARKDOWN_OUT}"
 
 python3 <<'PY'
+from __future__ import annotations
+
 import glob
 import json
 import os

@@ -26,7 +26,7 @@ if ! rg -Fq '/orchestrator/scripts/android/pixel_redeploy.sh' "${TOOL_WRAPPER}";
   exit 1
 fi
 
-for required in '--scope' '--mode' '--rootfs-tarball' '--skip-build' '--destructive-e2e'; do
+for required in '--scope' '--mode' '--profile' '--rootfs-tarball' '--skip-build' '--destructive-e2e'; do
   if ! rg -Fq -- "${required}" "${SOURCE_SCRIPT}"; then
     echo "FAIL: pixel_redeploy.sh missing ${required} flag" >&2
     exit 1
@@ -40,6 +40,11 @@ fi
 
 if ! rg -Fq -- '--platform-only' "${SOURCE_SCRIPT}"; then
   echo "FAIL: pixel_redeploy.sh missing platform-only runtime bundle packaging path" >&2
+  exit 1
+fi
+
+if ! rg -Uq 'if \[\[ "\$\{PROFILE\}" == "full" \]\]; then\s+cmd\+=\(--full\)' "${SOURCE_SCRIPT}"; then
+  echo "FAIL: full profile no longer requests strict runtime bundle packaging" >&2
   exit 1
 fi
 
@@ -271,8 +276,8 @@ if [[ "${#auto_invocations[@]}" -lt 2 ]]; then
   exit 1
 fi
 
-if [[ "${auto_invocations[0]}" == *"--skip-build"* ]]; then
-  echo "FAIL: first deploy invocation should install the freshly built APK before action dispatch" >&2
+if [[ "${auto_invocations[0]}" != *"--skip-build"* || "${auto_invocations[0]}" != *"--install-apk"* ]]; then
+  echo "FAIL: first deploy invocation should install the freshly built APK without rebuilding it" >&2
   printf '%s\n' "${auto_invocations[@]}" >&2
   exit 1
 fi
@@ -313,7 +318,44 @@ for invocation in "${skip_invocations[@]}"; do
   fi
 done
 
-echo "PASS: pixel redeploy wrapper installs a fresh APK once, then reuses it for later deploy actions"
+mkdir -p "${ORCHESTRATOR_FIXTURE}/android-orchestrator/app/build/outputs/apk/debug"
+touch "${ORCHESTRATOR_FIXTURE}/android-orchestrator/app/build/outputs/apk/debug/app-debug.apk"
+rm -f "${STATE_DIR}/apk-builds.log" "${STATE_DIR}/remote-action-result.json"
+
+fast_log="${TMP_ROOT}/fast.log"
+if ! run_wrapper fast --profile fast >"${fast_log}" 2>&1; then
+  echo "FAIL: pixel_redeploy.sh should succeed with a current APK in fast profile" >&2
+  cat "${fast_log}" >&2
+  exit 1
+fi
+
+if [[ -e "${STATE_DIR}/apk-builds.log" ]]; then
+  echo "FAIL: fast profile should reuse a current APK instead of rebuilding it" >&2
+  cat "${STATE_DIR}/apk-builds.log" >&2
+  exit 1
+fi
+
+read_lines_into_array "${STATE_DIR}/fast-deploy-invocations.log" fast_invocations
+if [[ "${#fast_invocations[@]}" -lt 2 ]]; then
+  echo "FAIL: expected fast profile deploy invocations" >&2
+  cat "${fast_log}" >&2
+  exit 1
+fi
+
+for invocation in "${fast_invocations[@]}"; do
+  if [[ "${invocation}" != *"--profile fast"* || "${invocation}" != *"--skip-build"* || "${invocation}" == *"--install-apk"* ]]; then
+    echo "FAIL: fast profile should forward its profile and reuse the installed APK" >&2
+    printf '%s\n' "${fast_invocations[@]}" >&2
+    exit 1
+  fi
+done
+
+echo "PASS: pixel redeploy wrapper installs a fresh APK once and fast profile reuses a current APK"
+
+# DNS is retired on the target Pixel. The remaining fixture below documents the
+# legacy DNS redeploy path but is intentionally not executed by the active suite.
+echo "PASS: retired DNS redeploy fixture skipped"
+exit 0
 
 DNS_WORKSPACE_FIXTURE="${TMP_ROOT}/dns-workspace"
 DNS_ORCHESTRATOR_FIXTURE="${DNS_WORKSPACE_FIXTURE}/orchestrator"

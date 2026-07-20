@@ -21,16 +21,26 @@ if [[ ! -f "${CLEANUP_SCRIPT}" ]]; then
 fi
 
 for script_path in \
-  "${WORKSPACE_ROOT}/workloads/train-bot/scripts/pixel/common.sh" \
-  "${WORKSPACE_ROOT}/workloads/satiksme-bot/scripts/pixel/common.sh" \
-  "${WORKSPACE_ROOT}/workloads/site-notifications/scripts/pixel/common.sh" \
-  "${WORKSPACE_ROOT}/workloads/subscription-bot/scripts/pixel/common.sh" \
   "${REPO_ROOT}/scripts/android/pixel_redeploy.sh" \
   "${REPO_ROOT}/scripts/android/package_component_release.sh" \
   "${REPO_ROOT}/scripts/android/package_dns_component_release.sh" \
   "${REPO_ROOT}/scripts/android/package_runtime_bundle.sh"; do
   if ! rg -Fq 'cleanup_workspace.sh' "${script_path}"; then
     echo "FAIL: ${script_path} is missing the centralized workspace cleanup hook" >&2
+    exit 1
+  fi
+done
+
+# Cleanup belongs to top-level deployment/package lanes. Running it from every
+# workload helper repeats the same repository scan several times per deploy.
+for script_path in \
+  "${WORKSPACE_ROOT}/workloads/train-bot/scripts/pixel/common.sh" \
+  "${WORKSPACE_ROOT}/workloads/satiksme-bot/scripts/pixel/common.sh" \
+  "${WORKSPACE_ROOT}/workloads/site-notifications/scripts/pixel/common.sh" \
+  "${WORKSPACE_ROOT}/workloads/subscription-bot/scripts/pixel/common.sh"; do
+  [[ -f "${script_path}" ]] || continue
+  if rg -Fq 'cleanup_workspace.sh' "${script_path}"; then
+    echo "FAIL: ${script_path} repeats top-level workspace cleanup" >&2
     exit 1
   fi
 done
@@ -226,6 +236,7 @@ package_root="${TMP_ROOT}/orchestrator/.artifacts/component-releases"
 old_release="${package_root}/train_bot-old-release"
 recent_release="${package_root}/train_bot-recent-release"
 new_release="${package_root}/train_bot-test-release"
+full_release="${package_root}/train_bot-full-release"
 mkdir -p "${old_release}/artifacts" "${recent_release}/artifacts"
 printf 'old artifact\n' > "${old_release}/artifacts/old.tar"
 printf 'recent artifact\n' > "${recent_release}/artifacts/recent.tar"
@@ -238,6 +249,18 @@ bash "${TMP_ROOT}/orchestrator/scripts/android/package_component_release.sh" \
   --artifact "${TMP_ROOT}/input-artifact.tar" \
   --release-id test-release \
   --out-dir "${new_release}" >/dev/null
+
+if [[ ! -e "${old_release}" ]]; then
+  echo "FAIL: fast package_component_release.sh unexpectedly ran workspace cleanup" >&2
+  exit 1
+fi
+
+bash "${TMP_ROOT}/orchestrator/scripts/android/package_component_release.sh" \
+  --component train_bot \
+  --artifact "${TMP_ROOT}/input-artifact.tar" \
+  --release-id full-release \
+  --out-dir "${full_release}" \
+  --full >/dev/null
 
 if [[ -e "${old_release}" ]]; then
   echo "FAIL: package_component_release.sh did not prune stale sibling releases through cleanup_workspace.sh" >&2
@@ -256,6 +279,24 @@ fi
 
 if [[ ! -f "${new_release}/artifacts/input-artifact.tar" ]]; then
   echo "FAIL: package_component_release.sh did not stage the new artifact" >&2
+  exit 1
+fi
+
+python3 - "${new_release}/release-manifest.json" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    artifact = json.load(handle)["artifacts"][0]
+sha = artifact["sha256"]
+expected = f"/data/local/pixel-stack/conf/runtime/artifacts/sha256/{sha}"
+if not re.fullmatch(r"[0-9a-f]{64}", sha) or artifact["url"] != expected:
+    raise SystemExit("component manifest did not use the canonical content-addressed artifact URL")
+PY
+
+if [[ ! -f "${full_release}/release-manifest.json" ]]; then
+  echo "FAIL: full package_component_release.sh did not create its release manifest" >&2
   exit 1
 fi
 

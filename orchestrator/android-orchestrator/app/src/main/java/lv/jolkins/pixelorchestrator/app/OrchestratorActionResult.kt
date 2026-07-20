@@ -13,5 +13,6 @@ data class OrchestratorActionResult(
   val outputPath: String = "",
   val healthSnapshot: HealthSnapshot? = null,
   val recordedAt: String,
-  val resultSource: String = "artifact"
+  val resultSource: String = "artifact",
+  val releaseProvenance: OrchestratorReleaseProvenance = OrchestratorReleaseProvenance.current()
 )

@@ -1,5 +1,6 @@
 package lv.jolkins.pixelorchestrator.app.ticket;
 
+import android.annotation.TargetApi;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -40,11 +41,10 @@ public final class TicketRootHardwareH264CaptureMain {
   private static final int VISIBILITY_SAMPLE_WIDTH = 12;
   private static final int VISIBILITY_SAMPLE_HEIGHT = 20;
   private static final long VISIBILITY_PROBE_INTERVAL_MILLIS = 2_000L;
-  private static final int CONTROL_CODE_VISUAL_SAMPLE_WIDTH = 48;
-  private static final int CONTROL_CODE_VISUAL_SAMPLE_HEIGHT = 72;
   private static final long CONTROL_CODE_VISUAL_PROBE_MILLIS = 2_500L;
   private static final long CONTROL_CODE_VISUAL_GENERATED_HOLD_MILLIS = 1_200L;
   private static final long CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS = 150L;
+  private static final long CONTROL_CODE_REQUEST_BURST_MAX_MILLIS = 20_000L;
   private static final String PNG_BASE64_BEGIN = "PNG_BASE64_BEGIN";
   private static final String PNG_BASE64_END = "PNG_BASE64_END";
 
@@ -58,8 +58,9 @@ public final class TicketRootHardwareH264CaptureMain {
     int cropTopSource = intArg(args, "--crop-top-source", 0);
     int steadyFps = Math.max(1, intArg(args, "--fps", 10));
     int startupFps = Math.max(steadyFps, intArg(args, "--startup-fps", steadyFps));
+    int controlCodeRequestFps = Math.max(steadyFps, intArg(args, "--control-code-request-fps", steadyFps));
     int startupFrames = Math.max(0, intArg(args, "--startup-frames", 0));
-    int encoderFps = Math.max(steadyFps, startupFrames > 0 ? startupFps : steadyFps);
+    int encoderFps = Math.max(controlCodeRequestFps, Math.max(steadyFps, startupFrames > 0 ? startupFps : steadyFps));
     int bitrate = Math.max(500_000, intArg(args, "--bitrate", 5_000_000));
     int keyframeMillis = Math.max(1, intArg(args, "--keyframe-interval-millis", 1_000));
     int frames = intArg(args, "--frames", 0);
@@ -80,10 +81,9 @@ public final class TicketRootHardwareH264CaptureMain {
     Surface inputSurface = null;
     OutputStream output = new BufferedOutputStream(System.out, 256 * 1024);
     AtomicBoolean syncFrameRequested = new AtomicBoolean(true);
-    AtomicLong controlCodeVisualProbeUntilMillis = new AtomicLong(0L);
-    AtomicLong controlCodeVisualProbeLastReportMillis = new AtomicLong(0L);
-    AtomicReference<String> controlCodeVisualProbeReason = new AtomicReference<>("idle");
-    AtomicBoolean controlCodeVisualProbeGenerated = new AtomicBoolean(false);
+    AtomicReference<ControlCodeVisualProbeRequest> controlCodeVisualProbeRequest =
+      new AtomicReference<>(ControlCodeVisualProbeRequest.idle());
+    AtomicLong controlCodeBurstUntilMillis = new AtomicLong(0L);
     Object frameWaitLock = new Object();
     Thread commandThread = null;
     try {
@@ -110,11 +110,11 @@ public final class TicketRootHardwareH264CaptureMain {
       encoder.start();
       commandThread = startCommandReader(
         syncFrameRequested,
-        controlCodeVisualProbeUntilMillis,
-        controlCodeVisualProbeLastReportMillis,
-        controlCodeVisualProbeReason,
-        controlCodeVisualProbeGenerated,
-        frameWaitLock
+        controlCodeVisualProbeRequest,
+        controlCodeBurstUntilMillis,
+        frameWaitLock,
+        controlCodeRequestFps,
+        startupFps
       );
 
       Rect sourceCrop = new Rect(0, cropTopSource, sourceWidth, sourceHeight);
@@ -129,10 +129,22 @@ public final class TicketRootHardwareH264CaptureMain {
       boolean lastVisibilityVisible = true;
       while (frames <= 0 || sent < frames) {
         long started = SystemClock.elapsedRealtime();
-        boolean controlCodeVisualProbeActive = started <= controlCodeVisualProbeUntilMillis.get();
-        int currentTargetFps = startupFrames > 0 && sent < startupFrames
-          ? startupFps
-          : (controlCodeVisualProbeActive ? startupFps : steadyFps);
+        ControlCodeVisualProbeRequest visualProbeRequest = controlCodeVisualProbeRequest.get();
+        boolean controlCodeVisualProbeActive = started <= visualProbeRequest.untilMillis.get();
+        long controlCodeBurstUntil = controlCodeBurstUntilMillis.get();
+        boolean controlCodeBurstActive = started <= controlCodeBurstUntil;
+        if (
+          !controlCodeBurstActive &&
+          controlCodeBurstUntil > 0L &&
+          controlCodeBurstUntilMillis.compareAndSet(controlCodeBurstUntil, 0L)
+        ) {
+          System.err.println("CONTROL_CODE_BURST state=expired fps_target=" + controlCodeRequestFps);
+        }
+        int currentTargetFps = controlCodeBurstActive
+          ? controlCodeRequestFps
+          : (startupFrames > 0 && sent < startupFrames
+            ? startupFps
+            : (controlCodeVisualProbeActive ? visualProbeRequest.targetFps : steadyFps));
         long frameIntervalMillis = Math.max(1L, Math.round(1000.0 / currentTargetFps));
         boolean explicitSyncFrame = syncFrameRequested.getAndSet(false);
         if (sent == 0 || allKeyFrames || explicitSyncFrame) {
@@ -166,28 +178,36 @@ public final class TicketRootHardwareH264CaptureMain {
             }
           }
         }
-        if (started <= controlCodeVisualProbeUntilMillis.get()) {
-          String state = classifyControlCodeVisualState(source.bitmap, sourceCrop);
+        if (controlCodeVisualProbeActive) {
+          String state = classifyControlCodeVisualState(
+            source.bitmap,
+            sourceCrop,
+            visualProbeRequest.cleanup,
+            visualProbeRequest.submitLayout
+          );
           if (state.equals("generated")) {
-            if (controlCodeVisualProbeGenerated.compareAndSet(false, true)) {
-              controlCodeVisualProbeLastReportMillis.set(started);
-              extendUntil(controlCodeVisualProbeUntilMillis, started + CONTROL_CODE_VISUAL_GENERATED_HOLD_MILLIS);
+            if (visualProbeRequest.generated.compareAndSet(false, true)) {
+              visualProbeRequest.lastReportMillis.set(started);
+              extendUntil(visualProbeRequest.untilMillis, started + CONTROL_CODE_VISUAL_GENERATED_HOLD_MILLIS);
               System.err.println(
-                "CONTROL_CODE_VISUAL result=generated reason=" + safeDiagnosticValue(controlCodeVisualProbeReason.get()) +
+                "CONTROL_CODE_VISUAL result=generated reason=" + safeDiagnosticValue(visualProbeRequest.reason) +
+                  " probe_id=" + visualProbeRequest.id +
                   " method=h264_bitmap_probe"
               );
-            } else if (started - controlCodeVisualProbeLastReportMillis.get() >= CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS) {
-              controlCodeVisualProbeLastReportMillis.set(started);
+            } else if (started - visualProbeRequest.lastReportMillis.get() >= CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS) {
+              visualProbeRequest.lastReportMillis.set(started);
               System.err.println(
-                "CONTROL_CODE_VISUAL result=generated reason=" + safeDiagnosticValue(controlCodeVisualProbeReason.get()) +
+                "CONTROL_CODE_VISUAL result=generated reason=" + safeDiagnosticValue(visualProbeRequest.reason) +
+                  " probe_id=" + visualProbeRequest.id +
                   " method=h264_bitmap_probe"
               );
             }
-          } else if (started - controlCodeVisualProbeLastReportMillis.get() >= CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS) {
-            controlCodeVisualProbeLastReportMillis.set(started);
+          } else if (started - visualProbeRequest.lastReportMillis.get() >= CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS) {
+            visualProbeRequest.lastReportMillis.set(started);
             System.err.println(
               "CONTROL_CODE_VISUAL result=" + state +
-                " reason=" + safeDiagnosticValue(controlCodeVisualProbeReason.get()) +
+                " reason=" + safeDiagnosticValue(visualProbeRequest.reason) +
+                " probe_id=" + visualProbeRequest.id +
                 " method=h264_bitmap_probe"
             );
           }
@@ -229,6 +249,7 @@ public final class TicketRootHardwareH264CaptureMain {
               " fps_target=" + currentTargetFps +
               " steady_fps=" + steadyFps +
               " startup_fps=" + startupFps +
+              " control_code_request_fps=" + controlCodeRequestFps +
               " startup_frames=" + startupFrames +
               " visibility=" + (visible ? "visible" : "blocked") +
               " secure_layers=true protected_content=true method=secure_screen_capture"
@@ -257,11 +278,11 @@ public final class TicketRootHardwareH264CaptureMain {
 
   private static Thread startCommandReader(
     AtomicBoolean syncFrameRequested,
-    AtomicLong controlCodeVisualProbeUntilMillis,
-    AtomicLong controlCodeVisualProbeLastReportMillis,
-    AtomicReference<String> controlCodeVisualProbeReason,
-    AtomicBoolean controlCodeVisualProbeGenerated,
-    Object frameWaitLock
+    AtomicReference<ControlCodeVisualProbeRequest> controlCodeVisualProbeRequest,
+    AtomicLong controlCodeBurstUntilMillis,
+    Object frameWaitLock,
+    int controlCodeRequestFps,
+    int startupFps
   ) {
     Thread thread = new Thread(() -> {
       try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
@@ -271,12 +292,44 @@ public final class TicketRootHardwareH264CaptureMain {
           if (cmd.equals("keyframe")) {
             syncFrameRequested.set(true);
             wakeFrameLoop(frameWaitLock);
-          } else if (cmd.equals("control_code_visual_probe")) {
-            controlCodeVisualProbeReason.set("control_code_after_ok");
-            controlCodeVisualProbeLastReportMillis.set(0L);
-            controlCodeVisualProbeGenerated.set(false);
+          } else if (cmd.equals("control_code_burst_start")) {
+            controlCodeBurstUntilMillis.set(SystemClock.elapsedRealtime() + CONTROL_CODE_REQUEST_BURST_MAX_MILLIS);
+            System.err.println("CONTROL_CODE_BURST state=started fps_target=" + controlCodeRequestFps);
             syncFrameRequested.set(true);
-            controlCodeVisualProbeUntilMillis.set(SystemClock.elapsedRealtime() + CONTROL_CODE_VISUAL_PROBE_MILLIS);
+            wakeFrameLoop(frameWaitLock);
+          } else if (cmd.equals("control_code_burst_stop")) {
+            controlCodeBurstUntilMillis.set(0L);
+            ControlCodeVisualProbeRequest current = controlCodeVisualProbeRequest.get();
+            if (!current.cleanup) {
+              current.untilMillis.set(0L);
+            }
+            System.err.println("CONTROL_CODE_BURST state=stopped fps_target=" + controlCodeRequestFps);
+            wakeFrameLoop(frameWaitLock);
+          } else if (
+            cmd.startsWith("control_code_visual_probe:") ||
+            cmd.startsWith("control_code_request_visual_probe:") ||
+            cmd.startsWith("control_code_submit_visual_probe:") ||
+            cmd.startsWith("control_code_cleanup_visual_probe:") ||
+            cmd.startsWith("ticket_detail_visual_probe:")
+          ) {
+            int separator = cmd.lastIndexOf(':');
+            long probeId = parseLong(cmd.substring(separator + 1), 0L);
+            if (probeId <= 0L) {
+              continue;
+            }
+            boolean cleanup = cmd.startsWith("control_code_cleanup_visual_probe:");
+            boolean submitLayout = cmd.startsWith("control_code_submit_visual_probe:");
+            boolean ticketDetail = cmd.startsWith("ticket_detail_visual_probe:");
+            boolean requestCadence = cmd.startsWith("control_code_request_visual_probe:") || submitLayout;
+            controlCodeVisualProbeRequest.set(new ControlCodeVisualProbeRequest(
+              probeId,
+              ticketDetail ? "ticket_detail" : (cleanup ? "control_code_cleanup" : (submitLayout ? "control_code_submit_layout" : "control_code_after_ok")),
+              cleanup,
+              submitLayout,
+              requestCadence ? controlCodeRequestFps : startupFps,
+              SystemClock.elapsedRealtime() + CONTROL_CODE_VISUAL_PROBE_MILLIS
+            ));
+            syncFrameRequested.set(true);
             wakeFrameLoop(frameWaitLock);
           }
         }
@@ -287,6 +340,37 @@ public final class TicketRootHardwareH264CaptureMain {
     thread.setDaemon(true);
     thread.start();
     return thread;
+  }
+
+  private static final class ControlCodeVisualProbeRequest {
+    final long id;
+    final String reason;
+    final boolean cleanup;
+    final boolean submitLayout;
+    final int targetFps;
+    final AtomicLong untilMillis;
+    final AtomicLong lastReportMillis = new AtomicLong(0L);
+    final AtomicBoolean generated = new AtomicBoolean(false);
+
+    ControlCodeVisualProbeRequest(
+      long id,
+      String reason,
+      boolean cleanup,
+      boolean submitLayout,
+      int targetFps,
+      long untilMillis
+    ) {
+      this.id = id;
+      this.reason = reason;
+      this.cleanup = cleanup;
+      this.submitLayout = submitLayout;
+      this.targetFps = Math.max(1, targetFps);
+      this.untilMillis = new AtomicLong(untilMillis);
+    }
+
+    static ControlCodeVisualProbeRequest idle() {
+      return new ControlCodeVisualProbeRequest(0L, "idle", false, false, 1, 0L);
+    }
   }
 
   private static void waitForNextFrame(Object frameWaitLock, long millis) throws InterruptedException {
@@ -488,197 +572,66 @@ public final class TicketRootHardwareH264CaptureMain {
     }
   }
 
-  private static String classifyControlCodeVisualState(Bitmap source, Rect sourceCrop) {
+  private static String classifyControlCodeVisualState(
+    Bitmap source,
+    Rect sourceCrop,
+    boolean cleanupProbe,
+    boolean submitLayoutProbe
+  ) {
     Bitmap readableSource = source;
     boolean copiedSource = false;
-    Bitmap probe = Bitmap.createBitmap(CONTROL_CODE_VISUAL_SAMPLE_WIDTH, CONTROL_CODE_VISUAL_SAMPLE_HEIGHT, Bitmap.Config.ARGB_8888);
+    int probeWidth = submitLayoutProbe
+      ? TicketControlCodeVisualClassifier.SUBMIT_SAMPLE_WIDTH
+      : TicketControlCodeVisualClassifier.SAMPLE_WIDTH;
+    int probeHeight = submitLayoutProbe
+      ? TicketControlCodeVisualClassifier.SUBMIT_SAMPLE_HEIGHT
+      : TicketControlCodeVisualClassifier.SAMPLE_HEIGHT;
+    Bitmap probe = Bitmap.createBitmap(
+      probeWidth,
+      probeHeight,
+      Bitmap.Config.ARGB_8888
+    );
     try {
       if (source.getConfig() == Bitmap.Config.HARDWARE) {
         readableSource = source.copy(Bitmap.Config.ARGB_8888, false);
         copiedSource = true;
       }
       Canvas canvas = new Canvas(probe);
+      // Classification reads the capture bitmap before it is drawn into the MediaCodec surface.
+      // The source bitmap already has normal channel order; the red/blue correction belongs only
+      // to the later encoder-surface draw. Applying it here turns ViVi's orange OK button blue.
       Paint paint = new Paint();
       paint.setFilterBitmap(false);
       paint.setDither(false);
       canvas.drawColor(Color.BLACK);
-      canvas.drawBitmap(readableSource, sourceCrop, new Rect(0, 0, CONTROL_CODE_VISUAL_SAMPLE_WIDTH, CONTROL_CODE_VISUAL_SAMPLE_HEIGHT), paint);
-
-      if (frameHasControlCodeInputPopup(probe)) {
-        return "control_popup";
+      canvas.drawBitmap(
+        readableSource,
+        sourceCrop,
+        new Rect(0, 0, probeWidth, probeHeight),
+        paint
+      );
+      int[] pixels = new int[probeWidth * probeHeight];
+      probe.getPixels(
+        pixels,
+        0,
+        probeWidth,
+        0,
+        0,
+        probeWidth,
+        probeHeight
+      );
+      if (submitLayoutProbe) {
+        return TicketControlCodeVisualClassifier.classifySubmitLayout(pixels);
       }
-      if (frameHasGeneratedControlCodeResultHeader(probe) || frameHasGeneratedControlCodeResultChip(probe)) {
-        return "generated";
-      }
-      if (frameHasRawTicketCodeGraphic(probe)) {
-        return "raw_ticket";
-      }
-      return "unknown";
+      return cleanupProbe
+        ? TicketControlCodeVisualClassifier.classifyForCleanup(pixels)
+        : TicketControlCodeVisualClassifier.classify(pixels);
     } finally {
       probe.recycle();
       if (copiedSource && readableSource != null) {
         readableSource.recycle();
       }
     }
-  }
-
-  private static boolean frameHasControlCodeInputPopup(Bitmap probe) {
-    VisualStats dialog = visualStats(probe, 8, 30, 40, 45);
-    VisualStats inputLine = visualStats(probe, 13, 38, 36, 41);
-    boolean dialogVisible = dialog.mean >= 125.0 &&
-      dialog.lightRatio >= 0.46 &&
-      dialog.darkRatio <= 0.28 &&
-      dialog.contrast <= 95.0;
-    boolean inputLineVisible = inputLine.darkRatio >= 0.08 &&
-      inputLine.contrast >= 22.0;
-    return dialogVisible && (frameHasControlCodePopupOrangeOkButton(probe) || inputLineVisible);
-  }
-
-  private static boolean frameHasControlCodePopupOrangeOkButton(Bitmap probe) {
-    int sampled = 0;
-    int orange = 0;
-    for (int y = 39; y < 44; y++) {
-      for (int x = 31; x < 42; x++) {
-        int pixel = probe.getPixel(x, y);
-        int red = (pixel >> 16) & 0xff;
-        int green = (pixel >> 8) & 0xff;
-        int blue = pixel & 0xff;
-        if (red >= 155 && green >= 80 && green <= 190 && blue <= 95 && red - green >= 20 && green - blue >= 25) {
-          orange += 1;
-        }
-        sampled += 1;
-      }
-    }
-    return sampled > 0 && orange / (double) sampled >= 0.08;
-  }
-
-  private static boolean frameHasGeneratedControlCodeResultHeader(Bitmap probe) {
-    VisualStats label = visualStats(probe, 2, 2, 19, 7);
-    VisualStats topBand = visualStats(probe, 0, 0, CONTROL_CODE_VISUAL_SAMPLE_WIDTH, 10);
-    int redSamples = 0;
-    int redPixels = 0;
-    for (int y = 8; y < 15; y++) {
-      for (int x = 1; x < CONTROL_CODE_VISUAL_SAMPLE_WIDTH - 1; x++) {
-        int pixel = probe.getPixel(x, y);
-        int red = (pixel >> 16) & 0xff;
-        int green = (pixel >> 8) & 0xff;
-        int blue = pixel & 0xff;
-        if (red >= 135 && red - green >= 25 && red - blue >= 35 && green <= 110 && blue <= 115) {
-          redPixels += 1;
-        }
-        redSamples += 1;
-      }
-    }
-    double redRatio = redSamples == 0 ? 0.0 : redPixels / (double) redSamples;
-    boolean labelPillVisible = label.mean >= 150.0 &&
-      label.lightRatio >= 0.48 &&
-      label.darkRatio <= 0.34 &&
-      label.contrast <= 115.0;
-    boolean generatedHeaderShape = topBand.lightRatio >= 0.10 &&
-      topBand.darkRatio >= 0.10 &&
-      redRatio >= 0.24;
-    return labelPillVisible && generatedHeaderShape;
-  }
-
-  private static boolean frameHasGeneratedControlCodeResultChip(Bitmap probe) {
-    int sampled = 0;
-    int dark = 0;
-    int light = 0;
-    long sum = 0L;
-    long sumSquares = 0L;
-    int chipRows = 0;
-    for (int y = 36; y < 40; y++) {
-      int rowDark = 0;
-      for (int x = 7; x < CONTROL_CODE_VISUAL_SAMPLE_WIDTH - 7; x++) {
-        int luminance = luminance(probe.getPixel(x, y));
-        sum += luminance;
-        sumSquares += (long) luminance * luminance;
-        if (luminance <= 80) {
-          dark += 1;
-          rowDark += 1;
-        }
-        if (luminance >= 175) {
-          light += 1;
-        }
-        sampled += 1;
-      }
-      if (rowDark >= 30) {
-        chipRows += 1;
-      }
-    }
-    if (sampled == 0) {
-      return false;
-    }
-    double mean = sum / (double) sampled;
-    double variance = (sumSquares / (double) sampled) - (mean * mean);
-    double contrast = Math.sqrt(Math.max(0.0, variance));
-    double darkRatio = dark / (double) sampled;
-    double lightRatio = light / (double) sampled;
-    return darkRatio >= 0.58 &&
-      lightRatio <= 0.42 &&
-      contrast >= 60.0 &&
-      chipRows >= 3;
-  }
-
-  private static boolean frameHasRawTicketCodeGraphic(Bitmap probe) {
-    VisualStats code = visualStats(probe, 8, 14, 40, 34);
-    return code.darkRatio >= 0.14 &&
-      code.lightRatio >= 0.18 &&
-      code.contrast >= 45.0;
-  }
-
-  private static VisualStats visualStats(Bitmap probe, int left, int top, int right, int bottom) {
-    int sampled = 0;
-    int dark = 0;
-    int light = 0;
-    long sum = 0L;
-    long sumSquares = 0L;
-    for (int y = Math.max(0, top); y < Math.min(CONTROL_CODE_VISUAL_SAMPLE_HEIGHT, bottom); y++) {
-      for (int x = Math.max(0, left); x < Math.min(CONTROL_CODE_VISUAL_SAMPLE_WIDTH, right); x++) {
-        int luminance = luminance(probe.getPixel(x, y));
-        sum += luminance;
-        sumSquares += (long) luminance * luminance;
-        if (luminance <= 80) {
-          dark += 1;
-        }
-        if (luminance >= 175) {
-          light += 1;
-        }
-        sampled += 1;
-      }
-    }
-    if (sampled == 0) {
-      return new VisualStats(0.0, 0.0, 0.0, 0.0);
-    }
-    double mean = sum / (double) sampled;
-    double variance = (sumSquares / (double) sampled) - (mean * mean);
-    return new VisualStats(
-      mean,
-      Math.sqrt(Math.max(0.0, variance)),
-      dark / (double) sampled,
-      light / (double) sampled
-    );
-  }
-
-  private static final class VisualStats {
-    final double mean;
-    final double contrast;
-    final double darkRatio;
-    final double lightRatio;
-
-    VisualStats(double mean, double contrast, double darkRatio, double lightRatio) {
-      this.mean = mean;
-      this.contrast = contrast;
-      this.darkRatio = darkRatio;
-      this.lightRatio = lightRatio;
-    }
-  }
-
-  private static int luminance(int pixel) {
-    int red = (pixel >> 16) & 0xff;
-    int green = (pixel >> 8) & 0xff;
-    int blue = pixel & 0xff;
-    return (red * 299 + green * 587 + blue * 114) / 1000;
   }
 
   private static String safeDiagnosticValue(String value) {
@@ -774,13 +727,12 @@ public final class TicketRootHardwareH264CaptureMain {
     return fallback;
   }
 
-  private static long longArg(String[] args, String name, long fallback) {
-    for (int i = 0; i + 1 < args.length; i++) {
-      if (name.equals(args[i])) {
-        return Long.parseLong(args[i + 1]);
-      }
+  private static long parseLong(String value, long fallback) {
+    try {
+      return Long.parseLong(value);
+    } catch (NumberFormatException ignored) {
+      return fallback;
     }
-    return fallback;
   }
 
   private static boolean hasFlag(String[] args, String name) {
@@ -843,6 +795,7 @@ public final class TicketRootHardwareH264CaptureMain {
     }
   }
 
+  @TargetApi(31)
   private static final class SecureScreenCapture implements SurfaceCapture {
     private final Method capture;
     private final Method getHardwareBuffer;

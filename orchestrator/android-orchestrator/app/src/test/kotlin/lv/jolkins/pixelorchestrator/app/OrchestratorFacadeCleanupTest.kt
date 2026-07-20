@@ -83,7 +83,8 @@ class OrchestratorFacadeCleanupTest {
         CANDIDATE	app_cache	1024	/data/user/0/lv.jolkins.pixelorchestrator/cache/runtime-artifacts/site-notifier-bundle-old.tar	runtime_artifact_cache
       """.trimIndent()
     )
-    val facade = buildFacade(rootExecutor)
+    val runtimeInstaller = FakeRuntimeInstaller()
+    val facade = buildFacade(rootExecutor, runtimeInstaller)
 
     val result = facade.runCleanup(trigger = CleanupTrigger.MANUAL, dryRun = true)
 
@@ -91,15 +92,13 @@ class OrchestratorFacadeCleanupTest {
     assertTrue(result.message.contains("Cleanup dry-run complete"))
     val report = rootExecutor.decodeCleanupReport(result.outputPath)
     assertEquals(CleanupReportStatus.DRY_RUN.wireValue(), report.status)
-    assertTrue(report.protectedPaths.any { it.path == "/data/local/pixel-stack/apps/train-bot/releases/train-current" })
-    assertTrue(report.protectedPaths.any { it.path == "/data/local/pixel-stack/apps/train-bot/releases/train-previous" })
-    assertTrue(
-      report.protectedPaths.any {
-        it.path == "/data/local/pixel-stack/conf/runtime/components/site_notifier/artifacts/site-notifier-bundle.tar"
-      }
-    )
-    assertTrue(report.candidates.any { it.path == "/data/local/pixel-stack/apps/train-bot/releases/train-old" })
-    assertTrue(report.skippedPaths.any { it.path == "/data/local/pixel-stack/apps/train-bot/releases/train-current" })
+    assertTrue(report.protectedPaths.isEmpty())
+    assertTrue(report.candidates.isEmpty())
+    assertTrue(report.skippedPaths.isEmpty())
+    assertTrue(report.summary.protectedCount > 0)
+    assertEquals(2, report.summary.candidateCount)
+    assertEquals(1, report.summary.skippedCount)
+    assertEquals("runtime_cleanup", runtimeInstaller.lastSyncedComponent)
   }
 
   @Test
@@ -118,7 +117,8 @@ class OrchestratorFacadeCleanupTest {
     assertTrue(result.message.contains("Cleanup skipped"))
     val report = rootExecutor.decodeCleanupReport(result.outputPath)
     assertEquals(CleanupReportStatus.SKIPPED.wireValue(), report.status)
-    assertTrue(report.skippedPaths.any { it.category == "mutation_lock" })
+    assertTrue(report.skippedPaths.isEmpty())
+    assertEquals(1, report.summary.skippedCount)
   }
 
   @Test
@@ -173,7 +173,25 @@ class OrchestratorFacadeCleanupTest {
     assertTrue(rootExecutor.commands.any { it.contains("/data/local/pixel-stack/bin/pixel-runtime-cleanup.sh") })
     val report = rootExecutor.decodeCleanupReport(result.outputPath)
     assertEquals(CleanupReportStatus.COMPLETED.wireValue(), report.status)
-    assertTrue(report.deletedPaths.any { it.category == "tmp_artifact" })
+    assertTrue(report.deletedPaths.isEmpty())
+    assertEquals(1, report.summary.deletedCount)
+  }
+
+  @Test
+  fun hourlySuperuserMaintenanceUsesTheNarrowCleanupMode() = runBlocking {
+    val rootExecutor = FakeCleanupRootExecutor(
+      runtimeManifestJson = "",
+      componentManifests = emptyMap(),
+      cleanupStdout = "SKIP\tsuperuser_log_db\t1024\t/sulogs.db\twithin_size_limit"
+    )
+    val facade = buildFacade(rootExecutor)
+
+    val result = facade.maintainSuperuserLogDb()
+
+    assertTrue(result.success)
+    assertTrue(result.message.contains("within its size limit"))
+    assertTrue(rootExecutor.commands.any { it.contains("--superuser-only") })
+    assertFalse(rootExecutor.commands.any { it.contains("--retired-dns") })
   }
 
   private fun basicRuntimeManifestJson(): String =
@@ -196,12 +214,15 @@ class OrchestratorFacadeCleanupTest {
       )
     )
 
-  private fun buildFacade(rootExecutor: FakeCleanupRootExecutor): OrchestratorFacade {
+  private fun buildFacade(
+    rootExecutor: FakeCleanupRootExecutor,
+    runtimeInstaller: FakeRuntimeInstaller = FakeRuntimeInstaller()
+  ): OrchestratorFacade {
     val healthChecker = RuntimeHealthChecker(CommandRunner { CommandResult(ok = true, stdout = "", stderr = "") })
     return OrchestratorFacade(
       stackStore = InMemoryStackStore(),
       rootExecutor = rootExecutor,
-      runtimeInstaller = FakeRuntimeInstaller(),
+      runtimeInstaller = runtimeInstaller,
       supervisor = FakeSupervisor(),
       healthChecker = healthChecker,
       assetProvider = FakeAssetProvider(),
@@ -362,14 +383,17 @@ class OrchestratorFacadeCleanupTest {
   }
 
   private class FakeRuntimeInstaller : RuntimeInstallerControl {
+    var lastSyncedComponent: String? = null
+
     override suspend fun bootstrap(
       config: StackConfigV1,
       assets: AssetProvider,
       manifest: ArtifactManifest,
-      rootfsArtifactId: String
+      rootfsArtifactId: String?
     ): BootstrapResult = BootstrapResult(true, true, 0, "bootstrap", emptyList())
 
     override suspend fun syncBundledRuntimeAssets(assets: AssetProvider, component: String?): SyncResult {
+      lastSyncedComponent = component
       return SyncResult(success = true, message = "synced")
     }
 

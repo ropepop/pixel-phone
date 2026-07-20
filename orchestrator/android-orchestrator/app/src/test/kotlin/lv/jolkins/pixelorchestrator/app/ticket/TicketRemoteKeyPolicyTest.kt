@@ -1,26 +1,25 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class TicketRemoteKeyPolicyTest {
   @Test
-  fun mapsSupportedKeysToAndroidInputCommands() {
-    assertEquals("input text A", TicketRemoteKeyPolicy.commandFor("A"))
-    assertEquals("input text 7", TicketRemoteKeyPolicy.commandFor("7"))
-    assertEquals("input keyevent KEYCODE_DEL", TicketRemoteKeyPolicy.commandFor("Backspace"))
-    assertEquals("input keyevent KEYCODE_FORWARD_DEL", TicketRemoteKeyPolicy.commandFor("Delete"))
-    assertEquals("input keyevent KEYCODE_ENTER", TicketRemoteKeyPolicy.commandFor("Enter"))
+  fun arbitraryBrowserKeysAndTapsAreNotAccepted() {
+    val service = source("app/src/main/java/lv/jolkins/pixelorchestrator/app/ticket/TicketStreamService.kt")
+
+    assertFalse(service.contains("\"tap\" ->"))
+    assertFalse(service.contains("\"key\" ->"))
+    assertFalse(service.contains("private suspend fun handleRemoteKey"))
+    assertFalse(service.contains("private suspend fun tap(inputId"))
   }
 
-  @Test
-  fun rejectsUnsupportedKeysAndTreatsEscapeAsCloseRequest() {
-    assertTrue(TicketRemoteKeyPolicy.isCloseRequest("Escape"))
-    assertNull(TicketRemoteKeyPolicy.commandFor("Escape"))
-    assertNull(TicketRemoteKeyPolicy.commandFor(" "))
-    assertNull(TicketRemoteKeyPolicy.commandFor("ArrowLeft"))
-    assertNull(TicketRemoteKeyPolicy.commandFor(";"))
+  private fun source(relative: String): String {
+    val roots = listOf(Path.of(relative), Path.of("../$relative"), Path.of("../../$relative"))
+    val path = roots.firstOrNull(Files::exists) ?: error("Missing source file for $relative")
+    return String(Files.readAllBytes(path), StandardCharsets.UTF_8)
   }
 }

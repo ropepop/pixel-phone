@@ -2,6 +2,11 @@ package lv.jolkins.pixelorchestrator.app.ticket
 
 internal object TicketUiautomatorDump {
   private const val LOCK_PATH = "/data/local/tmp/pixel-ticket-uiautomator.lock"
+  private val KNOWN_DUMP_PATHS = listOf(
+    "/sdcard/pixel-ticket-window.xml",
+    "/data/local/tmp/pixel-vivi-fast-return-window.xml",
+    "/data/local/tmp/rs-direct-window.xml"
+  )
   private const val OUTER_TIMEOUT_CUSHION_MILLIS = 1_000L
   private const val MIN_SHELL_TIMEOUT_MILLIS = 250L
   private const val POST_FAILURE_LOCK_SETTLE_MILLIS = 500L
@@ -13,6 +18,10 @@ internal object TicketUiautomatorDump {
       ${functionDefinition(timeoutMillis)}
       ticket_safe_uiautomator_dump ${shellWord(path)} $mode
     """.trimIndent()
+  }
+
+  fun startupSweepCommand(): String {
+    return "/system/bin/rm -f ${KNOWN_DUMP_PATHS.joinToString(" ") { shellWord(it) }} >/dev/null 2>&1 || true"
   }
 
   fun functionDefinition(timeoutMillis: Long): String {
@@ -40,6 +49,7 @@ internal object TicketUiautomatorDump {
         /system/bin/chmod 0666 "${'$'}LOCK_PATH" >/dev/null 2>&1 || true
         (
           /system/bin/flock -x -n 9 || exit 125
+          trap '/system/bin/rm -f "${'$'}ticket_safe_path" >/dev/null 2>&1 || true' EXIT HUP INT TERM
           ticket_safe_uiautomator_cleanup
           /system/bin/rm -f "${'$'}ticket_safe_path" >/dev/null 2>&1 || true
           if /system/bin/timeout -k 0.100s ${timeoutSeconds}s /system/bin/uiautomator dump "${'$'}ticket_safe_path" >/dev/null 2>&1; then

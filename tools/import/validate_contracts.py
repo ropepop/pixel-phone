@@ -24,8 +24,6 @@ component_registry_path = (
     / "orchestrator/android-orchestrator/app/src/main/assets/runtime/component-registry.json"
 )
 orchestrator_manifest_path = ROOT / "orchestrator/module.yaml"
-train_bot_manifest_path = ROOT / "workloads/train-bot/module.yaml"
-site_notifier_manifest_path = ROOT / "workloads/site-notifications/module.yaml"
 
 manifest_roots = [
     ROOT / "orchestrator",
@@ -115,7 +113,7 @@ else:
         if len(component_ids) != len(set(component_ids)):
             errors.append("registry contains duplicate component_id values")
 
-required_components = {"dns", "ssh", "ddns", "remote", "train_bot", "site_notifier", "runtime_cleanup"}
+required_components = {"ssh", "vpn", "management", "ticket_screen", "runtime_cleanup"}
 if registry_modules:
     observed = {m.get("component_id") for m in registry_modules if isinstance(m, dict)}
     missing = sorted(required_components - observed)
@@ -179,7 +177,7 @@ else:
 
 if orchestrator_manifest_path.exists() and registry_modules:
     orchestrator_manifest = yaml.safe_load(orchestrator_manifest_path.read_text(encoding="utf-8")) or {}
-    shared_components = ["dns", "ssh", "vpn", "ddns", "remote", "train_bot", "site_notifier", "runtime_cleanup"]
+    shared_components = ["ssh", "vpn", "management", "ticket_screen", "runtime_cleanup"]
     for cid in shared_components:
         reg = registry_by_component.get(cid)
         if reg is None:
@@ -209,38 +207,6 @@ if orchestrator_manifest_path.exists() and registry_modules:
         if actual_health != expected_health:
             errors.append(
                 f"orchestrator/module.yaml mismatch for '{cid}' health: expected '{expected_health}' got '{actual_health}'"
-            )
-
-if train_bot_manifest_path.exists() and registry_modules:
-    train_manifest = yaml.safe_load(train_bot_manifest_path.read_text(encoding="utf-8")) or {}
-    train_comp = find_component(train_manifest, "train_bot")
-    registry_train = registry_by_component.get("train_bot")
-    if train_comp is None:
-        errors.append("workloads/train-bot/module.yaml missing component 'train_bot'")
-    elif registry_train is None:
-        errors.append("registry missing component 'train_bot'")
-    else:
-        expected = normalize_command(registry_train.get("health_command"))
-        actual = normalize_command(train_comp.get("health"))
-        if actual != expected:
-            errors.append(
-                f"workloads/train-bot/module.yaml health mismatch: expected '{expected}' got '{actual}'"
-            )
-
-if site_notifier_manifest_path.exists() and registry_modules:
-    site_manifest = yaml.safe_load(site_notifier_manifest_path.read_text(encoding="utf-8")) or {}
-    site_comp = find_component(site_manifest, "site_notifier")
-    registry_site = registry_by_component.get("site_notifier")
-    if site_comp is None:
-        errors.append("workloads/site-notifications/module.yaml missing component 'site_notifier'")
-    elif registry_site is None:
-        errors.append("registry missing component 'site_notifier'")
-    else:
-        expected = normalize_command(registry_site.get("health_command"))
-        actual = normalize_command(site_comp.get("health"))
-        if actual != expected:
-            errors.append(
-                f"workloads/site-notifications/module.yaml health mismatch: expected '{expected}' got '{actual}'"
             )
 
 if errors:

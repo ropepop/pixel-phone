@@ -23,15 +23,15 @@ class TicketServiceSourceTest {
   @Test
   fun supervisorRefreshStartsAndStopsTicketServiceFromToggle() {
     val supervisor = source("app/src/main/java/lv/jolkins/pixelorchestrator/app/SupervisorService.kt")
-    val mainActivity = source("app/src/main/java/lv/jolkins/pixelorchestrator/app/MainActivity.kt")
+    val dashboard = source("app/src/main/java/lv/jolkins/pixelorchestrator/app/dashboard/DashboardViewModel.kt")
 
     assertTrue(supervisor.contains("ACTION_REFRESH_TICKET_SERVICE"))
     assertTrue(supervisor.contains("syncTicketService(trigger = \"service_create\""))
     assertTrue(supervisor.contains("facade.startComponent(TICKET_SERVICE_COMPONENT)"))
     assertTrue(supervisor.contains("facade.stopComponent(TICKET_SERVICE_COMPONENT)"))
-    assertTrue(supervisor.contains("probeTicketTunnelReadiness()"))
-    assertTrue(mainActivity.contains("ticketServiceStore.setEnabled(enabled)"))
-    assertTrue(mainActivity.contains("SupervisorService.ACTION_REFRESH_TICKET_SERVICE"))
+    assertTrue(supervisor.contains("public ingress is owned by kitty-gration"))
+    assertTrue(dashboard.contains("ticketServiceStore.setEnabled(action.enabled)"))
+    assertTrue(dashboard.contains("SupervisorService.ACTION_REFRESH_TICKET_SERVICE"))
   }
 
   @Test
@@ -40,9 +40,9 @@ class TicketServiceSourceTest {
     val healthScript = source("app/src/main/assets/runtime/entrypoints/pixel-ticket-health.sh")
 
     assertTrue(startScript.contains("TICKET_SCREEN_OPEN_ORCHESTRATOR_ON_START:-0"))
-    assertTrue(startScript.contains("start_tunnel_loop_if_needed"))
-    assertTrue(healthScript.contains("ticket-web-tunnel-service-loop.pid"))
-    assertTrue(healthScript.contains("ticket-screen-cloudflared.pid"))
+    assertTrue(startScript.contains("pixel-ticket-health.sh"))
+    assertTrue(!startScript.contains("cloudflared"))
+    assertTrue(!healthScript.contains("cloudflared"))
   }
 
   private fun source(relative: String): String {

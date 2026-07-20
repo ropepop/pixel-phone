@@ -20,6 +20,11 @@ for required in \
   fi
 done
 
+if ! rg -Fq 'freshness_retry < 5 && rc == 3' "${DEPLOY_SCRIPT}"; then
+  echo "FAIL: deploy_orchestrator_apk.sh lacks a bounded post-repair freshness recheck" >&2
+  exit 1
+fi
+
 if rg -Fq 'advisory; continuing' "${DEPLOY_SCRIPT}"; then
   echo "FAIL: deploy_orchestrator_apk.sh still treats stale runtime assets as advisory" >&2
   exit 1

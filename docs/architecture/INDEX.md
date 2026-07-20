@@ -17,7 +17,7 @@ Architecture docs are canonical source material. Reports and evidence explain ho
 | Owner | Owns | Success authority | Must not depend on |
 | --- | --- | --- | --- |
 | Pixel root state | Phone app state, rooted input, root hierarchy proof, rooted capture health | Fresh root-owned Pixel evidence | Browser canvas state, relay summaries, stale health memory |
-| RS Telegram pipeline | Batch-capable RS monthly-ticket image generation and delivery | `rigassatiksme_qr_result` with generated monthly-ticket image bytes from RS visual tap/pixel proof and secure capture, or a named Pixel RS failure | Brave/public visual proof, public relay video clients, ViVi cleanup success, accessibility hierarchy state |
+| RS Telegram pipeline | Batch-capable RS monthly-ticket image generation and delivery | `rigassatiksme_qr_result` with direct state-gated tap proof, requested-code classification, and a final secure capture, or a named Pixel RS failure | Brave/public visual proof, public relay video clients, ViVi cleanup success, retired pixel-driver state |
 | Public ticket pipeline | Live ViVi viewer health at `ticket.jolkins.id.lv` | Authenticated Brave visual proof plus Pixel root health plus relay frame freshness | RS Telegram result state, optimistic browser-only canvas checks |
 | Broker/bot | Queueing, retries, user messaging, timeout naming, image retention | Broker job state and Pixel final RS result messages | Public viewer verification or cleanup completion before reporting an RS result |
 | Cleanup | Post-result restoration to ViVi ticket detail | Separate cleanup completion event and health state | Changing, delaying, or revoking an already delivered RS image result |

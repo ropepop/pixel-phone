@@ -1,9 +1,0 @@
-.env
-local.env
-*.db
-*.db-shm
-*.db-wal
-bin/
-logs/
-output/
-.DS_Store

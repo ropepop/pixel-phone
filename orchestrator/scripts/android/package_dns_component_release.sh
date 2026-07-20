@@ -7,9 +7,15 @@ WORKSPACE_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 APP_ROOT="${REPO_ROOT}/android-orchestrator"
 
 ROOTFS_TARBALL="${PIXEL_RUNTIME_ROOTFS_TARBALL:-}"
+REUSE_ROOTFS_SHA256=""
+REUSE_ROOTFS_SIZE=""
 RELEASE_ID=""
 OUT_DIR=""
 DNS_RUNTIME_ASSET_SOURCE_ROOT="${APP_ROOT}/app/src/main/assets/runtime"
+FULL_MODE=0
+TIMINGS_FILE="${PIXEL_PHASE_TIMINGS_FILE:-}"
+TIMING_TOTAL_START_MS=""
+TIMING_PHASE_START_MS=""
 
 usage() {
   cat <<USAGE
@@ -19,10 +25,46 @@ Builds a self-contained DNS component release bundle for on-device staging via d
 
 Options:
   --rootfs-tarball FILE    AdGuardHome rootfs tarball file
+  --reuse-rootfs-sha256 SHA
+                            Reuse the matching rootfs already staged on the device
+  --reuse-rootfs-size BYTES
+                            Size of the reusable device rootfs artifact
   --release-id VALUE       Release id string (default: local-<UTC timestamp>)
   --out-dir DIR            Output dir (default: .artifacts/component-releases/dns-<release-id>)
+  --fast                   Skip workspace-wide cleanup (default)
+  --full, --strict         Run workspace cleanup before packaging
+  --timings-file FILE      Append JSONL phase timings to FILE
   -h, --help               Show help
 USAGE
+}
+
+timing_now_ms() {
+  python3 -c 'import time; print(time.monotonic_ns() // 1_000_000)'
+}
+
+timing_start() {
+  [[ -n "${TIMINGS_FILE}" ]] || return 0
+  mkdir -p "$(dirname "${TIMINGS_FILE}")"
+  TIMING_TOTAL_START_MS="$(timing_now_ms)"
+  TIMING_PHASE_START_MS="${TIMING_TOTAL_START_MS}"
+}
+
+timing_mark() {
+  local phase="$1"
+  local now_ms=""
+  [[ -n "${TIMINGS_FILE}" ]] || return 0
+  now_ms="$(timing_now_ms)"
+  printf '{"script":"package_dns_component_release","phase":"%s","durationMs":%d}\n' \
+    "${phase}" "$((now_ms - TIMING_PHASE_START_MS))" >> "${TIMINGS_FILE}"
+  TIMING_PHASE_START_MS="${now_ms}"
+}
+
+timing_finish() {
+  local now_ms=""
+  [[ -n "${TIMINGS_FILE}" ]] || return 0
+  now_ms="$(timing_now_ms)"
+  printf '{"script":"package_dns_component_release","phase":"total","durationMs":%d}\n' \
+    "$((now_ms - TIMING_TOTAL_START_MS))" >> "${TIMINGS_FILE}"
 }
 
 while (( $# > 0 )); do
@@ -31,6 +73,14 @@ while (( $# > 0 )); do
       shift
       ROOTFS_TARBALL="${1:-}"
       ;;
+    --reuse-rootfs-sha256)
+      shift
+      REUSE_ROOTFS_SHA256="${1:-}"
+      ;;
+    --reuse-rootfs-size)
+      shift
+      REUSE_ROOTFS_SIZE="${1:-}"
+      ;;
     --release-id)
       shift
       RELEASE_ID="${1:-}"
@@ -38,6 +88,16 @@ while (( $# > 0 )); do
     --out-dir)
       shift
       OUT_DIR="${1:-}"
+      ;;
+    --fast)
+      FULL_MODE=0
+      ;;
+    --full|--strict)
+      FULL_MODE=1
+      ;;
+    --timings-file)
+      shift
+      TIMINGS_FILE="${1:-}"
       ;;
     -h|--help)
       usage
@@ -52,14 +112,25 @@ while (( $# > 0 )); do
   shift
 done
 
-[[ -n "${ROOTFS_TARBALL}" ]] || {
-  echo "Missing rootfs tarball. Pass --rootfs-tarball or set PIXEL_RUNTIME_ROOTFS_TARBALL." >&2
-  exit 1
-}
-[[ -f "${ROOTFS_TARBALL}" ]] || {
-  echo "Rootfs tarball not found: ${ROOTFS_TARBALL}" >&2
-  exit 1
-}
+if [[ -n "${ROOTFS_TARBALL}" ]]; then
+  [[ -f "${ROOTFS_TARBALL}" ]] || {
+    echo "Rootfs tarball not found: ${ROOTFS_TARBALL}" >&2
+    exit 1
+  }
+  if [[ -n "${REUSE_ROOTFS_SHA256}" || -n "${REUSE_ROOTFS_SIZE}" ]]; then
+    echo "Use either --rootfs-tarball or the reusable rootfs checksum and size, not both." >&2
+    exit 1
+  fi
+else
+  [[ "${REUSE_ROOTFS_SHA256}" =~ ^[[:xdigit:]]{64}$ ]] || {
+    echo "Missing or invalid --reuse-rootfs-sha256 (expected 64 hexadecimal characters)." >&2
+    exit 1
+  }
+  [[ "${REUSE_ROOTFS_SIZE}" =~ ^[1-9][0-9]*$ ]] || {
+    echo "Missing or invalid --reuse-rootfs-size (expected a positive byte count)." >&2
+    exit 1
+  }
+fi
 
 command -v tar >/dev/null 2>&1 || { echo "tar not found" >&2; exit 1; }
 
@@ -71,7 +142,11 @@ if [[ -z "${OUT_DIR}" ]]; then
   OUT_DIR="${REPO_ROOT}/.artifacts/component-releases/dns-${RELEASE_ID}"
 fi
 
-bash "${WORKSPACE_ROOT}/tools/pixel/cleanup_workspace.sh"
+timing_start
+if (( FULL_MODE == 1 )); then
+  bash "${WORKSPACE_ROOT}/tools/pixel/cleanup_workspace.sh"
+fi
+timing_mark "cleanup"
 mkdir -p "${OUT_DIR}/artifacts"
 OUT_DIR="$(cd "${OUT_DIR}" && pwd)"
 
@@ -91,6 +166,19 @@ size_bytes() {
   else
     stat -c "%s" "${path}"
   fi
+}
+
+copy_artifact() {
+  local source_path="$1"
+  local destination_path="$2"
+  rm -f "${destination_path}"
+  if cp -c "${source_path}" "${destination_path}" 2>/dev/null; then
+    return 0
+  fi
+  if cp --reflink=auto "${source_path}" "${destination_path}" 2>/dev/null; then
+    return 0
+  fi
+  cp "${source_path}" "${destination_path}"
 }
 
 create_deterministic_tar() {
@@ -162,7 +250,10 @@ DNS_RUNTIME_ASSETS_NAME="dns-runtime-assets.tar"
 ROOTFS_OUT="${OUT_DIR}/artifacts/${ROOTFS_NAME}"
 DNS_RUNTIME_ASSETS_OUT="${OUT_DIR}/artifacts/${DNS_RUNTIME_ASSETS_NAME}"
 
-cp "${ROOTFS_TARBALL}" "${ROOTFS_OUT}"
+if [[ -n "${ROOTFS_TARBALL}" ]]; then
+  copy_artifact "${ROOTFS_TARBALL}" "${ROOTFS_OUT}"
+fi
+timing_mark "rootfs_stage"
 
 dns_bundle_stage="$(mktemp -d)"
 trap 'rm -rf "${dns_bundle_stage}"' EXIT
@@ -171,11 +262,18 @@ cp -a "${DNS_RUNTIME_ASSET_SOURCE_ROOT}/templates/rooted/." "${dns_bundle_stage}
 install -m 0755 "${DNS_RUNTIME_ASSET_SOURCE_ROOT}/entrypoints/pixel-dns-start.sh" "${dns_bundle_stage}/bin/pixel-dns-start.sh"
 install -m 0755 "${DNS_RUNTIME_ASSET_SOURCE_ROOT}/entrypoints/pixel-dns-stop.sh" "${dns_bundle_stage}/bin/pixel-dns-stop.sh"
 create_deterministic_tar "${dns_bundle_stage}" "${DNS_RUNTIME_ASSETS_OUT}"
+timing_mark "dns_assets"
 
-ROOTFS_SHA="$(sha256_file "${ROOTFS_OUT}")"
-ROOTFS_SIZE="$(size_bytes "${ROOTFS_OUT}")"
+if [[ -n "${ROOTFS_TARBALL}" ]]; then
+  ROOTFS_SHA="$(sha256_file "${ROOTFS_OUT}")"
+  ROOTFS_SIZE="$(size_bytes "${ROOTFS_OUT}")"
+else
+  ROOTFS_SHA="$(printf '%s' "${REUSE_ROOTFS_SHA256}" | tr '[:upper:]' '[:lower:]')"
+  ROOTFS_SIZE="${REUSE_ROOTFS_SIZE}"
+fi
 DNS_RUNTIME_ASSETS_SHA="$(sha256_file "${DNS_RUNTIME_ASSETS_OUT}")"
 DNS_RUNTIME_ASSETS_SIZE="$(size_bytes "${DNS_RUNTIME_ASSETS_OUT}")"
+timing_mark "hash"
 MANIFEST_PATH="${OUT_DIR}/release-manifest.json"
 
 export MANIFEST_PATH RELEASE_ID ROOTFS_NAME ROOTFS_SHA ROOTFS_SIZE DNS_RUNTIME_ASSETS_NAME DNS_RUNTIME_ASSETS_SHA DNS_RUNTIME_ASSETS_SIZE
@@ -192,7 +290,7 @@ manifest = {
     "artifacts": [
         {
             "id": "adguardhome-rootfs",
-            "url": f"/data/local/pixel-stack/conf/runtime/components/dns/artifacts/{os.environ['ROOTFS_NAME']}",
+            "url": f"/data/local/pixel-stack/conf/runtime/artifacts/sha256/{os.environ['ROOTFS_SHA']}",
             "sha256": os.environ["ROOTFS_SHA"],
             "fileName": os.environ["ROOTFS_NAME"],
             "sizeBytes": int(os.environ["ROOTFS_SIZE"]),
@@ -200,7 +298,7 @@ manifest = {
         },
         {
             "id": "dns-runtime-assets",
-            "url": f"/data/local/pixel-stack/conf/runtime/components/dns/artifacts/{os.environ['DNS_RUNTIME_ASSETS_NAME']}",
+            "url": f"/data/local/pixel-stack/conf/runtime/artifacts/sha256/{os.environ['DNS_RUNTIME_ASSETS_SHA']}",
             "sha256": os.environ["DNS_RUNTIME_ASSETS_SHA"],
             "fileName": os.environ["DNS_RUNTIME_ASSETS_NAME"],
             "sizeBytes": int(os.environ["DNS_RUNTIME_ASSETS_SIZE"]),
@@ -209,15 +307,20 @@ manifest = {
     ],
 }
 
-Path(os.environ["MANIFEST_PATH"]).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+manifest_path = Path(os.environ["MANIFEST_PATH"])
+temporary_path = manifest_path.with_name(f".{manifest_path.name}.tmp-{os.getpid()}")
+temporary_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+temporary_path.replace(manifest_path)
 PY
+timing_mark "manifest"
+timing_finish
 
 cat <<EOF_SUMMARY
 DNS component release ready:
   ${OUT_DIR}
 
 Resolved inputs:
-  rootfs: ${ROOTFS_TARBALL}
+  rootfs: ${ROOTFS_TARBALL:-reuse matching device artifact (${ROOTFS_SHA}, ${ROOTFS_SIZE} bytes)}
   dns-runtime-assets: ${DNS_RUNTIME_ASSET_SOURCE_ROOT}
 
 Stage on device with:

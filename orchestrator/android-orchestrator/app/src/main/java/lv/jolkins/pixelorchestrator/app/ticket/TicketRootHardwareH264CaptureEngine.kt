@@ -14,10 +14,12 @@ import lv.jolkins.pixelorchestrator.rootexec.RootResult
 import java.io.BufferedInputStream
 import java.io.IOException
 import java.io.InputStream
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 data class TicketControlCodeVisualProbe(
+  val probeId: Long,
   val result: String,
   val reason: String,
   val atMillis: Long
@@ -42,6 +44,7 @@ class TicketRootHardwareH264CaptureEngine(
 
   private val startupLock = Any()
   private val keyFrameRequestLock = Any()
+  private val controlCodeVisualProbeSequence = AtomicLong(0L)
   @Volatile private var job: Job? = null
   @Volatile private var encoderProcess: Process? = null
   @Volatile private var wanted = false
@@ -77,7 +80,11 @@ class TicketRootHardwareH264CaptureEngine(
   @Volatile private var captureHelperMessage = "Root hardware H.264 helper has not been probed"
   @Volatile private var lastControlCodeVisualProbeResult = "not_run"
   @Volatile private var lastControlCodeVisualProbeReason = ""
+  @Volatile private var lastControlCodeVisualProbeId = 0L
   @Volatile private var lastControlCodeVisualProbeAtMillis = 0L
+  @Volatile private var controlCodeBurstActive = false
+  @Volatile private var controlCodeBurstState = "idle"
+  @Volatile private var lastControlCodeBurstAtMillis = 0L
   @Volatile private var encoderProcessCount = 0
   @Volatile private var staleCaptureProcessCount = 0
   @Volatile private var lastCaptureCleanupResult = "not_run"
@@ -248,19 +255,59 @@ class TicketRootHardwareH264CaptureEngine(
     }
   }
 
-  fun requestControlCodeVisualProbe(reason: String) {
+  fun requestControlCodeVisualProbe(reason: String): Long? =
+    requestControlCodeVisualProbe("control_code_visual_probe", reason)
+
+  fun requestControlCodeRequestVisualProbe(reason: String): Long? =
+    requestControlCodeVisualProbe("control_code_request_visual_probe", reason)
+
+  fun requestControlCodeSubmitVisualProbe(reason: String): Long? =
+    requestControlCodeVisualProbe("control_code_submit_visual_probe", reason)
+
+  fun requestControlCodeCleanupVisualProbe(reason: String): Long? =
+    requestControlCodeVisualProbe("control_code_cleanup_visual_probe", reason)
+
+  /**
+   * Proves the ordinary ticket surface while a public viewer is opening.
+   *
+   * The helper returns only the fixed-size visual classification; no bitmap or ticket contents
+   * leave the Pixel. This is deliberately separate from the control-code probes so a missing
+   * ViVi view hierarchy cannot turn into a synthetic touch or accessibility fallback.
+   */
+  fun requestTicketDetailVisualProbe(reason: String): Long? =
+    requestControlCodeVisualProbe("ticket_detail_visual_probe", reason)
+
+  fun startControlCodeRequestBurst(reason: String): Boolean =
+    writeHardwareCommand("control_code_burst_start\n", "control_code_burst_start", reason)
+
+  fun stopControlCodeRequestBurst(reason: String): Boolean =
+    writeHardwareCommand("control_code_burst_stop\n", "control_code_burst_stop", reason)
+
+  private fun requestControlCodeVisualProbe(command: String, reason: String): Long? {
+    val probeId = controlCodeVisualProbeSequence.incrementAndGet()
     lastControlCodeVisualProbeResult = "requested"
     lastControlCodeVisualProbeReason = reason
-    writeHardwareCommand("control_code_visual_probe\n", "control_code_visual_probe", reason)
+    lastControlCodeVisualProbeId = probeId
+    return if (writeHardwareCommand("$command:$probeId\n", command, reason)) probeId else null
   }
 
-  fun recentControlCodeVisualProbeAfter(startedAtMillis: Long): TicketControlCodeVisualProbe? {
+  fun recentControlCodeVisualProbeAfter(
+    expectedProbeId: Long,
+    startedAtMillis: Long
+  ): TicketControlCodeVisualProbe? {
     val atMillis = lastControlCodeVisualProbeAtMillis
     val result = lastControlCodeVisualProbeResult
-    if (atMillis < startedAtMillis || result == "not_run" || result == "requested") {
+    val probeId = lastControlCodeVisualProbeId
+    if (
+      probeId != expectedProbeId ||
+      atMillis < startedAtMillis ||
+      result == "not_run" ||
+      result == "requested"
+    ) {
       return null
     }
     return TicketControlCodeVisualProbe(
+      probeId = probeId,
       result = result,
       reason = lastControlCodeVisualProbeReason,
       atMillis = atMillis
@@ -330,6 +377,10 @@ class TicketRootHardwareH264CaptureEngine(
       burstFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FPS.takeIf {
         TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FRAMES > 0
       },
+      controlCodeRequestFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS,
+      controlCodeBurstActive = controlCodeBurstActive,
+      controlCodeBurstState = controlCodeBurstState,
+      lastControlCodeBurstAgoMillis = ageMillis(lastControlCodeBurstAtMillis, nowMillis),
       intervalMode = hardwareIntervalMode(),
       currentIntervalMillis = hardwareFrameIntervalMillis(),
       colorCorrection = TicketScreenConfig.ROOT_HARDWARE_H264_COLOR_CORRECTION,
@@ -528,7 +579,7 @@ class TicketRootHardwareH264CaptureEngine(
   ): String {
     val cleanStartupFps = startupFps.coerceAtLeast(targetFps)
     val cleanStartupFrames = startupFrameCount.coerceAtLeast(0)
-    val commonArgs = "--source-width $sourceWidth --source-height $sourceHeight --width $width --height $height --crop-top-source ${TicketScreenConfig.TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS} --fps $targetFps --startup-fps $cleanStartupFps --startup-frames $cleanStartupFrames --bitrate $targetBitrate --keyframe-interval-millis ${TicketScreenConfig.ROOT_HARDWARE_H264_KEYFRAME_INTERVAL_MILLIS}"
+    val commonArgs = "--source-width $sourceWidth --source-height $sourceHeight --width $width --height $height --crop-top-source ${TicketScreenConfig.TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS} --fps $targetFps --startup-fps $cleanStartupFps --startup-frames $cleanStartupFrames --control-code-request-fps ${TicketScreenConfig.ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS} --bitrate $targetBitrate --keyframe-interval-millis ${TicketScreenConfig.ROOT_HARDWARE_H264_KEYFRAME_INTERVAL_MILLIS}"
     return rootCaptureHelperCommand(commonArgs)
   }
 
@@ -599,9 +650,16 @@ class TicketRootHardwareH264CaptureEngine(
       }
       line.startsWith("CONTROL_CODE_VISUAL ") -> {
         val fields = diagnosticFields(line)
+        lastControlCodeVisualProbeId = fields["probe_id"]?.toLongOrNull() ?: 0L
         lastControlCodeVisualProbeResult = fields["result"].orEmpty().ifBlank { "unknown" }
         lastControlCodeVisualProbeReason = fields["reason"].orEmpty()
         lastControlCodeVisualProbeAtMillis = SystemClock.elapsedRealtime()
+      }
+      line.startsWith("CONTROL_CODE_BURST ") -> {
+        val fields = diagnosticFields(line)
+        controlCodeBurstState = fields["state"].orEmpty().ifBlank { "unknown" }
+        controlCodeBurstActive = controlCodeBurstState == "started"
+        lastControlCodeBurstAtMillis = SystemClock.elapsedRealtime()
       }
     }
   }
@@ -632,16 +690,17 @@ class TicketRootHardwareH264CaptureEngine(
 
   private fun hardwareIntervalMode(): String {
     val request = activeStartRequest ?: desiredStartRequest ?: return ""
-    return if (request.startupFrameCount > 0 && frames < request.startupFrameCount) {
-      "startup_burst"
-    } else {
-      "fixed"
+    return when {
+      controlCodeBurstActive -> "control_code_request_burst"
+      request.startupFrameCount > 0 && frames < request.startupFrameCount -> "startup_burst"
+      else -> "fixed"
     }
   }
 
   private fun hardwareFrameIntervalMillis(): Long? {
     val request = activeStartRequest ?: desiredStartRequest
     val currentFps = when {
+      controlCodeBurstActive -> TicketScreenConfig.ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS
       request != null && request.startupFrameCount > 0 && frames < request.startupFrameCount -> request.startupFps
       request != null -> request.targetFps
       else -> fps
@@ -693,24 +752,9 @@ class TicketRootHardwareH264CaptureEngine(
     estimatedBitrate = 0L
     bitrateWindowStartedAtMillis = 0L
     bitrateWindowBytes = 0L
-  }
-
-  private suspend fun reconcileStaleCaptureProcessesBeforeStart(): HardwareProcessCounts {
-    val before = countMatchingProcesses()
-    updateProcessCounts(before, expectedEncoderProcesses = 0)
-    if (before.encoderProcessCount == 0) {
-      lastCaptureCleanupResult = "start_cleanup_ok:${before.summary()}"
-      return before
-    }
-    cleanupMatchingProcesses()
-    val after = countMatchingProcesses()
-    updateProcessCounts(after, expectedEncoderProcesses = 0)
-    lastCaptureCleanupResult = if (after.encoderProcessCount == 0) {
-      "start_cleanup_ok:before=${before.summary()} after=${after.summary()}"
-    } else {
-      "capture_start_refused_stale_processes:before=${before.summary()} after=${after.summary()}"
-    }
-    return after
+    controlCodeBurstActive = false
+    controlCodeBurstState = "idle"
+    lastControlCodeBurstAtMillis = 0L
   }
 
   private fun schedulePostStartProcessSanityCheck() {

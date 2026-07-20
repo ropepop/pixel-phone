@@ -17,38 +17,28 @@ if [[ -z "${specs}" ]]; then
   exit 1
 fi
 
-if ! printf '%s\n' "${specs}" | rg -Fq '/data/local/pixel-stack/templates/rooted/adguardhome-start'; then
-  echo "FAIL: readiness scope is missing rooted runtime asset checks" >&2
+if ! printf '%s\n' "${specs}" | rg -Fq '/data/local/pixel-stack/templates/ssh/pixel-ssh-service-loop.sh'; then
+  echo "FAIL: readiness scope is missing SSH runtime asset checks" >&2
   exit 1
 fi
 
-if ! printf '%s\n' "${specs}" | rg -Fq '/data/local/pixel-stack/templates/train/train-web-tunnel-service-loop.sh'; then
-  echo "FAIL: readiness scope is missing train runtime template checks" >&2
+if ! printf '%s\n' "${specs}" | rg -Fq '/data/local/pixel-stack/templates/vpn/pixel-vpn-service-loop.sh'; then
+  echo "FAIL: readiness scope is missing VPN runtime asset checks" >&2
   exit 1
 fi
 
-if ! printf '%s\n' "${specs}" | rg -Fq '/data/local/pixel-stack/bin/pixel-dns-start.sh'; then
-  echo "FAIL: readiness scope is missing rooted entrypoint checks" >&2
+if printf '%s\n' "${specs}" | rg -Fq 'ticket-web-tunnel-service-loop'; then
+  echo "FAIL: retired Pixel-owned Ticket tunnel is still in runtime asset checks" >&2
   exit 1
 fi
 
-if ! printf '%s\n' "${specs}" | rg -Fq '/data/local/pixel-stack/bin/pixel-train-start.sh'; then
-  echo "FAIL: readiness scope is missing train entrypoint checks" >&2
+if ! printf '%s\n' "${specs}" | rg -Fq '/data/local/pixel-stack/bin/pixel-ticket-root-keyboard'; then
+  echo "FAIL: readiness scope is missing the Ticket native root keyboard" >&2
   exit 1
 fi
 
-if ! printf '%s\n' "${specs}" | rg -Fq '/data/local/pixel-stack/templates/satiksme/satiksme-service-loop.sh'; then
-  echo "FAIL: readiness scope is missing satiksme runtime template checks" >&2
-  exit 1
-fi
-
-if ! printf '%s\n' "${specs}" | rg -Fq '/data/local/pixel-stack/bin/pixel-satiksme-start.sh'; then
-  echo "FAIL: readiness scope is missing satiksme entrypoint checks" >&2
-  exit 1
-fi
-
-if ! printf '%s\n' "${specs}" | rg -Fq '/data/local/pixel-stack/bin/pixel-satiksme-health.sh'; then
-  echo "FAIL: readiness scope is missing satiksme health entrypoint checks" >&2
+if ! printf '%s\n' "${specs}" | rg -Fq '/data/local/pixel-stack/bin/pixel-runtime-cleanup.sh'; then
+  echo "FAIL: readiness scope is missing runtime cleanup" >&2
   exit 1
 fi
 
@@ -62,13 +52,17 @@ if ! printf '%s\n' "${ssh_specs}" | rg -Fq '/data/local/pixel-stack/bin/pixel-ma
   exit 1
 fi
 
-subscription_specs="$("${HELPER_SCRIPT}" --scope subscription_bot --print-specs)"
-if ! printf '%s\n' "${subscription_specs}" | rg -Fq '/data/local/pixel-stack/templates/subscription/subscription-service-loop.sh'; then
-  echo "FAIL: subscription_bot scope is missing subscription template checks" >&2
+ticket_specs="$("${HELPER_SCRIPT}" --scope ticket_screen --print-specs)"
+if ! printf '%s\n' "${ticket_specs}" | rg -Fq '/data/local/pixel-stack/bin/pixel-ticket-root-keyboard'; then
+  echo "FAIL: ticket_screen scope is missing the native root keyboard helper" >&2
   exit 1
 fi
-if ! printf '%s\n' "${subscription_specs}" | rg -Fq '/data/local/pixel-stack/bin/pixel-subscription-health.sh'; then
-  echo "FAIL: subscription_bot scope is missing subscription health entrypoint checks" >&2
+if ! printf '%s\n' "${ticket_specs}" | rg -Fq '/data/local/pixel-stack/bin/pixel-ticket-health.sh'; then
+  echo "FAIL: ticket_screen scope is missing ticket health entrypoint checks" >&2
+  exit 1
+fi
+if ! printf '%s\n' "${ticket_specs}" | rg -Fq '/data/local/pixel-stack/bin/pixel-ticket-lifecycle-lock.sh'; then
+  echo "FAIL: ticket_screen scope is missing lifecycle lock helper checks" >&2
   exit 1
 fi
 
@@ -82,4 +76,4 @@ if printf '%s\n' "${specs}" | rg -Fq '.pyc'; then
   exit 1
 fi
 
-echo "PASS: runtime asset freshness helper covers rooted, train, and satiksme readiness assets"
+echo "PASS: runtime asset freshness helper covers active SSH, VPN, Ticket, and cleanup assets"

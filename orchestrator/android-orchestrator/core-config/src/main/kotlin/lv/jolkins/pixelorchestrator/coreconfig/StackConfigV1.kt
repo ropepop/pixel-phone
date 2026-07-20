@@ -214,6 +214,7 @@ data class SupervisionConfig(
   val unhealthyFails: Int = 3,
   val managementUnhealthyFails: Int = 2,
   val managementRequireWirelessDebug: Boolean = false,
+  val managementRequireAuthConsistency: Boolean = false,
   val managementRecoveryCooldownSeconds: Int = 120,
   val maxRapidRestarts: Int = 5,
   val rapidWindowSeconds: Int = 300,

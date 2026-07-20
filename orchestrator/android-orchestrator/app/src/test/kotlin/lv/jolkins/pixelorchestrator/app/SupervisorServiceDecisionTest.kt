@@ -24,6 +24,91 @@ class SupervisorServiceDecisionTest {
   }
 
   @Test
+  fun ticketServiceEnableIsAcceptedOnlyForTicketRedeploy() {
+    assertEquals(
+      TicketServiceEnableRequestDecision.NOT_REQUESTED,
+      SupervisorService.resolveTicketServiceEnableRequest(
+        requested = false,
+        serviceAction = SupervisorService.ACTION_REDEPLOY_COMPONENT,
+        commandAction = OrchestratorShellCommand.ACTION_REDEPLOY_COMPONENT,
+        component = "ticket_screen"
+      )
+    )
+    assertEquals(
+      TicketServiceEnableRequestDecision.ENABLE,
+      SupervisorService.resolveTicketServiceEnableRequest(
+        requested = true,
+        serviceAction = SupervisorService.ACTION_REDEPLOY_COMPONENT,
+        commandAction = OrchestratorShellCommand.ACTION_REDEPLOY_COMPONENT,
+        component = " ticket_screen "
+      )
+    )
+    assertEquals(
+      TicketServiceEnableRequestDecision.REJECT,
+      SupervisorService.resolveTicketServiceEnableRequest(
+        requested = true,
+        serviceAction = SupervisorService.ACTION_RESTART_COMPONENT,
+        commandAction = OrchestratorShellCommand.ACTION_RESTART_COMPONENT,
+        component = "ticket_screen"
+      )
+    )
+    assertEquals(
+      TicketServiceEnableRequestDecision.REJECT,
+      SupervisorService.resolveTicketServiceEnableRequest(
+        requested = true,
+        serviceAction = SupervisorService.ACTION_REDEPLOY_COMPONENT,
+        commandAction = OrchestratorShellCommand.ACTION_REDEPLOY_COMPONENT,
+        component = "vpn"
+      )
+    )
+  }
+
+  @Test
+  fun ticketServiceEnablePersistsBeforeRedeployAndCancelsStaleStop() {
+    val sourcePath = listOf(
+      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/SupervisorService.kt"),
+      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/SupervisorService.kt")
+    ).first(Files::exists)
+    val source = String(Files.readAllBytes(sourcePath))
+    val onStart = source.substringBetween("override fun onStartCommand", "  override fun onDestroy")
+    val stopReadiness = source.substringBetween(
+      "private suspend fun stopTicketServiceReadiness",
+      "  private fun startPhoneAutomationPrerequisiteMonitor"
+    )
+
+    assertTrue(onStart.contains("ticketServiceStore.setEnabled(true)"))
+    assertTrue(onStart.indexOf("ticketServiceStore.setEnabled(true)") < onStart.indexOf("facade.redeployComponent("))
+    assertTrue(onStart.contains("syncTicketService(trigger = \"ticket_service_enabled_by_redeploy\""))
+    assertTrue(onStart.contains("ticketServiceStore.setEnabled(false)"))
+    assertTrue(onStart.contains("syncTicketService(trigger = \"ticket_service_enable_rollback\""))
+    assertTrue(stopReadiness.contains("if (ticketServiceStore.load().enabled)"))
+    assertTrue(stopReadiness.contains("reason=re_enabled"))
+  }
+
+  @Test
+  fun failedTicketRedeployRestoresOnlyAPreviouslyDisabledToggle() {
+    assertTrue(
+      SupervisorService.shouldKeepTicketServiceEnabledAfterRedeploy(
+        wasEnabled = false,
+        redeploySucceeded = true
+      )
+    )
+    assertTrue(
+      SupervisorService.shouldKeepTicketServiceEnabledAfterRedeploy(
+        wasEnabled = true,
+        redeploySucceeded = false
+      )
+    )
+    assertEquals(
+      false,
+      SupervisorService.shouldKeepTicketServiceEnabledAfterRedeploy(
+        wasEnabled = false,
+        redeploySucceeded = false
+      )
+    )
+  }
+
+  @Test
   fun ticketReadinessProbeIsBoundedAndStableChecksAreThrottled() {
     val sourcePath = listOf(
       Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/SupervisorService.kt"),
@@ -34,17 +119,28 @@ class SupervisorServiceDecisionTest {
     assertTrue(ensureStart >= 0)
     val ensureEnd = source.indexOf("private suspend fun stopTicketServiceReadiness", ensureStart)
     val ensureBlock = source.substring(ensureStart, ensureEnd)
-    val probeStart = source.indexOf("private suspend fun probeTicketTunnelReadiness")
-    assertTrue(probeStart >= 0)
-    val probeEnd = source.indexOf("private fun startPhoneAutomationPrerequisiteMonitor", probeStart)
-    val probeBlock = source.substring(probeStart, probeEnd)
-
     assertTrue(source.contains("private const val TICKET_SERVICE_STABLE_RECHECK_MILLIS = 2 * 60 * 1_000L"))
     assertTrue(source.contains("private fun shouldSkipStableTicketEnsure("))
     assertTrue(ensureBlock.contains("shouldSkipStableTicketEnsure(reason, current)"))
     assertTrue(ensureBlock.indexOf("shouldSkipStableTicketEnsure(reason, current)") < ensureBlock.indexOf("facade.startComponent(TICKET_SERVICE_COMPONENT)"))
-    assertTrue(probeBlock.contains("timeout 1 tr '\\000' ' '"))
-    assertTrue(!probeBlock.contains("\n            tr '\\000' ' '"))
+    assertTrue(ensureBlock.contains("localServerReachable"))
+    assertTrue(ensureBlock.contains("public ingress is owned by kitty-gration"))
+    assertTrue(!source.contains("probeTicketTunnelReadiness"))
+  }
+
+  @Test
+  fun fastTicketRedeploySkipsOnlyTheRedundantTicketPresync() {
+    val sourcePath = listOf(
+      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/SupervisorService.kt"),
+      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/SupervisorService.kt")
+    ).first(Files::exists)
+    val source = String(Files.readAllBytes(sourcePath))
+    val onStart = source.substringBetween("override fun onStartCommand", "  override fun onDestroy")
+
+    assertTrue(source.contains("EXTRA_FAST_TICKET_REDEPLOY"))
+    assertTrue(onStart.contains("val fastTicketRedeploy"))
+    assertTrue(onStart.contains("!fastTicketRedeploy"))
+    assertTrue(onStart.contains("fastTicketScreenRedeploy = fastTicketRedeploy"))
   }
 
   @Test

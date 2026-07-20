@@ -8,7 +8,6 @@ if [[ -d "${REPO_ROOT}/../workloads" && -d "${REPO_ROOT}/../tools" ]]; then
   WORKSPACE_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 fi
 
-ROOTFS_TARBALL="${PIXEL_RUNTIME_ROOTFS_TARBALL:-}"
 DROPBEAR_ARTIFACT_DIR="${PIXEL_RUNTIME_DROPBEAR_ARTIFACT_DIR:-}"
 TAILSCALE_BUNDLE="${PIXEL_RUNTIME_TAILSCALE_BUNDLE:-}"
 TRAIN_BOT_BUNDLE="${PIXEL_RUNTIME_TRAIN_BOT_BUNDLE:-}"
@@ -19,10 +18,16 @@ INCLUDE_TRAIN_BOT_BUNDLE=1
 INCLUDE_SATIKSME_BOT_BUNDLE=1
 INCLUDE_SITE_NOTIFIER_BUNDLE=1
 INCLUDE_SUBSCRIPTION_BOT_BUNDLE=1
+# Fast packaging should only resolve artifacts that the caller selected.  The
+# strict lane retains the historical complete bundle when no selection is given.
+INCLUDE_WORKLOADS="auto"
 MANIFEST_VERSION=""
 OUT_DIR=""
 PRINT_INPUTS=0
-DNS_RUNTIME_ASSET_SOURCE_ROOT="${APP_ROOT}/app/src/main/assets/runtime"
+FULL_MODE=0
+TIMINGS_FILE="${PIXEL_PHASE_TIMINGS_FILE:-}"
+TIMING_TOTAL_START_MS=""
+TIMING_PHASE_START_MS=""
 
 usage() {
   cat <<USAGE
@@ -31,7 +36,6 @@ Usage: $(basename "$0") [options]
 Builds a local runtime bundle for on-device staging via deploy_orchestrator_apk.sh --runtime-bundle-dir.
 
 Options:
-  --rootfs-tarball FILE          AdGuardHome rootfs tarball file
   --dropbear-artifact-dir DIR    Dropbear prebuilt dir containing dropbearmulti
   --tailscale-bundle FILE        Tailscale runtime bundle tar
   --train-bot-bundle FILE        Train bot runtime bundle tar
@@ -39,19 +43,48 @@ Options:
   --site-notifier-bundle FILE    Site notifier runtime bundle tar
   --subscription-bot-bundle FILE Subscription bot runtime bundle tar
   --platform-only               Build a platform-only runtime bundle without workload bundles
+  --include-workloads LIST      Comma-separated workload list (train_bot,satiksme_bot,site_notifier,subscription_bot)
   --manifest-version VALUE       Manifest version string (default: local-<UTC timestamp>)
   --out-dir DIR                  Output bundle dir (default: .artifacts/runtime-local/<manifest-version>)
   --print-inputs                 Resolve and print the selected input paths, then exit
+  --fast                         Skip workspace-wide cleanup (default)
+  --full, --strict               Run workspace cleanup and include all selected checks
+  --timings-file FILE            Append JSONL phase timings to FILE
   -h, --help                     Show this help
 USAGE
 }
 
+timing_now_ms() {
+  python3 -c 'import time; print(time.monotonic_ns() // 1_000_000)'
+}
+
+timing_start() {
+  [[ -n "${TIMINGS_FILE}" ]] || return 0
+  mkdir -p "$(dirname "${TIMINGS_FILE}")"
+  TIMING_TOTAL_START_MS="$(timing_now_ms)"
+  TIMING_PHASE_START_MS="${TIMING_TOTAL_START_MS}"
+}
+
+timing_mark() {
+  local phase="$1"
+  local now_ms=""
+  [[ -n "${TIMINGS_FILE}" ]] || return 0
+  now_ms="$(timing_now_ms)"
+  printf '{"script":"package_runtime_bundle","phase":"%s","durationMs":%d}\n' \
+    "${phase}" "$((now_ms - TIMING_PHASE_START_MS))" >> "${TIMINGS_FILE}"
+  TIMING_PHASE_START_MS="${now_ms}"
+}
+
+timing_finish() {
+  local now_ms=""
+  [[ -n "${TIMINGS_FILE}" ]] || return 0
+  now_ms="$(timing_now_ms)"
+  printf '{"script":"package_runtime_bundle","phase":"total","durationMs":%d}\n' \
+    "$((now_ms - TIMING_TOTAL_START_MS))" >> "${TIMINGS_FILE}"
+}
+
 while (( $# > 0 )); do
   case "$1" in
-    --rootfs-tarball)
-      shift
-      ROOTFS_TARBALL="${1:-}"
-      ;;
     --dropbear-artifact-dir)
       shift
       DROPBEAR_ARTIFACT_DIR="${1:-}"
@@ -77,10 +110,11 @@ while (( $# > 0 )); do
       SUBSCRIPTION_BOT_BUNDLE="${1:-}"
       ;;
     --platform-only)
-      INCLUDE_TRAIN_BOT_BUNDLE=0
-      INCLUDE_SATIKSME_BOT_BUNDLE=0
-      INCLUDE_SITE_NOTIFIER_BUNDLE=0
-      INCLUDE_SUBSCRIPTION_BOT_BUNDLE=0
+      INCLUDE_WORKLOADS="none"
+      ;;
+    --include-workloads)
+      shift
+      INCLUDE_WORKLOADS="${1:-}"
       ;;
     --manifest-version)
       shift
@@ -92,6 +126,16 @@ while (( $# > 0 )); do
       ;;
     --print-inputs)
       PRINT_INPUTS=1
+      ;;
+    --fast)
+      FULL_MODE=0
+      ;;
+    --full|--strict)
+      FULL_MODE=1
+      ;;
+    --timings-file)
+      shift
+      TIMINGS_FILE="${1:-}"
       ;;
     -h|--help)
       usage
@@ -105,6 +149,71 @@ while (( $# > 0 )); do
   esac
   shift
 done
+
+configure_workload_selection() {
+  local requested=()
+  local item=""
+
+  INCLUDE_TRAIN_BOT_BUNDLE=0
+  INCLUDE_SATIKSME_BOT_BUNDLE=0
+  INCLUDE_SITE_NOTIFIER_BUNDLE=0
+  INCLUDE_SUBSCRIPTION_BOT_BUNDLE=0
+
+  if [[ "${INCLUDE_WORKLOADS}" == "auto" ]]; then
+    if (( FULL_MODE == 1 )); then
+      INCLUDE_WORKLOADS="all"
+    else
+      requested=()
+      [[ -n "${TRAIN_BOT_BUNDLE}" ]] && requested+=("train_bot")
+      [[ -n "${SATIKSME_BOT_BUNDLE}" ]] && requested+=("satiksme_bot")
+      [[ -n "${SITE_NOTIFIER_BUNDLE}" ]] && requested+=("site_notifier")
+      [[ -n "${SUBSCRIPTION_BOT_BUNDLE}" ]] && requested+=("subscription_bot")
+      if (( ${#requested[@]} == 0 )); then
+        INCLUDE_WORKLOADS="none"
+      else
+        INCLUDE_WORKLOADS="$(IFS=,; printf '%s' "${requested[*]}")"
+      fi
+    fi
+  fi
+
+  IFS=',' read -r -a requested <<< "${INCLUDE_WORKLOADS}"
+  (( ${#requested[@]} > 0 )) || {
+    echo "--include-workloads requires at least one workload or 'none'" >&2
+    exit 2
+  }
+
+  for item in "${requested[@]}"; do
+    item="${item//[[:space:]]/}"
+    case "${item}" in
+      all)
+        INCLUDE_TRAIN_BOT_BUNDLE=1
+        INCLUDE_SATIKSME_BOT_BUNDLE=1
+        INCLUDE_SITE_NOTIFIER_BUNDLE=1
+        INCLUDE_SUBSCRIPTION_BOT_BUNDLE=1
+        ;;
+      none|platform)
+        ;;
+      train_bot|train-bot)
+        INCLUDE_TRAIN_BOT_BUNDLE=1
+        ;;
+      satiksme_bot|satiksme-bot)
+        INCLUDE_SATIKSME_BOT_BUNDLE=1
+        ;;
+      site_notifier|site-notifier)
+        INCLUDE_SITE_NOTIFIER_BUNDLE=1
+        ;;
+      subscription_bot|subscription-bot)
+        INCLUDE_SUBSCRIPTION_BOT_BUNDLE=1
+        ;;
+      *)
+        echo "Unsupported workload in --include-workloads: ${item:-<empty>}" >&2
+        exit 2
+        ;;
+    esac
+  done
+}
+
+configure_workload_selection
 
 artifact_roots() {
   printf '%s\n' "${WORKSPACE_ROOT}/.artifacts"
@@ -232,10 +341,6 @@ choose_latest_candidate() {
 }
 
 resolve_inputs() {
-  [[ -n "${ROOTFS_TARBALL}" ]] || {
-    echo "Missing rootfs tarball. Pass --rootfs-tarball or set PIXEL_RUNTIME_ROOTFS_TARBALL." >&2
-    exit 1
-  }
   [[ -n "${DROPBEAR_ARTIFACT_DIR}" ]] || DROPBEAR_ARTIFACT_DIR="$(choose_latest_candidate "dropbear artifact dir" emit_dropbear_candidates)"
   [[ -n "${TAILSCALE_BUNDLE}" ]] || TAILSCALE_BUNDLE="$(choose_latest_candidate "tailscale bundle" emit_tailscale_candidates)"
   if (( INCLUDE_TRAIN_BOT_BUNDLE == 1 )); then
@@ -260,35 +365,24 @@ resolve_inputs() {
   fi
 }
 
+timing_start
 resolve_inputs
+timing_mark "resolve_inputs"
 
 if (( PRINT_INPUTS == 1 )); then
-  printf 'ROOTFS_TARBALL=%s\n' "${ROOTFS_TARBALL}"
   printf 'DROPBEAR_ARTIFACT_DIR=%s\n' "${DROPBEAR_ARTIFACT_DIR}"
   printf 'TAILSCALE_BUNDLE=%s\n' "${TAILSCALE_BUNDLE}"
   printf 'TRAIN_BOT_BUNDLE=%s\n' "${TRAIN_BOT_BUNDLE}"
   printf 'SATIKSME_BOT_BUNDLE=%s\n' "${SATIKSME_BOT_BUNDLE}"
   printf 'SITE_NOTIFIER_BUNDLE=%s\n' "${SITE_NOTIFIER_BUNDLE}"
   printf 'SUBSCRIPTION_BOT_BUNDLE=%s\n' "${SUBSCRIPTION_BOT_BUNDLE}"
+  timing_finish
   exit 0
 fi
 
-[[ -f "${ROOTFS_TARBALL}" ]] || { echo "Rootfs tarball not found: ${ROOTFS_TARBALL}" >&2; exit 1; }
 [[ -d "${DROPBEAR_ARTIFACT_DIR}" ]] || { echo "Dropbear artifact dir not found: ${DROPBEAR_ARTIFACT_DIR}" >&2; exit 1; }
 [[ -x "${DROPBEAR_ARTIFACT_DIR}/dropbearmulti" ]] || { echo "Missing dropbearmulti in ${DROPBEAR_ARTIFACT_DIR}" >&2; exit 1; }
 [[ -f "${TAILSCALE_BUNDLE}" ]] || { echo "Tailscale bundle not found: ${TAILSCALE_BUNDLE}" >&2; exit 1; }
-[[ -d "${DNS_RUNTIME_ASSET_SOURCE_ROOT}/templates/rooted" ]] || {
-  echo "Missing rooted DNS templates in ${DNS_RUNTIME_ASSET_SOURCE_ROOT}/templates/rooted" >&2
-  exit 1
-}
-[[ -f "${DNS_RUNTIME_ASSET_SOURCE_ROOT}/entrypoints/pixel-dns-start.sh" ]] || {
-  echo "Missing DNS start entrypoint in ${DNS_RUNTIME_ASSET_SOURCE_ROOT}/entrypoints/pixel-dns-start.sh" >&2
-  exit 1
-}
-[[ -f "${DNS_RUNTIME_ASSET_SOURCE_ROOT}/entrypoints/pixel-dns-stop.sh" ]] || {
-  echo "Missing DNS stop entrypoint in ${DNS_RUNTIME_ASSET_SOURCE_ROOT}/entrypoints/pixel-dns-stop.sh" >&2
-  exit 1
-}
 if (( INCLUDE_TRAIN_BOT_BUNDLE == 1 )); then
   [[ -f "${TRAIN_BOT_BUNDLE}" ]] || { echo "Train bot bundle not found: ${TRAIN_BOT_BUNDLE}" >&2; exit 1; }
 fi
@@ -317,7 +411,10 @@ if [[ -z "${OUT_DIR}" ]]; then
   OUT_DIR="${ARTIFACT_ROOT}/runtime-local/${MANIFEST_VERSION}"
 fi
 
-bash "${WORKSPACE_ROOT}/tools/pixel/cleanup_workspace.sh"
+if (( FULL_MODE == 1 )); then
+  bash "${WORKSPACE_ROOT}/tools/pixel/cleanup_workspace.sh"
+fi
+timing_mark "cleanup"
 mkdir -p "${OUT_DIR}/artifacts"
 OUT_DIR="$(cd "${OUT_DIR}" && pwd)"
 
@@ -337,6 +434,19 @@ size_bytes() {
   else
     stat -c "%s" "${path}"
   fi
+}
+
+copy_artifact() {
+  local source_path="$1"
+  local destination_path="$2"
+  rm -f "${destination_path}"
+  if cp -c "${source_path}" "${destination_path}" 2>/dev/null; then
+    return 0
+  fi
+  if cp --reflink=auto "${source_path}" "${destination_path}" 2>/dev/null; then
+    return 0
+  fi
+  cp "${source_path}" "${destination_path}"
 }
 
 create_deterministic_tar() {
@@ -412,8 +522,6 @@ ln -sf "dropbearmulti" "${bundle_stage}/bin/dropbear"
 ln -sf "dropbearmulti" "${bundle_stage}/bin/dropbearkey"
 ln -sf "dropbearmulti" "${bundle_stage}/bin/dbclient"
 
-ROOTFS_NAME="adguardhome-rootfs-arm64.tar"
-DNS_RUNTIME_ASSETS_NAME="dns-runtime-assets.tar"
 DROPBEAR_BUNDLE_NAME="dropbear-bundle.tar"
 TAILSCALE_BUNDLE_NAME="tailscale-bundle.tar"
 TRAIN_BOT_BUNDLE_NAME="train-bot-bundle.tar"
@@ -421,8 +529,6 @@ SATIKSME_BOT_BUNDLE_NAME="satiksme-bot-bundle.tar"
 SITE_NOTIFIER_BUNDLE_NAME="site-notifier-bundle.tar"
 SUBSCRIPTION_BOT_BUNDLE_NAME="subscription-bot-bundle.tar"
 
-ROOTFS_OUT="${OUT_DIR}/artifacts/${ROOTFS_NAME}"
-DNS_RUNTIME_ASSETS_OUT="${OUT_DIR}/artifacts/${DNS_RUNTIME_ASSETS_NAME}"
 DROPBEAR_BUNDLE_OUT="${OUT_DIR}/artifacts/${DROPBEAR_BUNDLE_NAME}"
 TAILSCALE_BUNDLE_OUT="${OUT_DIR}/artifacts/${TAILSCALE_BUNDLE_NAME}"
 TRAIN_BOT_BUNDLE_OUT="${OUT_DIR}/artifacts/${TRAIN_BOT_BUNDLE_NAME}"
@@ -430,33 +536,22 @@ SATIKSME_BOT_BUNDLE_OUT="${OUT_DIR}/artifacts/${SATIKSME_BOT_BUNDLE_NAME}"
 SITE_NOTIFIER_BUNDLE_OUT="${OUT_DIR}/artifacts/${SITE_NOTIFIER_BUNDLE_NAME}"
 SUBSCRIPTION_BOT_BUNDLE_OUT="${OUT_DIR}/artifacts/${SUBSCRIPTION_BOT_BUNDLE_NAME}"
 
-cp "${ROOTFS_TARBALL}" "${ROOTFS_OUT}"
-dns_bundle_stage="$(mktemp -d)"
-trap 'rm -rf "${bundle_stage}" "${dns_bundle_stage}"' EXIT
-mkdir -p "${dns_bundle_stage}/templates/rooted" "${dns_bundle_stage}/bin"
-cp -a "${DNS_RUNTIME_ASSET_SOURCE_ROOT}/templates/rooted/." "${dns_bundle_stage}/templates/rooted/"
-install -m 0755 "${DNS_RUNTIME_ASSET_SOURCE_ROOT}/entrypoints/pixel-dns-start.sh" "${dns_bundle_stage}/bin/pixel-dns-start.sh"
-install -m 0755 "${DNS_RUNTIME_ASSET_SOURCE_ROOT}/entrypoints/pixel-dns-stop.sh" "${dns_bundle_stage}/bin/pixel-dns-stop.sh"
-create_deterministic_tar "${dns_bundle_stage}" "${DNS_RUNTIME_ASSETS_OUT}"
 create_deterministic_tar "${bundle_stage}" "${DROPBEAR_BUNDLE_OUT}"
-cp "${TAILSCALE_BUNDLE}" "${TAILSCALE_BUNDLE_OUT}"
+copy_artifact "${TAILSCALE_BUNDLE}" "${TAILSCALE_BUNDLE_OUT}"
 if (( INCLUDE_TRAIN_BOT_BUNDLE == 1 )); then
-  cp "${TRAIN_BOT_BUNDLE}" "${TRAIN_BOT_BUNDLE_OUT}"
+  copy_artifact "${TRAIN_BOT_BUNDLE}" "${TRAIN_BOT_BUNDLE_OUT}"
 fi
 if (( INCLUDE_SATIKSME_BOT_BUNDLE == 1 )); then
-  cp "${SATIKSME_BOT_BUNDLE}" "${SATIKSME_BOT_BUNDLE_OUT}"
+  copy_artifact "${SATIKSME_BOT_BUNDLE}" "${SATIKSME_BOT_BUNDLE_OUT}"
 fi
 if (( INCLUDE_SITE_NOTIFIER_BUNDLE == 1 )); then
-  cp "${SITE_NOTIFIER_BUNDLE}" "${SITE_NOTIFIER_BUNDLE_OUT}"
+  copy_artifact "${SITE_NOTIFIER_BUNDLE}" "${SITE_NOTIFIER_BUNDLE_OUT}"
 fi
 if (( INCLUDE_SUBSCRIPTION_BOT_BUNDLE == 1 )); then
-  cp "${SUBSCRIPTION_BOT_BUNDLE}" "${SUBSCRIPTION_BOT_BUNDLE_OUT}"
+  copy_artifact "${SUBSCRIPTION_BOT_BUNDLE}" "${SUBSCRIPTION_BOT_BUNDLE_OUT}"
 fi
+timing_mark "stage"
 
-ROOTFS_SHA="$(sha256_file "${ROOTFS_OUT}")"
-ROOTFS_SIZE="$(size_bytes "${ROOTFS_OUT}")"
-DNS_RUNTIME_ASSETS_SHA="$(sha256_file "${DNS_RUNTIME_ASSETS_OUT}")"
-DNS_RUNTIME_ASSETS_SIZE="$(size_bytes "${DNS_RUNTIME_ASSETS_OUT}")"
 DROPBEAR_SHA="$(sha256_file "${DROPBEAR_BUNDLE_OUT}")"
 DROPBEAR_SIZE="$(size_bytes "${DROPBEAR_BUNDLE_OUT}")"
 TAILSCALE_SHA="$(sha256_file "${TAILSCALE_BUNDLE_OUT}")"
@@ -485,19 +580,18 @@ if (( INCLUDE_SUBSCRIPTION_BOT_BUNDLE == 1 )); then
   SUBSCRIPTION_BOT_SHA="$(sha256_file "${SUBSCRIPTION_BOT_BUNDLE_OUT}")"
   SUBSCRIPTION_BOT_SIZE="$(size_bytes "${SUBSCRIPTION_BOT_BUNDLE_OUT}")"
 fi
+timing_mark "hash"
 
 MANIFEST_PATH="${OUT_DIR}/runtime-manifest.json"
 export RUNTIME_INPUTS_JSON="${OUT_DIR}/resolved-inputs.json"
 export RUNTIME_MANIFEST_JSON="${MANIFEST_PATH}"
 export INCLUDE_TRAIN_BOT_BUNDLE INCLUDE_SATIKSME_BOT_BUNDLE INCLUDE_SITE_NOTIFIER_BUNDLE INCLUDE_SUBSCRIPTION_BOT_BUNDLE
-export ROOTFS_NAME DROPBEAR_BUNDLE_NAME TAILSCALE_BUNDLE_NAME
-export DNS_RUNTIME_ASSETS_NAME DNS_RUNTIME_ASSETS_SHA DNS_RUNTIME_ASSETS_SIZE
+export FULL_MODE
+export DROPBEAR_BUNDLE_NAME TAILSCALE_BUNDLE_NAME
 export TRAIN_BOT_BUNDLE_NAME SATIKSME_BOT_BUNDLE_NAME SITE_NOTIFIER_BUNDLE_NAME SUBSCRIPTION_BOT_BUNDLE_NAME
-export ROOTFS_SHA ROOTFS_SIZE DROPBEAR_SHA DROPBEAR_SIZE TAILSCALE_SHA TAILSCALE_SIZE
+export DROPBEAR_SHA DROPBEAR_SIZE TAILSCALE_SHA TAILSCALE_SIZE
 export TRAIN_BOT_SHA TRAIN_BOT_SIZE SATIKSME_BOT_SHA SATIKSME_BOT_SIZE SITE_NOTIFIER_SHA SITE_NOTIFIER_SIZE SUBSCRIPTION_BOT_SHA SUBSCRIPTION_BOT_SIZE
 export MANIFEST_VERSION
-export RESOLVED_ROOTFS_TARBALL="${ROOTFS_TARBALL}"
-export RESOLVED_DNS_RUNTIME_ASSET_SOURCE_ROOT="${DNS_RUNTIME_ASSET_SOURCE_ROOT}"
 export RESOLVED_DROPBEAR_ARTIFACT_DIR="${DROPBEAR_ARTIFACT_DIR}"
 export RESOLVED_TAILSCALE_BUNDLE="${TAILSCALE_BUNDLE}"
 export RESOLVED_TRAIN_BOT_BUNDLE="${TRAIN_BOT_BUNDLE}"
@@ -511,24 +605,8 @@ from pathlib import Path
 
 artifacts = [
     {
-        "id": "adguardhome-rootfs",
-        "url": f"/data/local/pixel-stack/conf/runtime/artifacts/{os.environ['ROOTFS_NAME']}",
-        "sha256": os.environ["ROOTFS_SHA"],
-        "fileName": os.environ["ROOTFS_NAME"],
-        "sizeBytes": int(os.environ["ROOTFS_SIZE"]),
-        "required": True,
-    },
-    {
-        "id": "dns-runtime-assets",
-        "url": f"/data/local/pixel-stack/conf/runtime/artifacts/{os.environ['DNS_RUNTIME_ASSETS_NAME']}",
-        "sha256": os.environ["DNS_RUNTIME_ASSETS_SHA"],
-        "fileName": os.environ["DNS_RUNTIME_ASSETS_NAME"],
-        "sizeBytes": int(os.environ["DNS_RUNTIME_ASSETS_SIZE"]),
-        "required": True,
-    },
-    {
         "id": "dropbear-bundle",
-        "url": f"/data/local/pixel-stack/conf/runtime/artifacts/{os.environ['DROPBEAR_BUNDLE_NAME']}",
+        "url": f"/data/local/pixel-stack/conf/runtime/artifacts/sha256/{os.environ['DROPBEAR_SHA']}",
         "sha256": os.environ["DROPBEAR_SHA"],
         "fileName": os.environ["DROPBEAR_BUNDLE_NAME"],
         "sizeBytes": int(os.environ["DROPBEAR_SIZE"]),
@@ -536,7 +614,7 @@ artifacts = [
     },
     {
         "id": "tailscale-bundle",
-        "url": f"/data/local/pixel-stack/conf/runtime/artifacts/{os.environ['TAILSCALE_BUNDLE_NAME']}",
+        "url": f"/data/local/pixel-stack/conf/runtime/artifacts/sha256/{os.environ['TAILSCALE_SHA']}",
         "sha256": os.environ["TAILSCALE_SHA"],
         "fileName": os.environ["TAILSCALE_BUNDLE_NAME"],
         "sizeBytes": int(os.environ["TAILSCALE_SIZE"]),
@@ -547,7 +625,7 @@ artifacts = [
 if os.environ["INCLUDE_TRAIN_BOT_BUNDLE"] == "1":
     artifacts.append({
         "id": "train-bot-bundle",
-        "url": f"/data/local/pixel-stack/conf/runtime/artifacts/{os.environ['TRAIN_BOT_BUNDLE_NAME']}",
+        "url": f"/data/local/pixel-stack/conf/runtime/artifacts/sha256/{os.environ['TRAIN_BOT_SHA']}",
         "sha256": os.environ["TRAIN_BOT_SHA"],
         "fileName": os.environ["TRAIN_BOT_BUNDLE_NAME"],
         "sizeBytes": int(os.environ["TRAIN_BOT_SIZE"]),
@@ -557,7 +635,7 @@ if os.environ["INCLUDE_TRAIN_BOT_BUNDLE"] == "1":
 if os.environ["INCLUDE_SATIKSME_BOT_BUNDLE"] == "1":
     artifacts.append({
         "id": "satiksme-bot-bundle",
-        "url": f"/data/local/pixel-stack/conf/runtime/artifacts/{os.environ['SATIKSME_BOT_BUNDLE_NAME']}",
+        "url": f"/data/local/pixel-stack/conf/runtime/artifacts/sha256/{os.environ['SATIKSME_BOT_SHA']}",
         "sha256": os.environ["SATIKSME_BOT_SHA"],
         "fileName": os.environ["SATIKSME_BOT_BUNDLE_NAME"],
         "sizeBytes": int(os.environ["SATIKSME_BOT_SIZE"]),
@@ -567,7 +645,7 @@ if os.environ["INCLUDE_SATIKSME_BOT_BUNDLE"] == "1":
 if os.environ["INCLUDE_SITE_NOTIFIER_BUNDLE"] == "1":
     artifacts.append({
         "id": "site-notifier-bundle",
-        "url": f"/data/local/pixel-stack/conf/runtime/artifacts/{os.environ['SITE_NOTIFIER_BUNDLE_NAME']}",
+        "url": f"/data/local/pixel-stack/conf/runtime/artifacts/sha256/{os.environ['SITE_NOTIFIER_SHA']}",
         "sha256": os.environ["SITE_NOTIFIER_SHA"],
         "fileName": os.environ["SITE_NOTIFIER_BUNDLE_NAME"],
         "sizeBytes": int(os.environ["SITE_NOTIFIER_SIZE"]),
@@ -577,7 +655,7 @@ if os.environ["INCLUDE_SITE_NOTIFIER_BUNDLE"] == "1":
 if os.environ["INCLUDE_SUBSCRIPTION_BOT_BUNDLE"] == "1":
     artifacts.append({
         "id": "subscription-bot-bundle",
-        "url": f"/data/local/pixel-stack/conf/runtime/artifacts/{os.environ['SUBSCRIPTION_BOT_BUNDLE_NAME']}",
+        "url": f"/data/local/pixel-stack/conf/runtime/artifacts/sha256/{os.environ['SUBSCRIPTION_BOT_SHA']}",
         "sha256": os.environ["SUBSCRIPTION_BOT_SHA"],
         "fileName": os.environ["SUBSCRIPTION_BOT_BUNDLE_NAME"],
         "sizeBytes": int(os.environ["SUBSCRIPTION_BOT_SIZE"]),
@@ -591,7 +669,10 @@ manifest = {
     "artifacts": artifacts,
 }
 
-Path(os.environ["RUNTIME_MANIFEST_JSON"]).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+manifest_path = Path(os.environ["RUNTIME_MANIFEST_JSON"])
+manifest_tmp = manifest_path.with_name(f".{manifest_path.name}.tmp-{os.getpid()}")
+manifest_tmp.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+manifest_tmp.replace(manifest_path)
 
 payload = {
     "platformOnly": (
@@ -600,8 +681,17 @@ payload = {
         and os.environ["INCLUDE_SITE_NOTIFIER_BUNDLE"] == "0"
         and os.environ["INCLUDE_SUBSCRIPTION_BOT_BUNDLE"] == "0"
     ),
-    "rootfsTarball": os.environ["RESOLVED_ROOTFS_TARBALL"],
-    "dnsRuntimeAssetSourceRoot": os.environ["RESOLVED_DNS_RUNTIME_ASSET_SOURCE_ROOT"],
+    "packagingMode": "full" if os.environ["FULL_MODE"] == "1" else "fast",
+    "includedWorkloads": [
+        name
+        for name, enabled in (
+            ("train_bot", os.environ["INCLUDE_TRAIN_BOT_BUNDLE"]),
+            ("satiksme_bot", os.environ["INCLUDE_SATIKSME_BOT_BUNDLE"]),
+            ("site_notifier", os.environ["INCLUDE_SITE_NOTIFIER_BUNDLE"]),
+            ("subscription_bot", os.environ["INCLUDE_SUBSCRIPTION_BOT_BUNDLE"]),
+        )
+        if enabled == "1"
+    ],
     "dropbearArtifactDir": os.environ["RESOLVED_DROPBEAR_ARTIFACT_DIR"],
     "tailscaleBundle": os.environ["RESOLVED_TAILSCALE_BUNDLE"],
     "trainBotBundle": os.environ["RESOLVED_TRAIN_BOT_BUNDLE"] or None,
@@ -609,16 +699,19 @@ payload = {
     "siteNotifierBundle": os.environ["RESOLVED_SITE_NOTIFIER_BUNDLE"] or None,
     "subscriptionBotBundle": os.environ["RESOLVED_SUBSCRIPTION_BOT_BUNDLE"] or None,
 }
-Path(os.environ["RUNTIME_INPUTS_JSON"]).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+inputs_path = Path(os.environ["RUNTIME_INPUTS_JSON"])
+inputs_tmp = inputs_path.with_name(f".{inputs_path.name}.tmp-{os.getpid()}")
+inputs_tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+inputs_tmp.replace(inputs_path)
 PY
+timing_mark "manifest"
+timing_finish
 
 cat <<EOF_SUMMARY
 Runtime bundle ready:
   ${OUT_DIR}
 
 Resolved inputs:
-  rootfs: ${ROOTFS_TARBALL}
-  dns-runtime-assets: ${DNS_RUNTIME_ASSET_SOURCE_ROOT}
   dropbear: ${DROPBEAR_ARTIFACT_DIR}
   tailscale: ${TAILSCALE_BUNDLE}
   train-bot: ${TRAIN_BOT_BUNDLE}

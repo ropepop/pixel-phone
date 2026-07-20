@@ -3,6 +3,7 @@ package lv.jolkins.pixelorchestrator.runtimeinstaller
 import java.nio.file.Files
 import java.security.MessageDigest
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.junit.Test
@@ -97,6 +98,30 @@ class ArtifactSyncerDownloadTest {
 
     assertEquals(target, synced)
     assertEquals("fresh-artifact", Files.readString(synced))
+  }
+
+  @Test
+  fun releaseDeletesOnlyThePrivateStagingCopy() {
+    val sourceDir = Files.createTempDirectory("artifact-syncer-release-source")
+    val cacheDir = Files.createTempDirectory("artifact-syncer-release-cache")
+    val source = sourceDir.resolve("artifact.tar")
+    Files.writeString(source, "artifact-bytes")
+    val syncer = ArtifactSyncer(cacheDir)
+    val entry = ArtifactEntry(
+      id = "artifact",
+      url = source.toString(),
+      sha256 = sha256("artifact-bytes".toByteArray()),
+      fileName = "artifact.tar",
+      sizeBytes = Files.size(source),
+      required = true
+    )
+
+    val staged = syncer.sync(entry)
+    syncer.release(staged)
+    syncer.release(source)
+
+    assertFalse(Files.exists(staged))
+    assertTrue(Files.exists(source))
   }
 
   private fun sha256(bytes: ByteArray): String {

@@ -47,6 +47,7 @@ CONFIG_FILE=""
 TIMEOUT_SEC=2
 DNS_TEST_DOMAIN="example.com"
 RUN_ROOT_CHECKS=0
+RUN_NETWORK_CHECKS=1
 REQUIRE_REMOTE=0
 DOH_URL=""
 DOH_TOKEN="${SERVICE_REPORT_DOH_TOKEN:-}"
@@ -113,6 +114,7 @@ Options:
   --require-remote         Exit non-zero unless remote listener contracts pass
   --rooted-pixel-checks    Include Pixel adb/rooted checks
   --skip-root-checks       Skip adb + rooted runtime checks
+  --skip-network-checks    Skip ping, TCP, DNS, HTTPS, and DoH probes for data-only reports
   --json-out PATH          Write JSON summary to PATH
   -h, --help               Show this help text
 EOH
@@ -177,12 +179,18 @@ while (( $# > 0 )); do
     --require-remote) REQUIRE_REMOTE=1 ;;
     --rooted-pixel-checks) RUN_ROOT_CHECKS=1 ;;
     --skip-root-checks) RUN_ROOT_CHECKS=0 ;;
+    --skip-network-checks) RUN_NETWORK_CHECKS=0 ;;
     --json-out) shift; JSON_OUT="${1:-}" ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
   shift
 done
+
+if (( RUN_NETWORK_CHECKS == 0 && REQUIRE_REMOTE == 1 )); then
+  echo "--skip-network-checks cannot be combined with --require-remote" >&2
+  exit 2
+fi
 
 INTERNAL_QUERYLOG_CLIENTS="$(normalize_csv_unique "${INTERNAL_QUERYLOG_CLIENTS_CSV}")"
 if [[ -z "${INTERNAL_QUERYLOG_CLIENTS}" ]]; then
@@ -358,60 +366,77 @@ if [[ -z "${DOH_URL}" ]]; then
 fi
 
 PING_STATE="skipped"
-if ping -c 1 "${HOST}" >/dev/null 2>&1; then
-  PING_STATE="ok"
-else
-  PING_STATE="failed"
-fi
-
-PORT_53="$(tcp_probe "${HOST}" 53)"
-PORT_HTTPS="$(tcp_probe "${HOST}" "${HTTPS_PORT}")"
-PORT_DOT="$(tcp_probe "${HOST}" "${DOT_PORT}")"
-PORT_SSH="$(tcp_probe "${HOST}" "${SSH_PORT}")"
-PORT_8080="$(tcp_probe "${HOST}" 8080)"
-
-DNS53_RAW="$(dns_probe "${HOST}" 53)"
-DNS53_STATE="${DNS53_RAW%%|*}"
-DNS53_DATA="${DNS53_RAW#*|}"
-
-HTTP_HTTPS_ROOT="$(http_code "$(https_url "/")")"
-HTTP_HTTPS_ADMIN="$(http_code "$(https_url "/admin/")")"
-HTTP_DOH_PRIMARY="$(http_code "${DOH_URL}")"
+PORT_53="skipped"
+PORT_HTTPS="skipped"
+PORT_DOT="skipped"
+PORT_SSH="skipped"
+PORT_8080="skipped"
+DNS53_STATE="skipped"
+DNS53_DATA=""
+HTTP_HTTPS_ROOT="skipped"
+HTTP_HTTPS_ADMIN="skipped"
+HTTP_DOH_PRIMARY="skipped"
 HTTP_DOH_TOKENIZED="skipped"
 HTTP_DOH_BARE="skipped"
-if [[ -n "${TOKENIZED_DOH_URL}" ]]; then
-  HTTP_DOH_TOKENIZED="$(http_code "${TOKENIZED_DOH_URL}")"
-fi
-if [[ -n "${BARE_DOH_URL}" ]]; then
-  HTTP_DOH_BARE="$(http_code "${BARE_DOH_URL}")"
-fi
+HTTPS_ROOT_CONTRACT="skipped"
+HTTPS_ADMIN_UI_CONTRACT="skipped"
+DOH_CONTRACT="skipped"
+REMOTE_CONTRACT="skipped"
 
-HTTPS_ROOT_CONTRACT="fail"
-case "${HTTP_HTTPS_ROOT}" in
-  200|301|302|303|307|308|401) HTTPS_ROOT_CONTRACT="pass" ;;
-esac
+if (( RUN_NETWORK_CHECKS == 1 )); then
+  if ping -c 1 "${HOST}" >/dev/null 2>&1; then
+    PING_STATE="ok"
+  else
+    PING_STATE="failed"
+  fi
 
-HTTPS_ADMIN_UI_CONTRACT="fail"
-case "${HTTP_HTTPS_ADMIN}" in
-  200|301|302|303|307|308|401) HTTPS_ADMIN_UI_CONTRACT="pass" ;;
-esac
+  PORT_53="$(tcp_probe "${HOST}" 53)"
+  PORT_HTTPS="$(tcp_probe "${HOST}" "${HTTPS_PORT}")"
+  PORT_DOT="$(tcp_probe "${HOST}" "${DOT_PORT}")"
+  PORT_SSH="$(tcp_probe "${HOST}" "${SSH_PORT}")"
+  PORT_8080="$(tcp_probe "${HOST}" 8080)"
 
-DOH_CONTRACT="fail"
-case "${DOH_ENDPOINT_MODE}" in
-  native)
-    [[ "${HTTP_DOH_BARE}" == "200" ]] && DOH_CONTRACT="pass"
-    ;;
-  tokenized)
-    [[ "${HTTP_DOH_TOKENIZED}" == "200" && "${HTTP_DOH_BARE}" != "200" ]] && DOH_CONTRACT="pass"
-    ;;
-  dual)
-    [[ "${HTTP_DOH_TOKENIZED}" == "200" && "${HTTP_DOH_BARE}" == "200" ]] && DOH_CONTRACT="pass"
-    ;;
-esac
+  DNS53_RAW="$(dns_probe "${HOST}" 53)"
+  DNS53_STATE="${DNS53_RAW%%|*}"
+  DNS53_DATA="${DNS53_RAW#*|}"
 
-REMOTE_CONTRACT="pass"
-if [[ "${PORT_HTTPS}" != "open" || "${PORT_DOT}" != "open" || "${HTTPS_ROOT_CONTRACT}" != "pass" || "${DOH_CONTRACT}" != "pass" ]]; then
-  REMOTE_CONTRACT="fail"
+  HTTP_HTTPS_ROOT="$(http_code "$(https_url "/")")"
+  HTTP_HTTPS_ADMIN="$(http_code "$(https_url "/admin/")")"
+  HTTP_DOH_PRIMARY="$(http_code "${DOH_URL}")"
+  if [[ -n "${TOKENIZED_DOH_URL}" ]]; then
+    HTTP_DOH_TOKENIZED="$(http_code "${TOKENIZED_DOH_URL}")"
+  fi
+  if [[ -n "${BARE_DOH_URL}" ]]; then
+    HTTP_DOH_BARE="$(http_code "${BARE_DOH_URL}")"
+  fi
+
+  HTTPS_ROOT_CONTRACT="fail"
+  case "${HTTP_HTTPS_ROOT}" in
+    200|301|302|303|307|308|401) HTTPS_ROOT_CONTRACT="pass" ;;
+  esac
+
+  HTTPS_ADMIN_UI_CONTRACT="fail"
+  case "${HTTP_HTTPS_ADMIN}" in
+    200|301|302|303|307|308|401) HTTPS_ADMIN_UI_CONTRACT="pass" ;;
+  esac
+
+  DOH_CONTRACT="fail"
+  case "${DOH_ENDPOINT_MODE}" in
+    native)
+      [[ "${HTTP_DOH_BARE}" == "200" ]] && DOH_CONTRACT="pass"
+      ;;
+    tokenized)
+      [[ "${HTTP_DOH_TOKENIZED}" == "200" && "${HTTP_DOH_BARE}" != "200" ]] && DOH_CONTRACT="pass"
+      ;;
+    dual)
+      [[ "${HTTP_DOH_TOKENIZED}" == "200" && "${HTTP_DOH_BARE}" == "200" ]] && DOH_CONTRACT="pass"
+      ;;
+  esac
+
+  REMOTE_CONTRACT="pass"
+  if [[ "${PORT_HTTPS}" != "open" || "${PORT_DOT}" != "open" || "${HTTPS_ROOT_CONTRACT}" != "pass" || "${DOH_CONTRACT}" != "pass" ]]; then
+    REMOTE_CONTRACT="fail"
+  fi
 fi
 
 BENCHMARK_ENABLED=0
@@ -423,7 +448,7 @@ BENCHMARK_P95_MS="0.000"
 BENCHMARK_P99_MS="0.000"
 BENCHMARK_STATUS_DIST=""
 
-if (( BENCHMARK_REQUESTS > 0 )) && [[ -n "${DOH_URL}" ]]; then
+if (( RUN_NETWORK_CHECKS == 1 && BENCHMARK_REQUESTS > 0 )) && [[ -n "${DOH_URL}" ]]; then
   BENCHMARK_ENABLED=1
   tmp_results="$(mktemp)"
   tmp_sorted="$(mktemp)"

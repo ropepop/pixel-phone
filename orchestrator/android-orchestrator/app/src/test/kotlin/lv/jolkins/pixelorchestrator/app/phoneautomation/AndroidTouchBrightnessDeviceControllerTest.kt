@@ -297,6 +297,45 @@ class AndroidTouchBrightnessDeviceControllerTest {
   }
 
   @Test
+  fun panelSleepWakeClampWritesAndroidAndRawBrightnessEvenWhenPanelWasAlreadyZero() = runTest {
+    val rootExecutor = QueuedRootExecutor(
+      scriptResults = ArrayDeque(
+        listOf(
+          okResult(stdout = ""),
+          okResult(
+            stdout = """
+              mode=0
+              value=0
+              display_percentage=0.0
+              panel_path=/sys/class/backlight/panel0-backlight
+              panel_brightness=0
+              panel_actual_brightness=0
+              panel_max_brightness=3939
+            """.trimIndent()
+          )
+        )
+      )
+    )
+    val controller = AndroidTouchBrightnessDeviceController(
+      context = ContextWrapper(null),
+      rootExecutor = rootExecutor
+    )
+
+    val result = controller.clampPanelSleepForWake()
+
+    assertTrue(result.success)
+    assertEquals(2, rootExecutor.scripts.size)
+    assertTrue(rootExecutor.scripts[0].contains("settings put system screen_brightness_mode 0"))
+    assertTrue(rootExecutor.scripts[0].contains("cmd display set-brightness 0 --unit percentage"))
+    assertTrue(rootExecutor.scripts[0].contains("settings put system screen_brightness 0"))
+    assertTrue(rootExecutor.scripts[0].contains("panel_writes=${'$'}(( (250 + 50 - 1) / 50 ))"))
+    assertTrue(
+      rootExecutor.scripts[0].indexOf("echo \"${'$'}panel_target\" > \"${'$'}panel_dir/brightness\"") <
+        rootExecutor.scripts[0].indexOf("settings put system screen_brightness_mode 0")
+    )
+  }
+
+  @Test
   fun setBrightnessPercentZeroClampsPanelAroundInitialAndroidBrightnessWrites() = runTest {
     val rootExecutor = QueuedRootExecutor(
       scriptResults = ArrayDeque(

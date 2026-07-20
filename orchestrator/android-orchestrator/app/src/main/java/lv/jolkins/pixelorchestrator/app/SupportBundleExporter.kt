@@ -1,13 +1,17 @@
 package lv.jolkins.pixelorchestrator.app
 
 import android.content.Context
-import android.os.Environment
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import androidx.core.content.FileProvider
 import java.io.File
-import java.nio.charset.StandardCharsets
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import lv.jolkins.pixelorchestrator.app.cpufrequency.CpuFrequencyPreferencesStore
-import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationPreferencesStore
 import lv.jolkins.pixelorchestrator.coreconfig.SecretRedactor
 import lv.jolkins.pixelorchestrator.coreconfig.StackConfigV1
 import lv.jolkins.pixelorchestrator.coreconfig.StackStateV1
@@ -15,97 +19,100 @@ import lv.jolkins.pixelorchestrator.rootexec.RootExecutor
 
 class SupportBundleExporter(
   private val context: Context,
-  private val rootExecutor: RootExecutor,
+  @Suppress("UNUSED_PARAMETER") rootExecutor: RootExecutor,
   private val json: Json = Json { prettyPrint = true; encodeDefaults = true }
 ) : SupportBundleExporting {
+
+  init {
+    removeExistingBundles()
+  }
 
   override suspend fun export(
     config: StackConfigV1,
     state: StackStateV1,
     includeSecrets: Boolean
   ): File {
-    val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-      ?: context.filesDir
-    val bundleDir = File(downloadsDir, "pixel-stack-support")
+    val bundleDir = File(context.cacheDir, SUPPORT_CACHE_DIR)
     bundleDir.mkdirs()
+    removeExistingBundles()
 
-    val timestamp = System.currentTimeMillis() / 1000
-    val root = File(bundleDir, "bundle-$timestamp")
-    root.mkdirs()
+    val timestamp = System.currentTimeMillis() / 1_000
+    val target = File(bundleDir, "pixel-stack-support-$timestamp.zip")
+    val temporary = File(bundleDir, "${target.name}.tmp")
+    val redactedConfig = SecretRedactor.redact(config, includeSecrets = false)
+    val redactedState = redactState(state)
 
-    val redacted = SecretRedactor.redact(config, includeSecrets)
-
-    File(root, "health.json").writeText(
-      json.encodeToString(state.lastHealthSnapshot),
-      StandardCharsets.UTF_8
-    )
-
-    File(root, "config.json").writeText(
-      json.encodeToString(redacted),
-      StandardCharsets.UTF_8
-    )
-
-    File(root, "state.json").writeText(
-      json.encodeToString(state),
-      StandardCharsets.UTF_8
-    )
-
-    File(root, "phone-automation-state.json").writeText(
-      json.encodeToString(PhoneAutomationPreferencesStore(context).load()),
-      StandardCharsets.UTF_8
-    )
-
-    File(root, "cpu-frequency-state.json").writeText(
-      json.encodeToString(CpuFrequencyPreferencesStore(context).load()),
-      StandardCharsets.UTF_8
-    )
-
-    exportRootLogs(root)
-
-    return root
+    try {
+      ZipOutputStream(FileOutputStream(temporary)).use { zip ->
+        zip.putJson("config.json", json.encodeToString(redactedConfig))
+        zip.putJson("state.json", json.encodeToString(redactedState))
+        zip.putJson(
+          "cpu-frequency-state.json",
+          json.encodeToString(CpuFrequencyPreferencesStore(context).load())
+        )
+      }
+      check(temporary.renameTo(target)) { "Failed to finalize support archive" }
+      Handler(Looper.getMainLooper()).postDelayed({ target.delete() }, SUPPORT_ARCHIVE_TTL_MILLIS)
+      return target
+    } finally {
+      temporary.delete()
+    }
   }
 
-  private suspend fun exportRootLogs(root: File) {
-    val listResult = rootExecutor.run("if [ -d /data/local/pixel-stack/logs ]; then ls -1 /data/local/pixel-stack/logs; fi")
-    if (!listResult.ok) {
-      return
-    }
+  private fun ZipOutputStream.putJson(name: String, value: String) {
+    putNextEntry(ZipEntry(name))
+    write(value.toByteArray(Charsets.UTF_8))
+    closeEntry()
+  }
 
-    val names = listResult.stdout
-      .lineSequence()
-      .map { it.trim() }
-      .filter { it.isNotBlank() }
-      .toList()
-
-    for (name in names) {
-      val path = "/data/local/pixel-stack/logs/$name"
-      val readResult = rootExecutor.run("cat '${path.replace("'", "'\"'\"'")}'")
-      if (readResult.ok) {
-        val target = File(root, "logs/$name")
-        target.parentFile?.mkdirs()
-        target.writeText(readResult.stdout, StandardCharsets.UTF_8)
-      } else {
-        val target = File(root, "logs/$name.error.txt")
-        target.parentFile?.mkdirs()
-        target.writeText(readResult.stderr, StandardCharsets.UTF_8)
+  private fun removeExistingBundles() {
+    val bundleDir = File(context.cacheDir, SUPPORT_CACHE_DIR)
+    bundleDir.listFiles()?.forEach { candidate ->
+      if (candidate.isFile &&
+        (candidate.name.matches(SUPPORT_ARCHIVE_PATTERN) || candidate.name.endsWith(".zip.tmp"))
+      ) {
+        candidate.delete()
       }
     }
+  }
 
-    val runDirResult = rootExecutor.run("if [ -d /data/local/pixel-stack/run ]; then ls -1 /data/local/pixel-stack/run; fi")
-    if (!runDirResult.ok) {
-      return
+  companion object {
+    const val FILE_PROVIDER_AUTHORITY = "lv.jolkins.pixelorchestrator.support"
+    private const val SUPPORT_CACHE_DIR = "support-bundles"
+    private const val SUPPORT_ARCHIVE_TTL_MILLIS = 24L * 60L * 60L * 1_000L
+    private val SUPPORT_ARCHIVE_PATTERN = Regex("pixel-stack-support-[0-9]+\\.zip")
+
+    fun contentUri(context: Context, archive: File): Uri {
+      require(archive.parentFile?.canonicalFile == File(context.cacheDir, SUPPORT_CACHE_DIR).canonicalFile) {
+        "Support archive must be inside the private support cache"
+      }
+      return FileProvider.getUriForFile(context, FILE_PROVIDER_AUTHORITY, archive)
     }
 
-    for (name in runDirResult.stdout.lineSequence().map { it.trim() }.filter { it.isNotBlank() }) {
-      if (name.endsWith(".pid") || name.startsWith("ddns-last-") || name.startsWith("pihole-") || name.startsWith("adguardhome-")) {
-        val path = "/data/local/pixel-stack/run/$name"
-        val readResult = rootExecutor.run("cat '${path.replace("'", "'\"'\"'")}' 2>/dev/null || true")
-        if (readResult.ok) {
-          val target = File(root, "run/$name")
-          target.parentFile?.mkdirs()
-          target.writeText(readResult.stdout, StandardCharsets.UTF_8)
-        }
-      }
+    fun deleteArchive(context: Context, uri: Uri): Boolean {
+      if (uri.authority != FILE_PROVIDER_AUTHORITY) return false
+      val archiveName = uri.lastPathSegment.orEmpty()
+      if (!archiveName.matches(SUPPORT_ARCHIVE_PATTERN)) return false
+      val supportDir = File(context.cacheDir, SUPPORT_CACHE_DIR).canonicalFile
+      val archive = File(supportDir, archiveName).canonicalFile
+      if (archive.parentFile != supportDir) return false
+      return !archive.exists() || archive.delete()
+    }
+
+    internal fun redactState(state: StackStateV1): StackStateV1 {
+      return state.copy(
+        lastNetworkFingerprint = "",
+        lastObservedPublicIpv4 = "",
+        services = state.services.mapValues { (_, service) -> service.copy(lastFailureReason = "") },
+        moduleState = state.moduleState.mapValues { (_, module) -> module.copy(details = emptyMap()) },
+        lastHealthSnapshot = state.lastHealthSnapshot.copy(
+          moduleHealth = state.lastHealthSnapshot.moduleHealth.mapValues { (_, module) ->
+            module.copy(details = emptyMap())
+          },
+          evidence = emptyMap()
+        ),
+        operationLog = state.operationLog.map { event -> event.copy(details = "") }
+      )
     }
   }
 }

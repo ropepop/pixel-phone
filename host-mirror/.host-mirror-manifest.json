@@ -15,20 +15,35 @@
       "sha256": "33c22d25f4a75588293b59cfd42af6f26c659b6018f5ae83894919d5e6f3c615",
       "size": 60
     },
+    "data/local/pixel-stack/conf/apps/chatgpt-broker.env": {
+      "mode": 384,
+      "sha256": "b9b6b91b80fb062c71591633e305fe1b6412b62267dbcdb8cdce4f227da160b1",
+      "size": 1054
+    },
     "data/local/pixel-stack/conf/apps/codex-mv-test": {
-      "mode": 420,
+      "mode": 384,
       "sha256": "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2",
       "size": 5
     },
     "data/local/pixel-stack/conf/apps/codex-small": {
-      "mode": 420,
+      "mode": 384,
       "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
       "size": 3
     },
     "data/local/pixel-stack/conf/apps/codex-small-dot.json": {
-      "mode": 420,
+      "mode": 384,
       "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
       "size": 3
+    },
+    "data/local/pixel-stack/conf/apps/pixel-orchestrator-observability-token": {
+      "mode": 384,
+      "sha256": "b1761e5eeecb3850bd6bfbd9b0f653240c9fd5310e476964d2425ca95a3e7115",
+      "size": 387
+    },
+    "data/local/pixel-stack/conf/apps/pixel-orchestrator-observability.env": {
+      "mode": 384,
+      "sha256": "fba0e2ab64f94900bf0f050f0dc4576d5bae2638aa964678a848160a0a56d1a5",
+      "size": 277
     },
     "data/local/pixel-stack/conf/apps/satiksme-bot-cloudflared.json": {
       "mode": 384,
@@ -80,6 +95,11 @@
       "sha256": "d961d4233dc7b9fe9fadc994c62960f4e8846e131e074b663ebe3365697d9e16",
       "size": 175
     },
+    "data/local/pixel-stack/conf/apps/ticket-screen-spacetime-token": {
+      "mode": 384,
+      "sha256": "28ad686dc207890746c88d4e1df2ba5edd24f54ae88ac8df725226db306edcc3",
+      "size": 690
+    },
     "data/local/pixel-stack/conf/apps/ticket-screen-vivi-login.env": {
       "mode": 384,
       "sha256": "ab74618f098ed6402b8773485dca1c3ddb20539954a3defd3f90b3908c7f52e9",
@@ -87,11 +107,11 @@
     },
     "data/local/pixel-stack/conf/apps/ticket-screen.env": {
       "mode": 384,
-      "sha256": "5d2e11b52cb4129de319c40ae5d3d6bb0bb8535f41b2f7b53682f653504d3989",
-      "size": 400
+      "sha256": "7159b5f0efb8f51dd12a9ab57091a11b6e0b3b003cad23003ad5c38a5eec3c45",
+      "size": 521
     },
     "data/local/pixel-stack/conf/apps/train-bot-cloudflared": {
-      "mode": 420,
+      "mode": 384,
       "sha256": "edeaaff3f1774ad2888673770c6d64097e391bc362d7d6fb34982ddf0efd18cb",
       "size": 4
     },
@@ -116,7 +136,7 @@
       "size": 2022
     },
     "data/local/pixel-stack/conf/apps/trainbotcloudflaredjson": {
-      "mode": 420,
+      "mode": 384,
       "sha256": "edeaaff3f1774ad2888673770c6d64097e391bc362d7d6fb34982ddf0efd18cb",
       "size": 4
     },
@@ -145,35 +165,30 @@
       "sha256": "e3b767c1023cf63936d6dd2692bfd42f03926550407c5f8db21f6418c2e6258a",
       "size": 25
     },
-    "data/local/pixel-stack/conf/runtime/components/dns/release-manifest.json": {
-      "mode": 384,
-      "sha256": "85ddd3264cd5d16132944baac172336863d3f5793bf564e006558051d2629244",
-      "size": 805
-    },
     "data/local/pixel-stack/conf/runtime/components/satiksme_bot/release-manifest.json": {
       "mode": 384,
-      "sha256": "c8513e64b76053842dfa94447cceb19f051faa4a935caa18b78ad94aaeaee631",
-      "size": 588
+      "sha256": "4cf05b6d58aa7be6a9a40a7bcabb07cc657e1c153e089a1dd87c8a8c195ab8d6",
+      "size": 569
     },
     "data/local/pixel-stack/conf/runtime/components/site_notifier/release-manifest.json": {
       "mode": 384,
-      "sha256": "e14c8a492771de0d95d63d62486c22d6335347cc75edcdbd19c9b31f55e61725",
-      "size": 558
+      "sha256": "0d7d0a8b49811af2e86a40a5f8cc2f07056f8d63102ea733369522fa245382d6",
+      "size": 549
     },
     "data/local/pixel-stack/conf/runtime/components/subscription_bot/release-manifest.json": {
       "mode": 384,
-      "sha256": "aeef63004236f710dc1ba840a1095863467b4ff68f17d5ebeb3406aa261feddd",
-      "size": 581
+      "sha256": "7b5bd2ea08886874b19a173988d73882723b58363bb75ffa49e0a08e7bdf0708",
+      "size": 563
     },
     "data/local/pixel-stack/conf/runtime/components/train_bot/release-manifest.json": {
       "mode": 384,
-      "sha256": "0f74ae0e59ba8b21af5e13596915957415333e4738ce9090902e48095b4c758d",
-      "size": 564
+      "sha256": "e09d8d220b6d2f51bb9133e076455367df61717aa3af2e971bd6dda4b537963a",
+      "size": 554
     },
     "data/local/pixel-stack/conf/runtime/runtime-manifest.json": {
       "mode": 384,
-      "sha256": "0cd7d0b89615f35973c1cacff05734e0247da6a9e543fa76f3e1ffb721b9ef94",
-      "size": 1377
+      "sha256": "37762df0c5032304f7340bdc8cae3830b45c6d5c2824aa9494ecee510d11ce53",
+      "size": 848
     },
     "data/local/pixel-stack/conf/ssh/authorized_keys": {
       "mode": 384,
@@ -197,5 +212,5 @@
     }
   },
   "profile": "pixel",
-  "updatedEpochSeconds": 1781641547
+  "updatedEpochSeconds": 1783900735
 }

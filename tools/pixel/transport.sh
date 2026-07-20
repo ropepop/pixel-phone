@@ -15,11 +15,21 @@ PIXEL_SSH_HOST="${PIXEL_SSH_HOST:-}"
 PIXEL_SSH_PORT="${PIXEL_SSH_PORT:-2222}"
 PIXEL_SSH_USER="${PIXEL_SSH_USER:-root}"
 PIXEL_SSH_CONNECT_TIMEOUT_SEC="${PIXEL_SSH_CONNECT_TIMEOUT_SEC:-10}"
+PIXEL_TRANSPORT_PROBE_TIMEOUT_SEC="${PIXEL_TRANSPORT_PROBE_TIMEOUT_SEC:-10}"
+PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC="${PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC:-120}"
+PIXEL_TRANSPORT_TRANSFER_TIMEOUT_SEC="${PIXEL_TRANSPORT_TRANSFER_TIMEOUT_SEC:-900}"
+PIXEL_TRANSPORT_RESOLUTION_TTL_SEC="${PIXEL_TRANSPORT_RESOLUTION_TTL_SEC:-30}"
+PIXEL_SSH_CONTROL_PERSIST_SEC="${PIXEL_SSH_CONTROL_PERSIST_SEC:-60}"
 PIXEL_SSH_KNOWN_HOSTS_FILE="${PIXEL_SSH_KNOWN_HOSTS_FILE:-${HOME}/.ssh/known_hosts}"
 PIXEL_TAILSCALE_BIN="${PIXEL_TAILSCALE_BIN:-}"
+PIXEL_TRANSPORT_CONTROL_DIR="${PIXEL_TRANSPORT_CONTROL_DIR:-${PIXEL_TRANSPORT_FORWARD_DIR}/control}"
+PIXEL_TRANSPORT_TIMING_FILE="${PIXEL_TRANSPORT_TIMING_FILE:-${PIXEL_PHASE_TIMINGS_FILE:-}}"
+PIXEL_TRANSPORT_DEVICE_READY="${PIXEL_TRANSPORT_DEVICE_READY:-0}"
+PIXEL_TRANSPORT_DEVICE_CACHE_KEY="${PIXEL_TRANSPORT_DEVICE_CACHE_KEY:-}"
+PIXEL_TRANSPORT_DEVICE_CACHE_AT_SECONDS="${PIXEL_TRANSPORT_DEVICE_CACHE_AT_SECONDS:--1}"
 ADB_BIN="${ADB_BIN:-adb}"
 
-mkdir -p "${PIXEL_TRANSPORT_FORWARD_DIR}" "$(dirname "${PIXEL_SSH_KNOWN_HOSTS_FILE}")"
+mkdir -p "${PIXEL_TRANSPORT_FORWARD_DIR}" "${PIXEL_TRANSPORT_CONTROL_DIR}" "$(dirname "${PIXEL_SSH_KNOWN_HOSTS_FILE}")"
 
 pixel_transport_usage() {
   cat <<'USAGE'
@@ -120,11 +130,80 @@ pixel_transport_exec_join() {
   printf '%s\n' "${joined# }"
 }
 
+pixel_transport_run_bounded() {
+  local timeout_seconds="$1"
+  shift
+  python3 -c '
+import subprocess
+import sys
+
+timeout_seconds = float(sys.argv[1])
+try:
+    completed = subprocess.run(sys.argv[2:], timeout=timeout_seconds, check=False)
+except subprocess.TimeoutExpired:
+    raise SystemExit(124)
+raise SystemExit(completed.returncode)
+' "${timeout_seconds}" "$@"
+}
+
+pixel_transport_adb_run() {
+  local timeout_seconds="$1"
+  shift
+  pixel_transport_run_bounded "${timeout_seconds}" "${ADB_BIN}" -s "${ADB_SERIAL}" "$@"
+}
+
+pixel_transport_timing_now_ms() {
+  [[ -n "${PIXEL_TRANSPORT_TIMING_FILE}" ]] || {
+    printf '0\n'
+    return 0
+  }
+  python3 -c 'import time; print(time.monotonic_ns() // 1_000_000)'
+}
+
+pixel_transport_timing_event() {
+  local phase="$1"
+  local started_ms="$2"
+  local cache_hit="$3"
+  local now_ms=""
+  [[ -n "${PIXEL_TRANSPORT_TIMING_FILE}" ]] || return 0
+  mkdir -p "$(dirname "${PIXEL_TRANSPORT_TIMING_FILE}")"
+  now_ms="$(pixel_transport_timing_now_ms)"
+  printf '{"script":"pixel_transport","phase":"%s","durationMs":%d,"cacheHit":%s,"transport":"%s"}\n' \
+    "${phase}" "$((now_ms - started_ms))" "${cache_hit}" "${PIXEL_TRANSPORT_RESOLVED:-unresolved}" >> "${PIXEL_TRANSPORT_TIMING_FILE}"
+}
+
+pixel_transport_cache_key() {
+  printf '%s|%s|%s|%s|%s|%s\n' \
+    "${PIXEL_TRANSPORT}" "${PIXEL_TRANSPORT_RESOLVED}" "${ADB_SERIAL:-}" \
+    "${PIXEL_SSH_USER}" "${PIXEL_SSH_HOST}" "${PIXEL_SSH_PORT}"
+}
+
+pixel_transport_cache_valid() {
+  local age_seconds=0
+  (( PIXEL_TRANSPORT_DEVICE_READY == 1 )) || return 1
+  [[ "${PIXEL_TRANSPORT_DEVICE_CACHE_KEY}" == "$(pixel_transport_cache_key)" ]] || return 1
+  (( PIXEL_TRANSPORT_RESOLUTION_TTL_SEC > 0 )) || return 1
+  age_seconds=$((SECONDS - PIXEL_TRANSPORT_DEVICE_CACHE_AT_SECONDS))
+  (( age_seconds >= 0 && age_seconds < PIXEL_TRANSPORT_RESOLUTION_TTL_SEC ))
+}
+
+pixel_transport_invalidate_cache() {
+  PIXEL_TRANSPORT_DEVICE_READY=0
+  PIXEL_TRANSPORT_DEVICE_CACHE_KEY=""
+  PIXEL_TRANSPORT_DEVICE_CACHE_AT_SECONDS=-1
+}
+
+pixel_transport_mark_ready() {
+  PIXEL_TRANSPORT_DEVICE_READY=1
+  PIXEL_TRANSPORT_DEVICE_CACHE_KEY="$(pixel_transport_cache_key)"
+  PIXEL_TRANSPORT_DEVICE_CACHE_AT_SECONDS="${SECONDS}"
+}
+
 pixel_transport_resolve_adb() {
   pixel_transport_require_cmd "${ADB_BIN}" || return 1
 
   if [[ -n "${ADB_SERIAL:-}" ]]; then
-    "${ADB_BIN}" -s "${ADB_SERIAL}" get-state >/dev/null 2>&1 || {
+    pixel_transport_adb_run "${PIXEL_TRANSPORT_PROBE_TIMEOUT_SEC}" get-state >/dev/null 2>&1 || {
       echo "Device ${ADB_SERIAL} is not reachable via adb" >&2
       return 1
     }
@@ -135,7 +214,7 @@ pixel_transport_resolve_adb() {
   local line=""
   while IFS= read -r line; do
     [[ -n "${line}" ]] && devices+=("${line}")
-  done < <("${ADB_BIN}" devices | awk 'NR>1 && $2=="device" {print $1}')
+  done < <(pixel_transport_run_bounded "${PIXEL_TRANSPORT_PROBE_TIMEOUT_SEC}" "${ADB_BIN}" devices | awk 'NR>1 && $2=="device" {print $1}')
 
   if (( ${#devices[@]} == 1 )); then
     ADB_SERIAL="${devices[0]}"
@@ -147,7 +226,7 @@ pixel_transport_resolve_adb() {
   else
     echo "Multiple adb devices found; pass --device" >&2
   fi
-  "${ADB_BIN}" devices -l >&2 || true
+  pixel_transport_run_bounded "${PIXEL_TRANSPORT_PROBE_TIMEOUT_SEC}" "${ADB_BIN}" devices -l >&2 || true
   return 1
 }
 
@@ -176,7 +255,7 @@ pixel_transport_resolve_tailscale_bin() {
 pixel_transport_tailscale_status_json() {
   local tailscale_bin=""
   tailscale_bin="$(pixel_transport_resolve_tailscale_bin)" || return 1
-  "${tailscale_bin}" status --json
+  pixel_transport_run_bounded "${PIXEL_TRANSPORT_PROBE_TIMEOUT_SEC}" "${tailscale_bin}" status --json
 }
 
 pixel_transport_check_tailscale() {
@@ -223,14 +302,14 @@ pixel_transport_tcp_probe() {
   local host="$1"
   local port="$2"
 
-  python3 - "${host}" "${port}" <<'PY'
+  python3 - "${host}" "${port}" "${PIXEL_TRANSPORT_PROBE_TIMEOUT_SEC}" <<'PY'
 import socket
 import sys
 
 host = sys.argv[1]
 port = int(sys.argv[2])
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.settimeout(5)
+sock.settimeout(float(sys.argv[3]))
 try:
     sock.connect((host, port))
 except OSError:
@@ -242,6 +321,11 @@ PY
 
 pixel_transport_build_ssh_args() {
   local ref_name="$1"
+  local host_key=""
+  local control_path=""
+  host_key="${PIXEL_SSH_HOST//[^[:alnum:]]/_}"
+  host_key="${host_key:0:32}-${#PIXEL_SSH_HOST}"
+  control_path="${PIXEL_TRANSPORT_CONTROL_DIR}/ssh-${PIXEL_SSH_USER}-${host_key}-${PIXEL_SSH_PORT}.sock"
   eval "${ref_name}=()"
   eval "${ref_name}+=(-o LogLevel=ERROR)"
   eval "${ref_name}+=(-o StrictHostKeyChecking=accept-new)"
@@ -251,14 +335,25 @@ pixel_transport_build_ssh_args() {
   eval "${ref_name}+=(-o KbdInteractiveAuthentication=yes)"
   eval "${ref_name}+=(-o NumberOfPasswordPrompts=1)"
   eval "${ref_name}+=(-o ConnectTimeout=\"\${PIXEL_SSH_CONNECT_TIMEOUT_SEC}\")"
+  eval "${ref_name}+=(-o ConnectionAttempts=1)"
+  eval "${ref_name}+=(-o ServerAliveInterval=10)"
+  eval "${ref_name}+=(-o ServerAliveCountMax=2)"
+  eval "${ref_name}+=(-o ControlMaster=auto)"
+  eval "${ref_name}+=(-o ControlPersist=\"\${PIXEL_SSH_CONTROL_PERSIST_SEC}\")"
+  eval "${ref_name}+=(-o ControlPath=\"\${control_path}\")"
 }
 
 pixel_transport_expect_run() {
   local program="$1"
+  local command_timeout="${PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC}"
   shift
 
-EXPECT_PROGRAM="${program}" PIXEL_DEVICE_SSH_PASSWORD="${PIXEL_DEVICE_SSH_PASSWORD:-}" expect -f /dev/stdin -- "$@" <<'EOF'
-set timeout -1
+  if [[ "${program}" == "scp" ]]; then
+    command_timeout="${PIXEL_TRANSPORT_TRANSFER_TIMEOUT_SEC}"
+  fi
+
+EXPECT_PROGRAM="${program}" EXPECT_TIMEOUT_SEC="${command_timeout}" PIXEL_DEVICE_SSH_PASSWORD="${PIXEL_DEVICE_SSH_PASSWORD:-}" expect -f /dev/stdin -- "$@" <<'EOF'
+set timeout $env(EXPECT_TIMEOUT_SEC)
 if {![info exists env(PIXEL_DEVICE_SSH_PASSWORD)] || $env(PIXEL_DEVICE_SSH_PASSWORD) eq ""} {
   puts stderr "PIXEL_DEVICE_SSH_PASSWORD is not set"
   exit 96
@@ -271,15 +366,15 @@ set output ""
 expect {
   -re "(?i)are you sure you want to continue connecting.*" {
     send -- "yes\r"
-    exp_continue
+    exp_continue -continue_timer
   }
   -re "(?i)(password|passphrase).*:" {
     send -- "$password\r"
-    exp_continue
+    exp_continue -continue_timer
   }
   -re ".+" {
     append output $expect_out(buffer)
-    exp_continue
+    exp_continue -continue_timer
   }
   eof {
     append output $expect_out(buffer)
@@ -287,6 +382,12 @@ expect {
     catch wait result
     set rc [lindex $result 3]
     exit $rc
+  }
+  timeout {
+    catch close
+    catch wait
+    puts stderr "$program timed out after $env(EXPECT_TIMEOUT_SEC) seconds"
+    exit 124
   }
 }
 EOF
@@ -357,11 +458,27 @@ pixel_transport_host_ssh_ready() {
   pixel_transport_tcp_probe "${PIXEL_SSH_HOST}" "${PIXEL_SSH_PORT}" || return 1
 
   local probe_output=""
-  probe_output="$(pixel_transport_ssh_remote_probe 2>/dev/null)" || return 1
+  probe_output="$(PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC="${PIXEL_TRANSPORT_PROBE_TIMEOUT_SEC}" pixel_transport_ssh_remote_probe 2>/dev/null)" || return 1
   printf '%s\n' "${probe_output}" | pixel_transport_validate_management_probe >/dev/null || return 1
 }
 
 pixel_transport_require_device() {
+  local timing_started_ms="0"
+  local had_cached_resolution="${PIXEL_TRANSPORT_DEVICE_READY}"
+  timing_started_ms="$(pixel_transport_timing_now_ms)"
+
+  if pixel_transport_cache_valid; then
+    pixel_transport_timing_event "resolve" "${timing_started_ms}" 1
+    return 0
+  fi
+
+  if (( had_cached_resolution == 1 )); then
+    pixel_transport_invalidate_cache
+    if [[ "${PIXEL_TRANSPORT}" == "auto" ]]; then
+      PIXEL_TRANSPORT_RESOLVED=""
+    fi
+  fi
+
   case "${PIXEL_TRANSPORT}" in
     adb|ssh)
       if [[ -z "${PIXEL_TRANSPORT_RESOLVED}" ]]; then
@@ -388,16 +505,19 @@ pixel_transport_require_device() {
 
   case "${PIXEL_TRANSPORT_RESOLVED}" in
     adb)
-      pixel_transport_resolve_adb
+      pixel_transport_resolve_adb || return 1
       ;;
     ssh)
-      pixel_transport_require_ssh_client
+      pixel_transport_require_ssh_client || return 1
       ;;
     *)
       echo "Unsupported resolved transport: ${PIXEL_TRANSPORT_RESOLVED}" >&2
       return 1
       ;;
   esac
+
+  pixel_transport_mark_ready
+  pixel_transport_timing_event "resolve" "${timing_started_ms}" 0
 }
 
 pixel_transport_require_root() {
@@ -415,7 +535,7 @@ pixel_transport_shell() {
 
   case "${PIXEL_TRANSPORT_RESOLVED}" in
     adb)
-      printf '%s\n' "${command}" | "${ADB_BIN}" -s "${ADB_SERIAL}" shell "/system/bin/sh -s"
+      printf '%s\n' "${command}" | pixel_transport_adb_run "${PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC}" shell "/system/bin/sh -s"
       ;;
     ssh)
       pixel_transport_ssh_remote_shell "${command}"
@@ -429,7 +549,7 @@ pixel_transport_root_shell() {
 
   case "${PIXEL_TRANSPORT_RESOLVED}" in
     adb)
-      printf '%s\n' "${command}" | "${ADB_BIN}" -s "${ADB_SERIAL}" shell "su -c '/system/bin/sh -s'"
+      printf '%s\n' "${command}" | pixel_transport_adb_run "${PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC}" shell "su -c '/system/bin/sh -s'"
       ;;
     ssh)
       pixel_transport_ssh_remote_shell "${command}"
@@ -448,7 +568,7 @@ pixel_transport_root_shell_stdin() {
 
   case "${PIXEL_TRANSPORT_RESOLVED}" in
     adb)
-      "${ADB_BIN}" -s "${ADB_SERIAL}" shell "su -c '/system/bin/sh -s'" < /dev/stdin
+      pixel_transport_adb_run "${PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC}" shell "su -c '/system/bin/sh -s'" < /dev/stdin
       ;;
     ssh)
       local local_script="" remote_script="" rc=0
@@ -489,8 +609,8 @@ pixel_transport_push() {
       remote_parent="$(dirname "${remote_path}")"
       stage_path_quoted="$(pixel_transport_single_quote "${stage_path}")"
       remote_path_quoted="$(pixel_transport_single_quote "${remote_path}")"
-      "${ADB_BIN}" -s "${ADB_SERIAL}" shell "mkdir -p /data/local/tmp" < /dev/null >/dev/null
-      "${ADB_BIN}" -s "${ADB_SERIAL}" push "${local_path}" "${stage_path}" < /dev/null >/dev/null
+      pixel_transport_adb_run "${PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC}" shell "mkdir -p /data/local/tmp" < /dev/null >/dev/null
+      pixel_transport_adb_run "${PIXEL_TRANSPORT_TRANSFER_TIMEOUT_SEC}" push "${local_path}" "${stage_path}" < /dev/null >/dev/null
       pixel_transport_root_exec mkdir -p "${remote_parent}" >/dev/null
       pixel_transport_root_shell "
         set -e
@@ -502,7 +622,7 @@ pixel_transport_push() {
         cp -a \"\${stage_path}\" \"\${remote_path}\"
         rm -rf \"\${stage_path}\"
       "
-      "${ADB_BIN}" -s "${ADB_SERIAL}" shell "rm -rf $(pixel_transport_single_quote "${stage_path}")" < /dev/null >/dev/null 2>&1 || true
+      pixel_transport_adb_run "${PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC}" shell "rm -rf $(pixel_transport_single_quote "${stage_path}")" < /dev/null >/dev/null 2>&1 || true
       ;;
     ssh)
       local -a scp_args=()
@@ -527,7 +647,7 @@ pixel_transport_pull() {
       stage_path="/data/local/tmp/pixel-transport-pull-$$-${RANDOM}-$(basename "${remote_path}")"
       pixel_transport_root_exec cp -a "${remote_path}" "${stage_path}"
       pixel_transport_root_exec chmod 0644 "${stage_path}" >/dev/null 2>&1 || true
-      "${ADB_BIN}" -s "${ADB_SERIAL}" pull "${stage_path}" "${local_path}" < /dev/null >/dev/null
+      pixel_transport_adb_run "${PIXEL_TRANSPORT_TRANSFER_TIMEOUT_SEC}" pull "${stage_path}" "${local_path}" < /dev/null >/dev/null
       pixel_transport_root_exec rm -rf "${stage_path}" >/dev/null 2>&1 || true
       ;;
     ssh)
@@ -544,7 +664,7 @@ pixel_transport_install_apk() {
 
   case "${PIXEL_TRANSPORT_RESOLVED}" in
     adb)
-      "${ADB_BIN}" -s "${ADB_SERIAL}" install -r "${apk_path}" < /dev/null
+      pixel_transport_adb_run "${PIXEL_TRANSPORT_TRANSFER_TIMEOUT_SEC}" install -r "${apk_path}" < /dev/null
       ;;
     ssh)
       local remote_apk="/data/local/tmp/$(basename "${apk_path}")"
@@ -563,27 +683,39 @@ pixel_transport_remote_file_exists() {
 pixel_transport_remote_sha256_file() {
   local remote_path="$1"
   local raw=""
-  local quoted_path=""
-  quoted_path="$(pixel_transport_single_quote "${remote_path}")"
-  raw="$(
-    pixel_transport_root_shell "
-      f=${quoted_path}
-      if [ ! -f \${f} ]; then
-        printf 'MISSING\n'
-        exit 0
-      fi
-      if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum \${f}
-      elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 \${f}
-      elif command -v toybox >/dev/null 2>&1; then
-        toybox sha256sum \${f}
-      else
-        printf 'UNKNOWN\n'
-      fi
-    " 2>/dev/null | tr -d '\r' | sed -n '1p'
-  )"
-  printf '%s\n' "${raw%% *}"
+  raw="$(pixel_transport_remote_sha256_files "${remote_path}" 2>/dev/null | sed -n '1p')"
+  printf '%s\n' "${raw:-UNKNOWN}"
+}
+
+pixel_transport_remote_sha256_files() {
+  (( $# > 0 )) || return 0
+
+  local remote_path=""
+  local remote_script='hash_one() {
+  f="$1"
+  if [ ! -f "$f" ]; then
+    printf "MISSING\n"
+    return 0
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    result=$(sha256sum "$f")
+  elif command -v shasum >/dev/null 2>&1; then
+    result=$(shasum -a 256 "$f")
+  elif command -v toybox >/dev/null 2>&1; then
+    result=$(toybox sha256sum "$f")
+  else
+    printf "UNKNOWN\n"
+    return 0
+  fi
+  printf "%s\n" "${result%% *}"
+}
+'
+
+  for remote_path in "$@"; do
+    remote_script+="hash_one $(pixel_transport_single_quote "${remote_path}")"$'\n'
+  done
+
+  pixel_transport_root_shell "${remote_script}" | tr -d '\r'
 }
 
 pixel_transport_remote_cat() {
@@ -607,8 +739,8 @@ pixel_transport_forward_start() {
 
   case "${PIXEL_TRANSPORT_RESOLVED}" in
     adb)
-      "${ADB_BIN}" -s "${ADB_SERIAL}" forward --remove "tcp:${local_port}" >/dev/null 2>&1 || true
-      "${ADB_BIN}" -s "${ADB_SERIAL}" forward "tcp:${local_port}" "tcp:${remote_port}" >/dev/null
+      pixel_transport_adb_run "${PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC}" forward --remove "tcp:${local_port}" >/dev/null 2>&1 || true
+      pixel_transport_adb_run "${PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC}" forward "tcp:${local_port}" "tcp:${remote_port}" >/dev/null
       ;;
     ssh)
       local socket_file="${PIXEL_TRANSPORT_FORWARD_DIR}/ssh-forward-${local_port}.sock"
@@ -627,7 +759,7 @@ pixel_transport_forward_stop() {
   case "${PIXEL_TRANSPORT_RESOLVED:-${PIXEL_TRANSPORT}}" in
     adb|auto)
       if [[ -n "${ADB_SERIAL:-}" ]] && command -v "${ADB_BIN}" >/dev/null 2>&1; then
-        "${ADB_BIN}" -s "${ADB_SERIAL}" forward --remove "tcp:${local_port}" >/dev/null 2>&1 || true
+        pixel_transport_adb_run "${PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC}" forward --remove "tcp:${local_port}" >/dev/null 2>&1 || true
       fi
       ;;
     ssh)

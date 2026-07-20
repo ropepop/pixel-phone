@@ -14,7 +14,7 @@ class TicketViviPageEnforcerTest {
   fun leavesTicketDetailAlone() {
     val xml = ticketDetailXml()
 
-    assertNull(TicketViviPageEnforcer.actionForHierarchy(xml))
+    assertNull(LegacyTicketViviPageEnforcer.actionForHierarchy(xml))
     assertEquals(true, TicketViviPageEnforcer.isTicketDetail(xml))
   }
 
@@ -33,7 +33,7 @@ class TicketViviPageEnforcerTest {
 
     assertEquals(TicketViviRecoveryState.TICKET_DETAIL, TicketViviPageEnforcer.classifyForRecovery(xml))
     assertTrue(TicketViviPageEnforcer.isTicketDetail(xml))
-    assertTrue(TicketViviPageEnforcer.hasTicketCodeGraphicForHierarchy(xml))
+    assertTrue(LegacyTicketViviPageEnforcer.hasTicketCodeGraphicForHierarchy(xml))
     assertNull(TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml))
   }
 
@@ -60,7 +60,7 @@ class TicketViviPageEnforcerTest {
       </hierarchy>
     """.trimIndent()
 
-    val action = TicketViviPageEnforcer.actionForHierarchy(xml)
+    val action = LegacyTicketViviPageEnforcer.actionForHierarchy(xml)
 
     assertEquals("open_fresh_time_ticket_card", action?.reason)
     assertEquals(540, action?.x)
@@ -110,7 +110,7 @@ class TicketViviPageEnforcerTest {
     val xml = loginScreenXml()
 
     assertEquals(TicketViviRecoveryState.LOGIN_REQUIRED, TicketViviPageEnforcer.classifyForRecovery(xml))
-    assertNull(TicketViviPageEnforcer.actionForHierarchy(xml))
+    assertNull(LegacyTicketViviPageEnforcer.actionForHierarchy(xml))
     assertNull(TicketViviPageEnforcer.recoveryActionForHierarchy(xml))
   }
 
@@ -149,7 +149,7 @@ class TicketViviPageEnforcerTest {
     """.trimIndent()
 
     assertEquals(TicketViviRecoveryState.AUTH_ATTENTION_REQUIRED, TicketViviPageEnforcer.classifyForRecovery(xml))
-    assertNull(TicketViviPageEnforcer.actionForHierarchy(xml))
+    assertNull(LegacyTicketViviPageEnforcer.actionForHierarchy(xml))
     assertNull(TicketViviPageEnforcer.recoveryActionForHierarchy(xml))
   }
 
@@ -164,7 +164,7 @@ class TicketViviPageEnforcerTest {
     """.trimIndent()
 
     assertEquals(TicketViviRecoveryState.AUTH_ATTENTION_REQUIRED, TicketViviPageEnforcer.classifyForRecovery(xml))
-    assertNull(TicketViviPageEnforcer.actionForHierarchy(xml))
+    assertNull(LegacyTicketViviPageEnforcer.actionForHierarchy(xml))
     assertNull(TicketViviPageEnforcer.recoveryActionForHierarchy(xml))
   }
 
@@ -213,7 +213,7 @@ class TicketViviPageEnforcerTest {
       </hierarchy>
     """.trimIndent()
 
-    val action = TicketViviPageEnforcer.actionForHierarchy(xml)
+    val action = LegacyTicketViviPageEnforcer.actionForHierarchy(xml)
 
     assertEquals("open_tickets_tab", action?.reason)
     assertEquals(405, action?.x)
@@ -232,7 +232,7 @@ class TicketViviPageEnforcerTest {
       </hierarchy>
     """.trimIndent()
 
-    val action = TicketViviPageEnforcer.actionForHierarchy(xml)
+    val action = LegacyTicketViviPageEnforcer.actionForHierarchy(xml)
 
     assertEquals(TicketViviRecoveryState.OTHER_VIVI_TAB, TicketViviPageEnforcer.classifyForRecovery(xml))
     assertEquals("open_tickets_tab", action?.reason)
@@ -254,7 +254,7 @@ class TicketViviPageEnforcerTest {
     """.trimIndent()
 
     val recoveryAction = TicketViviPageEnforcer.recoveryActionForHierarchy(xml)
-    val genericAction = TicketViviPageEnforcer.actionForHierarchy(xml)
+    val genericAction = LegacyTicketViviPageEnforcer.actionForHierarchy(xml)
 
     assertEquals(TicketViviRecoveryState.OTHER_VIVI_TAB, TicketViviPageEnforcer.classifyForRecovery(xml))
     assertEquals("open_tickets_tab", recoveryAction?.reason)
@@ -329,7 +329,7 @@ class TicketViviPageEnforcerTest {
     assertFalse(TicketViviPageEnforcer.isTicketDetail(xml))
     assertTrue(TicketViviPageEnforcer.isControlCodeInputFocused(xml))
 
-    val input = TicketViviPageEnforcer.controlCodeInputActionForHierarchy(xml)
+    val input = LegacyTicketViviPageEnforcer.controlCodeInputActionForHierarchy(xml)
 
     assertEquals("focus_control_code_input", input?.reason)
     assertEquals(540, input?.x)
@@ -345,8 +345,8 @@ class TicketViviPageEnforcerTest {
     assertEquals("close_control_code_popup", close?.reason)
     assertEquals(984, close?.x)
     assertEquals(468, close?.y)
-    assertTrue(TicketViviPageEnforcer.isControlCodeCloseTap(xml, 984, 468))
-    assertFalse(TicketViviPageEnforcer.isControlCodeCloseTap(xml, 540, 805))
+    assertTrue(LegacyTicketViviPageEnforcer.isControlCodeCloseTap(xml, 984, 468))
+    assertFalse(LegacyTicketViviPageEnforcer.isControlCodeCloseTap(xml, 540, 805))
   }
 
   @Test
@@ -358,7 +358,7 @@ class TicketViviPageEnforcerTest {
             <node package="com.pv.vivi" class="android.view.View" content-desc="Ievadi kontroles kodu" focusable="true" focused="false" bounds="[236,1096][845,1149]" />
             <node package="com.pv.vivi" class="android.widget.EditText" clickable="true" focusable="true" focused="false" hint="kontroles kods" bounds="[251,1175][829,1301]" />
             <node package="com.pv.vivi" class="android.widget.Button" content-desc="Atcelt" clickable="true" focusable="true" focused="false" bounds="[464,1327][687,1453]" />
-            <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" focusable="true" focused="false" bounds="[713,1327][881,1453]" />
+            <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" enabled="true" focusable="true" focused="false" bounds="[713,1327][881,1453]" />
           </node>
         </node>
       </hierarchy>
@@ -374,6 +374,18 @@ class TicketViviPageEnforcerTest {
   }
 
   @Test
+  fun editableNumericNodeCannotImpersonateGeneratedResult() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.widget.EditText" text="5555" clickable="true" enabled="true" editable="true" focusable="true" focused="true" bounds="[251,1175][829,1301]" />
+      </hierarchy>
+    """.trimIndent()
+
+    assertNull(LegacyTicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
+    assertFalse(TicketViviPageEnforcer.classifyForRecovery(xml) == TicketViviRecoveryState.CONTROL_CODE_RESULT)
+  }
+
+  @Test
   fun popupIsReadyOnlyWhenInputAndSubmitAreBothPresent() {
     val missingSubmitXml = """
       <hierarchy>
@@ -385,14 +397,29 @@ class TicketViviPageEnforcerTest {
     val missingInputXml = """
       <hierarchy>
         <node package="com.pv.vivi" class="android.view.View" content-desc="Ievadi kontroles kodu" bounds="[236,1096][845,1149]" />
-        <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" bounds="[713,1327][881,1453]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" enabled="true" bounds="[713,1327][881,1453]" />
       </hierarchy>
     """.trimIndent()
 
     assertFalse(TicketViviPageEnforcer.isControlCodePopup(missingSubmitXml))
-    assertNull(TicketViviPageEnforcer.controlCodeInputActionForHierarchy(missingSubmitXml))
-    assertNull(TicketViviPageEnforcer.controlCodeSubmitActionForHierarchy(missingInputXml))
+    assertNull(LegacyTicketViviPageEnforcer.controlCodeInputActionForHierarchy(missingSubmitXml))
+    assertNull(LegacyTicketViviPageEnforcer.controlCodeSubmitActionForHierarchy(missingInputXml))
     assertFalse(TicketViviPageEnforcer.isControlCodePopup(missingInputXml))
+  }
+
+  @Test
+  fun disabledControlCodeSubmitCannotAuthorizePopupOrSubmit() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.view.View" content-desc="Ievadi kontroles kodu" bounds="[236,1096][845,1149]" />
+        <node package="com.pv.vivi" class="android.widget.EditText" text="5555" clickable="true" enabled="true" editable="true" hint="kontroles kods" bounds="[251,1175][829,1301]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" enabled="false" bounds="[713,1327][881,1453]" />
+      </hierarchy>
+    """.trimIndent()
+
+    assertFalse(TicketViviPageEnforcer.isControlCodePopup(xml))
+    assertNull(LegacyTicketViviPageEnforcer.controlCodeSubmitActionForHierarchy(xml))
+    assertNull(TicketViviPageEnforcer.controlCodeSubmitActionLooseForHierarchy(xml))
   }
 
   @Test
@@ -407,7 +434,7 @@ class TicketViviPageEnforcerTest {
 
     assertFalse(TicketViviPageEnforcer.isControlCodePopup(xml))
     assertTrue(TicketViviPageEnforcer.hasControlCodeInputForHierarchy(xml))
-    assertEquals("12", TicketViviPageEnforcer.controlCodeInputValueLooseForHierarchy(xml))
+    assertEquals("12", LegacyTicketViviPageEnforcer.controlCodeInputValueLooseForHierarchy(xml))
   }
 
   @Test
@@ -416,12 +443,12 @@ class TicketViviPageEnforcerTest {
       <hierarchy>
         <node package="com.pv.vivi" class="android.view.View" content-desc="Ievadi kontroles kodu" bounds="[236,1096][845,1149]" />
         <node package="com.pv.vivi" class="android.view.View" clickable="true" focusable="true" focused="false" hint="Kontroles kods" bounds="[251,1175][829,1301]" />
-        <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" bounds="[713,1327][881,1453]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" enabled="true" bounds="[713,1327][881,1453]" />
       </hierarchy>
     """.trimIndent()
 
-    val input = TicketViviPageEnforcer.controlCodeInputActionForHierarchy(xml)
-    val submit = TicketViviPageEnforcer.controlCodeSubmitActionForHierarchy(xml)
+    val input = LegacyTicketViviPageEnforcer.controlCodeInputActionForHierarchy(xml)
+    val submit = LegacyTicketViviPageEnforcer.controlCodeSubmitActionForHierarchy(xml)
 
     assertTrue(TicketViviPageEnforcer.isControlCodePopup(xml))
     assertEquals(TicketViviRecoveryState.CONTROL_CODE_POPUP, TicketViviPageEnforcer.classifyForRecovery(xml))
@@ -440,13 +467,13 @@ class TicketViviPageEnforcerTest {
             <node package="com.pv.vivi" class="android.view.View" content-desc="Ievadi kontroles kodu" focusable="true" focused="false" bounds="[236,1096][845,1149]" />
             <node package="com.pv.vivi" class="android.widget.EditText" clickable="true" focusable="true" focused="true" hint="kontroles kods" bounds="[251,1175][829,1301]" />
             <node package="com.pv.vivi" class="android.widget.Button" content-desc="Atcelt" clickable="true" focusable="true" focused="false" bounds="[464,1327][687,1453]" />
-            <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" focusable="true" focused="false" bounds="[713,1327][881,1453]" />
+            <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" enabled="true" focusable="true" focused="false" bounds="[713,1327][881,1453]" />
           </node>
         </node>
       </hierarchy>
     """.trimIndent()
 
-    val submit = TicketViviPageEnforcer.controlCodeSubmitActionForHierarchy(xml)
+    val submit = LegacyTicketViviPageEnforcer.controlCodeSubmitActionForHierarchy(xml)
 
     assertEquals("submit_control_code_popup", submit?.reason)
     assertEquals(797, submit?.x)
@@ -462,13 +489,13 @@ class TicketViviPageEnforcerTest {
             <node package="com.pv.vivi" class="android.view.View" content-desc="Ievadi kontroles kodu" focusable="true" focused="false" bounds="[236,1096][845,1149]" />
             <node package="com.pv.vivi" class="android.widget.EditText" clickable="true" focusable="true" focused="true" hint="kontroles kods" bounds="[251,1175][829,1301]" />
             <node package="com.pv.vivi" class="android.widget.Button" content-desc="Atcelt" clickable="true" bounds="[464,1327][687,1453]" />
-            <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" bounds="[713,1327][881,1453]" />
+            <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" enabled="true" bounds="[713,1327][881,1453]" />
           </node>
         </node>
       </hierarchy>
     """.trimIndent()
 
-    val input = TicketViviPageEnforcer.controlCodeInputActionForHierarchy(xml)
+    val input = LegacyTicketViviPageEnforcer.controlCodeInputActionForHierarchy(xml)
 
     assertEquals("focus_control_code_input", input?.reason)
     assertEquals(540, input?.x)
@@ -493,7 +520,7 @@ class TicketViviPageEnforcerTest {
     assertEquals(908, close?.x)
     assertEquals(1220, close?.y)
     assertEquals("[868,1180][948,1260]", close?.bounds)
-    assertEquals("253986", TicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
+    assertEquals("253986", LegacyTicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
   }
 
   @Test
@@ -531,7 +558,7 @@ class TicketViviPageEnforcerTest {
     """.trimIndent()
 
     assertFalse(TicketViviPageEnforcer.isTicketDetail(xml))
-    assertFalse(TicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml)?.isNotBlank() == true)
+    assertFalse(LegacyTicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml)?.isNotBlank() == true)
     assertEquals(TicketViviRecoveryState.CONTROL_CODE_POPUP, TicketViviPageEnforcer.classifyForRecovery(xml))
   }
 
@@ -543,7 +570,7 @@ class TicketViviPageEnforcerTest {
         <node package="com.pv.vivi" content-desc="Ievadi kontroles kodu" focusable="true" bounds="[330,760][750,820]" />
         <node package="com.pv.vivi" class="android.widget.EditText" text="13468" clickable="true" editable="true" focusable="true" focused="true" hint="kontroles kods" bounds="[350,850][730,940]" />
         <node package="com.pv.vivi" class="android.widget.Button" content-desc="Atcelt" clickable="true" bounds="[474,980][642,1070]" />
-        <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" bounds="[715,980][879,1070]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" enabled="true" bounds="[715,980][879,1070]" />
         <node package="com.android.inputmethod.latin" text="1" clickable="true" bounds="[260,1660][410,1810]" />
       </hierarchy>
     """.trimIndent()
@@ -573,7 +600,7 @@ class TicketViviPageEnforcerTest {
     assertEquals("close_control_code_result", close?.reason)
     assertEquals(924, close?.x)
     assertEquals(1096, close?.y)
-    assertNull(TicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
+    assertNull(LegacyTicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
   }
 
   @Test
@@ -607,7 +634,7 @@ class TicketViviPageEnforcerTest {
     assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
     assertEquals("close_control_code_result", close?.reason)
     assertTrue("synthetic close should be to the right of the generated code", close?.x ?: 0 > 760)
-    assertEquals("25698415", TicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
+    assertEquals("25698415", LegacyTicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
   }
 
   @Test
@@ -677,7 +704,7 @@ class TicketViviPageEnforcerTest {
 
     assertFalse(TicketViviPageEnforcer.isTicketDetail(xml))
     assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
-    assertEquals("561649898", TicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
+    assertEquals("561649898", LegacyTicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
     assertEquals("close_control_code_result", close?.reason)
     assertEquals(870, close?.x)
     assertEquals(1229, close?.y)
@@ -735,10 +762,10 @@ class TicketViviPageEnforcerTest {
     """.trimIndent()
 
     assertFalse(TicketViviPageEnforcer.isControlCodePopup(xml))
-    assertNull(TicketViviPageEnforcer.controlCodeInputActionForHierarchy(xml))
+    assertNull(LegacyTicketViviPageEnforcer.controlCodeInputActionForHierarchy(xml))
     assertNull(TicketViviPageEnforcer.controlCodeCloseActionForHierarchy(xml))
     assertNull(TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml))
-    assertFalse(TicketViviPageEnforcer.isControlCodeCloseTap(xml, 984, 468))
+    assertFalse(LegacyTicketViviPageEnforcer.isControlCodeCloseTap(xml, 984, 468))
   }
 
   @Test
@@ -758,7 +785,7 @@ class TicketViviPageEnforcerTest {
 
   @Test
   fun classifiesAccessibilityNodesAsTicketDetail() {
-    val xml = TicketViviPageEnforcer.hierarchyForVisibleNodes(
+    val xml = LegacyTicketViviPageEnforcer.hierarchyForVisibleNodes(
       listOf(
         PhoneAutomationVisibleNode(
           text = "",
@@ -793,11 +820,11 @@ class TicketViviPageEnforcerTest {
 
   @Test
   fun resetFlowClosesPopupBeforeOpeningTicketCard() {
-    val popupAction = TicketViviPageEnforcer.resetActionForHierarchy(controlCodePopupXml(inputFocused = false))
+    val popupAction = LegacyTicketViviPageEnforcer.resetActionForHierarchy(controlCodePopupXml(inputFocused = false))
     assertEquals("close_control_code_popup", popupAction?.reason)
 
     val currentRange = currentTicketDateRange()
-    val listAction = TicketViviPageEnforcer.resetActionForHierarchy(
+    val listAction = LegacyTicketViviPageEnforcer.resetActionForHierarchy(
       """
         <hierarchy>
           <node package="com.pv.vivi" content-desc="Manas biļetes" bounds="[288,158][792,270]" />
@@ -808,7 +835,7 @@ class TicketViviPageEnforcerTest {
     )
     assertEquals("open_fresh_time_ticket_card", listAction?.reason)
 
-    val detailAction = TicketViviPageEnforcer.resetActionForHierarchy(
+    val detailAction = LegacyTicketViviPageEnforcer.resetActionForHierarchy(
       """
         <hierarchy>
           <node package="com.pv.vivi" content-desc="KONTROLES KODS" clickable="true" bounds="[53,264][450,390]" />
@@ -927,10 +954,10 @@ class TicketViviPageEnforcerTest {
     val xml = ticketDetailXml()
 
     assertTrue(TicketViviPageEnforcer.isTicketDetail(xml))
-    assertTrue(TicketViviPageEnforcer.isControlCodeButtonTap(xml, 55, 265))
-    assertTrue(TicketViviPageEnforcer.isControlCodeButtonTap(xml, 250, 327))
-    assertTrue(TicketViviPageEnforcer.isControlCodeButtonTap(xml, 448, 388))
-    assertFalse(TicketViviPageEnforcer.isForbiddenViviTap(xml, 250, 327))
+    assertTrue(LegacyTicketViviPageEnforcer.isControlCodeButtonTap(xml, 55, 265))
+    assertTrue(LegacyTicketViviPageEnforcer.isControlCodeButtonTap(xml, 250, 327))
+    assertTrue(LegacyTicketViviPageEnforcer.isControlCodeButtonTap(xml, 448, 388))
+    assertFalse(LegacyTicketViviPageEnforcer.isForbiddenViviTap(xml, 250, 327))
     val action = TicketViviPageEnforcer.controlCodeButtonActionForHierarchy(xml)
     assertEquals("control_code_button_snap_detected", action?.reason)
     assertEquals(251, action?.x)
@@ -952,12 +979,12 @@ class TicketViviPageEnforcerTest {
       </hierarchy>
     """.trimIndent()
 
-    assertTrue(TicketViviPageEnforcer.isForbiddenViviTap(xml, 100, 320))
-    assertTrue(TicketViviPageEnforcer.isForbiddenViviTap(xml, 675, 2285))
-    assertFalse(TicketViviPageEnforcer.isForbiddenViviTap(xml, 960, 330))
-    assertFalse(TicketViviPageEnforcer.isForbiddenViviTap(xml, 135, 2285))
-    assertFalse(TicketViviPageEnforcer.isForbiddenViviTap(xml, 250, 483))
-    assertFalse(TicketViviPageEnforcer.isForbiddenViviTap(xml, 540, 1380))
+    assertTrue(LegacyTicketViviPageEnforcer.isForbiddenViviTap(xml, 100, 320))
+    assertTrue(LegacyTicketViviPageEnforcer.isForbiddenViviTap(xml, 675, 2285))
+    assertFalse(LegacyTicketViviPageEnforcer.isForbiddenViviTap(xml, 960, 330))
+    assertFalse(LegacyTicketViviPageEnforcer.isForbiddenViviTap(xml, 135, 2285))
+    assertFalse(LegacyTicketViviPageEnforcer.isForbiddenViviTap(xml, 250, 483))
+    assertFalse(LegacyTicketViviPageEnforcer.isForbiddenViviTap(xml, 540, 1380))
   }
 
   @Test
@@ -971,10 +998,10 @@ class TicketViviPageEnforcerTest {
       </hierarchy>
     """.trimIndent()
 
-    assertTrue(TicketViviPageEnforcer.isForbiddenViviTap(xml, 100, 320))
-    assertTrue(TicketViviPageEnforcer.isForbiddenViviTap(xml, 675, 2285))
-    assertFalse(TicketViviPageEnforcer.isForbiddenViviTap(xml, 250, 483))
-    assertFalse(TicketViviPageEnforcer.isForbiddenViviTap(xml, 945, 2285))
+    assertTrue(LegacyTicketViviPageEnforcer.isForbiddenViviTap(xml, 100, 320))
+    assertTrue(LegacyTicketViviPageEnforcer.isForbiddenViviTap(xml, 675, 2285))
+    assertFalse(LegacyTicketViviPageEnforcer.isForbiddenViviTap(xml, 250, 483))
+    assertFalse(LegacyTicketViviPageEnforcer.isForbiddenViviTap(xml, 945, 2285))
   }
 
   @Test
@@ -988,8 +1015,8 @@ class TicketViviPageEnforcerTest {
       </hierarchy>
     """.trimIndent()
 
-    assertTrue(TicketViviPageEnforcer.isControlCodeButtonTap(xml, 100, 320))
-    assertFalse(TicketViviPageEnforcer.isForbiddenViviTap(xml, 100, 320))
+    assertTrue(LegacyTicketViviPageEnforcer.isControlCodeButtonTap(xml, 100, 320))
+    assertFalse(LegacyTicketViviPageEnforcer.isForbiddenViviTap(xml, 100, 320))
   }
 
   @Test
@@ -1006,8 +1033,8 @@ class TicketViviPageEnforcerTest {
     """.trimIndent()
 
     assertFalse(TicketViviPageEnforcer.isTicketDetail(xml))
-    assertFalse(TicketViviPageEnforcer.isForbiddenViviTap(xml, 940, 1005))
-    assertFalse(TicketViviPageEnforcer.isForbiddenViviTap(xml, 540, 1355))
+    assertFalse(LegacyTicketViviPageEnforcer.isForbiddenViviTap(xml, 940, 1005))
+    assertFalse(LegacyTicketViviPageEnforcer.isForbiddenViviTap(xml, 540, 1355))
   }
 
   @Test
@@ -1035,7 +1062,7 @@ class TicketViviPageEnforcerTest {
         <node package="com.pv.vivi" text="Kontroles kods" bounds="[124,548][700,604]" />
         <node package="com.pv.vivi" class="android.widget.EditText" text="" editable="true" focusable="true" focused="$inputFocused" bounds="[120,760][960,850]" />
         <node package="com.pv.vivi" content-desc="Aizvērt" clickable="true" bounds="[936,420][1032,516]" />
-        <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" bounds="[720,890][940,1016]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" enabled="true" bounds="[720,890][940,1016]" />
       </hierarchy>
     """.trimIndent()
   }

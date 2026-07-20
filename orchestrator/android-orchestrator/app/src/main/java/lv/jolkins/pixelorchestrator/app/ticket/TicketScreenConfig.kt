@@ -31,6 +31,7 @@ object TicketScreenConfig {
   const val ROOT_HARDWARE_H264_FPS = 1
   const val ROOT_HARDWARE_H264_STEADY_FPS = 1
   const val ROOT_HARDWARE_H264_STARTUP_FPS = 5
+  const val ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS = 4
   const val ROOT_HARDWARE_H264_STARTUP_FRAMES = 3
   const val ROOT_HARDWARE_H264_BURST_HOLD_MILLIS = 0L
   const val ROOT_HARDWARE_H264_BITRATE = 1_200_000
@@ -70,112 +71,17 @@ data class TicketStreamHealth(
   val inactivityRemainingMillis: Long,
   val autoStartAllowed: Boolean = true,
   val autoStartBlockedReason: String? = null,
-  val lastSessionReuseReason: String? = null,
-  val lastSessionReuseDurationMillis: Long? = null,
-  val lastSessionReuseAgoMillis: Long? = null,
   val latestTicketReselect: TicketLatestTicketReselectHealth = TicketLatestTicketReselectHealth(),
   val viviState: TicketViviStateHealth = TicketViviStateHealth(),
   val ticketState: TicketControlStateHealth = TicketControlStateHealth(),
   val streamPipeline: TicketStreamPipeline,
-  val serviceReadiness: TicketServiceReadinessHealth = TicketServiceReadinessHealth(),
-  val inputGate: TicketInputGateHealth = TicketInputGateHealth(),
-  val controlCodeSnap: TicketControlCodeSnapHealth = TicketControlCodeSnapHealth(),
-  val controlCodeMode: TicketControlCodeModeHealth = TicketControlCodeModeHealth(),
   val controlCodeRequest: TicketControlCodeRequestHealth = TicketControlCodeRequestHealth(),
   val rigasSatiksmeBatch: TicketRigasSatiksmeBatchHealth = TicketRigasSatiksmeBatchHealth(),
-  val controlExitCleanup: TicketControlExitCleanupHealth = TicketControlExitCleanupHealth(),
-  val loading: TicketLoadingHealth = TicketLoadingHealth(),
-  val wake: TicketWakeHealth = TicketWakeHealth(),
-  val automation: TicketAutomationHealth = TicketAutomationHealth(),
-  val page: TicketPageHealth = TicketPageHealth(),
-  val notificationLockdown: TicketNotificationLockdownHealth = TicketNotificationLockdownHealth(),
   val brightnessGuard: TicketBrightnessGuardHealth = TicketBrightnessGuardHealth(),
   val visibleFrame: TicketVisibleFrameHealth = TicketVisibleFrameHealth(),
-  val ffmpeg: TicketFfmpegHealth = TicketFfmpegHealth(),
   val hardwareH264: TicketHardwareH264Health = TicketHardwareH264Health(),
-  val startupTrace: TicketStartupTraceHealth = TicketStartupTraceHealth(),
   val recovery: TicketRecoveryHealth = TicketRecoveryHealth(),
-  val pixelTicketStateEvent: TicketPixelStateEventHealth = TicketPixelStateEventHealth(),
-  val recentClientTelemetry: List<TicketClientTelemetry> = emptyList(),
-  val recentEvents: List<TicketSessionEvent> = emptyList(),
   val message: String
-)
-
-@Serializable
-data class TicketStartupTraceHealth(
-  val id: String = "",
-  val reason: String = "",
-  val startedAgoMillis: Long? = null,
-  val elapsedMillis: Long? = null,
-  val targetMillis: Long = 5_000L,
-  val overBudget: Boolean = false,
-  val complete: Boolean = false,
-  val lastPhase: String = "",
-  val phases: List<TicketStartupTracePhaseHealth> = emptyList()
-)
-
-@Serializable
-data class TicketStartupTracePhaseHealth(
-  val name: String,
-  val detail: String = "",
-  val sinceStartMillis: Long,
-  val sincePreviousMillis: Long
-)
-
-@Serializable
-data class TicketPixelStateEventHealth(
-  val eventSeq: Long = 0L,
-  val ticketState: String = "",
-  val reason: String = "",
-  val requestId: String = "",
-  val streamEpoch: Long = 0L,
-  val frameSequence: Long = 0L,
-  val minFrameSequence: Long = 0L,
-  val lastSentAgoMillis: Long? = null
-)
-
-@Serializable
-data class TicketAutomationHealth(
-  val ticketAutomationMode: String = "root_only",
-  val fallbackPolicy: String = "fail_fast",
-  val nonRootAccessibilityAllowed: Boolean = false,
-  val lastRootReadinessResult: String = "not_run",
-  val lastRootReadinessDurationMillis: Long? = null,
-  val lastRootReadinessAgoMillis: Long? = null,
-  val viviLoginCredentialsConfigured: Boolean = false,
-  val viviLoginLastStatus: String = "idle",
-  val viviLoginLastReason: String = "",
-  val viviLoginLastCompletedAgoMillis: Long? = null
-)
-
-@Serializable
-data class TicketWakeHealth(
-  val budgetMillis: Long = 5_000L,
-  val lastReason: String? = null,
-  val lastStartedAgoMillis: Long? = null,
-  val lastWakeCommandMillis: Long? = null,
-  val lastInteractiveMillis: Long? = null,
-  val lastViviForegroundMillis: Long? = null,
-  val lastTicketReadyMillis: Long? = null,
-  val lastTotalMillis: Long? = null,
-  val lastSucceeded: Boolean? = null,
-  val lastSlowestPhase: String? = null,
-  val lastSlowestPhaseDurationMillis: Long? = null,
-  val lastFailureReason: String? = null
-)
-
-@Serializable
-data class TicketServiceReadinessHealth(
-  val enabled: Boolean = false,
-  val state: String = TicketServiceRuntimeState.DISABLED.wireName,
-  val detail: String = TicketServiceRuntimeState.DISABLED.defaultDetail,
-  val lastEnsureReason: String = "",
-  val lastEnsureAgeMillis: Long? = null,
-  val lastEnsureSucceeded: Boolean = false,
-  val lastEnsureResult: String = "",
-  val localServerReachable: Boolean = false,
-  val tunnelReady: Boolean = false,
-  val componentStatus: String = ""
 )
 
 @Serializable
@@ -240,84 +146,6 @@ data class TicketClientConnectionHealth(
   val generation: Long = 0L
 )
 
-@Serializable
-data class TicketRootCaptureHealth(
-  val supported: Boolean = false,
-  val active: Boolean = false,
-  val state: String = "unavailable",
-  val message: String = "",
-  val encoderName: String? = null,
-  val colorFormat: String? = null,
-  val width: Int? = null,
-  val height: Int? = null,
-  val bitrate: Int? = null,
-  val fps: Int? = null,
-  val steadyFpsTarget: Int? = null,
-  val burstFpsTarget: Int? = null,
-  val intervalMode: String = "",
-  val currentIntervalMillis: Long? = null,
-  val frames: Long = 0L,
-  val keyFrames: Long = 0L,
-  val lastCaptureDurationMillis: Long? = null,
-  val lastDecodeDurationMillis: Long? = null,
-  val lastConvertDurationMillis: Long? = null,
-  val lastEncodeDrainDurationMillis: Long? = null,
-  val lastFrameTotalDurationMillis: Long? = null,
-  val lastFrameAgoMillis: Long? = null,
-  val lastKeyFrameAgoMillis: Long? = null,
-  val lastStartAgoMillis: Long? = null,
-  val restarts: Long = 0L,
-  val restartReasonCounts: Map<String, Long> = emptyMap(),
-  val lastRestartReason: String? = null,
-  val lastRestartAgoMillis: Long? = null,
-  val suppressedRestartRequests: Long = 0L
-)
-
-@Serializable
-data class TicketFfmpegHealth(
-  val mode: String = "removed",
-  val available: Boolean = false,
-  val active: Boolean = false,
-  val version: String? = null,
-  val binarySha: String? = null,
-  val encoderName: String? = null,
-  val chrootPath: String = "",
-  val binaryPath: String = "",
-  val frameFeederActive: Boolean = false,
-  val captureSource: String = "removed",
-  val captureMethod: String = "removed",
-  val captureHelperAvailable: Boolean = false,
-  val captureHelperState: String = "unavailable",
-  val captureHelperMessage: String = "FFmpeg/raw capture has been removed",
-  val state: String = "unavailable",
-  val message: String = "FFmpeg/raw capture has been removed",
-  val width: Int? = null,
-  val height: Int? = null,
-  val bitrate: Int? = null,
-  val fps: Int? = null,
-  val frames: Long = 0L,
-  val keyFrames: Long = 0L,
-  val lastFrameBytes: Int = 0,
-  val estimatedBitrate: Long = 0L,
-  val lastFrameAgoMillis: Long? = null,
-  val lastStartAgoMillis: Long? = null,
-  val lastRootFrameReadDurationMillis: Long? = null,
-  val lastFfmpegWriteDurationMillis: Long? = null,
-  val lastFrameTotalDurationMillis: Long? = null,
-  val suppressedRawFrames: Long = 0L,
-  val lastSuppressedRawFrameAgoMillis: Long? = null,
-  val firstVisibleRawFrameAgoMillis: Long? = null,
-  val lastRawFrameVisible: Boolean = false,
-  val captureProcessCount: Int = 0,
-  val ffmpegProcessCount: Int = 0,
-  val staleCaptureProcessCount: Int = 0,
-  val lastCaptureCleanupResult: String = "not_run",
-  val droppedFrames: Long = 0L,
-  val restartCount: Long = 0L,
-  val lastExitReason: String? = null,
-  val lastExitAgoMillis: Long? = null,
-  val stderrTail: String = ""
-)
 
 @Serializable
 data class TicketHardwareH264Health(
@@ -337,6 +165,10 @@ data class TicketHardwareH264Health(
   val fps: Int? = null,
   val steadyFpsTarget: Int? = null,
   val burstFpsTarget: Int? = null,
+  val controlCodeRequestFpsTarget: Int? = null,
+  val controlCodeBurstActive: Boolean = false,
+  val controlCodeBurstState: String = "idle",
+  val lastControlCodeBurstAgoMillis: Long? = null,
   val intervalMode: String = "",
   val currentIntervalMillis: Long? = null,
   val colorCorrection: String = TicketScreenConfig.ROOT_HARDWARE_H264_COLOR_CORRECTION,
@@ -366,50 +198,6 @@ data class TicketHardwareH264Health(
 )
 
 @Serializable
-data class TicketInputGateHealth(
-  val tapOnly: Boolean = true,
-  val active: Boolean = false,
-  val allowed: Boolean = false,
-  val reason: String = "no_active_control",
-  val lastDecisionAgoMillis: Long? = null,
-  val lastCommandReason: String? = null,
-  val lastCommandDurationMillis: Long? = null,
-  val lastCommandCompletedAgoMillis: Long? = null,
-  val lastInputId: String? = null,
-  val lastInputKind: String? = null,
-  val lastInputAccepted: Boolean? = null,
-  val lastInputReason: String? = null,
-  val lastInputTotalDurationMillis: Long? = null,
-  val lastInputCompletedAgoMillis: Long? = null,
-  val duplicateInputResults: Long = 0L,
-  val lastDuplicateInputId: String? = null,
-  val lastDuplicateInputAgoMillis: Long? = null
-)
-
-@Serializable
-data class TicketControlCodeSnapHealth(
-  val lastRawX: Int? = null,
-  val lastRawY: Int? = null,
-  val lastCandidateZone: String? = null,
-  val lastDetectedButtonBounds: String? = null,
-  val lastSnapTarget: String? = null,
-  val lastAccepted: Boolean? = null,
-  val lastReason: String? = null,
-  val lastFinalX: Int? = null,
-  val lastFinalY: Int? = null,
-  val lastCompletedAgoMillis: Long? = null
-)
-
-@Serializable
-data class TicketControlCodeModeHealth(
-  val active: Boolean = false,
-  val entryId: Long = 0L,
-  val enteredAgoMillis: Long? = null,
-  val transitionGraceActive: Boolean = false,
-  val transitionGraceRemainingMillis: Long = 0L
-)
-
-@Serializable
 data class TicketControlCodeRequestHealth(
   val requestId: String? = null,
   val status: String = "idle",
@@ -418,20 +206,11 @@ data class TicketControlCodeRequestHealth(
   val commandOwner: String? = null,
   val commandApp: String? = null,
   val commandFlow: String? = null,
-  val lastRejectedOwner: String? = null,
-  val lastRejectedApp: String? = null,
-  val lastRejectedFlow: String? = null,
-  val lastRejectedReason: String? = null,
-  val lastRejectedAgoMillis: Long? = null,
   val totalDurationMillis: Long? = null,
   val phases: Map<String, Long> = emptyMap(),
-  val rootObservationMillis: Long? = null,
-  val visualMarkerMillis: Long? = null,
-  val resultProofMillis: Long? = null,
   val browserCaptureAckMillis: Long? = null,
   val browserCaptureReason: String? = null,
   val browserCaptureAgoMillis: Long? = null,
-  val resultDeliveryMillis: Long? = null,
   val completedAgoMillis: Long? = null,
   val duplicateResults: Long = 0L,
   val lastDuplicateRequestId: String? = null,
@@ -466,50 +245,6 @@ data class TicketRigasSatiksmeBatchHealth(
   val lastCancelReason: String? = null,
   val phases: Map<String, Long> = emptyMap(),
   val completedAgoMillis: Long? = null
-)
-
-@Serializable
-data class TicketControlExitCleanupHealth(
-  val lastReason: String? = null,
-  val lastDetectedState: String? = null,
-  val lastCloseAction: String? = null,
-  val lastDetectorSource: String? = null,
-  val lastSurfaceProbeResult: String? = null,
-  val lastDurationMillis: Long? = null,
-  val lastCompletedAgoMillis: Long? = null,
-  val lastVerificationResult: String? = null,
-  val lastSucceeded: Boolean? = null,
-  val lastFreshFrameRequested: Boolean = false,
-  val lastFreshFrameVerified: Boolean = false,
-  val lastFreshFrameVerifiedAgoMillis: Long? = null
-)
-
-@Serializable
-data class TicketLoadingHealth(
-  val lastPhase: String? = null,
-  val lastDurationMillis: Long? = null,
-  val lastCompletedAgoMillis: Long? = null,
-  val lastOverBudgetPhase: String? = null,
-  val lastOverBudgetDurationMillis: Long? = null,
-  val lastOverBudgetAgoMillis: Long? = null
-)
-
-@Serializable
-data class TicketPageHealth(
-  val htmlVersion: String = "",
-  val cachePolicy: String = "no-store",
-  val lastRootHtmlRequestAgoMillis: Long? = null,
-  val lastBootstrapRequestAgoMillis: Long? = null,
-  val lastCacheCleanupRequestAgoMillis: Long? = null,
-  val lastClientPageVersion: String? = null,
-  val lastClientPageVersionAgoMillis: Long? = null
-)
-
-@Serializable
-data class TicketNotificationLockdownHealth(
-  val active: Boolean = false,
-  val reason: String = "inactive",
-  val lastChangedAgoMillis: Long? = null
 )
 
 @Serializable
@@ -562,13 +297,7 @@ data class TicketRecoveryHealth(
 data class TicketControlStateHealth(
   val state: String = "stopped",
   val stateAgeMillis: Long? = null,
-  val lastReason: String = "init",
-  val lastOverBudgetState: String? = null,
-  val lastOverBudgetDurationMillis: Long? = null,
-  val lastOverBudgetReason: String? = null,
-  val hardResetCount: Long = 0L,
-  val lastHardResetReason: String? = null,
-  val lastHardResetAgoMillis: Long? = null
+  val lastReason: String = "init"
 )
 
 @Serializable
@@ -578,19 +307,6 @@ data class TicketViviStateHealth(
   val observedAgoMillis: Long? = null,
   val source: String = "none",
   val reason: String = "none"
-)
-
-@Serializable
-data class TicketClientTelemetry(
-  val atAgoMillis: Long,
-  val message: String
-)
-
-@Serializable
-data class TicketSessionEvent(
-  val atAgoMillis: Long,
-  val event: String,
-  val detail: String = ""
 )
 
 @Serializable
@@ -617,17 +333,6 @@ data class TicketStreamSize(
 ) {
   val sourceVisibleHeight: Int = (sourceHeight - sourceTopCrop).coerceAtLeast(1)
 
-  fun sourceX(encodedX: Int): Int {
-    return ((encodedX.coerceIn(0, width) / width.toFloat()) * sourceWidth).roundToInt()
-      .coerceIn(0, sourceWidth)
-  }
-
-  fun sourceY(encodedY: Int): Int {
-    return (
-      sourceTopCrop +
-        ((encodedY.coerceIn(0, height) / height.toFloat()) * sourceVisibleHeight).roundToInt()
-      ).coerceIn(sourceTopCrop, sourceHeight)
-  }
 }
 
 object TicketStreamSizing {

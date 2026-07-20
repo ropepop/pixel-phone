@@ -82,5 +82,12 @@ data class CleanupReport(
 internal data class CleanupScheduleResult(
   val success: Boolean,
   val scheduledAtMillis: Long = 0,
+  val mode: CleanupScheduleMode = CleanupScheduleMode.NONE,
   val reason: String = ""
 )
+
+internal enum class CleanupScheduleMode {
+  EXACT_IDLE,
+  APPROXIMATE_IDLE,
+  NONE
+}

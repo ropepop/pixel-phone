@@ -12,6 +12,11 @@ if [ ! -r "${CONF_FILE}" ]; then
   CONF_FILE="/data/local/pixel-stack/conf/vpn/tailscale.env"
 fi
 
+config_ready="0"
+if [ -r "${CONF_FILE}" ]; then
+  config_ready="1"
+fi
+
 if [ -r "${CONF_FILE}" ]; then
   # shellcheck disable=SC1090
   set -a
@@ -92,11 +97,16 @@ if verify_ssh_guard_chain "${IP6TABLES_BIN}" PIXEL_SSH_GUARD6; then
 fi
 
 emit "vpn_enabled" "${VPN_ENABLED}"
+emit "config_ready" "${config_ready}"
 emit "tailscaled_live" "${tailscaled_live}"
 emit "tailscaled_sock" "${tailscaled_sock}"
 emit "tailnet_ipv4" "${tailnet_ipv4}"
 emit "guard_chain_ipv4" "${guard_chain_ipv4}"
 emit "guard_chain_ipv6" "${guard_chain_ipv6}"
+
+if [ "${config_ready}" != "1" ]; then
+  exit 1
+fi
 
 if [ "${VPN_ENABLED}" != "1" ]; then
   exit 0

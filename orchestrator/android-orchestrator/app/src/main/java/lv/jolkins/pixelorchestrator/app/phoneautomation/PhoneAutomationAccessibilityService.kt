@@ -27,6 +27,8 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
   private lateinit var windowManager: WindowManager
   private var blackoutOverlayView: View? = null
   private var blackoutOverlayActivePointerCount = 0
+  private var viviControlCodePreviousKeyboardShowMode: Int? = null
+  private var viviControlCodeKeyboardExpectedPackageName: String? = null
 
   override fun onServiceConnected() {
     super.onServiceConnected()
@@ -66,6 +68,9 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
 
   override fun onUnbind(intent: android.content.Intent?): Boolean {
     syncBlackoutOverlayVisibility(false)
+    if (Looper.myLooper() == Looper.getMainLooper()) {
+      restoreViviControlCodeKeyboardModeOnMainThread(null)
+    }
     PhoneAutomationServiceBridge.unbindAccessibilityService(this)
     return super.onUnbind(intent)
   }
@@ -227,6 +232,78 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     return false
   }
 
+  override suspend fun setViviControlCodeTextWithoutKeyboard(
+    expectedPackageName: String,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean {
+    val deadline = System.currentTimeMillis() + timeoutMillis.coerceAtLeast(1L)
+    while (System.currentTimeMillis() < deadline) {
+      val updated = withContext(Dispatchers.Main.immediate) {
+        val root = rootForPackage(expectedPackageName) ?: return@withContext false
+        val target = viviControlCodeEditableNode(root, expectedPackageName) ?: return@withContext false
+        if (!suppressViviControlCodeKeyboardOnMainThread(expectedPackageName)) {
+          restoreViviControlCodeKeyboardModeOnMainThread(expectedPackageName)
+          return@withContext false
+        }
+        val activated = target.isFocused ||
+          target.performAction(AccessibilityNodeInfo.ACTION_CLICK) ||
+          target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        if (!activated) {
+          restoreViviControlCodeKeyboardModeOnMainThread(expectedPackageName)
+          return@withContext false
+        }
+        val args = Bundle().apply {
+          putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        PhoneAutomationServiceBridge.markNonTouchInput("accessibility_activate_and_set_control_code_without_keyboard")
+        val set = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        if (!set) {
+          restoreViviControlCodeKeyboardModeOnMainThread(expectedPackageName)
+        }
+        set
+      }
+      if (updated) {
+        return true
+      }
+      delay(40)
+    }
+    return false
+  }
+
+  override suspend fun submitViviControlCodeWithoutKeyboard(
+    expectedPackageName: String,
+    expectedText: String,
+    timeoutMillis: Long
+  ): Boolean {
+    val deadline = System.currentTimeMillis() + timeoutMillis.coerceAtLeast(1L)
+    while (System.currentTimeMillis() < deadline) {
+      val submitted = withContext(Dispatchers.Main.immediate) {
+        val root = rootForPackage(expectedPackageName) ?: return@withContext false
+        val target = viviControlCodeSubmitNode(
+          root = root,
+          expectedPackageName = expectedPackageName,
+          expectedText = expectedText
+        ) ?: return@withContext false
+        PhoneAutomationServiceBridge.markNonTouchInput("accessibility_submit_control_code_without_keyboard")
+        target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+      }
+      if (submitted) {
+        return true
+      }
+      delay(40)
+    }
+    return false
+  }
+
+  override suspend fun restoreViviControlCodeKeyboardMode(
+    expectedPackageName: String
+  ): Boolean {
+    return withContext(Dispatchers.Main.immediate) {
+      restoreViviControlCodeKeyboardModeOnMainThread(expectedPackageName)
+    }
+  }
+
   override suspend fun tapScreenRatio(
     expectedPackageName: String,
     xRatio: Double,
@@ -317,6 +394,139 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
   private fun firstEditableNode(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
     return editableNodes(root).firstOrNull { node -> node.isVisibleToUser }
       ?: editableNodes(root).firstOrNull()
+  }
+
+  private fun viviControlCodeEditableNode(
+    root: AccessibilityNodeInfo,
+    expectedPackageName: String
+  ): AccessibilityNodeInfo? {
+    val visibleNodes = flattenNodes(root)
+      .filter { node ->
+        nodePackageMatchesExpected(node, expectedPackageName) &&
+          node.isVisibleToUser &&
+          node.isEnabled
+      }
+      .toList()
+    val promptPresent = visibleNodes.any { node ->
+      val label = nodeAccessibilityLabel(node)
+      label.contains("kontroles kod") ||
+        label.contains("control code") ||
+        label.contains("enter the code manually")
+    }
+    if (!promptPresent) {
+      return null
+    }
+    val submitPresent = visibleNodes.any { node ->
+      val label = nodeAccessibilityLabel(node)
+      val submitLabel =
+        label == "ok" ||
+          label == "labi" ||
+          label.contains("apstiprin") ||
+          label.contains("izveidot kod") ||
+          label.contains("create code")
+      submitLabel && clickableEnabledNodeOrParent(node) != null
+    }
+    if (!submitPresent) {
+      return null
+    }
+    val editables = visibleNodes.filter { node ->
+      node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true
+    }
+    val labeled = editables.filter { node ->
+      val label = nodeAccessibilityLabel(node)
+      val resourceId = node.resourceIdValue().lowercase()
+      label.contains("kontroles kod") ||
+        label.contains("control code") ||
+        label.contains("koda cipari") ||
+        resourceId.contains("code") ||
+        resourceId.contains("kod")
+    }
+    return labeled.singleOrNull() ?: editables.singleOrNull()
+  }
+
+  private fun viviControlCodeSubmitNode(
+    root: AccessibilityNodeInfo,
+    expectedPackageName: String,
+    expectedText: String
+  ): AccessibilityNodeInfo? {
+    val input = viviControlCodeEditableNode(root, expectedPackageName) ?: return null
+    if (input.textValue().trim() != expectedText.trim() || expectedText.isBlank()) {
+      return null
+    }
+    return flattenNodes(root)
+      .filter { node ->
+        nodePackageMatchesExpected(node, expectedPackageName) &&
+          node.isVisibleToUser &&
+          node.isEnabled &&
+          node.isClickable &&
+          isViviControlCodeSubmitLabel(nodeAccessibilityLabel(node))
+      }
+      .singleOrNull()
+  }
+
+  private fun isViviControlCodeSubmitLabel(label: String): Boolean {
+    return label == "ok" ||
+      label == "labi" ||
+      label.contains("apstiprin") ||
+      label.contains("izveidot kod") ||
+      label.contains("create code")
+  }
+
+  private fun suppressViviControlCodeKeyboardOnMainThread(
+    expectedPackageName: String
+  ): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+      return false
+    }
+    val controller = softKeyboardController
+    if (viviControlCodePreviousKeyboardShowMode == null) {
+      viviControlCodePreviousKeyboardShowMode = controller.showMode
+    }
+    viviControlCodeKeyboardExpectedPackageName = expectedPackageName
+    return controller.setShowMode(SHOW_MODE_HIDDEN)
+  }
+
+  private fun restoreViviControlCodeKeyboardModeOnMainThread(
+    expectedPackageName: String?
+  ): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+      return true
+    }
+    val packageToClear = expectedPackageName?.takeIf { it.isNotBlank() }
+      ?: viviControlCodeKeyboardExpectedPackageName
+    if (!packageToClear.isNullOrBlank()) {
+      rootForPackage(packageToClear)?.let { root ->
+        editableNodes(root)
+          .filter { node -> node.isFocused }
+          .forEach { node -> node.performAction(AccessibilityNodeInfo.ACTION_CLEAR_FOCUS) }
+      }
+    }
+    val previousMode = viviControlCodePreviousKeyboardShowMode ?: return true
+    val restored = softKeyboardController.setShowMode(previousMode)
+    if (restored) {
+      viviControlCodePreviousKeyboardShowMode = null
+      viviControlCodeKeyboardExpectedPackageName = null
+    }
+    return restored
+  }
+
+  private fun nodeAccessibilityLabel(node: AccessibilityNodeInfo): String {
+    return listOf(
+      node.textValue(),
+      node.contentDescriptionValue(),
+      node.hintText?.toString().orEmpty()
+    ).joinToString(" ").trim().lowercase().replace(Regex("""\s+"""), " ")
+  }
+
+  private fun clickableEnabledNodeOrParent(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+    var current: AccessibilityNodeInfo? = node
+    while (current != null) {
+      if (current.isClickable && current.isEnabled) {
+        return current
+      }
+      current = current.parent
+    }
+    return null
   }
 
   private fun editableFocusedNode(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {

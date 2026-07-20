@@ -238,7 +238,7 @@ internal class RigasSatiksmeDirectTapDriver(
     observedStates: MutableList<String>
   ): Observation {
     val snapshot = gateway.snapshot("rs_direct_$reason")
-    val state = RigasSatiksmeSemanticDriver.classify(snapshot, cleanDigits)
+    val state = RigasSatiksmeSemanticClassifier.classify(snapshot, cleanDigits)
     observedStates += state.name.lowercase()
     return Observation(state, snapshot)
   }

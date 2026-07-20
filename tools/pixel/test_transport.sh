@@ -38,6 +38,10 @@ cat > "${FAKE_ADB}" <<'EOF'
 set -euo pipefail
 printf '%s\n' "$*" >> "${PIXEL_TEST_ADB_LOG}"
 
+if [[ -n "${PIXEL_TEST_ADB_SLEEP_SEC:-}" ]]; then
+  sleep "${PIXEL_TEST_ADB_SLEEP_SEC}"
+fi
+
 if [[ "${1:-}" == "devices" ]]; then
   printf 'List of devices attached\nSER123\tdevice\n'
   exit 0
@@ -232,6 +236,48 @@ test_auto_transport_selection() {
   source "${TRANSPORT_SH}"
 }
 
+test_transport_resolution_cache() {
+  local resolve_count=0
+
+  PIXEL_TRANSPORT="auto"
+  PIXEL_TRANSPORT_RESOLVED=""
+  PIXEL_TRANSPORT_RESOLUTION_TTL_SEC=30
+  PIXEL_TRANSPORT_DEVICE_READY=0
+  PIXEL_TRANSPORT_DEVICE_CACHE_KEY=""
+  PIXEL_TRANSPORT_DEVICE_CACHE_AT_SECONDS=-1
+  ADB_SERIAL=""
+  PIXEL_SSH_HOST="100.64.0.10"
+
+  pixel_transport_host_ssh_ready() {
+    resolve_count=$((resolve_count + 1))
+    return 0
+  }
+  pixel_transport_require_device >/dev/null
+  pixel_transport_require_device >/dev/null
+  [[ "${resolve_count}" == "1" ]] || fail "transport resolution should be cached within the configured TTL"
+
+  unset -f pixel_transport_host_ssh_ready
+  unset PIXEL_TRANSPORT_SH_LOADED
+  # shellcheck source=./transport.sh
+  source "${TRANSPORT_SH}"
+}
+
+test_adb_commands_are_bounded() {
+  PIXEL_TRANSPORT="adb"
+  PIXEL_TRANSPORT_RESOLVED=""
+  PIXEL_TRANSPORT_DEVICE_READY=0
+  ADB_SERIAL="SER123"
+  PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC=0.05
+  export PIXEL_TEST_ADB_SLEEP_SEC=1
+
+  if pixel_transport_root_shell "echo timeout" >/dev/null 2>&1; then
+    fail "bounded adb command should time out"
+  fi
+
+  unset PIXEL_TEST_ADB_SLEEP_SEC
+  PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC=120
+}
+
 test_management_probe_validation() {
   local healthy_probe='remote_uid=0
 management_enabled=1
@@ -300,6 +346,8 @@ test_tailscale_bin_resolution() {
 test_adb_transport_contract
 test_ssh_transport_contract
 test_auto_transport_selection
+test_transport_resolution_cache
+test_adb_commands_are_bounded
 test_management_probe_validation
 test_adb_push_does_not_consume_loop_input
 test_tailscale_bin_resolution

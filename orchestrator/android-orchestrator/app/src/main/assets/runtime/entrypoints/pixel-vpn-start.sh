@@ -21,11 +21,29 @@ STOP_BIN="/data/local/pixel-stack/bin/pixel-vpn-stop.sh"
 
 mkdir -p "${BIN_DIR}" "${CONF_DIR}" "${RUN_DIR}" "${LOG_DIR}" "${BASE}/state"
 
+same_file() {
+  [ -f "$1" ] && [ -f "$2" ] && cmp -s "$1" "$2"
+}
+
+runtime_inputs_current() {
+  same_file "${CONF_SRC}" "${CONF_DIR}/tailscale.env" &&
+    same_file "${TPL_LAUNCH}" "${LAUNCH_BIN}" &&
+    same_file "${TPL_LOOP}" "${LOOP_BIN}"
+}
+
+# The overwhelmingly common start request is a health reconciliation. Avoid
+# rewriting runtime inputs or touching process state when it is already ready.
+if runtime_inputs_current && [ -x "${HEALTH_BIN}" ] && sh "${HEALTH_BIN}" >/dev/null 2>&1; then
+  exit 0
+fi
+
 if [ ! -f "${CONF_SRC}" ]; then
   echo "missing vpn config source: ${CONF_SRC}" >&2
   exit 1
 fi
-cp "${CONF_SRC}" "${CONF_DIR}/tailscale.env"
+if ! same_file "${CONF_SRC}" "${CONF_DIR}/tailscale.env"; then
+  cp "${CONF_SRC}" "${CONF_DIR}/tailscale.env"
+fi
 chmod 0600 "${CONF_DIR}/tailscale.env" >/dev/null 2>&1 || true
 
 if [ ! -f "${TPL_LAUNCH}" ]; then
@@ -37,9 +55,13 @@ if [ ! -f "${TPL_LOOP}" ]; then
   exit 1
 fi
 
-cp "${TPL_LAUNCH}" "${LAUNCH_BIN}"
+if ! same_file "${TPL_LAUNCH}" "${LAUNCH_BIN}"; then
+  cp "${TPL_LAUNCH}" "${LAUNCH_BIN}"
+fi
 chmod 0755 "${LAUNCH_BIN}"
-cp "${TPL_LOOP}" "${LOOP_BIN}"
+if ! same_file "${TPL_LOOP}" "${LOOP_BIN}"; then
+  cp "${TPL_LOOP}" "${LOOP_BIN}"
+fi
 chmod 0755 "${LOOP_BIN}"
 
 if [ ! -x "${BASE}/bin/tailscaled" ]; then
@@ -78,4 +100,18 @@ else
   exit 1
 fi
 
-exit 0
+attempt=0
+while [ "${attempt}" -lt 40 ]; do
+  if sh "${HEALTH_BIN}" >/dev/null 2>&1; then
+    exit 0
+  fi
+  if ! kill -0 "${pid}" >/dev/null 2>&1; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.25
+done
+
+echo "vpn service loop started but did not become ready" >&2
+sh "${STOP_BIN}" >/dev/null 2>&1 || true
+exit 1

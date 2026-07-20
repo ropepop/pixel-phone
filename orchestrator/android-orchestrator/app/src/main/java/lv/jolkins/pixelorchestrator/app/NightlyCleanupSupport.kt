@@ -28,11 +28,38 @@ internal class NightlyCleanupSupport(
   private val assetProvider: AssetProvider,
   private val json: Json
 ) {
+  suspend fun runSuperuserLogMaintenance(): FacadeOperationResult {
+    val protectedListPath = "${StackPaths.RUN}/cleanup-protected-superuser-${System.currentTimeMillis()}.txt"
+    writeRootFile(protectedListPath, "\n", mode = "0600")
+    return try {
+      val command = buildString {
+        append(singleQuote(CLEANUP_SCRIPT_PATH))
+        append(" --protected-list ")
+        append(singleQuote(protectedListPath))
+        append(" --superuser-only")
+      }
+      val result = rootExecutor.runScript(command)
+      val output = parseScriptOutput(result.stdout)
+      val success = result.ok && output.failures.isEmpty()
+      FacadeOperationResult(
+        success = success,
+        message = when {
+          !result.ok -> "Root-command history inspection failed"
+          output.failures.isNotEmpty() -> "Root-command history rotation failed safely"
+          output.deletedPaths.isNotEmpty() -> "Root-command history rotated and root access rechecked"
+          else -> "Root-command history remains within its size limit"
+        }
+      )
+    } finally {
+      deleteRootPath(protectedListPath)
+    }
+  }
+
   suspend fun run(trigger: CleanupTrigger, dryRun: Boolean): FacadeOperationResult {
     val startedAt = Instant.now()
     val config = stackStore.loadConfigOrDefault()
     return runCatching {
-      val syncResult = runtimeInstaller.syncBundledRuntimeAssets(assetProvider, component = MANAGEMENT_ASSET_SCOPE)
+      val syncResult = runtimeInstaller.syncBundledRuntimeAssets(assetProvider, component = CLEANUP_ASSET_SCOPE)
       if (!syncResult.success) {
         return@runCatching persistReport(
           config = config,
@@ -68,7 +95,13 @@ internal class NightlyCleanupSupport(
       )
 
       try {
-        val cleanupResult = rootExecutor.runScript(buildCleanupCommand(protectedListPath, dryRun))
+        val cleanupResult = rootExecutor.runScript(
+          buildCleanupCommand(
+            protectedListPath = protectedListPath,
+            dryRun = dryRun,
+            retiredDns = config.modules["dns"]?.enabled == false && config.modules["remote"]?.enabled == false
+          )
+        )
         val scriptOutput = parseScriptOutput(cleanupResult.stdout)
         val failures =
           if (cleanupResult.ok) {
@@ -163,7 +196,8 @@ internal class NightlyCleanupSupport(
     return FacadeOperationResult(
       success = success,
       message = buildMessage(report),
-      outputPath = outputPath
+      outputPath = outputPath,
+      cleanupSummary = report.summary
     )
   }
 
@@ -268,12 +302,31 @@ internal class NightlyCleanupSupport(
     runtimeManifest.artifacts.forEach { entry ->
       localArtifactPath(entry.url)?.let { add(it, "runtime_manifest_artifact", "runtime manifest artifact:${entry.id}") }
     }
+    loadRuntimeManifestIfPresent(RUNTIME_ROLLBACK_MANIFEST_FILE)?.let { rollbackManifest ->
+      add(RUNTIME_ROLLBACK_MANIFEST_FILE, "runtime_manifest", "rollback runtime manifest")
+      rollbackManifest.artifacts.forEach { entry ->
+        localArtifactPath(entry.url)?.let {
+          add(it, "runtime_manifest_artifact", "rollback runtime artifact:${entry.id}")
+        }
+      }
+    }
 
     for (component in COMPONENT_RELEASE_COMPONENTS) {
       val staged = loadComponentReleaseManifestIfPresent(component) ?: continue
       add(staged.first, "component_manifest", "staged component manifest:$component")
       staged.second.artifacts.forEach { entry ->
         localArtifactPath(entry.url)?.let { add(it, "component_manifest_artifact", "component manifest artifact:$component:${entry.id}") }
+      }
+      loadComponentReleaseManifestAtIfPresent(
+        component = component,
+        manifestPath = componentRollbackManifestPath(component)
+      )?.let { rollback ->
+        add(rollback.first, "component_manifest", "rollback component manifest:$component")
+        rollback.second.artifacts.forEach { entry ->
+          localArtifactPath(entry.url)?.let {
+            add(it, "component_manifest_artifact", "rollback component artifact:$component:${entry.id}")
+          }
+        }
       }
     }
 
@@ -411,8 +464,28 @@ internal class NightlyCleanupSupport(
     return manifest
   }
 
+  private suspend fun loadRuntimeManifestIfPresent(path: String): ArtifactManifest? {
+    val result = rootExecutor.run("if [ -f '${path}' ]; then cat '${path}'; fi")
+    if (!result.ok) error("Failed to read rollback runtime manifest")
+    val raw = result.stdout.trim()
+    if (raw.isBlank()) return null
+    val manifest = json.decodeFromString<ArtifactManifest>(raw)
+    require(manifest.manifestVersion.isNotBlank()) { "Rollback runtime manifest version is required" }
+    manifest.artifacts.forEach { entry ->
+      require(isLocalArtifactUrl(entry.url)) { "Rollback runtime artifact must use a local path" }
+    }
+    return manifest
+  }
+
   private suspend fun loadComponentReleaseManifestIfPresent(component: String): Pair<String, ComponentReleaseManifest>? {
     val manifestPath = componentReleaseManifestPath(component)
+    return loadComponentReleaseManifestAtIfPresent(component, manifestPath)
+  }
+
+  private suspend fun loadComponentReleaseManifestAtIfPresent(
+    component: String,
+    manifestPath: String
+  ): Pair<String, ComponentReleaseManifest>? {
     val result = rootExecutor.run("if [ -f '${manifestPath}' ]; then cat '${manifestPath}'; fi")
     if (!result.ok) {
       error("Failed to read component release manifest at $manifestPath: ${result.stderr}")
@@ -431,8 +504,9 @@ internal class NightlyCleanupSupport(
     return manifestPath to manifest
   }
 
-  private fun buildCleanupCommand(protectedListPath: String, dryRun: Boolean): String {
+  private fun buildCleanupCommand(protectedListPath: String, dryRun: Boolean, retiredDns: Boolean): String {
     val dryRunArg = if (dryRun) " --dry-run" else ""
+    val retiredDnsArg = if (retiredDns) " --retired-dns" else ""
     return buildString {
       append(singleQuote(CLEANUP_SCRIPT_PATH))
       append(" --protected-list ")
@@ -447,6 +521,7 @@ internal class NightlyCleanupSupport(
       append(CLEANUP_RETENTION_DAYS)
       append(" --log-age-days ")
       append(CLEANUP_RETENTION_DAYS)
+      append(retiredDnsArg)
       append(dryRunArg)
     }
   }
@@ -462,7 +537,20 @@ internal class NightlyCleanupSupport(
       append(".json")
     }
     val outputPath = "$outputDir/$fileName"
-    writeRootFile(outputPath, json.encodeToString(CleanupReport.serializer(), report), mode = "0600")
+    val durableSummary = report.copy(
+      protectedPaths = emptyList(),
+      candidates = emptyList(),
+      deletedPaths = emptyList(),
+      skippedPaths = emptyList(),
+      failurePaths = emptyList()
+    )
+    writeRootFile(outputPath, json.encodeToString(CleanupReport.serializer(), durableSummary), mode = "0600")
+    val pruneResult = rootExecutor.runScript(
+      "find ${singleQuote(outputDir)} -mindepth 1 -maxdepth 1 -type f -name 'cleanup-*.json' ! -path ${singleQuote(outputPath)} -exec rm -f '{}' '+'"
+    )
+    if (!pruneResult.ok) {
+      Log.w(TAG, "cleanup_report_prune_failed detail=${abbreviate(pruneResult.stderr)}")
+    }
     return outputPath
   }
 
@@ -539,6 +627,10 @@ internal class NightlyCleanupSupport(
     return "/data/local/pixel-stack/conf/runtime/components/$component/release-manifest.json"
   }
 
+  private fun componentRollbackManifestPath(component: String): String {
+    return "/data/local/pixel-stack/conf/runtime/components/$component/release-manifest.previous.json"
+  }
+
   private fun localArtifactPath(rawUrl: String): String? {
     val url = rawUrl.trim()
     return when {
@@ -579,7 +671,7 @@ internal class NightlyCleanupSupport(
   private companion object {
     const val TAG = "NightlyCleanupSupport"
     const val MAX_LOG_FIELD_LENGTH = 600
-    const val MANAGEMENT_ASSET_SCOPE = "management"
+    const val CLEANUP_ASSET_SCOPE = "runtime_cleanup"
     const val DEFAULT_EVENT_OUTPUT_DIR = "${StackPaths.LOG}/events"
     const val CLEANUP_SCRIPT_PATH = "${StackPaths.BIN}/pixel-runtime-cleanup.sh"
     const val MUTATION_LOCK_PATH = "${StackPaths.RUN}/orchestrator-mutation.lock"
@@ -587,6 +679,8 @@ internal class NightlyCleanupSupport(
     const val TERMUX_HOME = "/data/user/0/com.termux/files/home"
     const val CLEANUP_RETENTION_DAYS = 30
     const val RUNTIME_MANIFEST_FILE = "/data/local/pixel-stack/conf/runtime/runtime-manifest.json"
+    const val RUNTIME_ROLLBACK_MANIFEST_FILE =
+      "/data/local/pixel-stack/conf/runtime/runtime-manifest.previous.json"
     val REPORT_STAMP: DateTimeFormatter =
       DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'", Locale.US).withZone(ZoneOffset.UTC)
     val SITE_NOTIFIER_COHORT_REGEX = Regex("""site[-_]notifier-\d{8}T\d{6}Z""")

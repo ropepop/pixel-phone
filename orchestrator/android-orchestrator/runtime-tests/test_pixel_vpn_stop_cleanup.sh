@@ -15,7 +15,7 @@ if ! rg -Fq 'tailscaled.pid' "${VPN_STOP_SCRIPT}"; then
   exit 1
 fi
 
-if ! rg -Fq "pkill -f '/data/local/pixel-stack/vpn/bin/tailscaled'" "${VPN_STOP_SCRIPT}"; then
+if ! rg -Fq 'pkill -f "${BASE}/bin/tailscaled"' "${VPN_STOP_SCRIPT}"; then
   echo "FAIL: missing tailscaled process kill fallback in ${VPN_STOP_SCRIPT}" >&2
   exit 1
 fi

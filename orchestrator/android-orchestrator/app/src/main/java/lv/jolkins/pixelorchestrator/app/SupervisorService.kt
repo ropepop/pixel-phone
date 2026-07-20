@@ -16,6 +16,7 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import lv.jolkins.pixelorchestrator.BuildConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -74,8 +75,22 @@ import lv.jolkins.pixelorchestrator.app.ticket.TicketServiceRuntimeState
 import lv.jolkins.pixelorchestrator.app.ticket.TicketServiceSettingsSnapshot
 import lv.jolkins.pixelorchestrator.app.ticket.TicketServiceSettingsStore
 import lv.jolkins.pixelorchestrator.app.ticket.TicketStreamService
+import lv.jolkins.pixelorchestrator.app.telemetry.OrchestratorTelemetryComponent
+import lv.jolkins.pixelorchestrator.app.telemetry.OrchestratorTelemetryCleanupCategory
+import lv.jolkins.pixelorchestrator.app.telemetry.OrchestratorTelemetryDraft
+import lv.jolkins.pixelorchestrator.app.telemetry.OrchestratorTelemetryEventType
+import lv.jolkins.pixelorchestrator.app.telemetry.OrchestratorTelemetryPriority
+import lv.jolkins.pixelorchestrator.app.telemetry.OrchestratorTelemetryResult
+import lv.jolkins.pixelorchestrator.app.telemetry.OrchestratorTelemetryRuntime
+import lv.jolkins.pixelorchestrator.app.telemetry.OrchestratorTelemetryStatus
 import lv.jolkins.pixelorchestrator.rootexec.SuRootExecutor
 import kotlin.time.Duration
+
+internal enum class TicketServiceEnableRequestDecision {
+  NOT_REQUESTED,
+  ENABLE,
+  REJECT
+}
 
 class SupervisorService : Service() {
   private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -91,6 +106,7 @@ class SupervisorService : Service() {
   private var prerequisiteMonitorJob: Job? = null
   private var ticketServiceMonitorJob: Job? = null
   private var portraitLockMaintenanceJob: Job? = null
+  private var superuserLogMaintenanceJob: Job? = null
   private val ticketServiceEnsureMutex = Mutex()
   private val ticketReadinessRootExecutor = SuRootExecutor()
   private var deferredTouchBrightnessResumeRequested: Boolean = false
@@ -142,7 +158,9 @@ class SupervisorService : Service() {
       NotificationHelper.ensureChannel(this)
       startPortraitLockMaintenance()
       promoteToForeground()
-      WeeklyCleanupScheduler(this).scheduleNext(reason = "service_create")
+      val cleanupSchedule = WeeklyCleanupScheduler(this).scheduleNext(reason = "service_create")
+      startGeneralTelemetry(cleanupSchedule)
+      startSuperuserLogMaintenance(AppGraph.facade(this))
       reschedulePhoneAutomationWake(reason = "service_create", force = true)
       syncPhoneAutomation(trigger = "service_create")
       syncCpuFrequency(trigger = "service_create")
@@ -162,22 +180,58 @@ class SupervisorService : Service() {
     val bootEventToken = intent?.getStringExtra(EXTRA_BOOT_EVENT_TOKEN).orEmpty()
     val pixelRunId = intent?.getStringExtra(EXTRA_PIXEL_RUN_ID).orEmpty()
     val dryRun = intent?.getBooleanExtra(EXTRA_CLEANUP_DRY_RUN, false) ?: false
+    val fastTicketRedeploy =
+      intent?.getBooleanExtra(EXTRA_FAST_TICKET_REDEPLOY, false) == true &&
+        action == ACTION_REDEPLOY_COMPONENT &&
+        commandAction == OrchestratorShellCommand.ACTION_REDEPLOY_COMPONENT &&
+        component.trim().equals(TICKET_SERVICE_COMPONENT, ignoreCase = true)
+    val ticketServiceEnableDecision = resolveTicketServiceEnableRequest(
+      requested = intent?.getBooleanExtra(EXTRA_ENABLE_TICKET_SERVICE, false) == true,
+      serviceAction = action,
+      commandAction = commandAction,
+      component = component
+    )
+    val enableTicketService = ticketServiceEnableDecision == TicketServiceEnableRequestDecision.ENABLE
+    val ticketServiceWasEnabled = enableTicketService && ticketServiceStore.load().enabled
+    if (enableTicketService) {
+      val persisted = ticketServiceStore.setEnabled(true)
+      Log.i(
+        TAG,
+        "ticket_service_reliability_enabled action=$commandAction component=$component enabled=${persisted.enabled}"
+      )
+    }
     val cleanupTrigger = intent?.getStringExtra(EXTRA_CLEANUP_TRIGGER).orEmpty()
     val wakeReason = intent?.getStringExtra(EXTRA_PHONE_AUTOMATION_WAKE_REASON).orEmpty()
     val wakeDeadlineAtMillis = intent?.getLongExtra(EXTRA_PHONE_AUTOMATION_WAKE_DEADLINE_AT_MILLIS, 0L) ?: 0L
     val wakeToken = intent?.getStringExtra(EXTRA_PHONE_AUTOMATION_WAKE_TOKEN).orEmpty()
     val facade = AppGraph.facade(this)
     val resultAction = commandAction.ifBlank { OrchestratorShellCommand.fromSupervisorAction(action).orEmpty() }
+    val actionStartedAtMillis = System.currentTimeMillis()
+    val telemetryComponent = telemetryComponent(action, component)
+    OrchestratorTelemetryRuntime.enqueueIfReady(
+      OrchestratorTelemetryDraft(
+        eventType = telemetryEventType(action),
+        component = telemetryComponent,
+        status = OrchestratorTelemetryStatus.RUNNING,
+        priority = telemetryPriority(action)
+      )
+    )
     val ignorePhoneAutomationWake = action == ACTION_PHONE_AUTOMATION_WAKE &&
       shouldIgnorePhoneAutomationWake(
         wakeReason = wakeReason,
         wakeDeadlineAtMillis = wakeDeadlineAtMillis,
         wakeToken = wakeToken
       )
-    if (action != ACTION_INTERRUPT_PHONE_AUTOMATION_HANDOFF && !ignorePhoneAutomationWake) {
+    if (
+      ticketServiceEnableDecision != TicketServiceEnableRequestDecision.REJECT &&
+      action != ACTION_INTERRUPT_PHONE_AUTOMATION_HANDOFF &&
+      !ignorePhoneAutomationWake
+    ) {
       syncPhoneAutomation(trigger = action ?: "resume_supervision")
       syncCpuFrequency(trigger = action ?: "resume_supervision")
       if (
+        !fastTicketRedeploy &&
+        !enableTicketService &&
         action != ACTION_REFRESH_TICKET_SERVICE &&
         action != ACTION_TICKET_START_SERVER &&
         action != ACTION_TICKET_STOP_SERVER
@@ -187,7 +241,12 @@ class SupervisorService : Service() {
     }
 
     serviceScope.launch {
-      val result = when (action) {
+      val result = if (ticketServiceEnableDecision == TicketServiceEnableRequestDecision.REJECT) {
+        FacadeOperationResult(
+          false,
+          "Ticket service enable request is only valid for redeploy_component:ticket_screen"
+        )
+      } else when (action) {
         null -> facade.resumeSupervision()
 
         ACTION_BOOT_START -> {
@@ -210,7 +269,39 @@ class SupervisorService : Service() {
         ACTION_START_COMPONENT -> facade.startComponent(component)
         ACTION_STOP_COMPONENT -> facade.stopComponent(component)
         ACTION_RESTART_COMPONENT -> facade.restartComponent(component)
-        ACTION_REDEPLOY_COMPONENT -> facade.redeployComponent(component)
+        ACTION_REDEPLOY_COMPONENT -> {
+          val redeployResult = facade.redeployComponent(
+            component = component,
+            fastTicketScreenRedeploy = fastTicketRedeploy
+          )
+          if (enableTicketService) {
+            val keepEnabled = shouldKeepTicketServiceEnabledAfterRedeploy(
+              wasEnabled = ticketServiceWasEnabled,
+              redeploySucceeded = redeployResult.success
+            )
+            if (keepEnabled) {
+              syncTicketService(trigger = "ticket_service_enabled_by_redeploy", facade = facade)
+            } else {
+              ticketServiceStore.setEnabled(false)
+              syncTicketService(trigger = "ticket_service_enable_rollback", facade = facade)
+            }
+            redeployResult.copy(
+              message = when {
+                redeployResult.success -> {
+                  "Ticket service reliability enabled; ${redeployResult.message}"
+                }
+                ticketServiceWasEnabled -> {
+                  "Ticket service reliability remains enabled, but redeploy failed: ${redeployResult.message}"
+                }
+                else -> {
+                  "Ticket service reliability restored to disabled because redeploy failed: ${redeployResult.message}"
+                }
+              }
+            )
+          } else {
+            redeployResult
+          }
+        }
         ACTION_HEALTH_COMPONENT -> facade.healthComponent(component)
         ACTION_SYNC_DDNS -> facade.syncDdnsNow()
         ACTION_EXPORT_BUNDLE -> facade.exportSupportBundle(includeSecrets = false)
@@ -294,6 +385,12 @@ class SupervisorService : Service() {
       if (action == ACTION_CLEANUP) {
         WeeklyCleanupScheduler(this@SupervisorService).scheduleNext(reason = "cleanup_complete:${cleanupTrigger.ifBlank { "manual" }}")
       }
+      recordCompletedActionTelemetry(
+        action = action,
+        component = telemetryComponent,
+        result = result,
+        startedAtMillis = actionStartedAtMillis
+      )
     }
 
     return START_STICKY
@@ -303,8 +400,10 @@ class SupervisorService : Service() {
     prerequisiteMonitorJob?.cancel()
     ticketServiceMonitorJob?.cancel()
     portraitLockMaintenanceJob?.cancel()
+    superuserLogMaintenanceJob?.cancel()
     ticketServiceMonitorJob = null
     portraitLockMaintenanceJob = null
+    superuserLogMaintenanceJob = null
     if (this::cpuFrequencyRuntime.isInitialized) {
       cpuFrequencyRuntime.stop(
         reason = "service_destroyed",
@@ -334,6 +433,22 @@ class SupervisorService : Service() {
 
   override fun onBind(intent: Intent?): IBinder? = null
 
+  private fun startSuperuserLogMaintenance(facade: OrchestratorFacade) {
+    superuserLogMaintenanceJob?.cancel()
+    superuserLogMaintenanceJob = serviceScope.launch(Dispatchers.IO) {
+      while (isActive) {
+        delay(SUPERUSER_LOG_MAINTENANCE_INTERVAL_MILLIS)
+        runCatching { facade.maintainSuperuserLogDb() }
+          .onSuccess { result ->
+            Log.i(TAG, "superuser_log_maintenance success=${result.success}")
+          }
+          .onFailure {
+            Log.w(TAG, "superuser_log_maintenance_failed")
+          }
+      }
+    }
+  }
+
   private fun requestTicketStreamService(
     action: String,
     successMessage: String,
@@ -358,6 +473,192 @@ class SupervisorService : Service() {
         }
         delay(PORTRAIT_LOCK_MAINTENANCE_INTERVAL_MILLIS)
       }
+    }
+  }
+
+  private fun telemetryEventType(action: String?): OrchestratorTelemetryEventType {
+    return when (action) {
+      ACTION_START_COMPONENT,
+      ACTION_STOP_COMPONENT,
+      ACTION_RESTART_COMPONENT,
+      ACTION_REDEPLOY_COMPONENT -> OrchestratorTelemetryEventType.COMPONENT_TRANSITION
+      else -> OrchestratorTelemetryEventType.MANUAL_ACTION
+    }
+  }
+
+  private fun telemetryComponent(
+    action: String?,
+    component: String
+  ): OrchestratorTelemetryComponent {
+    return when {
+      action == ACTION_CLEANUP -> OrchestratorTelemetryComponent.CLEANUP
+      action == ACTION_EXPORT_BUNDLE -> OrchestratorTelemetryComponent.DIAGNOSTICS
+      action == ACTION_REFRESH_PHONE_AUTOMATION || action == ACTION_PHONE_AUTOMATION_WAKE ||
+        action == ACTION_INTERRUPT_PHONE_AUTOMATION_HANDOFF ->
+        OrchestratorTelemetryComponent.AUTOMATION
+      action == ACTION_REFRESH_CPU_FREQUENCY -> OrchestratorTelemetryComponent.CPU
+      action == ACTION_REFRESH_TICKET_SERVICE || action == ACTION_TICKET_START_SERVER ||
+        action == ACTION_TICKET_STOP_SERVER || component == TICKET_SERVICE_COMPONENT ->
+        OrchestratorTelemetryComponent.TICKET_READINESS
+      action == ACTION_SYNC_DDNS -> OrchestratorTelemetryComponent.MANAGEMENT
+      action == ACTION_HEALTH -> OrchestratorTelemetryComponent.STACK
+      component == "ssh" -> OrchestratorTelemetryComponent.SSH
+      component == "vpn" -> OrchestratorTelemetryComponent.VPN
+      component == "management" -> OrchestratorTelemetryComponent.MANAGEMENT
+      component == "cpu_frequency" -> OrchestratorTelemetryComponent.CPU
+      else -> OrchestratorTelemetryComponent.SUPERVISOR
+    }
+  }
+
+  private fun telemetryPriority(action: String?): OrchestratorTelemetryPriority {
+    return when (action) {
+      ACTION_BOOTSTRAP,
+      ACTION_STOP_ALL,
+      ACTION_CLEANUP -> OrchestratorTelemetryPriority.HIGH
+      else -> OrchestratorTelemetryPriority.NORMAL
+    }
+  }
+
+  private fun startGeneralTelemetry(cleanupSchedule: CleanupScheduleResult) {
+    serviceScope.launch {
+      val rootExecutor = SuRootExecutor()
+      var sessionRecorded = false
+      var scheduleRecorded = false
+      while (isActive) {
+        val configured = OrchestratorTelemetryRuntime.initialize(
+          rootExecutor = rootExecutor,
+          buildId = BuildConfig.ORCHESTRATOR_RELEASE_ID
+        )
+        if (configured && !sessionRecorded) {
+          OrchestratorTelemetryRuntime.enqueueIfReady(
+            OrchestratorTelemetryDraft(
+              eventType = OrchestratorTelemetryEventType.APP_SESSION,
+              component = OrchestratorTelemetryComponent.ORCHESTRATOR,
+              status = OrchestratorTelemetryStatus.RUNNING,
+              result = OrchestratorTelemetryResult.OK,
+              priority = OrchestratorTelemetryPriority.NORMAL
+            )
+          )
+          sessionRecorded = true
+        }
+        if (configured && !scheduleRecorded &&
+          (!cleanupSchedule.success || cleanupSchedule.mode == CleanupScheduleMode.APPROXIMATE_IDLE)
+        ) {
+          OrchestratorTelemetryRuntime.enqueueIfReady(
+            OrchestratorTelemetryDraft(
+              eventType = OrchestratorTelemetryEventType.SCHEDULING_FAILURE,
+              component = OrchestratorTelemetryComponent.SCHEDULER,
+              status = if (cleanupSchedule.success) {
+                OrchestratorTelemetryStatus.DEGRADED
+              } else {
+                OrchestratorTelemetryStatus.FAILED
+              },
+              result = if (cleanupSchedule.success) {
+                OrchestratorTelemetryResult.RETRYING
+              } else {
+                OrchestratorTelemetryResult.FAILED
+              },
+              priority = OrchestratorTelemetryPriority.HIGH
+            )
+          )
+          scheduleRecorded = true
+        }
+        OrchestratorTelemetryRuntime.drainDue()
+        delay(TELEMETRY_DRAIN_INTERVAL_MILLIS)
+      }
+    }
+  }
+
+  private suspend fun recordCompletedActionTelemetry(
+    action: String?,
+    component: OrchestratorTelemetryComponent,
+    result: FacadeOperationResult,
+    startedAtMillis: Long
+  ) {
+    val durationMillis = (System.currentTimeMillis() - startedAtMillis)
+      .coerceIn(0L, MAX_TELEMETRY_DURATION_MILLIS)
+    OrchestratorTelemetryRuntime.enqueueIfReady(
+      OrchestratorTelemetryDraft(
+        eventType = telemetryEventType(action),
+        component = component,
+        status = if (result.success) {
+          OrchestratorTelemetryStatus.COMPLETED
+        } else {
+          OrchestratorTelemetryStatus.FAILED
+        },
+        result = if (result.success) {
+          OrchestratorTelemetryResult.OK
+        } else {
+          OrchestratorTelemetryResult.FAILED
+        },
+        priority = telemetryPriority(action),
+        durationMillis = durationMillis
+      )
+    )
+    result.healthSnapshot?.let {
+      OrchestratorTelemetryRuntime.enqueueIfReady(
+        OrchestratorTelemetryDraft(
+          eventType = OrchestratorTelemetryEventType.HEALTH_CHANGE,
+          component = OrchestratorTelemetryComponent.STACK,
+          status = if (result.success) {
+            OrchestratorTelemetryStatus.HEALTHY
+          } else {
+            OrchestratorTelemetryStatus.DEGRADED
+          },
+          result = if (result.success) {
+            OrchestratorTelemetryResult.OK
+          } else {
+            OrchestratorTelemetryResult.FAILED
+          },
+          priority = OrchestratorTelemetryPriority.HIGH,
+          durationMillis = durationMillis
+        )
+      )
+    }
+    if (action == ACTION_CLEANUP) {
+      result.cleanupSummary?.categories.orEmpty().forEach { category ->
+        val safeCategory = telemetryCleanupCategory(category.category) ?: return@forEach
+        OrchestratorTelemetryRuntime.enqueueIfReady(
+          OrchestratorTelemetryDraft(
+            eventType = OrchestratorTelemetryEventType.CLEANUP_RESULT,
+            component = OrchestratorTelemetryComponent.CLEANUP,
+            cleanupCategory = safeCategory,
+            status = when {
+              category.failures > 0 -> OrchestratorTelemetryStatus.FAILED
+              category.deleted > 0 -> OrchestratorTelemetryStatus.COMPLETED
+              else -> OrchestratorTelemetryStatus.SKIPPED
+            },
+            result = when {
+              category.failures > 0 -> OrchestratorTelemetryResult.FAILED
+              result.success -> OrchestratorTelemetryResult.OK
+              else -> OrchestratorTelemetryResult.FAILED
+            },
+            priority = OrchestratorTelemetryPriority.HIGH,
+            durationMillis = durationMillis,
+            count = category.deleted.toLong().coerceAtLeast(0L),
+            byteCount = category.deletedBytes.coerceAtLeast(0L)
+          )
+        )
+      }
+    }
+    OrchestratorTelemetryRuntime.drainDue()
+  }
+
+  private fun telemetryCleanupCategory(category: String): OrchestratorTelemetryCleanupCategory? {
+    return when (category) {
+      "ticket_capture_file" -> OrchestratorTelemetryCleanupCategory.TICKET_HIERARCHY_XML
+      "action_result" -> OrchestratorTelemetryCleanupCategory.DEPLOYMENT_ACTION_RESULTS
+      "support_bundle" -> OrchestratorTelemetryCleanupCategory.SUPPORT_BUNDLES
+      "superuser_log_db" -> OrchestratorTelemetryCleanupCategory.ROOT_COMMAND_HISTORY
+      "runtime_log", "runtime_log_rotation", "legacy_log" ->
+        OrchestratorTelemetryCleanupCategory.STACK_LOGS
+      "retired_dns_log" -> OrchestratorTelemetryCleanupCategory.DNS_HISTORY
+      "runtime_artifact", "component_artifact" ->
+        OrchestratorTelemetryCleanupCategory.DEPLOYMENT_ARCHIVES
+      "release_dir", "termux_artifact" ->
+        OrchestratorTelemetryCleanupCategory.RETIRED_ARTIFACTS
+      "app_cache", "tmp_artifact" -> OrchestratorTelemetryCleanupCategory.APP_CACHE
+      else -> null
     }
   }
 
@@ -392,6 +693,8 @@ class SupervisorService : Service() {
     const val EXTRA_BOOT_EVENT_TOKEN = "orchestrator_boot_event_token"
     const val EXTRA_PIXEL_RUN_ID = OrchestratorShellCommand.EXTRA_PIXEL_RUN_ID
     const val EXTRA_CLEANUP_DRY_RUN = OrchestratorShellCommand.EXTRA_DRY_RUN
+    const val EXTRA_FAST_TICKET_REDEPLOY = OrchestratorShellCommand.EXTRA_FAST_TICKET_REDEPLOY
+    const val EXTRA_ENABLE_TICKET_SERVICE = OrchestratorShellCommand.EXTRA_ENABLE_TICKET_SERVICE
     const val EXTRA_CLEANUP_TRIGGER = "orchestrator_cleanup_trigger"
     const val EXTRA_PHONE_AUTOMATION_WAKE_REASON = "phone_automation_wake_reason"
     const val EXTRA_PHONE_AUTOMATION_WAKE_DEADLINE_AT_MILLIS = "phone_automation_wake_deadline_at_millis"
@@ -400,9 +703,12 @@ class SupervisorService : Service() {
     private const val CONNECTION_DROP_DEBOUNCE_MILLIS = 2_000L
     private const val DEFERRED_TOUCH_BRIGHTNESS_RESUME_TRIGGER = "deferred_touch_brightness_resume"
     private const val PORTRAIT_LOCK_MAINTENANCE_INTERVAL_MILLIS = 10_000L
+    private const val SUPERUSER_LOG_MAINTENANCE_INTERVAL_MILLIS = 60L * 60L * 1_000L
     private const val TICKET_SERVICE_COMPONENT = "ticket_screen"
     private const val TICKET_SERVICE_MONITOR_INTERVAL_MILLIS = 30_000L
     private const val TICKET_SERVICE_STABLE_RECHECK_MILLIS = 2 * 60 * 1_000L
+    private const val TELEMETRY_DRAIN_INTERVAL_MILLIS = 60_000L
+    private const val MAX_TELEMETRY_DURATION_MILLIS = 7L * 24L * 60L * 60L * 1_000L
 
     internal fun resolveBootRecoveryMode(shouldHandleFullStart: Boolean): BootRecoveryMode {
       return if (shouldHandleFullStart) {
@@ -412,6 +718,30 @@ class SupervisorService : Service() {
       }
     }
 
+    internal fun resolveTicketServiceEnableRequest(
+      requested: Boolean,
+      serviceAction: String?,
+      commandAction: String?,
+      component: String?
+    ): TicketServiceEnableRequestDecision {
+      if (!requested) {
+        return TicketServiceEnableRequestDecision.NOT_REQUESTED
+      }
+      return if (
+        serviceAction == ACTION_REDEPLOY_COMPONENT &&
+        OrchestratorShellCommand.permitsTicketServiceEnable(commandAction, component)
+      ) {
+        TicketServiceEnableRequestDecision.ENABLE
+      } else {
+        TicketServiceEnableRequestDecision.REJECT
+      }
+    }
+
+    internal fun shouldKeepTicketServiceEnabledAfterRedeploy(
+      wasEnabled: Boolean,
+      redeploySucceeded: Boolean
+    ): Boolean = wasEnabled || redeploySucceeded
+
     fun start(
       context: Context,
       action: String,
@@ -420,6 +750,8 @@ class SupervisorService : Service() {
       pixelRunId: String = "",
       commandAction: String = "",
       dryRun: Boolean = false,
+      fastTicketRedeploy: Boolean = false,
+      enableTicketService: Boolean = false,
       cleanupTrigger: String = ""
     ) {
       val intent = Intent(context, SupervisorService::class.java).setAction(action)
@@ -437,6 +769,12 @@ class SupervisorService : Service() {
       }
       if (dryRun) {
         intent.putExtra(EXTRA_CLEANUP_DRY_RUN, true)
+      }
+      if (fastTicketRedeploy) {
+        intent.putExtra(EXTRA_FAST_TICKET_REDEPLOY, true)
+      }
+      if (enableTicketService) {
+        intent.putExtra(EXTRA_ENABLE_TICKET_SERVICE, true)
       }
       if (cleanupTrigger.isNotBlank()) {
         intent.putExtra(EXTRA_CLEANUP_TRIGGER, cleanupTrigger)
@@ -624,12 +962,10 @@ class SupervisorService : Service() {
       val componentStatus = moduleHealth?.status.orEmpty().ifBlank {
         if (result.success) "running" else "degraded"
       }
-      val tunnelProbe = probeTicketTunnelReadiness()
-      val ready = result.success && localServerReachable && tunnelProbe.ready
+      val ready = result.success && localServerReachable
       val detail = when {
-        ready -> "Local ticket server and tunnel are ready"
+        ready -> "Local ticket server is ready; public ingress is owned by kitty-gration"
         !localServerReachable -> "Local ticket server is not reachable: ${result.message}"
-        !tunnelProbe.ready -> "Ticket tunnel is not ready: ${tunnelProbe.detail}"
         else -> result.message
       }
 
@@ -638,12 +974,12 @@ class SupervisorService : Service() {
         success = ready,
         result = detail,
         localServerReachable = localServerReachable,
-        tunnelReady = tunnelProbe.ready,
+        tunnelReady = true,
         componentStatus = componentStatus
       )
       Log.i(
         TAG,
-        "ticket_service_ensure reason=$reason enabled=${latest.enabled} state=${latest.runtimeState.wireName} local=$localServerReachable tunnel=${tunnelProbe.ready} component=$componentStatus detail=$detail"
+        "ticket_service_ensure reason=$reason enabled=${latest.enabled} state=${latest.runtimeState.wireName} local=$localServerReachable ingress=kitty-gration component=$componentStatus detail=$detail"
       )
       updateForegroundNotification(ticketServiceSnapshot = latest)
     }
@@ -663,6 +999,10 @@ class SupervisorService : Service() {
 
   private suspend fun stopTicketServiceReadiness(trigger: String, facade: OrchestratorFacade) {
     ticketServiceEnsureMutex.withLock {
+      if (ticketServiceStore.load().enabled) {
+        Log.i(TAG, "ticket_service_stop_skipped trigger=$trigger reason=re_enabled")
+        return
+      }
       ticketServiceStore.updateRuntimeState(
         TicketServiceRuntimeState.STOPPING,
         "Stopping local ticket server and tunnel readiness"
@@ -687,94 +1027,6 @@ class SupervisorService : Service() {
       )
       updateForegroundNotification(ticketServiceSnapshot = ticketServiceStore.load())
     }
-  }
-
-  private suspend fun probeTicketTunnelReadiness(): TicketTunnelProbe {
-    val result = ticketReadinessRootExecutor.runScript(
-      script = """
-        BASE="/data/local/pixel-stack/apps/ticket-screen"
-        CONF_ENV="/data/local/pixel-stack/conf/apps/ticket-screen.env"
-        RUNTIME_ENV="${'$'}BASE/env/ticket-screen.env"
-        RUN_DIR="${'$'}BASE/run"
-        LOOP_PID_FILE="${'$'}RUN_DIR/ticket-web-tunnel-service-loop.pid"
-        CLOUDFLARED_PID_FILE="${'$'}RUN_DIR/ticket-screen-cloudflared.pid"
-        TUNNEL_LOOP_BIN="${'$'}BASE/bin/ticket-web-tunnel-service-loop"
-
-        [ -r "${'$'}CONF_ENV" ] && . "${'$'}CONF_ENV"
-        [ -r "${'$'}RUNTIME_ENV" ] && . "${'$'}RUNTIME_ENV"
-
-        is_true() {
-          case "${'$'}{1:-}" in
-            1|true|TRUE|yes|YES|on|ON) return 0 ;;
-            *) return 1 ;;
-          esac
-        }
-
-        pid_cmdline() {
-          pid="${'$'}1"
-          if [ -r "/proc/${'$'}pid/cmdline" ]; then
-            timeout 1 tr '\000' ' ' < "/proc/${'$'}pid/cmdline" 2>/dev/null || true
-            return 0
-          fi
-          ps -p "${'$'}pid" -o ARGS= 2>/dev/null || true
-        }
-
-        pid_matches() {
-          pid="${'$'}1"
-          needle="${'$'}2"
-          [ -n "${'$'}pid" ] || return 1
-          kill -0 "${'$'}pid" >/dev/null 2>&1 || return 1
-          case "$(pid_cmdline "${'$'}pid")" in
-            *"${'$'}needle"*) return 0 ;;
-            *) return 1 ;;
-          esac
-        }
-
-        read_pid() {
-          [ -r "${'$'}1" ] && sed -n '1p' "${'$'}1" 2>/dev/null | tr -d '\r'
-        }
-
-        if ! is_true "${'$'}{TICKET_SCREEN_TUNNEL_ENABLED:-1}"; then
-          echo "ready=1"
-          echo "detail=tunnel_disabled"
-          exit 0
-        fi
-
-        loop_pid="$(read_pid "${'$'}LOOP_PID_FILE" || true)"
-        cloudflared_pid="$(read_pid "${'$'}CLOUDFLARED_PID_FILE" || true)"
-        loop_ready=0
-        cloudflared_ready=0
-        pid_matches "${'$'}loop_pid" "${'$'}TUNNEL_LOOP_BIN" && loop_ready=1
-        pid_matches "${'$'}cloudflared_pid" "/state/ticket-screen-cloudflared.yml" && cloudflared_ready=1
-
-        echo "loop=${'$'}loop_ready"
-        echo "cloudflared=${'$'}cloudflared_ready"
-        echo "loop_pid=${'$'}loop_pid"
-        echo "cloudflared_pid=${'$'}cloudflared_pid"
-
-        if [ "${'$'}loop_ready" = "1" ] && [ "${'$'}cloudflared_ready" = "1" ]; then
-          echo "ready=1"
-          echo "detail=tunnel_loop_and_cloudflared_ready"
-          exit 0
-        fi
-        echo "ready=0"
-        echo "detail=tunnel_loop_or_cloudflared_missing"
-        exit 1
-      """.trimIndent(),
-      timeout = Duration.parse("8s")
-    )
-    val fields = result.stdout.lineSequence()
-      .mapNotNull { line ->
-        val separator = line.indexOf('=')
-        if (separator <= 0) null else line.substring(0, separator).trim() to line.substring(separator + 1).trim()
-      }
-      .toMap()
-    return TicketTunnelProbe(
-      ready = result.ok && fields["ready"] == "1",
-      detail = fields["detail"].orEmpty().ifBlank {
-        result.stderr.ifBlank { result.stdout }.trim().ifBlank { "unknown" }
-      }
-    )
   }
 
   private fun startPhoneAutomationPrerequisiteMonitor() {
@@ -1029,11 +1281,6 @@ internal enum class BootRecoveryMode {
   START_ALL,
   RESUME_SUPERVISION
 }
-
-private data class TicketTunnelProbe(
-  val ready: Boolean,
-  val detail: String
-)
 
 internal class PhoneAutomationPrerequisiteMonitor(
   context: Context,

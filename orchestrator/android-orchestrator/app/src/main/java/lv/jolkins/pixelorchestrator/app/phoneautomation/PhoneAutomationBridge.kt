@@ -133,6 +133,22 @@ internal interface PhoneAutomationAccessibilityHost {
     timeoutMillis: Long
   ): Boolean
 
+  suspend fun setViviControlCodeTextWithoutKeyboard(
+    expectedPackageName: String,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean = false
+
+  suspend fun submitViviControlCodeWithoutKeyboard(
+    expectedPackageName: String,
+    expectedText: String,
+    timeoutMillis: Long
+  ): Boolean = false
+
+  suspend fun restoreViviControlCodeKeyboardMode(
+    expectedPackageName: String
+  ): Boolean = true
+
   suspend fun tapScreenRatio(
     expectedPackageName: String,
     xRatio: Double,
@@ -476,6 +492,35 @@ object PhoneAutomationServiceBridge {
     val service = accessibilityService.value ?: return false
     return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
       service.setTextInFirstEditableInput(expectedPackageName, text, timeoutMillis)
+    } ?: false
+  }
+
+  suspend fun setViviControlCodeTextWithoutKeyboard(
+    expectedPackageName: String,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
+      service.setViviControlCodeTextWithoutKeyboard(expectedPackageName, text, timeoutMillis)
+    } ?: false
+  }
+
+  suspend fun submitViviControlCodeWithoutKeyboard(
+    expectedPackageName: String,
+    expectedText: String,
+    timeoutMillis: Long
+  ): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
+      service.submitViviControlCodeWithoutKeyboard(expectedPackageName, expectedText, timeoutMillis)
+    } ?: false
+  }
+
+  suspend fun restoreViviControlCodeKeyboardMode(expectedPackageName: String): Boolean {
+    val service = accessibilityService.value ?: return true
+    return withTimeoutOrNull(ACCESSIBILITY_CALL_GRACE_TIMEOUT_MILLIS) {
+      service.restoreViviControlCodeKeyboardMode(expectedPackageName)
     } ?: false
   }
 

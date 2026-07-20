@@ -93,6 +93,7 @@ class RuntimeHealthChecker(
     val managementAmPath = parsed?.managementAmPath?.trim().orEmpty()
     val managementLogcatPath = parsed?.managementLogcatPath?.trim().orEmpty()
     val managementRequireWirelessDebug = config.supervision.managementRequireWirelessDebug
+    val managementRequireAuthConsistency = config.supervision.managementRequireAuthConsistency
     val managementWirelessDebugEnabled = parsed?.managementWirelessDebugEnabled?.trim().orEmpty().ifBlank { "0" }
     val managementWirelessDebugTlsPort = parsed?.managementWirelessDebugTlsPort?.trim().orEmpty()
     val managementWirelessDebugLive = parsed?.managementWirelessDebugLive?.trim().orEmpty().ifBlank { "0" }
@@ -295,6 +296,8 @@ class RuntimeHealthChecker(
     val remoteHealthy = remoteEnabled && remoteHttps && remoteDot && remoteDohContract && identityFrontendHealthy
     val remoteRequired = remoteHealthEnforced
     val managementAuthHealthy = !managementEnabled || managementAuthConsistent
+    val managementAuthGateHealthy =
+      !managementEnabled || !managementRequireAuthConsistency || managementAuthHealthy
     val supervisorHealthy = rootGranted &&
       (!dnsEnabled || dnsHealthy) &&
       (!sshEnabled || sshHealthy) &&
@@ -307,6 +310,7 @@ class RuntimeHealthChecker(
       (!managementEnabled || managementHealthy)
     val deployHealthy = supervisorLoopHealthy &&
       rootGranted &&
+      ticketScreenHealthy &&
       (!dnsEnabled || dnsHealthy) &&
       (!sshEnabled || sshHealthy) &&
       (!vpnEnabled || vpnHealthy) &&
@@ -316,7 +320,8 @@ class RuntimeHealthChecker(
       (!subscriptionBotEnabled || subscriptionBotHealthy) &&
       (!ddnsRequired || ddnsHealthy) &&
       (!remoteRequired || remoteHealthy) &&
-      (!managementEnabled || (managementHealthy && managementAuthHealthy))
+      (!managementEnabled || managementHealthy) &&
+      managementAuthGateHealthy
     val moduleHealth = mapOf(
       "dns" to ModuleHealthState(
         healthy = dnsHealthy,
@@ -370,6 +375,8 @@ class RuntimeHealthChecker(
           "management_enabled" to managementEnabled.toString(),
           "failure_reason" to managementReason,
           "management_auth_healthy" to managementAuthHealthy.toString(),
+          "management_auth_required" to managementRequireAuthConsistency.toString(),
+          "management_auth_gate_healthy" to managementAuthGateHealthy.toString(),
           "management_auth_consistent" to managementAuthConsistent.toString(),
           "management_auth_warning_reason" to managementAuthWarningReason,
           "ssh_listener" to managementSshListener,
@@ -491,11 +498,11 @@ class RuntimeHealthChecker(
         healthy = ticketScreenHealthy,
         status = when {
           ticketScreenHealthy -> "running"
-          ticketScreenEnabled -> "degraded"
-          else -> "disabled"
+          else -> "degraded"
         },
         details = mapOf(
           "ticket_screen_enabled" to ticketScreenEnabled.toString(),
+          "deploy_required" to "true",
           "ticket_screen_port" to TICKET_SCREEN_PORT.toString(),
           "listener" to if (ticketScreenHealthy) "1" else "0"
         )
@@ -600,6 +607,8 @@ class RuntimeHealthChecker(
         "management_path_healthy" to managementPathHealthy.toString(),
         "management_reason" to managementReason,
         "management_auth_healthy" to managementAuthHealthy.toString(),
+        "management_auth_required" to managementRequireAuthConsistency.toString(),
+        "management_auth_gate_healthy" to managementAuthGateHealthy.toString(),
         "management_auth_consistent" to managementAuthConsistent.toString(),
         "management_auth_warning_reason" to managementAuthWarningReason,
         "management_ssh_listener" to managementSshListener,
@@ -632,6 +641,8 @@ class RuntimeHealthChecker(
         "supervisor_loop_heartbeat_age_sec" to (supervisorLoopHeartbeatAge?.toString() ?: "unknown"),
         "supervisor_loop_heartbeat_fresh_sec" to supervisorLoopFreshSeconds.toString(),
         "supervisor_loop_healthy" to supervisorLoopHealthy.toString(),
+        "ticket_screen_deploy_required" to "true",
+        "ticket_screen_healthy" to ticketScreenHealthy.toString(),
         "deploy_healthy" to deployHealthy.toString(),
         "https_port" to config.remote.httpsPort.toString(),
         "dot_port" to config.remote.dotPort.toString(),

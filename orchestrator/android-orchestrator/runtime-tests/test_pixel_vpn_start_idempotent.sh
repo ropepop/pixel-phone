@@ -40,4 +40,17 @@ if ! rg -Fq 'missing vpn config source' "${VPN_START_SCRIPT}"; then
   exit 1
 fi
 
-echo "PASS: pixel-vpn-start includes PID-based idempotent launch guard and stale-state cleanup"
+python3 - "${VPN_START_SCRIPT}" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+fast_health = source.index('if runtime_inputs_current && [ -x "${HEALTH_BIN}" ]')
+first_copy = source.index('cp "${CONF_SRC}"')
+if fast_health >= first_copy:
+    raise SystemExit("healthy VPN fast path must run before runtime file copies")
+if 'vpn service loop started but did not become ready' not in source:
+    raise SystemExit("VPN start must wait for real readiness")
+PY
+
+echo "PASS: pixel-vpn-start keeps an idempotent ready fast path and verifies cold-start readiness"

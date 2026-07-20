@@ -51,10 +51,10 @@ mkdir -p "${RUN_DIR}" "${LOG_DIR}" "${STATE_DIR}"
   echo "missing tailscale binary: ${TAILSCALE_BIN}" >&2
   exit 1
 }
-[ -f "${VPN_AUTH_KEY_FILE}" ] || {
-  echo "missing tailscale auth key file: ${VPN_AUTH_KEY_FILE}" >&2
+if [ ! -f "${VPN_AUTH_KEY_FILE}" ] && [ ! -s "${TAILSCALED_STATE}" ]; then
+  echo "missing tailscale auth key and saved state" >&2
   exit 1
-}
+fi
 
 if [ -r "${SSH_CONF_FILE}" ]; then
   # shellcheck disable=SC1090
@@ -194,7 +194,7 @@ for _ in $(seq 1 20); do
   if ! kill -0 "${child_pid}" >/dev/null 2>&1; then
     break
   fi
-  sleep 1
+  sleep 0.25
 done
 
 if [ "${ready}" != "1" ]; then
@@ -209,9 +209,12 @@ set -- "${TAILSCALE_BIN}" \
   --socket "${TAILSCALED_SOCK}" \
   up \
   --ssh=false \
-  "--auth-key=file:${VPN_AUTH_KEY_FILE}" \
   "--accept-routes=$(bool_flag "${VPN_ACCEPT_ROUTES}")" \
   "--accept-dns=$(bool_flag "${VPN_ACCEPT_DNS}")"
+
+if [ -f "${VPN_AUTH_KEY_FILE}" ]; then
+  set -- "$@" "--auth-key=file:${VPN_AUTH_KEY_FILE}"
+fi
 
 if [ -n "${VPN_HOSTNAME}" ]; then
   set -- "$@" "--hostname=${VPN_HOSTNAME}"
@@ -220,7 +223,21 @@ if [ -n "${VPN_ADVERTISE_TAGS}" ]; then
   set -- "$@" "--advertise-tags=${VPN_ADVERTISE_TAGS}"
 fi
 
-if ! "$@" >> "${LOG_DIR}/tailscaled.log" 2>&1; then
+apply_ssh_guard_chain iptables PIXEL_SSH_GUARD
+apply_ssh_guard_chain ip6tables PIXEL_SSH_GUARD6
+
+if command -v timeout >/dev/null 2>&1; then
+  set +e
+  timeout 20 "$@" >> "${LOG_DIR}/tailscaled.log" 2>&1
+  up_rc=$?
+  set -e
+else
+  set +e
+  "$@" >> "${LOG_DIR}/tailscaled.log" 2>&1
+  up_rc=$?
+  set -e
+fi
+if [ "${up_rc}" -ne 0 ]; then
   kill "${child_pid}" >/dev/null 2>&1 || true
   wait "${child_pid}" >/dev/null 2>&1 || true
   rm -f "${TAILSCALED_PID_FILE}" >/dev/null 2>&1 || true
@@ -228,9 +245,18 @@ if ! "$@" >> "${LOG_DIR}/tailscaled.log" 2>&1; then
 fi
 
 tailnet_ipv4="$("${TAILSCALE_BIN}" --socket "${TAILSCALED_SOCK}" ip -4 2>/dev/null | sed -n '1p' || true)"
-if [ -z "${tailnet_ipv4}" ]; then
+attempt=0
+while [ -z "${tailnet_ipv4}" ] && [ "${attempt}" -lt 20 ]; do
   tailnet_ipv4="$(ip -4 addr show dev "${VPN_INTERFACE_NAME}" 2>/dev/null | awk '/inet / {sub(/\/.*/, "", $2); print $2; exit}')"
-fi
+  [ -n "${tailnet_ipv4}" ] && break
+  attempt=$((attempt + 1))
+  sleep 0.25
+done
+[ -n "${tailnet_ipv4}" ] || {
+  echo "tailscale did not publish an IPv4 address" >&2
+  kill "${child_pid}" >/dev/null 2>&1 || true
+  exit 1
+}
 printf '%s\n' "${tailnet_ipv4}" > "${TAILNET_IPV4_FILE}"
 
 if [ "${VPN_NATIVE_WIRELESS_DEBUG_ENABLED}" = "1" ]; then
@@ -238,9 +264,6 @@ if [ "${VPN_NATIVE_WIRELESS_DEBUG_ENABLED}" = "1" ]; then
 else
   rm -f "${WIRELESS_DEBUG_TLS_PORT_FILE}" >/dev/null 2>&1 || true
 fi
-
-apply_ssh_guard_chain iptables PIXEL_SSH_GUARD
-apply_ssh_guard_chain ip6tables PIXEL_SSH_GUARD6
 
 set +e
 wait "${child_pid}"

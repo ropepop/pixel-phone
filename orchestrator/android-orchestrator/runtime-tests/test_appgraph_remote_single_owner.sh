@@ -10,31 +10,9 @@ if [[ ! -f "${COMPONENT_REGISTRY_FILE}" ]]; then
   exit 1
 fi
 
-remote_block="$(awk '
-  /"id":[[:space:]]*"remote"/ {capture=1}
-  capture {print}
-  capture && /"healthCommand":/ {exit}
-' "${COMPONENT_REGISTRY_FILE}")"
-
-if [[ -z "${remote_block}" ]]; then
-  echo "FAIL: unable to locate remote component block in ${COMPONENT_REGISTRY_FILE}" >&2
+if rg -q '"id"[[:space:]]*:[[:space:]]*"(dns|remote)"|pixel-dns-(start|stop)\.sh' "${COMPONENT_REGISTRY_FILE}"; then
+  echo "FAIL: retired DNS or remote still has a runtime owner in ${COMPONENT_REGISTRY_FILE}" >&2
   exit 1
 fi
 
-if [[ "${remote_block}" != *'"startCommand": "true"'* ]]; then
-  echo "FAIL: remote startCommand is not noop=true in ${COMPONENT_REGISTRY_FILE}" >&2
-  exit 1
-fi
-
-if [[ "${remote_block}" != *'"stopCommand": "true"'* ]]; then
-  echo "FAIL: remote stopCommand is not noop=true in ${COMPONENT_REGISTRY_FILE}" >&2
-  exit 1
-fi
-
-count_dns_start="$(rg -F '"startCommand": "sh /data/local/pixel-stack/bin/pixel-dns-start.sh"' "${COMPONENT_REGISTRY_FILE}" | wc -l | tr -d '[:space:]' || true)"
-if [[ "${count_dns_start}" != "1" ]]; then
-  echo "FAIL: expected exactly one pixel-dns-start owner after consolidation, found ${count_dns_start}" >&2
-  exit 1
-fi
-
-echo "PASS: component registry keeps remote noop ownership and DNS start has a single owner"
+echo "PASS: retired DNS and remote have no active component owner"

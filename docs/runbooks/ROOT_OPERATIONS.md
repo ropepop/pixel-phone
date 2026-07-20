@@ -102,7 +102,7 @@ Use `bootstrap` only for first install, clean-room reprovisioning, or intentiona
 <a id="system-context-and-ownership-boundaries"></a>
 ## System Context and Ownership Boundaries
 
-The canonical source repo is `pixel-phone`.
+`pixel-phone` is the canonical source repository for device-side orchestration.
 
 In-scope ownership:
 - App/APK orchestration and intent action surface

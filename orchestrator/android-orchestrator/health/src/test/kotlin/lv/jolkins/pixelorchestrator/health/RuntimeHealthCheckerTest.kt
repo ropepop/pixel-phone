@@ -261,6 +261,137 @@ class RuntimeHealthCheckerTest {
   }
 
   @Test
+  fun standardDeployIgnoresDisabledOptionalComponentsAndKeepsAuthDriftVisible() {
+    val nowEpoch = System.currentTimeMillis() / 1000
+    val runner = CommandRunner {
+      CommandResult(
+        ok = true,
+        stdout = probeOutput(
+          idU = "0",
+          listeners = "LISTEN 0 128 0.0.0.0:2222\n",
+          ddnsEpoch = "",
+          trainBotPid = "",
+          trainBotHeartbeat = "",
+          satiksmeBotPid = "",
+          satiksmeBotHeartbeat = "",
+          siteNotifierPid = "",
+          siteNotifierHeartbeat = "",
+          supervisorLoopHeartbeat = nowEpoch.toString(),
+          siteNotifierHelperHealthy = "0",
+          siteNotifierHelperReason = "disabled",
+          subscriptionBotPid = "",
+          subscriptionBotHeartbeat = "",
+          vpnHealth = "1",
+          managementHealthy = "1",
+          managementReason = "ok",
+          managementAuthConsistent = "0",
+          managementAuthWarningReason = "password_auth_runtime_mismatch"
+        ),
+        stderr = ""
+      )
+    }
+    val modules = mapOf(
+      "dns" to lv.jolkins.pixelorchestrator.coreconfig.ModuleConfig(enabled = false),
+      "ssh" to lv.jolkins.pixelorchestrator.coreconfig.ModuleConfig(enabled = true),
+      "vpn" to lv.jolkins.pixelorchestrator.coreconfig.ModuleConfig(enabled = true),
+      "ddns" to lv.jolkins.pixelorchestrator.coreconfig.ModuleConfig(enabled = false),
+      "remote" to lv.jolkins.pixelorchestrator.coreconfig.ModuleConfig(enabled = false),
+      "train_bot" to lv.jolkins.pixelorchestrator.coreconfig.ModuleConfig(enabled = false),
+      "satiksme_bot" to lv.jolkins.pixelorchestrator.coreconfig.ModuleConfig(enabled = false),
+      "site_notifier" to lv.jolkins.pixelorchestrator.coreconfig.ModuleConfig(enabled = false),
+      "subscription_bot" to lv.jolkins.pixelorchestrator.coreconfig.ModuleConfig(enabled = false),
+      // Generic supervisor auto-start is intentionally off; the Android Ticket toggle owns it.
+      "ticket_screen" to lv.jolkins.pixelorchestrator.coreconfig.ModuleConfig(enabled = false)
+    )
+    val config = StackConfigV1(
+      vpn = StackConfigV1().vpn.copy(enabled = true),
+      ddns = StackConfigV1().ddns.copy(enabled = false),
+      modules = modules
+    )
+
+    val snapshot = runBlocking { RuntimeHealthChecker(runner).check(config) }
+
+    assertFalse(snapshot.dnsHealthy)
+    assertFalse(snapshot.trainBotHealthy)
+    assertFalse(snapshot.satiksmeBotHealthy)
+    assertFalse(snapshot.siteNotifierHealthy)
+    assertFalse(snapshot.subscriptionBotHealthy)
+    assertFalse(snapshot.ddnsHealthy)
+    assertFalse(snapshot.remoteHealthy)
+    assertTrue(snapshot.rootGranted)
+    assertTrue(snapshot.sshHealthy)
+    assertTrue(snapshot.vpnHealthy)
+    assertTrue(snapshot.supervisorLoopHealthy)
+    assertTrue(snapshot.managementHealthy)
+    assertFalse(snapshot.managementAuthHealthy)
+    assertTrue(snapshot.deployHealthy)
+    assertEquals("disabled", snapshot.moduleHealth["dns"]?.status)
+    assertEquals("disabled", snapshot.moduleHealth["train_bot"]?.status)
+    assertEquals("disabled", snapshot.moduleHealth["satiksme_bot"]?.status)
+    assertEquals("disabled", snapshot.moduleHealth["site_notifier"]?.status)
+    assertEquals("disabled", snapshot.moduleHealth["subscription_bot"]?.status)
+    assertEquals("disabled", snapshot.moduleHealth["ddns"]?.status)
+    assertEquals("disabled", snapshot.moduleHealth["remote"]?.status)
+    assertEquals("running", snapshot.moduleHealth["ticket_screen"]?.status)
+    assertEquals("true", snapshot.moduleHealth["ticket_screen"]?.details?.get("deploy_required"))
+    assertEquals("password_auth_runtime_mismatch", snapshot.evidence["management_auth_warning_reason"])
+  }
+
+  @Test
+  fun standardDeployFailsWhenStrictTicketCoreListenerIsMissing() {
+    val nowEpoch = System.currentTimeMillis() / 1000
+    val runner = CommandRunner {
+      CommandResult(
+        ok = true,
+        stdout = probeOutput(
+          idU = "0",
+          listeners = "LISTEN 0 128 0.0.0.0:2222\n",
+          ddnsEpoch = "",
+          trainBotPid = "",
+          trainBotHeartbeat = "",
+          satiksmeBotPid = "",
+          satiksmeBotHeartbeat = "",
+          siteNotifierPid = "",
+          siteNotifierHeartbeat = "",
+          supervisorLoopHeartbeat = nowEpoch.toString(),
+          siteNotifierHelperHealthy = "0",
+          subscriptionBotPid = "",
+          subscriptionBotHeartbeat = "",
+          vpnHealth = "1",
+          ticketScreenListener = false
+        ),
+        stderr = ""
+      )
+    }
+    val disabled = lv.jolkins.pixelorchestrator.coreconfig.ModuleConfig(enabled = false)
+    val config = StackConfigV1(
+      vpn = StackConfigV1().vpn.copy(enabled = true),
+      ddns = StackConfigV1().ddns.copy(enabled = false),
+      modules = mapOf(
+        "dns" to disabled,
+        "ddns" to disabled,
+        "remote" to disabled,
+        "train_bot" to disabled,
+        "satiksme_bot" to disabled,
+        "site_notifier" to disabled,
+        "subscription_bot" to disabled,
+        "ticket_screen" to disabled
+      )
+    )
+
+    val snapshot = runBlocking { RuntimeHealthChecker(runner).check(config) }
+
+    assertTrue(snapshot.rootGranted)
+    assertTrue(snapshot.sshHealthy)
+    assertTrue(snapshot.vpnHealthy)
+    assertTrue(snapshot.supervisorLoopHealthy)
+    assertFalse(snapshot.deployHealthy)
+    assertEquals("degraded", snapshot.moduleHealth["ticket_screen"]?.status)
+    assertEquals("true", snapshot.evidence["ticket_screen_deploy_required"])
+    assertEquals("false", snapshot.evidence["ticket_screen_healthy"])
+  }
+
+  @Test
   fun doesNotTreatHttpsListenerAsHealthySshWhenDropbearIsMissing() {
     val nowEpoch = System.currentTimeMillis() / 1000
     val runner = CommandRunner {
@@ -423,14 +554,61 @@ class RuntimeHealthCheckerTest {
 
     assertTrue(snapshot.managementHealthy)
     assertFalse(snapshot.managementAuthHealthy)
-    assertFalse(snapshot.deployHealthy)
+    assertTrue(snapshot.deployHealthy)
     assertEquals("true", snapshot.evidence["management_path_healthy"])
     assertEquals("false", snapshot.evidence["management_auth_healthy"])
+    assertEquals("false", snapshot.evidence["management_auth_required"])
+    assertEquals("true", snapshot.evidence["management_auth_gate_healthy"])
     assertEquals("false", snapshot.evidence["management_auth_consistent"])
     assertEquals("password_auth_runtime_mismatch", snapshot.evidence["management_auth_warning_reason"])
     assertEquals("running", snapshot.moduleHealth["management"]?.status)
     assertEquals("false", snapshot.moduleHealth["management"]?.details?.get("management_auth_healthy"))
     assertEquals("password_auth_runtime_mismatch", snapshot.moduleHealth["management"]?.details?.get("management_auth_warning_reason"))
+  }
+
+  @Test
+  fun failsDeployForManagementAuthDriftWhenStrictConsistencyIsConfigured() {
+    val runner = CommandRunner {
+      CommandResult(
+        ok = true,
+        stdout = probeOutput(
+          idU = "0",
+          listeners = "LISTEN 0 128 0.0.0.0:53\nLISTEN 0 128 0.0.0.0:2222\n",
+          ddnsEpoch = (System.currentTimeMillis() / 1000).toString(),
+          trainBotPid = "1234",
+          trainBotHeartbeat = (System.currentTimeMillis() / 1000).toString(),
+          siteNotifierPid = "2234",
+          siteNotifierHeartbeat = (System.currentTimeMillis() / 1000).toString(),
+          vpnHealth = "1",
+          managementHealthy = "1",
+          managementReason = "ok",
+          managementAuthConsistent = "0",
+          managementAuthWarningReason = "password_auth_runtime_mismatch"
+        ),
+        stderr = ""
+      )
+    }
+
+    val checker = RuntimeHealthChecker(runner)
+    val snapshot =
+      runBlocking {
+        checker.check(
+          StackConfigV1(
+            vpn = StackConfigV1().vpn.copy(enabled = true),
+            supervision = StackConfigV1().supervision.copy(
+              managementRequireAuthConsistency = true
+            )
+          )
+        )
+      }
+
+    assertTrue(snapshot.managementHealthy)
+    assertFalse(snapshot.managementAuthHealthy)
+    assertFalse(snapshot.deployHealthy)
+    assertEquals("true", snapshot.evidence["management_auth_required"])
+    assertEquals("false", snapshot.evidence["management_auth_gate_healthy"])
+    assertEquals("password_auth_runtime_mismatch", snapshot.evidence["management_auth_warning_reason"])
+    assertEquals("running", snapshot.moduleHealth["management"]?.status)
   }
 
   @Test
@@ -1535,13 +1713,20 @@ class RuntimeHealthCheckerTest {
     remotePublicProbeAvailable: String = "1",
     remotePublicDohTokenizedCode: String = "404",
     remotePublicDohBareCode: String = "200",
-    remotePublicIdentityInjectCode: String = "000"
+    remotePublicIdentityInjectCode: String = "000",
+    ticketScreenListener: Boolean = true
   ): String {
     return buildString {
       appendLine("__PIXEL_HEALTH_ID_U__")
       appendLine(idU)
       appendLine("__PIXEL_HEALTH_LISTENERS__")
       append(listeners)
+      if (ticketScreenListener && !listeners.contains(":9388")) {
+        if (listeners.isNotEmpty() && !listeners.endsWith('\n')) {
+          appendLine()
+        }
+        appendLine("LISTEN 0 50 127.0.0.1:9388")
+      }
       appendLine("__PIXEL_HEALTH_DDNS_EPOCH__")
       appendLine(ddnsEpoch)
       appendLine("__PIXEL_HEALTH_DDNS_LAST_IPV4__")

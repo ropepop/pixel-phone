@@ -10,6 +10,12 @@ if ! rg -Fq 'emit "vpn_enabled" "${VPN_ENABLED}"' "${VPN_HEALTH_SCRIPT}"; then
   exit 1
 fi
 
+if ! rg -Fq 'emit "config_ready" "${config_ready}"' "${VPN_HEALTH_SCRIPT}" ||
+   ! rg -Fq 'if [ "${config_ready}" != "1" ]; then' "${VPN_HEALTH_SCRIPT}"; then
+  echo "FAIL: missing explicit config readiness failure in ${VPN_HEALTH_SCRIPT}" >&2
+  exit 1
+fi
+
 if ! rg -Fq 'emit "tailscaled_live" "${tailscaled_live}"' "${VPN_HEALTH_SCRIPT}"; then
   echo "FAIL: missing tailscaled_live report in ${VPN_HEALTH_SCRIPT}" >&2
   exit 1
