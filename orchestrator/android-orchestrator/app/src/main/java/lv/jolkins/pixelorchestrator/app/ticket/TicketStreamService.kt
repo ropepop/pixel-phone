@@ -1,8 +1,6 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
 import android.app.Service
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -45,9 +43,6 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import lv.jolkins.pixelorchestrator.app.MainActivity
 import lv.jolkins.pixelorchestrator.app.SupervisorService
-import lv.jolkins.pixelorchestrator.app.phoneautomation.ChatGPTRootShellInput
-import lv.jolkins.pixelorchestrator.app.phoneautomation.ChatGPTPhoneRunner
-import lv.jolkins.pixelorchestrator.app.phoneautomation.ChatGPTSpacetimeWorker
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationPreferencesStore
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationServiceBridge
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationVisibleNode
@@ -244,16 +239,6 @@ class TicketStreamService : Service() {
   private val inputRootExecutor = TicketRootCommandWorker()
   private val wakeRootExecutor = TicketRootCommandWorker()
   private val foregroundRootExecutor = TicketRootCommandWorker()
-  private val chatgptRunner by lazy {
-    ChatGPTPhoneRunner(
-      this,
-      shellInput = ChatGPTRootShellInput(
-        rootExecutor = inputRootExecutor,
-        clipboardTextSetter = ::setChatGptClipboardText
-      )
-    )
-  }
-  private var chatgptSpacetimeWorker: ChatGPTSpacetimeWorker? = null
   private var ticketSpacetimeWorker: TicketSpacetimeWorker? = null
   private val ticketSpacetimePhoneOutbox = TicketSpacetimePhoneOutbox(
     maxLossyMessages = TICKET_SPACETIME_PHONE_MESSAGE_LIMIT,
@@ -273,13 +258,6 @@ class TicketStreamService : Service() {
   private val encoderLock = Any()
   private val sessionMutex = Mutex()
 
-  private fun setChatGptClipboardText(text: String): Boolean {
-    return runCatching {
-      val clipboard = getSystemService(ClipboardManager::class.java)
-      clipboard.setPrimaryClip(ClipData.newPlainText("chatgpt-broker", text))
-      true
-    }.getOrDefault(false)
-  }
   private val controlCodePhoneMutationLane = ControlCodePhoneMutationLane()
   private val controlCodeBrowserCaptureLock = Object()
   private val running = AtomicBoolean(false)
@@ -490,14 +468,6 @@ class TicketStreamService : Service() {
       rootHardwareH264CaptureEngine.cleanupStaleProcesses()
       rootHardwareH264CaptureEngine.probe()
     }
-    chatgptSpacetimeWorker = ChatGPTSpacetimeWorker(
-      scope = serviceScope,
-      rootExecutor = inputRootExecutor,
-      runner = chatgptRunner,
-      ticketPriorityActive = ::chatgptTicketPriorityActive
-    ).also { worker ->
-      worker.start()
-    }
     ticketSpacetimeWorker = TicketSpacetimeWorker(
       scope = serviceScope,
       rootExecutor = inputRootExecutor,
@@ -534,8 +504,6 @@ class TicketStreamService : Service() {
     latestTicketReselectSettleJob = null
     latestTicketReselectProofIdleStopJob?.cancel()
     latestTicketReselectProofIdleStopJob = null
-    chatgptSpacetimeWorker?.stop()
-    chatgptSpacetimeWorker = null
     ticketSpacetimeWorker?.stop()
     ticketSpacetimeWorker = null
     rootH264BlankProbeJob?.cancel()
@@ -662,9 +630,6 @@ class TicketStreamService : Service() {
         method == "GET" && (path == "/" || path == "/api/v1/bootstrap" || path == "/api/v1/cache-cleanup") ->
           sendText(output, 410, "Pixel-local viewer retired; use the public Ticket service")
         method == "GET" && path == "/api/v1/health" -> sendJson(output, health())
-        (method == "GET" || method == "POST") && path.startsWith("/api/v1/chatgpt/") -> {
-          sendText(output, 410, "chatgpt phone http control disabled; use spacetime queue")
-        }
         method == "POST" && path == "/api/v1/session/start" -> sendJson(output, startTicketSession())
         method == "POST" && path == "/api/v1/session/recover" -> sendJson(output, recoverTicketSession(bodyText))
         method == "POST" && path == "/api/v1/session/stop" -> sendJson(output, handleBrowserStopRequest(bodyText))
@@ -2194,21 +2159,6 @@ class TicketStreamService : Service() {
 
   private fun ticketSessionOpen(): Boolean {
     return streamActive
-  }
-
-  private fun chatgptTicketPriorityActive(): Boolean {
-    return streamActive ||
-      totalClientCount() > 0 ||
-      protectedControlClients.isNotEmpty() ||
-      controlCodeRequestActive() ||
-      ticketSessionState in setOf(
-        TICKET_SESSION_STARTING,
-        TICKET_SESSION_CONTROL_TRANSITION,
-        TICKET_SESSION_CONTROL_ACTIVE,
-        TICKET_SESSION_CONTROL_EXIT,
-        TICKET_SESSION_SOFT_RECOVERY,
-        TICKET_SESSION_NEEDS_ATTENTION
-      )
   }
 
   private fun updateTicketSessionState(next: String, reason: String) {

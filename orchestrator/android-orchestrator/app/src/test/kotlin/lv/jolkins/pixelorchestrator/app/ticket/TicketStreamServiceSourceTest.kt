@@ -102,13 +102,6 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun phoneHttpChatgptControlIsRetiredInFavorOfQueue() {
-    val http = body(service, "private suspend fun handleHttpClient", "private suspend fun acceptWebSocket")
-    assertTrue(http.contains("path.startsWith(\"/api/v1/chatgpt/\")"))
-    assertTrue(http.contains("sendText(output, 410, \"chatgpt phone http control disabled; use spacetime queue\")"))
-  }
-
-  @Test
   fun arbitraryNonRsBrowserInputIsAbsent() {
     assertFalse(service.contains("private suspend fun handleRemoteKey"))
     assertFalse(service.contains("private suspend fun tap(inputId"))

@@ -157,8 +157,6 @@ internal interface PhoneAutomationAccessibilityHost {
   ): Boolean
 
   suspend fun performBack(): Boolean
-
-  fun setClipboardText(text: String): Boolean
 }
 
 object PhoneAutomationServiceBridge {
@@ -539,11 +537,6 @@ object PhoneAutomationServiceBridge {
   suspend fun performBack(): Boolean {
     val service = accessibilityService.value ?: return false
     return service.performBack()
-  }
-
-  fun setClipboardText(text: String): Boolean {
-    val service = accessibilityService.value ?: return false
-    return service.setClipboardText(text)
   }
 
   private fun Long.accessibilityCallTimeoutMillis(): Long {

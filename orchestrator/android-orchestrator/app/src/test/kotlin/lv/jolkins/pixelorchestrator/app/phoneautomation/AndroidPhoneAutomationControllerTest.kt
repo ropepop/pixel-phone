@@ -658,8 +658,6 @@ private class ScriptedAccessibilityHost : PhoneAutomationAccessibilityHost {
   ): Boolean = false
 
   override suspend fun performBack(): Boolean = false
-
-  override fun setClipboardText(text: String): Boolean = false
 }
 
 private class ScriptedRootExecutor : RootExecutor {

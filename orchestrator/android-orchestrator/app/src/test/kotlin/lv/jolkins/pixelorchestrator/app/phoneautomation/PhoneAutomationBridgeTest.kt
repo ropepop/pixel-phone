@@ -610,6 +610,4 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
     backCalls += 1
     return backResult
   }
-
-  override fun setClipboardText(text: String): Boolean = false
 }

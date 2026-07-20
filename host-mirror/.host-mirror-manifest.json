@@ -15,11 +15,6 @@
       "sha256": "33c22d25f4a75588293b59cfd42af6f26c659b6018f5ae83894919d5e6f3c615",
       "size": 60
     },
-    "data/local/pixel-stack/conf/apps/chatgpt-broker.env": {
-      "mode": 384,
-      "sha256": "b9b6b91b80fb062c71591633e305fe1b6412b62267dbcdb8cdce4f227da160b1",
-      "size": 1054
-    },
     "data/local/pixel-stack/conf/apps/codex-mv-test": {
       "mode": 384,
       "sha256": "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2",
@@ -212,5 +207,5 @@
     }
   },
   "profile": "pixel",
-  "updatedEpochSeconds": 1783900735
+  "updatedEpochSeconds": 1784523324
 }
