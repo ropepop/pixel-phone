@@ -28,6 +28,8 @@ class RuntimeEntrypointSpeedSourceTest {
     assertTrue(source.contains("ticket_lock_acquire \"${'$'}LOCK\""))
     assertTrue(lock.contains("TICKET_LOCK_OWNER=\"${'$'}{TICKET_LOCK_DIR}/owner.pid\""))
     assertTrue(lock.contains("ticket_lock_owner_active"))
+    assertTrue(lock.contains("ticket_lock_run_bounded"))
+    assertTrue(lock.contains("timeout 1 \"${'$'}@\""))
     assertTrue(lock.contains("kill -0 \"${'$'}owner\""))
     assertTrue(lock.contains("rmdir \"${'$'}TICKET_LOCK_DIR\""))
     assertFalse(source.contains("rm -rf \"${'$'}LOCK\""))

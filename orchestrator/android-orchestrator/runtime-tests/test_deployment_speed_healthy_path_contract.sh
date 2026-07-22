@@ -66,6 +66,10 @@ rg -Fq 'ticket_lock_acquire "$LOCK"' "${TICKET_START}" || fail "Ticket start lac
 rg -Fq 'ticket_lock_acquire "$LOCK"' "${TICKET_STOP}" || fail "Ticket stop lacks lifecycle lock acquisition"
 rg -Fq 'TICKET_LOCK_OWNER="${TICKET_LOCK_DIR}/owner.pid"' "${TICKET_LOCK}" || fail "Ticket lock lacks owner PID"
 rg -Fq 'ticket_lock_owner_active' "${TICKET_LOCK}" || fail "Ticket lock lacks stale-owner proof"
+rg -Fq 'ticket_lock_run_bounded' "${TICKET_LOCK}" || fail "Ticket lock owner inspection is not bounded"
+if rg -Fq '$(tr '\''\000'\'' '\'' '\'' < "/proc/$owner/cmdline"' "${TICKET_LOCK}"; then
+  fail "Ticket lock still reads owner command lines without a timeout"
+fi
 rg -Fq 'rmdir "$TICKET_LOCK_DIR"' "${TICKET_LOCK}" || fail "Ticket lock lacks narrow stale cleanup"
 if rg -Fq 'cloudflared' "${TICKET_START}" || rg -Fq 'ticket-web-tunnel' "${TICKET_STOP}"; then
   fail "Ticket lifecycle still owns the retired Pixel tunnel"

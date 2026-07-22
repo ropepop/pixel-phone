@@ -2,15 +2,31 @@
 
 TICKET_LOCK_HELD=0
 
+ticket_lock_run_bounded() {
+  if [ -n "${TICKET_LOCK_TIMEOUT_BIN:-}" ]; then
+    "$TICKET_LOCK_TIMEOUT_BIN" 1 "$@"
+  elif command -v timeout >/dev/null 2>&1; then
+    timeout 1 "$@"
+  elif [ -x /system/bin/timeout ]; then
+    /system/bin/timeout 1 "$@"
+  else
+    return 125
+  fi
+}
+
 ticket_lock_owner_active() {
   owner="$1"
   case "$owner" in ''|*[!0-9]*) return 1 ;; esac
   kill -0 "$owner" >/dev/null 2>&1 || return 1
   [ -r "/proc/$owner/cmdline" ] || return 0
-  case "$(tr '\000' ' ' < "/proc/$owner/cmdline" 2>/dev/null)" in
-    *pixel-ticket-start.sh*|*pixel-ticket-stop.sh*) return 0 ;;
-    *) return 1 ;;
-  esac
+  if owner_command="$(ticket_lock_run_bounded tr '\000' ' ' < "/proc/$owner/cmdline" 2>/dev/null)"; then
+    case "$owner_command" in
+      *pixel-ticket-start.sh*|*pixel-ticket-stop.sh*) return 0 ;;
+      *) return 1 ;;
+    esac
+  fi
+  kill -0 "$owner" >/dev/null 2>&1 || return 1
+  return 0
 }
 
 ticket_lock_release() {
