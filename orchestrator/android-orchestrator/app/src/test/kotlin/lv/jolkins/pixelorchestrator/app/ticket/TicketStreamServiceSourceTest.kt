@@ -68,6 +68,75 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
+  fun ticketStateAndOperationalLogsUseSeparateCloudDatabases() {
+    val safeLog = body(
+      spacetimeWorker,
+      "fun safeLog",
+      "private suspend fun call(reducer: String"
+    )
+    val loggingSelection = body(
+      spacetimeWorker,
+      "val operationalLoggingDatabase = boundedOperationalLoggingDatabase",
+      "return TicketSpacetimeConfig"
+    )
+    val queue = body(
+      spacetimeWorker,
+      "internal class TicketOperationalLogQueue",
+      "internal class TicketSpacetimeWorker"
+    )
+    val sender = body(
+      spacetimeWorker,
+      "private class TicketOperationalLogHttpSender",
+      "private fun safeOperationalLogId"
+    )
+    val tracePublisher = body(
+      spacetimeWorker,
+      "private suspend fun publishTicketTraceEvent",
+      "private fun JsonObject.string"
+    )
+    assertTrue(spacetimeWorker.contains("OPERATIONAL_LOGGING_DATABASE"))
+    assertTrue(spacetimeWorker.contains("DEFAULT_OPERATIONAL_LOGGING_DATABASE = \"operational-logging-prod\""))
+    assertTrue(safeLog.contains("operationalLogQueue ?: return"))
+    assertTrue(safeLog.contains("queue.enqueue"))
+    assertFalse(safeLog.contains("callDatabase"))
+    assertFalse(safeLog.contains("ticketremote_append_safe_operational_log"))
+    assertTrue(spacetimeWorker.contains("operationallog_append_ticket_event"))
+    assertTrue(spacetimeWorker.contains("boundedTicketOperationalDetailJson(event.detailJson)"))
+    assertTrue(spacetimeWorker.contains("BufferOverflow.DROP_OLDEST"))
+    assertTrue(spacetimeWorker.contains("events.trySend(event)"))
+    assertTrue(spacetimeWorker.contains("TICKET_OPERATIONAL_LOG_HTTP_TIMEOUT_MILLIS = 1_500"))
+    assertTrue(tracePublisher.contains("ticketTraceOperationalDetailJson("))
+    assertFalse(tracePublisher.contains("eventAtEpochMillis.toString()"))
+    assertTrue(sender.contains("connectTimeout = httpTimeoutMillis"))
+    assertTrue(sender.contains("readTimeout = httpTimeoutMillis"))
+    assertTrue(queue.contains("events.close()"))
+    assertTrue(queue.contains("senderJob.cancel()"))
+    assertFalse(queue.contains("File("))
+    assertFalse(queue.contains("SQLite"))
+    assertTrue(loggingSelection.contains("logOperationalLoggingDisabled()"))
+    assertFalse(loggingSelection.contains("return null"))
+    assertTrue(spacetimeWorker.contains("callDatabase(config.database, reducer, args)"))
+  }
+
+  @Test
+  fun malformedPhoneMessagesAndWorkerFailuresNeverPersistRawContent() {
+    val publish = body(
+      spacetimeWorker,
+      "private suspend fun publishPhoneMessage",
+      "private fun isControlCodeResultPayload"
+    )
+    assertTrue(publish.contains("\"inputCategory\" to \"invalid_json\""))
+    assertTrue(publish.contains("\"inputLength\" to message.length"))
+    assertTrue(publish.contains("\"inputCategory\" to \"unsupported_type\""))
+    assertFalse(publish.contains("message.take"))
+    assertFalse(publish.contains("\"message\" to message"))
+    assertFalse(spacetimeWorker.contains("safeDetail("))
+    assertFalse(spacetimeWorker.contains("error.message"))
+    assertTrue(spacetimeWorker.contains("ticketOperationalErrorCategory(error)"))
+    assertTrue(spacetimeWorker.contains("hashedOperationalIdentifier(correlationId)"))
+  }
+
+  @Test
   fun traceSinkIsAllowlistedAndErrorTextIsBounded() {
     val allowlist = body(service, "private fun shouldPublishTicketTraceEvent", "private fun safeErrorDetail")
     val safeError = body(service, "private fun safeErrorDetail", "private fun safeRootFailure")

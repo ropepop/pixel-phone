@@ -93,8 +93,10 @@ class OrchestratorFacadeRedeployPolicyTest {
     assertFalse(writer.contains("TICKET_SCREEN_TUNNEL_ENABLED"))
     assertTrue(writer.contains("TICKET_SCREEN_SPACETIME_DIRECT_ENABLED=1"))
     assertTrue(writer.contains("TICKET_SCREEN_SPACETIME_DATABASE=ticket-remote-prod-v3"))
+    assertTrue(writer.contains("OPERATIONAL_LOGGING_DATABASE=operational-logging-prod"))
     assertTrue(writer.contains("TICKET_SCREEN_SPACETIME_SERVICE_TOKEN_FILE=/data/local/pixel-stack/conf/apps/ticket-screen-spacetime-token"))
     assertTrue(writer.contains("TICKET_SCREEN_SPACETIME_POLL_MILLIS=250"))
+    assertTrue(writer.contains("chown 2000:2000"))
     assertFalse(writer.contains("upsert_env"))
     assertFalse(writer.contains("grep -v \"^${'$'}{key}=\""))
   }

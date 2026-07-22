@@ -6,7 +6,7 @@ APP_ROOT="${REPO_ROOT}/android-orchestrator"
 WORKSPACE_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 # shellcheck source=../../../tools/pixel/transport.sh
 source "${WORKSPACE_ROOT}/tools/pixel/transport.sh"
-DEPLOY_TIMING_REPORTER="${DEPLOY_TIMING_REPORTER:-${WORKSPACE_ROOT}/../ops/workloads/deployment-timing/scripts/report.sh}"
+DEPLOY_TIMING_REPORTER="${DEPLOY_TIMING_REPORTER:-${WORKSPACE_ROOT}/../ops/workloads/operational-logging/scripts/report-deployment.sh}"
 APK_PATH="${APP_ROOT}/app/build/outputs/apk/debug/app-debug.apk"
 PKG="lv.jolkins.pixelorchestrator"
 SUPERVISOR="${PKG}/.app.SupervisorService"
@@ -58,10 +58,10 @@ TIMINGS_PRINTED=0
 declare -a PHASE_TIMINGS=()
 
 now_ms() {
-  if [[ -n "${EPOCHREALTIME:-}" ]]; then
-    awk -v value="${EPOCHREALTIME}" 'BEGIN { printf "%.0f\n", value * 1000 }'
-  elif command -v python3 >/dev/null 2>&1; then
+  if command -v python3 >/dev/null 2>&1; then
     python3 -c 'import time; print(time.monotonic_ns() // 1000000)'
+  elif [[ -n "${EPOCHREALTIME:-}" ]]; then
+    awk -v value="${EPOCHREALTIME}" 'BEGIN { printf "%.0f\n", value * 1000 }'
   else
     printf '%s\n' "$(( $(date +%s) * 1000 ))"
   fi
@@ -195,11 +195,14 @@ finish_deploy_timing() {
   local finished_ms=""
   local total_ms=""
   local status="ok"
+  trap - EXIT INT TERM
   cleanup_remote_deploy_staging
   print_deploy_timings "${rc}" || true
-  if (( rc != 0 )); then
-    status="failed"
-  fi
+  case "${rc}" in
+    0) status="ok" ;;
+    130|143) status="cancelled" ;;
+    *) status="failed" ;;
+  esac
   finished_ms="$(now_ms)"
   total_ms="$(deployment_timing_total_ms "${finished_ms}")"
   emit_deployment_timing run-complete \
@@ -207,6 +210,15 @@ finish_deploy_timing() {
     --total-duration-ms "${total_ms}" \
     --phase-bundle "$(deployment_timing_phase_bundle)"
   return "${rc}"
+}
+
+deployment_timing_on_signal() {
+  local signal_name="$1"
+  trap - INT TERM
+  case "${signal_name}" in
+    INT) exit 130 ;;
+    TERM) exit 143 ;;
+  esac
 }
 
 cleanup_remote_deploy_staging() {
@@ -466,6 +478,8 @@ fi
 
 DEPLOY_STARTED_MS="$(now_ms)"
 trap finish_deploy_timing EXIT
+trap 'deployment_timing_on_signal INT' INT
+trap 'deployment_timing_on_signal TERM' TERM
 emit_deployment_timing run-start --total-duration-ms 0
 
 if [[ -n "${RUNTIME_BUNDLE_DIR}" && "${ACTION}" != "bootstrap" ]]; then

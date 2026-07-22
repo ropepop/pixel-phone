@@ -36,6 +36,11 @@ internal class SpacetimeOrchestratorTelemetryConfig(
 
   internal fun authorizationHeader(): String = "Bearer $bearerToken"
 
+  internal fun pixelEventEndpoint(): String {
+    val databasePath = URLEncoder.encode(database, "UTF-8").replace("+", "%20")
+    return "${host.trimEnd('/')}/v1/database/$databasePath/call/${SpacetimeOrchestratorTelemetryTransport.PIXEL_EVENT_REDUCER}"
+  }
+
   override fun toString(): String {
     return "SpacetimeOrchestratorTelemetryConfig(host=$host, database=$database, bearerToken=<redacted>)"
   }
@@ -47,9 +52,7 @@ internal class SpacetimeOrchestratorTelemetryTransport(
   override suspend fun send(
     payload: OrchestratorTelemetryPayload
   ): OrchestratorTelemetrySendResult = withContext(Dispatchers.IO) {
-    val database = pathEscape(config.database)
-    val endpoint =
-      "${config.host.trimEnd('/')}/v1/database/$database/call/pixelorchestrator_append_event"
+    val endpoint = config.pixelEventEndpoint()
     val connection = try {
       URL(endpoint).openConnection() as HttpURLConnection
     } catch (_: IOException) {
@@ -86,8 +89,6 @@ internal class SpacetimeOrchestratorTelemetryTransport(
       }
     }
 
-    private fun pathEscape(value: String): String {
-      return URLEncoder.encode(value, "UTF-8").replace("+", "%20")
-    }
+    internal const val PIXEL_EVENT_REDUCER = "operationallog_append_pixel_event"
   }
 }

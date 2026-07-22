@@ -152,10 +152,10 @@ log() {
 }
 
 now_ms() {
-  if [[ -n "${EPOCHREALTIME:-}" ]]; then
-    awk -v value="${EPOCHREALTIME}" 'BEGIN { printf "%.0f\n", value * 1000 }'
-  elif command -v python3 >/dev/null 2>&1; then
+  if command -v python3 >/dev/null 2>&1; then
     python3 -c 'import time; print(time.monotonic_ns() // 1000000)'
+  elif [[ -n "${EPOCHREALTIME:-}" ]]; then
+    awk -v value="${EPOCHREALTIME}" 'BEGIN { printf "%.0f\n", value * 1000 }'
   else
     printf '%s\n' "$(( $(date +%s) * 1000 ))"
   fi
@@ -293,13 +293,14 @@ pixel_mirror_affected_actions() {
   local changed_paths_file="$1"
   local rel=""
   local -a actions=()
-  local seen_train=0 seen_satiksme=0 seen_site=0 seen_subscription=0 seen_dns=0 seen_ssh=0 seen_vpn=0 seen_ddns=0
+  local seen_train=0 seen_satiksme=0 seen_site=0 seen_subscription=0 seen_ticket=0 seen_dns=0 seen_ssh=0 seen_vpn=0 seen_ddns=0
   while IFS= read -r rel; do
     case "${rel}" in
       data/local/pixel-stack/conf/apps/train-bot.env|data/local/pixel-stack/conf/apps/train-bot-cloudflared.json) seen_train=1 ;;
       data/local/pixel-stack/conf/apps/satiksme-bot.env) seen_satiksme=1 ;;
       data/local/pixel-stack/conf/apps/site-notifications.env) seen_site=1 ;;
       data/local/pixel-stack/conf/apps/subscription-bot.env) seen_subscription=1 ;;
+      data/local/pixel-stack/conf/apps/ticket-screen.env|data/local/pixel-stack/conf/apps/operational-logging.env|data/local/pixel-stack/conf/apps/operational-logging-token|data/local/pixel-stack/conf/apps/pixel-orchestrator-observability.env|data/local/pixel-stack/conf/apps/pixel-orchestrator-observability-token) seen_ticket=1 ;;
       data/local/pixel-stack/conf/ssh/*) seen_ssh=1 ;;
       data/local/pixel-stack/conf/vpn/*) seen_vpn=1 ;;
       data/local/pixel-stack/conf/ddns/*) seen_ddns=1 ;;
@@ -310,6 +311,7 @@ pixel_mirror_affected_actions() {
   (( seen_satiksme == 1 )) && actions+=("restart_component satiksme_bot")
   (( seen_site == 1 )) && actions+=("restart_component site_notifier")
   (( seen_subscription == 1 )) && actions+=("restart_component subscription_bot")
+  (( seen_ticket == 1 )) && actions+=("restart_component ticket_screen")
   (( seen_ssh == 1 )) && actions+=("restart_component ssh")
   (( seen_vpn == 1 )) && actions+=("restart_component vpn")
   (( seen_ddns == 1 )) && actions+=("sync_ddns")

@@ -1,5 +1,7 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
+import kotlinx.serialization.json.JsonPrimitive
+
 /** Keeps durable Ticket traces useful without copying client identity or arbitrary runtime text. */
 internal object TicketTracePrivacy {
   private val numericFields = setOf(
@@ -59,10 +61,6 @@ internal object TicketTracePrivacy {
       "control_exit", "soft_recovery", "needs_attention", "client_disconnected", "unavailable",
       "stopped"
     ),
-    "sessionState" to setOf(
-      "idle", "starting", "live", "control_transition", "control_active", "control_exit",
-      "soft_recovery", "needs_attention", "client_disconnected", "unavailable", "stopped"
-    ),
     "captureMode" to setOf("idle", "root_hardware_h264"),
     "hardwareH264State" to setOf("idle", "starting", "active", "restarting", "unavailable"),
     "hardwareH264HelperState" to setOf("unavailable", "installed", "ready", "capture_blocked"),
@@ -107,4 +105,24 @@ internal object TicketTracePrivacy {
   }
 
   fun booleanValue(value: String): String = value.takeIf { it == "true" || it == "false" }.orEmpty()
+
+  fun numericJsonValue(value: String, allowNegative: Boolean = false): JsonPrimitive? {
+    return numericValue(value, allowNegative).toLongOrNull()?.let(::JsonPrimitive)
+  }
+
+  fun booleanJsonValue(value: String): JsonPrimitive? {
+    return when (value) {
+      "true" -> JsonPrimitive(true)
+      "false" -> JsonPrimitive(false)
+      else -> null
+    }
+  }
+
+  fun typedFieldValue(field: String, value: String): JsonPrimitive? {
+    return when (field) {
+      in numericFields -> numericJsonValue(value, allowNegative = true)
+      in booleanFields -> booleanJsonValue(value)
+      else -> null
+    }
+  }
 }

@@ -33,6 +33,25 @@ for required in '--scope' '--mode' '--profile' '--rootfs-tarball' '--skip-build'
   fi
 done
 
+if ! rg -Fq 'time.monotonic_ns()' "${SOURCE_SCRIPT}"; then
+  echo "FAIL: pixel_redeploy.sh no longer measures phases with a monotonic clock" >&2
+  exit 1
+fi
+
+for logging_config_path in \
+  'data/local/pixel-stack/conf/apps/ticket-screen.env' \
+  'data/local/pixel-stack/conf/apps/operational-logging.env' \
+  'data/local/pixel-stack/conf/apps/operational-logging-token'; do
+  if ! rg -Fq "${logging_config_path}" "${SOURCE_SCRIPT}"; then
+    echo "FAIL: deploy-config does not classify ${logging_config_path} as a Ticket restart input" >&2
+    exit 1
+  fi
+done
+if ! rg -Fq '(( seen_ticket == 1 )) && actions+=("restart_component ticket_screen")' "${SOURCE_SCRIPT}"; then
+  echo "FAIL: central logging config changes no longer restart the Ticket/orchestrator process" >&2
+  exit 1
+fi
+
 if ! rg -Fq 'package_runtime_bundle.sh' "${SOURCE_SCRIPT}"; then
   echo "FAIL: pixel_redeploy.sh no longer packages runtime bundles" >&2
   exit 1

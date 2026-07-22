@@ -224,11 +224,15 @@ class OrchestratorTelemetryClientTest {
   fun configRedactsBearerTokenAndPayloadRejectsSensitiveTokenShapes() {
     val config = SpacetimeOrchestratorTelemetryConfig(
       host = "https://maincloud.spacetimedb.com",
-      database = "pixel-orchestrator-observability-prod",
+      database = "operational-logging-prod",
       bearerToken = "super-secret-token"
     )
     assertFalse(config.toString().contains("super-secret-token"))
     assertTrue(config.toString().contains("<redacted>"))
+    assertEquals(
+      "https://maincloud.spacetimedb.com/v1/database/operational-logging-prod/call/operationallog_append_pixel_event",
+      config.pixelEventEndpoint()
+    )
     assertFails { client(buildId = "/data/local/pixel-stack") }
     assertFails { client(buildId = "100.76.50.43") }
     assertFails {

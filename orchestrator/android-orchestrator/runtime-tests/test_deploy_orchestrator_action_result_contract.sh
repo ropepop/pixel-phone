@@ -135,6 +135,19 @@ if ! rg -Fq 'DEPLOY_TIMING_PYTHON_BIN:-/usr/bin/python3' "${SOURCE_SCRIPT}"; the
   exit 1
 fi
 
+if ! rg -Fq 'ops/workloads/operational-logging/scripts/report-deployment.sh' "${SOURCE_SCRIPT}"; then
+  echo "FAIL: deploy reporter no longer targets the canonical operational logging workload" >&2
+  exit 1
+fi
+
+if ! rg -Fq 'time.monotonic_ns()' "${SOURCE_SCRIPT}" ||
+   ! rg -Fq '130|143) status="cancelled"' "${SOURCE_SCRIPT}" ||
+   ! rg -Fq "trap 'deployment_timing_on_signal INT' INT" "${SOURCE_SCRIPT}" ||
+   ! rg -Fq "trap 'deployment_timing_on_signal TERM' TERM" "${SOURCE_SCRIPT}"; then
+  echo "FAIL: Pixel deployment timing no longer uses a monotonic clock and explicit cancellation status" >&2
+  exit 1
+fi
+
 TEST_ROOT="${TMP_ROOT}/repo"
 mkdir -p "${TEST_ROOT}/scripts/android" \
   "${TEST_ROOT}/android-orchestrator/app/build/outputs/apk/debug" \

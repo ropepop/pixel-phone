@@ -48,6 +48,7 @@ Architecture docs are canonical source material. Reports and evidence explain ho
 - Component redeploy metadata lives in module manifests and the registry; every managed component declares whether it is an `artifact_release`, `asset_refresh`, `job`, or `derived` surface
 - Observability event schema: `standards/schemas/observability-event.v1.schema.json`
 - Observability health schema: `standards/schemas/observability-health.v1.schema.json`
+- Private operational logging: the single `operationallog_event` data table in `operational-logging-prod`; Pixel general events use `operationallog_append_pixel_event` and Ticket diagnostics use `operationallog_append_ticket_event`
 - RS/ViVi user incident trace schema: `standards/schemas/rs-vivi-incident-trace.v1.schema.json`
 - RS/ViVi broker analytics schema: `standards/schemas/rs-vivi-qr-analytics.v1.schema.json`
 

@@ -16,29 +16,29 @@
       "size": 60
     },
     "data/local/pixel-stack/conf/apps/codex-mv-test": {
-      "mode": 384,
+      "mode": 420,
       "sha256": "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2",
       "size": 5
     },
     "data/local/pixel-stack/conf/apps/codex-small": {
-      "mode": 384,
+      "mode": 420,
       "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
       "size": 3
     },
     "data/local/pixel-stack/conf/apps/codex-small-dot.json": {
-      "mode": 384,
+      "mode": 420,
       "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
       "size": 3
     },
-    "data/local/pixel-stack/conf/apps/pixel-orchestrator-observability-token": {
+    "data/local/pixel-stack/conf/apps/operational-logging-token": {
       "mode": 384,
       "sha256": "b1761e5eeecb3850bd6bfbd9b0f653240c9fd5310e476964d2425ca95a3e7115",
       "size": 387
     },
-    "data/local/pixel-stack/conf/apps/pixel-orchestrator-observability.env": {
+    "data/local/pixel-stack/conf/apps/operational-logging.env": {
       "mode": 384,
-      "sha256": "fba0e2ab64f94900bf0f050f0dc4576d5bae2638aa964678a848160a0a56d1a5",
-      "size": 277
+      "sha256": "21a89eb4dce4683ff20acbc713b4c7ca255565140f26e3e9b09b1fce50dc41fd",
+      "size": 212
     },
     "data/local/pixel-stack/conf/apps/satiksme-bot-cloudflared.json": {
       "mode": 384,
@@ -102,11 +102,11 @@
     },
     "data/local/pixel-stack/conf/apps/ticket-screen.env": {
       "mode": 384,
-      "sha256": "7159b5f0efb8f51dd12a9ab57091a11b6e0b3b003cad23003ad5c38a5eec3c45",
-      "size": 521
+      "sha256": "71ce94b8a9ce2a68c8f143f6d1b00ad2966890859f92ac6c879d47ec69ca86ae",
+      "size": 575
     },
     "data/local/pixel-stack/conf/apps/train-bot-cloudflared": {
-      "mode": 384,
+      "mode": 420,
       "sha256": "edeaaff3f1774ad2888673770c6d64097e391bc362d7d6fb34982ddf0efd18cb",
       "size": 4
     },
@@ -131,7 +131,7 @@
       "size": 2022
     },
     "data/local/pixel-stack/conf/apps/trainbotcloudflaredjson": {
-      "mode": 384,
+      "mode": 420,
       "sha256": "edeaaff3f1774ad2888673770c6d64097e391bc362d7d6fb34982ddf0efd18cb",
       "size": 4
     },
@@ -207,5 +207,5 @@
     }
   },
   "profile": "pixel",
-  "updatedEpochSeconds": 1784523324
+  "updatedEpochSeconds": 1784685116
 }

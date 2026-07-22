@@ -9,9 +9,9 @@ class OrchestratorTelemetryRuntimeTest {
   fun parseEnvKeepsOnlyTheThreeTypedConfigurationKeys() {
     val parsed = OrchestratorTelemetryRuntime.parseEnv(
       """
-        PIXEL_ORCHESTRATOR_OBSERVABILITY_HOST="https://maincloud.spacetimedb.com"
-        PIXEL_ORCHESTRATOR_OBSERVABILITY_DATABASE=pixel-orchestrator-observability-prod
-        PIXEL_ORCHESTRATOR_OBSERVABILITY_SERVICE_TOKEN_FILE='/data/local/pixel-stack/conf/apps/pixel-orchestrator-observability-token'
+        OPERATIONAL_LOGGING_HOST="https://maincloud.spacetimedb.com"
+        OPERATIONAL_LOGGING_DATABASE=operational-logging-prod
+        OPERATIONAL_LOGGING_SERVICE_TOKEN_FILE='/data/local/pixel-stack/conf/apps/operational-logging-token'
         UNRELATED_SECRET=must-not-be-retained
       """.trimIndent()
     )
@@ -21,7 +21,7 @@ class OrchestratorTelemetryRuntimeTest {
       parsed[OrchestratorTelemetryRuntime.KEY_HOST]
     )
     assertEquals(
-      "pixel-orchestrator-observability-prod",
+      "operational-logging-prod",
       parsed[OrchestratorTelemetryRuntime.KEY_DATABASE]
     )
     assertEquals(

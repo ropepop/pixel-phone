@@ -61,9 +61,11 @@ cd automation/task-executor && ./scripts/drain_runner_smoke_test.sh
 
 ## Observability
 
+- Private operational history is consolidated in the single `operationallog_event` data table in `operational-logging-prod`; Ticket application state remains in `ticket-remote-prod-v3`.
+- General orchestrator telemetry reads `/data/local/pixel-stack/conf/apps/operational-logging.env` and its separately protected token file. The dashboard's newest-event list remains process-memory-only.
 - Event schema: [observability-event.v1.schema.json](./standards/schemas/observability-event.v1.schema.json)
 - Health schema: [observability-health.v1.schema.json](./standards/schemas/observability-health.v1.schema.json)
-- Event emitter: `./tools/observability/emit_event.sh`
+- One-off evidence emitter: `./tools/observability/emit_event.sh` (stdout JSON; it is not the cloud writer)
 - Evidence archive root: `ops/evidence/`
 
 ## Runtime Notes
