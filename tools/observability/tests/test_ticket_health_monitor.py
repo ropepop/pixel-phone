@@ -82,6 +82,8 @@ def collect_pixel_with_health(health: dict) -> dict:
     tail = list(args[3:])
     if tail == ["get-state"]:
       return monitor.CommandResult(0, "device\n", "")
+    if tail == ["shell", "su", "-c", monitor.TICKET_LIFECYCLE_PS_COMMAND]:
+      return monitor.CommandResult(0, "PID PPID ELAPSED STAT NAME ARGS\n", "")
     if tail[:3] == ["shell", "su", "-c"]:
       return monitor.CommandResult(0, json.dumps(health), "")
     if tail in (
@@ -169,6 +171,12 @@ def healthy_snapshot(active: bool) -> dict:
         "thermal_status": 0,
         "memory": {"used_percent": 70},
         "data_disk": {"used_percent": 20},
+      },
+      "ticket_lifecycle": {
+        "ok": True,
+        "stuck_helper_count": 0,
+        "stuck_start_stop_count": 0,
+        "oldest_age_seconds": None,
       },
     },
   }
@@ -347,6 +355,102 @@ class TicketHealthMonitorTest(unittest.TestCase):
       "pixel_memory_pressure",
       "pixel_data_disk_pressure",
     }, set(verdict["failures"]))
+
+  def test_ticket_lifecycle_parser_keeps_only_stuck_counts_and_age(self):
+    output = (
+      "PID PPID ELAPSED STAT NAME ARGS\n"
+      "5983 814 12:28:28 Ss sh sh /data/local/pixel-stack/bin/pixel-ticket-start.sh\n"
+      "9443 814 12:28:05 Ss sh sh /data/local/pixel-stack/bin/pixel-ticket-stop.sh\n"
+      "9567 9443 12:28:03 R tr tr \\000\n"
+      "9568 5983 12:28:03 R tr tr \\000\n"
+      "222 1 00:00:30 S sh sh /data/local/pixel-stack/bin/pixel-ticket-start.sh\n"
+      "333 1 4-01:02:03 S unrelated private email@example.com\n"
+    )
+
+    status = monitor._ticket_lifecycle_status(output)
+
+    self.assertEqual({
+      "ok": True,
+      "stuck_helper_count": 2,
+      "stuck_start_stop_count": 2,
+      "oldest_age_seconds": 44908,
+    }, status)
+    self.assertNotIn("email@example.com", json.dumps(status, sort_keys=True))
+
+  def test_ticket_lifecycle_stuck_degrades_an_otherwise_healthy_snapshot(self):
+    snapshot = healthy_snapshot(active=False)
+    snapshot["pixel"]["ticket_lifecycle"] = {
+      "ok": True,
+      "stuck_helper_count": 2,
+      "stuck_start_stop_count": 2,
+      "oldest_age_seconds": 44908,
+    }
+
+    verdict = monitor.evaluate_snapshot(snapshot, default_thresholds(), ["standby-present"])
+
+    self.assertEqual("degraded", verdict["status"])
+    self.assertIn("pixel_ticket_lifecycle_stuck", verdict["failures"])
+
+  def test_orphaned_ticket_command_reader_is_still_counted(self):
+    status = monitor._ticket_lifecycle_status(
+      "PID PPID ELAPSED STAT NAME ARGS\n"
+      "9567 1 12:28:03 R tr tr \\000\n"
+    )
+
+    self.assertEqual({
+      "ok": True,
+      "stuck_helper_count": 1,
+      "stuck_start_stop_count": 0,
+      "oldest_age_seconds": 44883,
+    }, status)
+
+  def test_ticket_lifecycle_summary_rejects_mistyped_negative_and_inconsistent_values(self):
+    malformed = [
+      {"ok": True, "stuck_helper_count": "1", "stuck_start_stop_count": 0, "oldest_age_seconds": 61},
+      {"ok": True, "stuck_helper_count": 0, "stuck_start_stop_count": -1, "oldest_age_seconds": None},
+      {"ok": True, "stuck_helper_count": 0, "stuck_start_stop_count": 0, "oldest_age_seconds": "none"},
+      {"ok": True, "stuck_helper_count": 1, "stuck_start_stop_count": 0, "oldest_age_seconds": None},
+    ]
+
+    for lifecycle in malformed:
+      with self.subTest(lifecycle=lifecycle):
+        snapshot = healthy_snapshot(active=False)
+        snapshot["pixel"]["ticket_lifecycle"] = lifecycle
+        verdict = monitor.evaluate_snapshot(snapshot, default_thresholds(), ["standby-present"])
+        self.assertEqual("degraded", verdict["status"])
+        self.assertIn("pixel_ticket_lifecycle_metrics_invalid", verdict["failures"])
+
+  def test_ticket_lifecycle_collection_failure_fails_pixel_closed(self):
+    def runner(args, _timeout):
+      tail = list(args[3:])
+      if tail == ["get-state"]:
+        return monitor.CommandResult(0, "device\n", "")
+      if tail[:3] == ["shell", "su", "-c"] and tail[-1] != monitor.TICKET_LIFECYCLE_PS_COMMAND:
+        return monitor.CommandResult(0, json.dumps(raw_pixel_health(active=False)), "")
+      if tail in (
+        ["shell", "settings", "get", "system", "accelerometer_rotation"],
+        ["shell", "settings", "get", "system", "user_rotation"],
+      ):
+        return monitor.CommandResult(0, "0\n", "")
+      if tail == ["shell", "dumpsys", "battery"]:
+        return monitor.CommandResult(0, "status: 3\nlevel: 80\ntemperature: 320\n", "")
+      if tail == ["shell", "dumpsys", "thermalservice"]:
+        return monitor.CommandResult(0, "Thermal Status: 0\n", "")
+      if tail == ["shell", "cat", "/proc/meminfo"]:
+        return monitor.CommandResult(0, "MemTotal: 8388608 kB\nMemAvailable: 4194304 kB\n", "")
+      if tail == ["shell", "df", "-Pk", "/data"]:
+        return monitor.CommandResult(0, "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/block/data 104857600 52428800 52428800 50% /data\n", "")
+      if tail == ["shell", "su", "-c", monitor.TICKET_LIFECYCLE_PS_COMMAND]:
+        return monitor.CommandResult(1, "", "permission denied")
+      raise AssertionError(f"unexpected adb command: {tail}")
+
+    collected = monitor.collect_pixel({
+      "adb_binary": "adb", "serial": "100.76.50.43:5555", "timeout_seconds": 10,
+      "curl_path": "/data/local/pixel-stack/bin/curl", "health_url": "http://127.0.0.1:9388/api/v1/health",
+    }, runner)
+
+    self.assertFalse(collected["ok"])
+    self.assertFalse(collected["ticket_lifecycle"]["ok"])
 
   def test_unknown_host_or_pixel_does_not_add_resource_secondary_failures(self):
     snapshot = healthy_snapshot(active=False)
@@ -777,6 +881,8 @@ class TicketHealthMonitorTest(unittest.TestCase):
       tail = list(args[3:])
       if tail == ["get-state"]:
         return monitor.CommandResult(0, "device\n", "")
+      if tail == ["shell", "su", "-c", monitor.TICKET_LIFECYCLE_PS_COMMAND]:
+        return monitor.CommandResult(0, "PID PPID ELAPSED STAT NAME ARGS\n", "")
       if tail[:3] == ["shell", "su", "-c"]:
         return monitor.CommandResult(0, json.dumps(health_payload), "")
       if tail == ["shell", "settings", "get", "system", "accelerometer_rotation"]:

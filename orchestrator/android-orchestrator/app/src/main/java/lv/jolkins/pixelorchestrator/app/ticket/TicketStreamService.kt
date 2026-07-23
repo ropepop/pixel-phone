@@ -1274,11 +1274,13 @@ class TicketStreamService : Service() {
     delay(LATEST_TICKET_RESELECT_RELAUNCH_DELAY_MILLIS)
     launchViviForWake(recoveryReason)
     recordTicketEvent("latest_ticket_reselect_vivi_opened", "reason=$reason command=$commandId")
+    val observationStartedAtMillis = SystemClock.elapsedRealtime()
     val result = observeTicketDetailForWakeWithRoot(
       reason = recoveryReason,
-      wakeStartedAtMillis = recoveryStartedAtMillis,
+      wakeStartedAtMillis = observationStartedAtMillis,
       budgetMillis = LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS,
-      maxRecoveryActions = LATEST_TICKET_RESELECT_MAX_RECOVERY_ACTIONS
+      maxRecoveryActions = LATEST_TICKET_RESELECT_MAX_RECOVERY_ACTIONS,
+      recoveryActionRepeatCooldownMillis = LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS
     )
     markWakeReadyIfNeeded(recoveryStartedAtMillis, result)
     recordTicketEvent(
@@ -4708,7 +4710,8 @@ class TicketStreamService : Service() {
     reason: String,
     wakeStartedAtMillis: Long,
     budgetMillis: Long = TICKET_WAKE_BUDGET_MILLIS,
-    maxRecoveryActions: Int = TICKET_WAKE_RECOVERY_MAX_ACTIONS
+    maxRecoveryActions: Int = TICKET_WAKE_RECOVERY_MAX_ACTIONS,
+    recoveryActionRepeatCooldownMillis: Long = 0L
   ): TicketAutopilotResult {
     var lastState = TicketViviRecoveryState.UNKNOWN_VIVI
     var lastStep = "wake_root_unavailable"
@@ -4717,6 +4720,8 @@ class TicketStreamService : Service() {
     var attemptedWakeRelaunch = false
     var wakeRecoveryActions = 0
     var rootUnavailableAttempts = 0
+    var lastRecoveryActionKey = ""
+    var lastRecoveryActionAtMillis = 0L
     while (true) {
       val activeBudgetMillis = if (wakeRecoveryActions > 0) {
         maxOf(budgetMillis, TICKET_WAKE_RECOVERY_BUDGET_MILLIS)
@@ -4788,15 +4793,41 @@ class TicketStreamService : Service() {
             return TicketAutopilotResult(true, TicketViviRecoveryState.TICKET_DETAIL, lastStep)
           }
         }
-        if (
-          wakeRecoveryActions < maxRecoveryActions &&
-          attemptWakeRecoveryActionForRootWake(state, observation.hierarchy, reason)
-        ) {
-          wakeRecoveryActions += 1
-          lastStep = "wake_root_recovery_action_${state.name.lowercase()}"
-          val recoveryBudgetMillis = maxOf(budgetMillis, TICKET_WAKE_RECOVERY_BUDGET_MILLIS)
-          delay(minOf(TICKET_WAKE_RECOVERY_ACTION_SETTLE_MILLIS, remainingWakeBudgetMillis(wakeStartedAtMillis, recoveryBudgetMillis)).coerceAtLeast(0L))
-          continue
+        val recoveryAction = TicketViviPageEnforcer.recoveryActionForHierarchy(observation.hierarchy)
+        val recoveryActionKey = recoveryAction?.let { "${state.name}:${it.reason}:${it.x}:${it.y}" }.orEmpty()
+        val actionNowMillis = SystemClock.elapsedRealtime()
+        val sameActionCoolingDown = recoveryActionCoolingDown(
+          actionKey = recoveryActionKey,
+          lastActionKey = lastRecoveryActionKey,
+          nowMillis = actionNowMillis,
+          lastActionAtMillis = lastRecoveryActionAtMillis,
+          cooldownMillis = recoveryActionRepeatCooldownMillis
+        )
+        val actionRemainingMillis = remainingWakeBudgetMillis(wakeStartedAtMillis, activeBudgetMillis)
+        val actionEligible =
+          recoveryAction != null &&
+          !sameActionCoolingDown &&
+          actionRemainingMillis >= TICKET_WAKE_RECOVERY_MIN_ACTION_TIMEOUT_MILLIS &&
+          wakeRecoveryActions < maxRecoveryActions
+        if (actionEligible) {
+          val actionSucceeded = attemptWakeRecoveryActionForRootWake(
+            state = state,
+            hierarchy = observation.hierarchy,
+            action = checkNotNull(recoveryAction),
+            reason = reason,
+            timeoutMillis = minOf(NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS, actionRemainingMillis)
+          )
+          if (actionSucceeded || recoveryActionRepeatCooldownMillis > 0L) {
+            wakeRecoveryActions += 1
+            lastRecoveryActionKey = recoveryActionKey
+            lastRecoveryActionAtMillis = SystemClock.elapsedRealtime()
+          }
+          if (actionSucceeded) {
+            lastStep = "wake_root_recovery_action_${state.name.lowercase()}"
+            val recoveryBudgetMillis = maxOf(budgetMillis, TICKET_WAKE_RECOVERY_BUDGET_MILLIS)
+            delay(minOf(TICKET_WAKE_RECOVERY_ACTION_SETTLE_MILLIS, remainingWakeBudgetMillis(wakeStartedAtMillis, recoveryBudgetMillis)).coerceAtLeast(0L))
+            continue
+          }
         }
       }
       if (
@@ -4817,13 +4848,11 @@ class TicketStreamService : Service() {
 
   private suspend fun attemptWakeRecoveryActionForRootWake(
     state: TicketViviRecoveryState,
-    hierarchy: String?,
-    reason: String
+    hierarchy: String,
+    action: TicketViviPageAction,
+    reason: String,
+    timeoutMillis: Long
   ): Boolean {
-    if (hierarchy.isNullOrBlank()) {
-      return false
-    }
-    val action = TicketViviPageEnforcer.recoveryActionForHierarchy(hierarchy) ?: return false
     if (state == TicketViviRecoveryState.TICKET_LIST_WITH_CARD || action.reason.contains("ticket_card")) {
       recordTicketEvent(
         "ticket_card_selection_decision",
@@ -4831,15 +4860,36 @@ class TicketStreamService : Service() {
       )
     }
     val input = if (action.x >= 0 && action.y >= 0) {
-      runFastNonTouchInput("input tap ${action.x} ${action.y}", "wake_recovery_action:${action.reason}")
+      runFastNonTouchInput(
+        "input tap ${action.x} ${action.y}",
+        "wake_recovery_action:${action.reason}",
+        timeout = timeoutMillis.milliseconds
+      )
     } else {
-      runFastNonTouchInput("input keyevent KEYCODE_BACK", "wake_recovery_action:${action.reason}")
+      runFastNonTouchInput(
+        "input keyevent KEYCODE_BACK",
+        "wake_recovery_action:${action.reason}",
+        timeout = timeoutMillis.milliseconds
+      )
     }
     recordTicketEvent(
       "wake_recovery_action",
       "state=${state.name} action=${action.reason} ok=${input.ok} duration_ms=${input.durationMs} reason=$reason"
     )
     return input.ok
+  }
+
+  private fun recoveryActionCoolingDown(
+    actionKey: String,
+    lastActionKey: String,
+    nowMillis: Long,
+    lastActionAtMillis: Long,
+    cooldownMillis: Long
+  ): Boolean {
+    return actionKey.isNotBlank() &&
+      actionKey == lastActionKey &&
+      cooldownMillis > 0L &&
+      nowMillis - lastActionAtMillis in 0 until cooldownMillis
   }
 
   private suspend fun attemptWakeRelaunchForRootWake(
@@ -9292,15 +9342,18 @@ class TicketStreamService : Service() {
   private suspend fun runFastNonTouchInput(
     command: String,
     reason: String,
-    postMillis: Long = NON_TOUCH_PANEL_SLEEP_CLAMP_POST_MILLIS
+    postMillis: Long = NON_TOUCH_PANEL_SLEEP_CLAMP_POST_MILLIS,
+    timeout: Duration = NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS.milliseconds
   ): RootResult {
     PhoneAutomationServiceBridge.markNonTouchInput("ticket:$reason")
+    val commandTimeout = (timeout - postMillis.milliseconds).coerceAtLeast(250.milliseconds)
     val result = inputRootExecutor.runScript(
       wrapNonTouchPanelSleepClamp(
         command,
         postMillis = postMillis,
-        commandTimeout = NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS.milliseconds
-      )
+        commandTimeout = commandTimeout
+      ),
+      timeout
     ).also { recordInputCommandResult(reason, it) }
     PhoneAutomationServiceBridge.markNonTouchInput("ticket:$reason:complete")
     return result
@@ -10295,7 +10348,7 @@ class TicketStreamService : Service() {
     private const val TICKET_SPACETIME_CRITICAL_MESSAGE_TTL_MILLIS = 5 * 60_000L
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
     private const val SESSION_START_TIMEOUT_MILLIS = 70_000L
-    const val SERVER_VERSION = "ticket-stream-2026-07-11-panel-sleep-shield-handoff-v290"
+    const val SERVER_VERSION = "ticket-stream-2026-07-22-latest-ticket-hydration-v291"
     private const val CONTROL_CODE_MARKER_RESULT_HIERARCHY = "__marker_control_code_result__"
     private const val FRAME_ENVELOPE_VERSION = "tsf2"
     private const val FRAME_ENVELOPE_MAGIC = 0x54534632
@@ -10364,6 +10417,7 @@ class TicketStreamService : Service() {
     private const val TICKET_FAST_PUBLIC_OPEN_VISUAL_RAW_TICKET_PROOF_COUNT = 2
     private const val TICKET_WAKE_RECOVERY_BUDGET_MILLIS = 60_000L
     private const val TICKET_WAKE_RECOVERY_MAX_ACTIONS = 4
+    private const val TICKET_WAKE_RECOVERY_MIN_ACTION_TIMEOUT_MILLIS = 4_000L
     private const val TICKET_RS_MONTHLY_RETURN_BUDGET_MILLIS = 45_000L
     private const val TICKET_RS_MONTHLY_RETURN_MAX_RECOVERY_ACTIONS = 6
     private const val TICKET_RS_MONTHLY_IDLE_CLEANUP_DELAY_MILLIS = 2_500L
@@ -10438,15 +10492,16 @@ class TicketStreamService : Service() {
     private const val CONTROL_CODE_RECOVERY_QUEUE_POLL_MILLIS = 250L
     private const val CONTROL_CODE_RESELECT_FRESH_TICKET_MAX_AGE_MILLIS = 5_000L
     private const val LATEST_TICKET_RESELECT_RELAUNCH_DELAY_MILLIS = 300L
-    private const val LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS = TICKET_WAKE_RECOVERY_BUDGET_MILLIS
-    private const val LATEST_TICKET_RESELECT_MAX_RECOVERY_ACTIONS = TICKET_WAKE_RECOVERY_MAX_ACTIONS
+    private const val LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS = 120_000L
+    private const val LATEST_TICKET_RESELECT_MAX_RECOVERY_ACTIONS = 6
+    private const val LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS = 30_000L
     private const val LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS = 20_000L
     private const val LATEST_TICKET_RESELECT_PROOF_HOLD_MILLIS =
       LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS + 5_000L
     private const val LATEST_TICKET_RESELECT_PROOF_NUDGE_MILLIS = 1_000L
     private const val LATEST_TICKET_RESELECT_PROOF_IDLE_STOP_GRACE_MILLIS = 2_000L
     private const val LATEST_TICKET_RESELECT_ACTIVE_WINDOW_MILLIS =
-      LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS + LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS + 5_000L
+      LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS + LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS + 30_000L
     private const val CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 0L
     private const val CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS = 250L
     private const val CONTROL_CODE_VISUAL_STATE_POLL_MILLIS = 40L

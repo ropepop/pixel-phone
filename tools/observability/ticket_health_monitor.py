@@ -28,7 +28,7 @@ def _words(value: str) -> set[str]:
   return set(value.split())
 
 
-VERSION = "3"
+VERSION = "4"
 TERMINAL_COMMAND_STATES = _words("succeeded failed expired canceled cancelled completed")
 STREAM_COMMAND_STATES = TERMINAL_COMMAND_STATES | _words("pending running warming closed")
 ENDPOINT_STATUS_STATES = _words("ok healthy ready live starting degraded error unhealthy unavailable")
@@ -80,6 +80,14 @@ MAX_MONITORED_CONTAINERS = 32
 MAX_RESOURCE_LINES = 128
 MAX_COMMAND_CAPTURE_BYTES = 262144
 MAX_EVIDENCE_REPORTS = 1000
+TICKET_LIFECYCLE_STUCK_SECONDS = 60
+TICKET_LIFECYCLE_PS_COMMAND = (
+  "ps -A -o PID,PPID,ELAPSED,STAT,NAME,ARGS | "
+  "awk 'NR == 1 || ($5 == \"sh\" && $6 == \"sh\" && "
+  "($7 == \"/data/local/pixel-stack/bin/pixel-ticket-start.sh\" || "
+  "$7 == \"/data/local/pixel-stack/bin/pixel-ticket-stop.sh\")) || "
+  "($5 == \"tr\" && $6 == \"tr\" && ($7 == \"\\\\000\" || $7 == \"\\\\0\" || $7 == \"\\\\x00\"))'"
+)
 
 
 @dataclass(frozen=True)
@@ -729,6 +737,56 @@ def _parse_battery(output: str) -> dict[str, Any] | None:
   return {"level_percent": fields["level"], "temperature_c": round(fields["temperature"] / 10, 1), "status_code": fields["status"]}
 
 
+def _elapsed_seconds(value: str) -> int | None:
+  match = re.fullmatch(r"(?:(\d+)-)?(\d+):(\d+):(\d+)", value)
+  if match:
+    days, hours, minutes, seconds = (int(item or 0) for item in match.groups())
+    if hours < 24 and minutes < 60 and seconds < 60:
+      return days * 86400 + hours * 3600 + minutes * 60 + seconds
+    return None
+  match = re.fullmatch(r"(\d+):(\d+)", value)
+  if match:
+    minutes, seconds = (int(item) for item in match.groups())
+    return minutes * 60 + seconds if seconds < 60 else None
+  return None
+
+
+def _ticket_lifecycle_status(output: str) -> dict[str, Any]:
+  lines = [line for line in output.splitlines()[:MAX_RESOURCE_LINES] if line.strip()]
+  if not lines or lines[0].split()[:6] != ["PID", "PPID", "ELAPSED", "STAT", "NAME", "ARGS"]:
+    return {"ok": False, "stuck_helper_count": 0, "stuck_start_stop_count": 0, "oldest_age_seconds": None}
+  lifecycle: dict[int, int] = {}
+  helpers: list[tuple[int, int]] = []
+  for line in lines[1:]:
+    fields = line.split(None, 5)
+    if len(fields) != 6:
+      continue
+    try:
+      pid, ppid = int(fields[0]), int(fields[1])
+    except ValueError:
+      continue
+    age = _elapsed_seconds(fields[2])
+    if age is None:
+      continue
+    name, args = fields[4], fields[5]
+    if name == "sh" and re.match(r"^sh /data/local/pixel-stack/bin/pixel-ticket-(?:start|stop)\.sh(?:\s|$)", args):
+      lifecycle[pid] = age
+    elif name == "tr" and re.fullmatch(r"tr (?:\\000|\\0|\\x00)", args):
+      helpers.append((ppid, age))
+  stuck_parents = {pid: age for pid, age in lifecycle.items() if age > TICKET_LIFECYCLE_STUCK_SECONDS}
+  stuck_helpers = [
+    age for ppid, age in helpers
+    if age > TICKET_LIFECYCLE_STUCK_SECONDS and (ppid in stuck_parents or ppid == 1)
+  ]
+  ages = [*stuck_parents.values(), *stuck_helpers]
+  return {
+    "ok": True,
+    "stuck_helper_count": len(stuck_helpers),
+    "stuck_start_stop_count": len(stuck_parents),
+    "oldest_age_seconds": max(ages) if ages else None,
+  }
+
+
 def _pixel_resources(config: Mapping[str, Any], runner: CommandRunner) -> dict[str, Any]:
   battery, thermal, memory, disk = [
     _adb(config, runner, *args) for args in (
@@ -764,12 +822,18 @@ def collect_pixel(config: Mapping[str, Any], runner: CommandRunner) -> dict[str,
   ]
   rotations = [_as_int(item.stdout.strip(), -1) for item in rotation_results]
   resources = _pixel_resources(config, runner)
+  lifecycle_result = _adb(
+    config, runner, "shell", "su", "-c", TICKET_LIFECYCLE_PS_COMMAND,
+  )
+  lifecycle = _ticket_lifecycle_status(lifecycle_result.stdout) if lifecycle_result.returncode == 0 else {
+    "ok": False, "stuck_helper_count": 0, "stuck_start_stop_count": 0, "oldest_age_seconds": None,
+  }
   contract_ok = _pixel_health_contract_valid(health)
   result.update({
-    "ok": health.get("ok") is True and contract_ok and rotations == [0, 0] and resources["ok"],
+    "ok": health.get("ok") is True and contract_ok and rotations == [0, 0] and resources["ok"] and lifecycle["ok"],
     "health_contract_ok": contract_ok, "health": _select_pixel_health(health),
     "portrait_lock": {"ok": rotations == [0, 0], "accelerometer_rotation": rotations[0], "user_rotation": rotations[1]},
-    "resources": resources,
+    "resources": resources, "ticket_lifecycle": lifecycle,
   })
   return result
 
@@ -835,6 +899,21 @@ def _recovery_failed(value: Mapping[str, Any]) -> bool:
   )
 
 
+def _ticket_lifecycle_valid(value: Any) -> bool:
+  if not isinstance(value, Mapping) or set(value) != {
+    "ok", "stuck_helper_count", "stuck_start_stop_count", "oldest_age_seconds",
+  } or value.get("ok") is not True:
+    return False
+  helper_count, lifecycle_count, oldest = (
+    value.get("stuck_helper_count"), value.get("stuck_start_stop_count"), value.get("oldest_age_seconds"),
+  )
+  if any(type(count) is not int or not 0 <= count <= 64 for count in (helper_count, lifecycle_count)):
+    return False
+  if helper_count + lifecycle_count == 0:
+    return oldest is None
+  return type(oldest) is int and TICKET_LIFECYCLE_STUCK_SECONDS < oldest <= 315_576_000
+
+
 def evaluate_snapshot(snapshot: Mapping[str, Any], thresholds: Mapping[str, Any], standby_devices: Sequence[Any]) -> dict[str, Any]:
   surfaces = {name: snapshot.get(name, {}) for name in ("public", "host", "spacetime", "pixel")}
   failures = [f"{name}_unhealthy" for name, value in surfaces.items() if not isinstance(value, Mapping) or value.get("ok") is not True]
@@ -849,6 +928,12 @@ def evaluate_snapshot(snapshot: Mapping[str, Any], thresholds: Mapping[str, Any]
   health = pixel.get("health", {}) if isinstance(pixel.get("health"), Mapping) else {}
   if pixel_ok and not pixel.get("portrait_lock", {}).get("ok"):
     failures.append("portrait_unlocked")
+  if pixel_ok:
+    lifecycle = pixel.get("ticket_lifecycle") if isinstance(pixel.get("ticket_lifecycle"), Mapping) else {}
+    if not _ticket_lifecycle_valid(lifecycle):
+      failures.append("pixel_ticket_lifecycle_metrics_invalid")
+    elif _as_int(lifecycle.get("stuck_helper_count")) > 0 or _as_int(lifecycle.get("stuck_start_stop_count")) > 0:
+      failures.append("pixel_ticket_lifecycle_stuck")
   if spacetime_ok:
     desired = bool(spacetime.get("desired_active"))
     viewers = _as_int(spacetime.get("viewer_count"))

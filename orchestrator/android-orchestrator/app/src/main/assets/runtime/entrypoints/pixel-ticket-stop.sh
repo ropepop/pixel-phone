@@ -43,4 +43,8 @@ if listening && [ "$DEEP" = 1 ]; then
   am force-stop "$APP" >/dev/null 2>&1 || true
   sleep 0.2
 fi
-listening && { echo "Ticket runtime did not stop cleanly" >&2; exit 1; }
+if listening; then
+  echo "Ticket runtime did not stop cleanly" >&2
+  exit 1
+fi
+exit 0

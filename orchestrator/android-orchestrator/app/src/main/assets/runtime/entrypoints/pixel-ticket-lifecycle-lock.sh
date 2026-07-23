@@ -16,10 +16,11 @@ ticket_lock_run_bounded() {
 
 ticket_lock_owner_active() {
   owner="$1"
+  proc_root="${TICKET_LOCK_PROC_ROOT:-/proc}"
   case "$owner" in ''|*[!0-9]*) return 1 ;; esac
   kill -0 "$owner" >/dev/null 2>&1 || return 1
-  [ -r "/proc/$owner/cmdline" ] || return 0
-  if owner_command="$(ticket_lock_run_bounded tr '\000' ' ' < "/proc/$owner/cmdline" 2>/dev/null)"; then
+  [ -r "$proc_root/$owner/cmdline" ] || return 0
+  if owner_command="$(ticket_lock_run_bounded tr '\000' ' ' < "$proc_root/$owner/cmdline" 2>/dev/null)"; then
     case "$owner_command" in
       *pixel-ticket-start.sh*|*pixel-ticket-stop.sh*) return 0 ;;
       *) return 1 ;;

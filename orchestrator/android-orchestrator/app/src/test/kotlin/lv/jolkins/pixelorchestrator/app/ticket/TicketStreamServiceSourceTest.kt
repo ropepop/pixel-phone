@@ -550,12 +550,33 @@ class TicketStreamServiceSourceTest {
   @Test
   fun latestTicketReselectIsGenerationGuardedAndCannotOverlapControlCode() {
     val force = body(service, "private fun forceLatestTicketReselect", "private fun markLatestTicketReselectStarted")
+    val recovery = body(service, "private suspend fun runLatestTicketReselectRecovery", "private fun latestTicketReselectGenerationIsCurrent")
     val current = body(service, "private fun latestTicketReselectGenerationIsCurrent", "private fun markLatestTicketReselectFinished")
     assertTrue(force.contains("controlSensitiveWindowActive()"))
     assertTrue(force.contains("reason = \"control_code_active\""))
     assertTrue(force.contains("viviStateMemory.clear"))
+    assertTrue(recovery.indexOf("launchViviForWake") < recovery.indexOf("val observationStartedAtMillis"))
+    assertTrue(recovery.contains("wakeStartedAtMillis = observationStartedAtMillis"))
+    assertTrue(recovery.contains("recoveryActionRepeatCooldownMillis = LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS"))
+    assertTrue(service.contains("LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS = 120_000L"))
+    assertTrue(service.contains("LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS = 30_000L"))
     assertTrue(current.contains("latestTicketReselectGeneration == generation"))
     assertTrue(current.contains("latestTicketReselectCommandId == commandId"))
+  }
+
+  @Test
+  fun wakeRecoveryActionsAreDeduplicatedAndDeadlineBound() {
+    val observe = body(service, "private suspend fun observeTicketDetailForWakeWithRoot", "private suspend fun attemptWakeRecoveryActionForRootWake")
+    val attempt = body(service, "private suspend fun attemptWakeRecoveryActionForRootWake", "private fun recoveryActionCoolingDown")
+    val input = body(service, "private suspend fun runFastNonTouchInput", "private suspend fun runSensitiveFastNonTouchScript")
+    assertTrue(observe.contains("sameActionCoolingDown"))
+    assertTrue(observe.contains("actionRemainingMillis"))
+    assertTrue(observe.contains("actionSucceeded || recoveryActionRepeatCooldownMillis > 0L"))
+    assertTrue(observe.contains("timeoutMillis = minOf(NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS, actionRemainingMillis)"))
+    assertTrue(attempt.contains("timeout = timeoutMillis.milliseconds"))
+    assertTrue(input.contains("timeout: Duration = NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS.milliseconds"))
+    assertTrue(input.contains("val commandTimeout = (timeout - postMillis.milliseconds).coerceAtLeast(250.milliseconds)"))
+    assertTrue(input.contains("commandTimeout = commandTimeout"))
   }
 
   @Test

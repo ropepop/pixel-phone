@@ -26,6 +26,7 @@ class RuntimeEntrypointSpeedSourceTest {
     val source = source("app/src/main/assets/runtime/entrypoints/pixel-ticket-stop.sh")
     val lock = source("app/src/main/assets/runtime/entrypoints/pixel-ticket-lifecycle-lock.sh")
     assertTrue(source.contains("ticket_lock_acquire \"${'$'}LOCK\""))
+    assertTrue(source.trimEnd().endsWith("exit 0"))
     assertTrue(lock.contains("TICKET_LOCK_OWNER=\"${'$'}{TICKET_LOCK_DIR}/owner.pid\""))
     assertTrue(lock.contains("ticket_lock_owner_active"))
     assertTrue(lock.contains("ticket_lock_run_bounded"))
