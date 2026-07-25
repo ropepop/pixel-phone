@@ -22,6 +22,7 @@ class TicketStreamServiceSourceTest {
   private val rootInput by lazy { source("ticket/TicketControlCodeRootInput.kt") }
   private val viviEnforcer by lazy { source("ticket/TicketViviPageEnforcer.kt") }
   private val spacetimeWorker by lazy { source("ticket/TicketSpacetimeWorker.kt") }
+  private val reselectCommandPolicy by lazy { source("ticket/TicketLatestTicketReselectCommandPolicy.kt") }
 
   @Test
   fun runtimeEventsUseOneBoundedSpacetimeSinkWithoutLogcat() {
@@ -378,14 +379,86 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun cleanupUsesInlineXFirstWithGeometryOnlyAsFallback() {
+  fun cleanupUsesCurrentXFirstWithGeometryFallbackAndAOneShotRootInputPath() {
     val begin = body(service, "private suspend fun beginGeneratedControlCodeResultFastClose", "private suspend fun finishGeneratedControlCodeResultFastCleanup")
     val send = body(service, "private suspend fun sendFastGeneratedResultCloseTap", "private fun controlCodeResultGeometryCloseAction")
+    val oneShot = body(service, "private suspend fun runFastOneShotControlSurfaceCloseInput", "private suspend fun runFastNonTouchWakeScript")
     assertTrue(begin.contains("TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(generatedHierarchy)"))
     assertTrue(begin.contains("?: controlCodeResultGeometryCloseAction()"))
     assertTrue(begin.indexOf("controlCodeExitCloseActionForHierarchy") < begin.indexOf("controlCodeResultGeometryCloseAction"))
-    assertTrue(send.contains("action.reason == \"close_control_code_result\""))
-    assertTrue(send.contains("runFastInlineControlResultCloseInput"))
+    assertTrue(send.contains("input tap ${'$'}{action.x} ${'$'}{action.y}"))
+    assertTrue(send.contains("runFastOneShotControlSurfaceCloseInput("))
+    assertFalse(send.contains("runFastNonTouchInput("))
+    assertTrue(service.contains("private val controlSurfaceCloseRootExecutor = SuRootExecutor()"))
+    assertTrue(oneShot.contains("controlSurfaceCloseRootExecutor.run(command, timeout)"))
+    assertFalse(oneShot.contains("wrapNonTouchPanelSleepClamp("))
+    assertFalse(oneShot.contains("runScript("))
+    assertTrue(oneShot.contains("CONTROL_CODE_FAST_CLOSE_COMMAND_TIMEOUT_MILLIS.milliseconds"))
+    assertTrue(service.contains("CONTROL_CODE_FAST_CLOSE_COMMAND_TIMEOUT_MILLIS = 2_000L"))
+    assertFalse(send.contains("runFastInlineControlResultCloseInput"))
+    assertFalse(service.contains("private suspend fun runFastInlineControlResultCloseInput"))
+  }
+
+  @Test
+  fun failedEntryCleanupReinspectsABlankHierarchyBeforeBroaderRecovery() {
+    val cleanup = body(
+      service,
+      "private suspend fun returnControlCodeSurfaceToRawTicket",
+      "private fun isActionableControlCodeExitHierarchy"
+    )
+    assertTrue(cleanup.contains("TicketControlCodeCleanupHierarchyResolver.resolve("))
+    assertTrue(cleanup.contains("CONTROL_CODE_CLEANUP_HIERARCHY_REINSPECT_MAX_READS"))
+    assertTrue(cleanup.contains("controlExitHierarchy().orEmpty()"))
+    assertTrue(cleanup.contains("\"control_code_cleanup_hierarchy_reinspect\""))
+    assertTrue(cleanup.contains("TicketViviRecoveryState.CONTROL_CODE_POPUP"))
+    assertTrue(cleanup.contains("sendFastGeneratedResultCloseTap("))
+  }
+
+  @Test
+  fun finalReselectTraceRequiresConfirmedOperationalWriteBeforePhoneAck() {
+    val drain = body(
+      spacetimeWorker,
+      "private suspend fun drainPhoneMessages",
+      "private fun controlCodeRequestId"
+    )
+    val tracePublisher = body(
+      spacetimeWorker,
+      "private suspend fun publishTicketTraceEvent",
+      "private fun JsonObject.string"
+    )
+    val queue = body(
+      spacetimeWorker,
+      "internal class TicketOperationalLogQueue",
+      "private data class TicketPhoneMessagePublishOutcome"
+    )
+    assertTrue(drain.contains("if (!outcome.acknowledgePhoneMessage)"))
+    assertTrue(drain.indexOf("if (!outcome.acknowledgePhoneMessage)") <
+      drain.indexOf("service.acknowledgeTicketSpacetimePhoneMessage(message)"))
+    assertTrue(tracePublisher.contains("event.startsWith(\"latest_ticket_reselect_final_\")"))
+    assertTrue(tracePublisher.contains("client.safeLogRetained("))
+    assertTrue(tracePublisher.contains("retainedTicketTraceOperationalLogId(payload, event)"))
+    assertTrue(queue.contains("suspend fun sendRetained"))
+    assertTrue(queue.contains("sender(event)"))
+    assertTrue(queue.contains("catch (_: Throwable)"))
+  }
+
+  @Test
+  fun staticBlankProofSettlesAndReprovesBeforeAnyNonOverlappingRetype() {
+    val enter = body(service, "private suspend fun enterAndSubmitControlCodeDigitsFastForRequest", "private suspend fun executeRootControlCodeType")
+    val firstProof = enter.indexOf("var valueProof = waitForEnteredControlCodeValueVisualProof(phases)")
+    val settle = enter.indexOf("delay(CONTROL_CODE_VALUE_RENDER_RECHECK_SETTLE_MILLIS)")
+    val secondProof = enter.indexOf("valueProof = waitForEnteredControlCodeValueVisualProof(phases)", settle)
+    val leaseWait = enter.indexOf("remainingInitialKeyboardLeaseMillis(")
+    val retype = enter.indexOf("\"control_code_root_virtual_keyboard_retype\"")
+    assertTrue(firstProof >= 0)
+    assertTrue(firstProof < settle)
+    assertTrue(settle < secondProof)
+    assertTrue(secondProof < leaseWait)
+    assertTrue(leaseWait < retype)
+    assertTrue(enter.contains("initialTypeCompletedAtMillis = initialTypeCompletedAtMillis"))
+    assertTrue(enter.contains("safetyMarginMillis = CONTROL_CODE_ROOT_RETYPE_LEASE_MARGIN_MILLIS"))
+    assertTrue(service.contains("CONTROL_CODE_VALUE_RENDER_RECHECK_SETTLE_MILLIS = 350L"))
+    assertTrue(service.contains("CONTROL_CODE_ROOT_RETYPE_LEASE_MARGIN_MILLIS = 250L"))
   }
 
   @Test
@@ -549,19 +622,180 @@ class TicketStreamServiceSourceTest {
 
   @Test
   fun latestTicketReselectIsGenerationGuardedAndCannotOverlapControlCode() {
+    val commands = body(service, "internal suspend fun handleTicketSpacetimeCommand", "internal suspend fun handleTicketSpacetimeDesiredActive")
     val force = body(service, "private fun forceLatestTicketReselect", "private fun markLatestTicketReselectStarted")
+    val yielding = body(
+      service,
+      "internal fun yieldLatestTicketReselectForImmediateControl",
+      "private fun recordLatestTicketReselectDeferred"
+    )
+    val scheduling = body(service, "private fun scheduleLatestTicketReselectRecovery", "private suspend fun runLatestTicketReselectRecovery")
     val recovery = body(service, "private suspend fun runLatestTicketReselectRecovery", "private fun latestTicketReselectGenerationIsCurrent")
-    val current = body(service, "private fun latestTicketReselectGenerationIsCurrent", "private fun markLatestTicketReselectFinished")
-    assertTrue(force.contains("controlSensitiveWindowActive()"))
-    assertTrue(force.contains("reason = \"control_code_active\""))
+    val observation = body(service, "private suspend fun observeTicketDetailForWakeWithRoot", "private suspend fun attemptWakeRecoveryActionForRootWake")
+    val current = body(service, "private fun latestTicketReselectGenerationIsCurrent", "private fun markLatestTicketReselectFailed")
+    val forceDispatch = commands.substringAfter("\"force_ticket_reselect\" ->").substringBefore("\"prepare_control_code\" ->")
+    assertTrue(forceDispatch.contains("forceLatestTicketReselect("))
+    assertFalse(forceDispatch.contains("controlCodePhoneMutationLane.withOwnership"))
+    assertTrue(force.contains("TicketLatestTicketReselectCommandPolicy.decide("))
+    assertTrue(force.contains("terminal = false"))
     assertTrue(force.contains("viviStateMemory.clear"))
+    assertTrue(force.contains("recordLatestTicketReselectDeferred"))
+    assertTrue(yielding.contains("latestTicketReselectGeneration += 1L"))
+    assertTrue(yielding.contains("latestTicketReselectStatus = \"yielded\""))
+    assertTrue(yielding.contains("latestTicketReselectPhase = \"control_code_yielded\""))
+    assertTrue(yielding.contains("jobsToCancel.forEach { it.cancel() }"))
+    assertTrue(scheduling.contains("controlCodePhoneMutationLane.withOwnership"))
     assertTrue(recovery.indexOf("launchViviForWake") < recovery.indexOf("val observationStartedAtMillis"))
     assertTrue(recovery.contains("wakeStartedAtMillis = observationStartedAtMillis"))
     assertTrue(recovery.contains("recoveryActionRepeatCooldownMillis = LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS"))
+    assertTrue(recovery.contains("ticketCardSelectionGraceMillis = LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS"))
+    assertTrue(recovery.contains("recordLatestTicketReselectRecoveryTelemetry(result)"))
+    assertTrue(observation.contains("TicketLatestTicketReselectRecoveryPolicy.remainingMillis("))
+    assertTrue(observation.contains("ticketCardSelectionGraceDeadlineMillis("))
+    assertTrue(observation.contains("latest_ticket_reselect_ticket_card_action_grace_started"))
     assertTrue(service.contains("LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS = 120_000L"))
     assertTrue(service.contains("LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS = 30_000L"))
+    assertTrue(service.contains("LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS = 60_000L"))
+    assertTrue(service.contains("LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS +\n        LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS"))
+    assertTrue(recovery.contains("TicketLatestTicketReselectRecoveryPolicy.finalTelemetryEvent("))
+    assertFalse(recovery.contains("latest_ticket_reselect_final_state_"))
+    assertFalse(recovery.contains("latest_ticket_reselect_final_action_"))
     assertTrue(current.contains("latestTicketReselectGeneration == generation"))
     assertTrue(current.contains("latestTicketReselectCommandId == commandId"))
+  }
+
+  @Test
+  fun latestTicketReselectCommandRemainsPendingUntilTerminalPhoneState() {
+    val cycle = body(
+      spacetimeWorker,
+      "private suspend fun runCycle",
+      "private fun commandCanBePreemptedByControlCode"
+    )
+    val preemption = body(
+      spacetimeWorker,
+      "private fun commandCanBePreemptedByControlCode",
+      "private fun shouldWriteRemoteCommandLog"
+    )
+    val deferredCheck = cycle.indexOf("if (!result.terminal)")
+    val deferredReport = cycle.indexOf("maybeUpdatePhoneReport(client, desired)", deferredCheck)
+    val deferredBreak = cycle.indexOf("break", deferredCheck)
+    val forcedTerminalReport = cycle.indexOf("maybeUpdatePhoneReport(client, desired, force = true)")
+    val acknowledgementAfterForcedReport = cycle.indexOf("client.ack(", forcedTerminalReport)
+    val firstYield = cycle.indexOf("yieldLatestTicketReselectForImmediateControl")
+    val commandLoop = cycle.indexOf("for (scannedCommand in commands)")
+
+    assertTrue(spacetimeWorker.contains("val terminal: Boolean = true"))
+    assertTrue(preemption.contains("commandType == \"force_ticket_reselect\""))
+    assertTrue(reselectCommandPolicy.contains("commandType == \"generate_control_code\""))
+    assertTrue(reselectCommandPolicy.contains("commandType == \"control_code_browser_capture\""))
+    assertTrue(reselectCommandPolicy.contains("commandType == \"close_control_code\""))
+    assertFalse(reselectCommandPolicy.contains("commandType == \"prepare_control_code\""))
+    assertTrue(cycle.contains("TicketLatestTicketReselectPreemptionPolicy.shouldYieldFor(it.commandType)"))
+    assertTrue(spacetimeWorker.contains("\"prepare_control_code\" -> 9"))
+    assertTrue(deferredCheck >= 0)
+    assertTrue(deferredReport > deferredCheck)
+    assertTrue(deferredBreak > deferredReport)
+    assertTrue(cycle.substring(deferredCheck, deferredBreak).contains("command.commandType == \"force_ticket_reselect\""))
+    assertTrue(forcedTerminalReport > deferredBreak)
+    assertTrue(acknowledgementAfterForcedReport > forcedTerminalReport)
+    assertTrue(firstYield in 0 until commandLoop)
+  }
+
+  @Test
+  fun latestTicketReselectPollingReturnsToOriginalCommandAfterInterveningWork() {
+    val cycle = body(
+      spacetimeWorker,
+      "private suspend fun runCycle",
+      "private fun commandCanBePreemptedByControlCode"
+    )
+    val pendingCommands = body(
+      spacetimeWorker,
+      "suspend fun pendingCommands",
+      "private fun streamCommandPriority"
+    )
+    val commandPriority = body(
+      spacetimeWorker,
+      "private fun streamCommandPriority",
+      "suspend fun desiredState"
+    )
+
+    assertTrue(cycle.indexOf("var commands = if (eagerCommandLane)") < cycle.indexOf("for (scannedCommand in commands)"))
+    assertTrue(cycle.contains("TicketSpacetimePollingPolicy.shouldReadPendingCommands(signal.pendingCount)"))
+    assertTrue(
+      cycle.indexOf("val signal = client.commandSignal(config)") <
+        cycle.indexOf("drainPhoneMessages(config, client, routinePhoneMessageDrainLimit())")
+    )
+    assertFalse(cycle.contains("pending command post phone drain hot scan"))
+    assertTrue(cycle.contains("lastInboxSignalKey = \"\""))
+    assertTrue(pendingCommands.contains(".thenBy { it.createdAt }"))
+    assertTrue(pendingCommands.contains(".thenBy { it.id }"))
+    assertTrue(pendingCommands.contains("!ticketSpacetimeCommandExpired(row.expiresAt, now)"))
+    assertTrue(commandPriority.contains("\"force_ticket_reselect\" -> 3"))
+  }
+
+  @Test
+  fun missingOrExpiredReselectCommandIsConfirmedAndClearsResumablePhoneState() {
+    val cycle = body(
+      spacetimeWorker,
+      "private suspend fun runCycle",
+      "private suspend fun reconcileLatestTicketReselectCommand"
+    )
+    val reconciliation = body(
+      spacetimeWorker,
+      "private suspend fun reconcileLatestTicketReselectCommand",
+      "private fun commandCanBePreemptedByControlCode"
+    )
+    val exactLookup = body(
+      spacetimeWorker,
+      "suspend fun pendingCommandIsDispatchable",
+      "private fun streamCommandPriority"
+    )
+    val reset = body(
+      service,
+      "internal fun resetLatestTicketReselectIfCommandAbsent",
+      "private fun recordLatestTicketReselectDeferred"
+    )
+
+    assertTrue(cycle.contains("reconcileLatestTicketReselectCommand(config, client, commands)"))
+    assertTrue(reconciliation.contains("commands.any { it.id == activeCommandId }"))
+    assertTrue(reconciliation.contains("client.pendingCommandIsDispatchable(config, activeCommandId)"))
+    assertTrue(reconciliation.contains("catch (error: Throwable)"))
+    assertTrue(reconciliation.contains("missingLatestTicketReselectCommand.reset()"))
+    assertTrue(reconciliation.contains("throw error"))
+    assertTrue(reconciliation.contains("resetLatestTicketReselectIfCommandAbsent(activeCommandId)"))
+    assertTrue(exactLookup.contains("WHERE id ="))
+    assertTrue(exactLookup.contains("!ticketSpacetimeCommandExpired"))
+    assertTrue(reset.contains("latestTicketReselectCommandId != commandId"))
+    assertTrue(reset.contains("latestTicketReselectStatus = \"idle\""))
+    assertTrue(reset.contains("latestTicketReselectCommandId = \"\""))
+    assertTrue(reset.contains("jobsToCancel.forEach { it.cancel() }"))
+  }
+
+  @Test
+  fun compactPhoneReportIncludesLatestTicketReselectProgress() {
+    val compactHealth = body(
+      service,
+      "internal fun ticketSpacetimeCompactHealthJson",
+      "internal fun peekTicketSpacetimePhoneMessages"
+    )
+
+    assertTrue(compactHealth.contains("\"latestTicketReselectStatus\""))
+    assertTrue(compactHealth.contains("\"latestTicketReselectPhase\""))
+    assertTrue(compactHealth.contains("\"latestTicketReselectProofSource\""))
+  }
+
+  @Test
+  fun unexpectedReselectFailureBecomesTerminalButServiceCancellationCanRetryAfterRestart() {
+    val scheduling = body(
+      service,
+      "private fun scheduleLatestTicketReselectRecovery",
+      "private suspend fun runLatestTicketReselectRecovery"
+    )
+
+    assertTrue(scheduling.contains("catch (cancelled: CancellationException)"))
+    assertTrue(scheduling.contains("throw cancelled"))
+    assertTrue(scheduling.contains("reason = \"latest_ticket_reselect_exception\""))
+    assertTrue(scheduling.contains("markLatestTicketReselectFailed("))
   }
 
   @Test

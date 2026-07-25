@@ -3,7 +3,24 @@ package lv.jolkins.pixelorchestrator.app.ticket
 internal object TicketControlCodeRootInput {
   const val HELPER_ASSET = "ticket-root-keyboard"
   const val HELPER_PATH = "/data/local/pixel-stack/bin/pixel-ticket-root-keyboard"
+  const val KEYBOARD_LEASE_MILLIS = 6_000L
   private val digitsPattern = Regex("^[0-9]{2,8}${'$'}")
+
+  fun remainingInitialKeyboardLeaseMillis(
+    initialTypeCompletedAtMillis: Long,
+    nowMillis: Long,
+    safetyMarginMillis: Long
+  ): Long {
+    if (initialTypeCompletedAtMillis <= 0L || safetyMarginMillis < 0L) {
+      return 0L
+    }
+    return (
+      initialTypeCompletedAtMillis +
+        KEYBOARD_LEASE_MILLIS +
+        safetyMarginMillis -
+        nowMillis
+      ).coerceAtLeast(0L)
+  }
 
   fun buildTypeScript(
     digits: String,

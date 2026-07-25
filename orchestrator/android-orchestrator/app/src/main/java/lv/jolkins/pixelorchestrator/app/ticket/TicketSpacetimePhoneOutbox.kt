@@ -1,5 +1,37 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+
+internal object TicketSpacetimeCriticalMessagePolicy {
+  fun key(payload: JsonObject): String? {
+    val type = payload.stringValue("type")
+    val requestId = payload.stringValue("requestId").trim()
+    return when (type) {
+      "ticket_state_event" -> requestId.takeIf { it.isNotBlank() }
+        ?.let { "$type:$it:${payload.stringValue("ticketState")}" }
+      "control_code_progress",
+      "control_code_result",
+      "control_code_cleanup_complete",
+      "rigassatiksme_qr_result" -> requestId.takeIf { it.isNotBlank() }?.let { "$type:$it" }
+      "control_code_fast_state" -> type
+      "ticket_trace_event" -> payload.stringValue("event")
+        .takeIf { it.startsWith("latest_ticket_reselect_final_") }
+        ?.let { event ->
+          val eventIdentity = payload.stringValue("eventAtPhoneUptimeMillis")
+            .ifBlank { payload.stringValue("eventAtEpochMillis") }
+            .ifBlank { event }
+          "$type:latest_ticket_reselect_final:$eventIdentity"
+        }
+      else -> null
+    }
+  }
+
+  private fun JsonObject.stringValue(key: String): String =
+    this[key]?.jsonPrimitive?.contentOrNull.orEmpty()
+}
+
 internal class TicketSpacetimePhoneOutbox(
   private val maxLossyMessages: Int,
   private val criticalTtlMillis: Long,

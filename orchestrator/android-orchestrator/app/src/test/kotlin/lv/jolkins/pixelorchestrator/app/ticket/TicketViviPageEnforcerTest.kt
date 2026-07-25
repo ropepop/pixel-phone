@@ -374,6 +374,29 @@ class TicketViviPageEnforcerTest {
   }
 
   @Test
+  fun detectsFailureCleanupCancelWhenFocusedInputTextIsHidden() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.view.View" bounds="[0,0][1080,2424]">
+          <node package="com.pv.vivi" class="android.view.View" bounds="[173,1033][908,1480]">
+            <node package="com.pv.vivi" class="android.view.View" content-desc="Ievadi kontroles kodu" focusable="true" focused="false" bounds="[236,1096][845,1149]" />
+            <node package="com.pv.vivi" class="android.widget.EditText" clickable="true" focusable="true" focused="true" hint="kontroles kods" bounds="[251,1175][829,1301]" />
+            <node package="com.pv.vivi" class="android.widget.Button" content-desc="Atcelt" clickable="true" focusable="true" focused="false" bounds="[464,1327][687,1453]" />
+            <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" enabled="true" focusable="true" focused="false" bounds="[713,1327][881,1453]" />
+          </node>
+        </node>
+      </hierarchy>
+    """.trimIndent()
+
+    val close = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml)
+
+    assertEquals(TicketViviRecoveryState.CONTROL_CODE_POPUP, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("close_control_code_popup", close?.reason)
+    assertEquals(575, close?.x)
+    assertEquals(1390, close?.y)
+  }
+
+  @Test
   fun editableNumericNodeCannotImpersonateGeneratedResult() {
     val xml = """
       <hierarchy>

@@ -73,6 +73,7 @@ class TicketControlCodeRootInputTest {
     assertTrue(source.contains("FOCUS_SETTLE_MS 300"))
     assertTrue(source.contains("VALUE_SETTLE_MS 100"))
     assertTrue(source.contains("KEYBOARD_LEASE_MS 6000"))
+    assertEquals(6_000L, TicketControlCodeRootInput.KEYBOARD_LEASE_MILLIS)
     assertTrue(source.contains("HELPER_DEADLINE_MS 2700"))
     assertTrue(source.contains("handoff_keyboard_lease()"))
     assertTrue(source.contains("ticket-kbd-lease"))
@@ -95,6 +96,26 @@ class TicketControlCodeRootInputTest {
     assertFalse("typing must never implicitly advance or submit the form", source.contains("KEY_TAB"))
     assertFalse("typing must never implicitly submit the form", source.contains("KEY_ENTER"))
     assertFalse("typing must never implicitly submit the form", source.contains("KEY_KPENTER"))
+  }
+
+  @Test
+  fun retryWaitsForTheInitialKeyboardLeaseAndSafetyMargin() {
+    assertEquals(
+      4_250L,
+      TicketControlCodeRootInput.remainingInitialKeyboardLeaseMillis(
+        initialTypeCompletedAtMillis = 1_000L,
+        nowMillis = 3_000L,
+        safetyMarginMillis = 250L
+      )
+    )
+    assertEquals(
+      0L,
+      TicketControlCodeRootInput.remainingInitialKeyboardLeaseMillis(
+        initialTypeCompletedAtMillis = 1_000L,
+        nowMillis = 7_250L,
+        safetyMarginMillis = 250L
+      )
+    )
   }
 
   @Test

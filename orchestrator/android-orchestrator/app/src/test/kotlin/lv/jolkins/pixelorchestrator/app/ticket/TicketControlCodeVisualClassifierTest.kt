@@ -182,15 +182,28 @@ class TicketControlCodeVisualClassifierTest {
   }
 
   @Test
-  fun twoSeparatedDigitStrokesAreEnoughForTheShortestAcceptedValue() {
+  fun liveThinTwoDigitAggregateIsEnoughForTheShortestAcceptedValue() {
     val entered = blankSubmitFrame()
-    entered[48, 67] = DARK
-    entered[49, 67] = DARK
-    entered[50, 67] = DARK
+    // Privacy-safe aggregate reconstructed from the production 96x144 submit probe. It retains
+    // only the two sampled stroke positions and luminances, never the entered value or image.
+    entered[46, 68] = LIVE_DIGIT_STROKE_60
+    entered[48, 67] = LIVE_DIGIT_STROKE_75
 
     assertEquals(
       TicketControlCodeVisualClassifier.CONTROL_POPUP_VALUE_READY,
       TicketControlCodeVisualClassifier.classifySubmitLayout(entered.pixels)
+    )
+  }
+
+  @Test
+  fun twoAdjacentCaretColumnsCannotImpersonateEnteredDigits() {
+    val caret = blankSubmitFrame()
+    caret[48, 67] = LIVE_DIGIT_STROKE_60
+    caret[49, 68] = LIVE_DIGIT_STROKE_75
+
+    assertEquals(
+      TicketControlCodeVisualClassifier.CONTROL_POPUP_STATIC_READY,
+      TicketControlCodeVisualClassifier.classifySubmitLayout(caret.pixels)
     )
   }
 
@@ -324,6 +337,8 @@ class TicketControlCodeVisualClassifierTest {
     val DARK_DIALOG = rgb(18, 26, 37)
     val DARK_BLUE = rgb(23, 58, 114)
     val DARK_PLACEHOLDER = rgb(115, 115, 120)
+    val LIVE_DIGIT_STROKE_60 = rgb(60, 60, 60)
+    val LIVE_DIGIT_STROKE_75 = rgb(75, 75, 75)
     val RED = rgb(190, 45, 35)
     val RESULT_DARK = rgb(52, 52, 52)
 

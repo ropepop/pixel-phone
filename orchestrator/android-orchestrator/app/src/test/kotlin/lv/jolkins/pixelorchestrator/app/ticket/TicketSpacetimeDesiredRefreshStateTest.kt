@@ -134,26 +134,37 @@ class TicketSpacetimeDesiredRefreshStateTest {
   }
 
   @Test
-  fun workerScansCommandsFirstAndInvalidatesThePhoneReportAfterCanonicalRefresh() {
+  fun workerResolvesTheActiveOrSignaledCommandLaneBeforeCanonicalDesiredRefresh() {
     val worker = source("ticket/TicketSpacetimeWorker.kt")
     val connection = body(worker, "private fun onSpacetimeClientConnected", "private suspend fun runCycle")
     val cycle = body(worker, "private suspend fun runCycle", "private fun commandCanBePreemptedByControlCode")
     val register = worker.indexOf("client.register()")
     val connected = worker.indexOf("onSpacetimeClientConnected()", register)
-    val commandScan = cycle.indexOf("var commands = client.pendingCommands(config)")
+    val eagerLane = cycle.indexOf("val eagerCommandLane = eagerCommandLaneActive()")
+    val signalRead = cycle.indexOf("val signal = client.commandSignal(config)")
+    val signaledCommandRead = cycle.indexOf("TicketSpacetimePollingPolicy.shouldReadPendingCommands(signal.pendingCount)")
+    val routinePhoneMessageDrain = cycle.indexOf("drainPhoneMessages(config, client, routinePhoneMessageDrainLimit())")
     val refreshDecision = cycle.indexOf("desiredRefreshState.shouldRefresh(")
+    val previousDesired = cycle.indexOf("val previousDesired = desired", refreshDecision)
     val canonicalRead = cycle.indexOf("desired = client.desiredState(config)")
     val cacheUpdate = cycle.indexOf("desiredRefreshState.markRefreshed(", canonicalRead)
-    val reportInvalidation = cycle.indexOf("lastPhoneReportWriteKey = \"\"", cacheUpdate)
+    val materialChangeCheck = cycle.indexOf("if (desired != previousDesired)", cacheUpdate)
+    val reportInvalidation = cycle.indexOf("lastPhoneReportWriteKey = \"\"", materialChangeCheck)
     val phoneReport = cycle.indexOf("maybeUpdatePhoneReport(client, desired)", reportInvalidation)
 
     assertTrue(register >= 0 && connected > register)
     assertTrue(connection.contains("desiredRefreshState.onClientConnected()"))
     assertTrue(connection.contains("lastPhoneReportWriteKey = \"\""))
-    assertTrue(commandScan >= 0 && refreshDecision > commandScan)
+    assertTrue(eagerLane >= 0)
+    assertTrue(signalRead > eagerLane)
+    assertTrue(signaledCommandRead > signalRead)
+    assertTrue(routinePhoneMessageDrain > signaledCommandRead)
+    assertTrue(refreshDecision > signaledCommandRead)
+    assertTrue(previousDesired > refreshDecision)
     assertTrue(canonicalRead > refreshDecision)
     assertTrue(cacheUpdate > canonicalRead)
-    assertTrue(reportInvalidation > cacheUpdate)
+    assertTrue(materialChangeCheck > cacheUpdate)
+    assertTrue(reportInvalidation > materialChangeCheck)
     assertTrue(phoneReport > reportInvalidation)
     assertEquals(1, Regex("desiredRefreshState\\.shouldRefresh\\(").findAll(cycle).count())
   }

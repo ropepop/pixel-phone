@@ -129,12 +129,14 @@ public final class TicketControlCodeVisualClassifier {
       return false;
     }
     // The dedicated 96x144 submit probe preserves the shortest two-digit value. ViVi's empty
-    // placeholder is gray at this resolution, while entered digits retain nearly black strokes.
-    // Two independent columns plus three pixels reject the placeholder, underline and one-column
-    // caret without attempting to OCR or expose the private value.
-    int veryDarkPixels = submitDarkPixelCount(pixels, 28, 64, 68, 72, 60);
-    int veryDarkColumns = submitDarkColumnCount(pixels, 28, 64, 68, 72, 60);
-    return veryDarkPixels >= 3 && veryDarkColumns >= 2;
+    // placeholder remains above this threshold at this resolution, while the live thin digit
+    // strokes land at luminance 60 and 75. Two separated columns plus two pixels preserve those
+    // strokes while rejecting the placeholder, underline and a one- or two-column caret without
+    // OCR or retaining the value.
+    int veryDarkPixels = submitDarkPixelCount(pixels, 28, 64, 68, 72, 90);
+    int veryDarkColumns = submitDarkColumnCount(pixels, 28, 64, 68, 72, 90);
+    int veryDarkColumnSpan = submitDarkColumnSpan(pixels, 28, 64, 68, 72, 90);
+    return veryDarkPixels >= 2 && veryDarkColumns >= 2 && veryDarkColumnSpan >= 2;
   }
 
   private static int submitDarkPixelCount(
@@ -178,6 +180,30 @@ public final class TicketControlCodeVisualClassifier {
       }
     }
     return darkColumns;
+  }
+
+  private static int submitDarkColumnSpan(
+    int[] pixels,
+    int left,
+    int top,
+    int right,
+    int bottom,
+    int maxLuminance
+  ) {
+    int firstDarkColumn = -1;
+    int lastDarkColumn = -1;
+    for (int x = Math.max(0, left); x < Math.min(SUBMIT_SAMPLE_WIDTH, right); x++) {
+      for (int y = Math.max(0, top); y < Math.min(SUBMIT_SAMPLE_HEIGHT, bottom); y++) {
+        if (luminance(submitPixelAt(pixels, x, y)) <= maxLuminance) {
+          if (firstDarkColumn < 0) {
+            firstDarkColumn = x;
+          }
+          lastDarkColumn = x;
+          break;
+        }
+      }
+    }
+    return firstDarkColumn < 0 ? 0 : lastDarkColumn - firstDarkColumn;
   }
 
   private static int submitBrightPixelCount(

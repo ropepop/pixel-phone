@@ -51,6 +51,7 @@ import lv.jolkins.pixelorchestrator.app.phoneautomation.ScreenBrightnessControl
 import lv.jolkins.pixelorchestrator.app.phoneautomation.ScreenBrightnessState
 import lv.jolkins.pixelorchestrator.app.phoneautomation.TouchBrightnessRuntimeState
 import lv.jolkins.pixelorchestrator.rootexec.RootResult
+import lv.jolkins.pixelorchestrator.rootexec.SuRootExecutor
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
@@ -202,7 +203,9 @@ class TicketStreamService : Service() {
   private data class TicketAutopilotResult(
     val success: Boolean,
     val state: TicketViviRecoveryState,
-    val step: String
+    val step: String,
+    val finalActionCategory: String = "none",
+    val finalActionOutcome: String = "not_attempted"
   )
 
   private enum class TicketRecoveryMode { ACTIVE_SOFT, FRESH_RESET }
@@ -237,6 +240,7 @@ class TicketStreamService : Service() {
   private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
   private val rootExecutor = TicketRootCommandWorker()
   private val inputRootExecutor = TicketRootCommandWorker()
+  private val controlSurfaceCloseRootExecutor = SuRootExecutor()
   private val wakeRootExecutor = TicketRootCommandWorker()
   private val foregroundRootExecutor = TicketRootCommandWorker()
   private var ticketSpacetimeWorker: TicketSpacetimeWorker? = null
@@ -436,6 +440,7 @@ class TicketStreamService : Service() {
   @Volatile private var latestTicketReselectProofHoldUntilMillis: Long = 0L
   @Volatile private var latestTicketReselectLastProofNudgeAtMillis: Long = 0L
   private val latestTicketReselectStateLock = Any()
+  private var latestTicketReselectLastDeferredKey: String = ""
   @Volatile private var latestTicketReselectGeneration: Long = 0L
   private var latestTicketReselectRecoveryJob: Job? = null
   private var latestTicketReselectSettleJob: Job? = null
@@ -887,12 +892,10 @@ class TicketStreamService : Service() {
             ).toTicketSpacetimeCommandResult(reason)
           }
         }
-        "force_ticket_reselect" -> controlCodePhoneMutationLane.withOwnership {
-          forceLatestTicketReselect(
-            reason = reason.ifBlank { "admin_force_latest_ticket_reselect" },
-            commandId = command.id
-          )
-        }
+        "force_ticket_reselect" -> forceLatestTicketReselect(
+          reason = reason.ifBlank { "admin_force_latest_ticket_reselect" },
+          commandId = command.id
+        )
         "prepare_control_code" -> {
           val owner = payload?.stringValue("owner").orEmpty()
           val app = payload?.stringValue("app").orEmpty()
@@ -1015,6 +1018,9 @@ class TicketStreamService : Service() {
       put("desiredRecoveryStage", spacetimeDesiredRecoveryStage)
       put("lastDesiredRecoveryResult", lastSpacetimeDesiredRecoveryResult)
       put("controlCodeStatus", lastControlCodeRequestStatus)
+      put("latestTicketReselectStatus", latestTicketReselectStatus)
+      put("latestTicketReselectPhase", latestTicketReselectPhase)
+      put("latestTicketReselectProofSource", latestTicketReselectProofSource)
     }.toString()
   }
 
@@ -1032,18 +1038,7 @@ class TicketStreamService : Service() {
 
   private fun ticketSpacetimeCriticalMessageKey(message: String): String? {
     val payload = runCatching { json.parseToJsonElement(message).jsonObject }.getOrNull() ?: return null
-    val type = payload.stringValue("type")
-    val requestId = payload.stringValue("requestId").trim()
-    return when (type) {
-      "ticket_state_event" -> requestId.takeIf { it.isNotBlank() }
-        ?.let { "$type:$it:${payload.stringValue("ticketState")}" }
-      "control_code_progress",
-      "control_code_result",
-      "control_code_cleanup_complete",
-      "rigassatiksme_qr_result" -> requestId.takeIf { it.isNotBlank() }?.let { "$type:$it" }
-      "control_code_fast_state" -> type
-      else -> null
-    }
+    return TicketSpacetimeCriticalMessagePolicy.key(payload)
   }
 
   private fun TicketSessionResponse.toTicketSpacetimeCommandResult(reason: String): TicketSpacetimeCommandResult {
@@ -1181,16 +1176,40 @@ class TicketStreamService : Service() {
   private fun forceLatestTicketReselect(reason: String, commandId: String): TicketSpacetimeCommandResult {
     val cleanReason = reason.ifBlank { "admin_force_latest_ticket_reselect" }
     val cleanCommandId = commandId.ifBlank { "unknown" }
-    if (controlSensitiveWindowActive()) {
-      recordTicketEvent(
-        "latest_ticket_reselect_blocked",
-        "reason=control_code_active command=$cleanCommandId state=$ticketSessionState"
+    val decision = synchronized(latestTicketReselectStateLock) {
+      TicketLatestTicketReselectCommandPolicy.decide(
+        currentCommandId = latestTicketReselectCommandId,
+        currentStatus = latestTicketReselectStatus,
+        currentPhase = latestTicketReselectPhase,
+        incomingCommandId = cleanCommandId,
+        controlSensitiveWindowActive = controlSensitiveWindowActive()
       )
-      return TicketSpacetimeCommandResult(
-        ok = false,
-        reason = "control_code_active",
-        streamState = ticketSpacetimeStreamState()
-      )
+    }
+    when (decision.disposition) {
+      TicketLatestTicketReselectCommandDisposition.SUCCEEDED -> {
+        return TicketSpacetimeCommandResult(
+          ok = true,
+          reason = latestTicketReselectReason.ifBlank { decision.reason },
+          streamState = ticketSpacetimeStreamState()
+        )
+      }
+      TicketLatestTicketReselectCommandDisposition.FAILED -> {
+        return TicketSpacetimeCommandResult(
+          ok = false,
+          reason = latestTicketReselectReason.ifBlank { decision.reason },
+          streamState = ticketSpacetimeStreamState()
+        )
+      }
+      TicketLatestTicketReselectCommandDisposition.DEFER -> {
+        recordLatestTicketReselectDeferred(decision.reason, cleanCommandId)
+        return TicketSpacetimeCommandResult(
+          ok = true,
+          reason = decision.reason,
+          streamState = ticketSpacetimeStreamState(),
+          terminal = false
+        )
+      }
+      TicketLatestTicketReselectCommandDisposition.START -> Unit
     }
     markLatestTicketReselectStarted(cleanReason, cleanCommandId)
     recordTicketEvent("latest_ticket_reselect_command_received", "reason=$cleanReason command=$cleanCommandId")
@@ -1206,9 +1225,112 @@ class TicketStreamService : Service() {
     }
     return TicketSpacetimeCommandResult(
       ok = true,
-      reason = "latest_ticket_reselect_scheduled",
-      streamState = ticketSpacetimeStreamState()
+      reason = "latest_ticket_reselect_in_progress",
+      streamState = ticketSpacetimeStreamState(),
+      terminal = false
     )
+  }
+
+  internal fun yieldLatestTicketReselectForImmediateControl(controlCommandId: String): Boolean {
+    val jobsToCancel = synchronized(latestTicketReselectStateLock) {
+      if (latestTicketReselectStatus != "pending" || latestTicketReselectCommandId.isBlank()) {
+        return false
+      }
+      val jobs = listOfNotNull(
+        latestTicketReselectRecoveryJob,
+        latestTicketReselectSettleJob,
+        latestTicketReselectProofIdleStopJob
+      )
+      latestTicketReselectGeneration += 1L
+      latestTicketReselectRecoveryJob = null
+      latestTicketReselectSettleJob = null
+      latestTicketReselectProofIdleStopJob = null
+      latestTicketReselectStatus = "yielded"
+      latestTicketReselectReason = "latest_ticket_reselect_yielded_for_control_code"
+      latestTicketReselectPhase = "control_code_yielded"
+      latestTicketReselectTicketDetailAtMillis = 0L
+      latestTicketReselectCompletedAtMillis = 0L
+      latestTicketReselectFreshFrameAtMillis = 0L
+      latestTicketReselectProofSource = ""
+      latestTicketReselectProofHoldUntilMillis = 0L
+      latestTicketReselectLastProofNudgeAtMillis = 0L
+      latestTicketReselectLastDeferredKey = ""
+      jobs
+    }
+    jobsToCancel.forEach { it.cancel() }
+    recordTicketEvent(
+      "latest_ticket_reselect_yielded_for_control_code",
+      "command=${latestTicketReselectCommandId.takeLast(12)} control=${controlCommandId.takeLast(12)}"
+    )
+    broadcastStatus()
+    return true
+  }
+
+  internal fun ticketSpacetimeActiveLatestTicketReselectCommandId(): String? {
+    return synchronized(latestTicketReselectStateLock) {
+      latestTicketReselectCommandId.takeIf {
+        it.isNotBlank() &&
+          (latestTicketReselectStatus == "pending" || latestTicketReselectStatus == "yielded")
+      }
+    }
+  }
+
+  internal fun resetLatestTicketReselectIfCommandAbsent(commandId: String): Boolean {
+    val jobsToCancel = synchronized(latestTicketReselectStateLock) {
+      if (
+        latestTicketReselectCommandId != commandId ||
+        (latestTicketReselectStatus != "pending" && latestTicketReselectStatus != "yielded")
+      ) {
+        return false
+      }
+      val jobs = listOfNotNull(
+        latestTicketReselectRecoveryJob,
+        latestTicketReselectSettleJob,
+        latestTicketReselectProofIdleStopJob
+      )
+      latestTicketReselectGeneration += 1L
+      latestTicketReselectRecoveryJob = null
+      latestTicketReselectSettleJob = null
+      latestTicketReselectProofIdleStopJob = null
+      latestTicketReselectStatus = "idle"
+      latestTicketReselectReason = "latest_ticket_reselect_command_no_longer_pending"
+      latestTicketReselectCommandId = ""
+      latestTicketReselectPhase = "command_absent"
+      latestTicketReselectStartedAtMillis = 0L
+      latestTicketReselectTicketDetailAtMillis = 0L
+      latestTicketReselectCompletedAtMillis = 0L
+      latestTicketReselectFreshFrameAtMillis = 0L
+      latestTicketReselectProofSource = ""
+      latestTicketReselectProofHoldUntilMillis = 0L
+      latestTicketReselectLastProofNudgeAtMillis = 0L
+      latestTicketReselectLastDeferredKey = ""
+      jobs
+    }
+    jobsToCancel.forEach { it.cancel() }
+    recordTicketEvent(
+      "latest_ticket_reselect_command_no_longer_pending",
+      "command=${commandId.takeLast(12)}"
+    )
+    broadcastStatus()
+    return true
+  }
+
+  private fun recordLatestTicketReselectDeferred(reason: String, commandId: String) {
+    val key = "$commandId|$reason"
+    val shouldRecord = synchronized(latestTicketReselectStateLock) {
+      if (latestTicketReselectLastDeferredKey == key) {
+        false
+      } else {
+        latestTicketReselectLastDeferredKey = key
+        true
+      }
+    }
+    if (shouldRecord) {
+      recordTicketEvent(
+        "latest_ticket_reselect_deferred",
+        "reason=$reason command=$commandId state=$ticketSessionState"
+      )
+    }
   }
 
   private fun markLatestTicketReselectStarted(reason: String, commandId: String) {
@@ -1231,6 +1353,7 @@ class TicketStreamService : Service() {
       latestTicketReselectProofSource = ""
       latestTicketReselectProofHoldUntilMillis = 0L
       latestTicketReselectLastProofNudgeAtMillis = 0L
+      latestTicketReselectLastDeferredKey = ""
       latestTicketReselectGeneration += 1L
     }
     broadcastStatus()
@@ -1247,6 +1370,14 @@ class TicketStreamService : Service() {
               runLatestTicketReselectRecovery(reason, commandId, generation)
             }
           }
+        } catch (cancelled: CancellationException) {
+          throw cancelled
+        } catch (_: Throwable) {
+          markLatestTicketReselectFailed(
+            reason = "latest_ticket_reselect_exception",
+            generation = generation,
+            commandId = commandId
+          )
         } finally {
           val completingJob = coroutineContext[Job]
           synchronized(latestTicketReselectStateLock) {
@@ -1280,9 +1411,11 @@ class TicketStreamService : Service() {
       wakeStartedAtMillis = observationStartedAtMillis,
       budgetMillis = LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS,
       maxRecoveryActions = LATEST_TICKET_RESELECT_MAX_RECOVERY_ACTIONS,
-      recoveryActionRepeatCooldownMillis = LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS
+      recoveryActionRepeatCooldownMillis = LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS,
+      ticketCardSelectionGraceMillis = LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS
     )
     markWakeReadyIfNeeded(recoveryStartedAtMillis, result)
+    recordLatestTicketReselectRecoveryTelemetry(result)
     recordTicketEvent(
       "latest_ticket_reselect_recovery_result",
       "${result.state}:${result.step}:success=${result.success} reason=$reason"
@@ -1341,34 +1474,50 @@ class TicketStreamService : Service() {
     broadcastStatus()
   }
 
+  private fun recordLatestTicketReselectRecoveryTelemetry(result: TicketAutopilotResult) {
+    recordTicketEvent(
+      TicketLatestTicketReselectRecoveryPolicy.finalTelemetryEvent(
+        state = result.state,
+        actionCategory = result.finalActionCategory,
+        actionOutcome = result.finalActionOutcome
+      ),
+      "success=${result.success}"
+    )
+  }
+
   private fun latestTicketReselectGenerationIsCurrent(generation: Long, commandId: String): Boolean {
     return synchronized(latestTicketReselectStateLock) {
       latestTicketReselectGeneration == generation && latestTicketReselectCommandId == commandId
     }
   }
 
-  private fun markLatestTicketReselectFinished(
+  private fun markLatestTicketReselectFailed(
     reason: String,
-    success: Boolean,
     generation: Long,
     commandId: String
   ) {
-    if (!latestTicketReselectGenerationIsCurrent(generation, commandId)) {
-      return
-    }
-    val nowMillis = SystemClock.elapsedRealtime()
-    latestTicketReselectStatus = if (success) "succeeded" else "failed"
-    latestTicketReselectReason = reason
-    latestTicketReselectCompletedAtMillis = nowMillis
-    if (!success) {
+    val transitioned = mutateLatestTicketReselectIfCurrent(
+      stateLock = latestTicketReselectStateLock,
+      currentGeneration = { latestTicketReselectGeneration },
+      currentCommandId = { latestTicketReselectCommandId },
+      expectedGeneration = generation,
+      expectedCommandId = commandId
+    ) {
+      val nowMillis = SystemClock.elapsedRealtime()
+      latestTicketReselectStatus = "failed"
+      latestTicketReselectReason = reason
+      latestTicketReselectCompletedAtMillis = nowMillis
       latestTicketReselectPhase = if (latestTicketReselectTicketDetailAtMillis > 0L) "stream_proof_failed" else "failed"
       latestTicketReselectFreshFrameAtMillis = 0L
       latestTicketReselectProofHoldUntilMillis = 0L
     }
-    markLatestTicketReselectFreshIfReady(nowMillis)
+    if (!transitioned) {
+      return
+    }
+    recordTicketEvent("latest_ticket_reselect_failed", "command=$commandId")
     recordTicketEvent(
       "latest_ticket_reselect_finished",
-      "status=${latestTicketReselectStatus} reason=$reason command=$latestTicketReselectCommandId"
+      "status=failed reason=$reason command=$commandId"
     )
     broadcastStatus()
     scheduleLatestTicketReselectProofIdleStop(
@@ -1408,16 +1557,18 @@ class TicketStreamService : Service() {
               }
               delay(CONTROL_CODE_RECOVERY_QUEUE_POLL_MILLIS)
             }
-            synchronized(latestTicketReselectStateLock) {
+            val shouldFailCurrentCommand = synchronized(latestTicketReselectStateLock) {
               if (latestTicketReselectGeneration != generation || latestTicketReselectCommandId != commandId) {
-                return@synchronized
+                false
+              } else if (completeLatestTicketReselectIfFresh(successReason, generation, commandId)) {
+                false
+              } else {
+                true
               }
-              if (completeLatestTicketReselectIfFresh(successReason, generation, commandId)) {
-                return@synchronized
-              }
-              markLatestTicketReselectFinished(
+            }
+            if (shouldFailCurrentCommand) {
+              markLatestTicketReselectFailed(
                 reason = failureReason,
-                success = false,
                 generation = generation,
                 commandId = commandId
               )
@@ -4711,10 +4862,13 @@ class TicketStreamService : Service() {
     wakeStartedAtMillis: Long,
     budgetMillis: Long = TICKET_WAKE_BUDGET_MILLIS,
     maxRecoveryActions: Int = TICKET_WAKE_RECOVERY_MAX_ACTIONS,
-    recoveryActionRepeatCooldownMillis: Long = 0L
+    recoveryActionRepeatCooldownMillis: Long = 0L,
+    ticketCardSelectionGraceMillis: Long = 0L
   ): TicketAutopilotResult {
     var lastState = TicketViviRecoveryState.UNKNOWN_VIVI
     var lastStep = "wake_root_unavailable"
+    var finalActionCategory = "none"
+    var finalActionOutcome = "not_attempted"
     var attemptedGeneratedWakeHeal = false
     var attemptedPopupWakeReturn = false
     var attemptedWakeRelaunch = false
@@ -4722,17 +4876,39 @@ class TicketStreamService : Service() {
     var rootUnavailableAttempts = 0
     var lastRecoveryActionKey = ""
     var lastRecoveryActionAtMillis = 0L
+    var ticketCardSelectionGraceDeadlineMillis = 0L
+    fun remainingMillis(activeBudgetMillis: Long): Long {
+      return TicketLatestTicketReselectRecoveryPolicy.remainingMillis(
+        wakeStartedAtMillis = wakeStartedAtMillis,
+        launchBudgetMillis = activeBudgetMillis,
+        ticketCardSelectionGraceDeadlineMillis = ticketCardSelectionGraceDeadlineMillis,
+        nowMillis = SystemClock.elapsedRealtime()
+      )
+    }
+    fun result(
+      success: Boolean,
+      state: TicketViviRecoveryState,
+      step: String
+    ): TicketAutopilotResult {
+      return TicketAutopilotResult(
+        success = success,
+        state = state,
+        step = step,
+        finalActionCategory = finalActionCategory,
+        finalActionOutcome = finalActionOutcome
+      )
+    }
     while (true) {
       val activeBudgetMillis = if (wakeRecoveryActions > 0) {
         maxOf(budgetMillis, TICKET_WAKE_RECOVERY_BUDGET_MILLIS)
       } else {
         budgetMillis
       }
-      val remainingMillis = remainingWakeBudgetMillis(wakeStartedAtMillis, activeBudgetMillis)
-      if (remainingMillis <= 0L) {
-        return TicketAutopilotResult(false, lastState, "wake_budget_exhausted:$lastStep")
+      val currentRemainingMillis = remainingMillis(activeBudgetMillis)
+      if (currentRemainingMillis <= 0L) {
+        return result(false, lastState, "wake_budget_exhausted:$lastStep")
       }
-      val timeoutMillis = wakeRootDumpTimeoutMillis(rootUnavailableAttempts, remainingMillis)
+      val timeoutMillis = wakeRootDumpTimeoutMillis(rootUnavailableAttempts, currentRemainingMillis)
       val observation = observeRootViviStateForWake("wake_root:$reason", timeoutMillis = timeoutMillis)
       val state = observation.state
       lastState = state
@@ -4747,7 +4923,7 @@ class TicketStreamService : Service() {
         }
         if (state == TicketViviRecoveryState.TICKET_DETAIL) {
           recordTicketWakePhase("ticket_ready", wakeStartedAtMillis)
-          return TicketAutopilotResult(true, state, "wake_root_ticket_detail")
+          return result(true, state, "wake_root_ticket_detail")
         }
         if (
           state == TicketViviRecoveryState.LOGIN_REQUIRED &&
@@ -4757,7 +4933,7 @@ class TicketStreamService : Service() {
           wakeRecoveryActions += 1
           lastStep = "wake_root_login_submitted"
           val recoveryBudgetMillis = maxOf(budgetMillis, TICKET_WAKE_RECOVERY_BUDGET_MILLIS)
-          delay(minOf(TICKET_WAKE_RECOVERY_ACTION_SETTLE_MILLIS, remainingWakeBudgetMillis(wakeStartedAtMillis, recoveryBudgetMillis)).coerceAtLeast(0L))
+          delay(minOf(TICKET_WAKE_RECOVERY_ACTION_SETTLE_MILLIS, remainingMillis(recoveryBudgetMillis)).coerceAtLeast(0L))
           continue
         }
         if (state == TicketViviRecoveryState.CONTROL_CODE_POPUP && !attemptedPopupWakeReturn) {
@@ -4773,7 +4949,7 @@ class TicketStreamService : Service() {
             lastStep = "wake_root_popup_returned_raw"
             recordTicketEvent("wake_root_popup_returned_raw", reason)
             recordTicketWakePhase("ticket_ready", wakeStartedAtMillis)
-            return TicketAutopilotResult(true, TicketViviRecoveryState.TICKET_DETAIL, lastStep)
+            return result(true, TicketViviRecoveryState.TICKET_DETAIL, lastStep)
           }
         }
         if (state == TicketViviRecoveryState.CONTROL_CODE_RESULT && !attemptedGeneratedWakeHeal) {
@@ -4790,7 +4966,7 @@ class TicketStreamService : Service() {
             lastStep = "wake_root_generated_healed"
             recordTicketEvent("wake_root_generated_healed", reason)
             recordTicketWakePhase("ticket_ready", wakeStartedAtMillis)
-            return TicketAutopilotResult(true, TicketViviRecoveryState.TICKET_DETAIL, lastStep)
+            return result(true, TicketViviRecoveryState.TICKET_DETAIL, lastStep)
           }
         }
         val recoveryAction = TicketViviPageEnforcer.recoveryActionForHierarchy(observation.hierarchy)
@@ -4803,29 +4979,51 @@ class TicketStreamService : Service() {
           lastActionAtMillis = lastRecoveryActionAtMillis,
           cooldownMillis = recoveryActionRepeatCooldownMillis
         )
-        val actionRemainingMillis = remainingWakeBudgetMillis(wakeStartedAtMillis, activeBudgetMillis)
+        val actionRemainingMillis = remainingMillis(activeBudgetMillis)
         val actionEligible =
           recoveryAction != null &&
           !sameActionCoolingDown &&
           actionRemainingMillis >= TICKET_WAKE_RECOVERY_MIN_ACTION_TIMEOUT_MILLIS &&
           wakeRecoveryActions < maxRecoveryActions
         if (actionEligible) {
+          val action = checkNotNull(recoveryAction)
+          finalActionCategory = TicketLatestTicketReselectRecoveryPolicy.actionCategory(action.reason)
           val actionSucceeded = attemptWakeRecoveryActionForRootWake(
             state = state,
             hierarchy = observation.hierarchy,
-            action = checkNotNull(recoveryAction),
+            action = action,
             reason = reason,
             timeoutMillis = minOf(NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS, actionRemainingMillis)
           )
+          finalActionOutcome = TicketLatestTicketReselectRecoveryPolicy.actionOutcome(
+            attempted = true,
+            succeeded = actionSucceeded
+          )
+          val actionCompletedAtMillis = SystemClock.elapsedRealtime()
+          val updatedGraceDeadlineMillis =
+            TicketLatestTicketReselectRecoveryPolicy.ticketCardSelectionGraceDeadlineMillis(
+              currentDeadlineMillis = ticketCardSelectionGraceDeadlineMillis,
+              actionReason = action.reason,
+              actionSucceeded = actionSucceeded,
+              actionCompletedAtMillis = actionCompletedAtMillis,
+              graceMillis = ticketCardSelectionGraceMillis
+            )
+          if (updatedGraceDeadlineMillis > ticketCardSelectionGraceDeadlineMillis) {
+            ticketCardSelectionGraceDeadlineMillis = updatedGraceDeadlineMillis
+            recordTicketEvent(
+              "latest_ticket_reselect_ticket_card_action_grace_started",
+              "duration_ms=$ticketCardSelectionGraceMillis"
+            )
+          }
           if (actionSucceeded || recoveryActionRepeatCooldownMillis > 0L) {
             wakeRecoveryActions += 1
             lastRecoveryActionKey = recoveryActionKey
-            lastRecoveryActionAtMillis = SystemClock.elapsedRealtime()
+            lastRecoveryActionAtMillis = actionCompletedAtMillis
           }
           if (actionSucceeded) {
             lastStep = "wake_root_recovery_action_${state.name.lowercase()}"
             val recoveryBudgetMillis = maxOf(budgetMillis, TICKET_WAKE_RECOVERY_BUDGET_MILLIS)
-            delay(minOf(TICKET_WAKE_RECOVERY_ACTION_SETTLE_MILLIS, remainingWakeBudgetMillis(wakeStartedAtMillis, recoveryBudgetMillis)).coerceAtLeast(0L))
+            delay(minOf(TICKET_WAKE_RECOVERY_ACTION_SETTLE_MILLIS, remainingMillis(recoveryBudgetMillis)).coerceAtLeast(0L))
             continue
           }
         }
@@ -4839,10 +5037,10 @@ class TicketStreamService : Service() {
         wakeRecoveryActions += 1
         lastStep = "wake_root_relaunch_${state.name.lowercase()}"
         val recoveryBudgetMillis = maxOf(budgetMillis, TICKET_WAKE_RECOVERY_BUDGET_MILLIS)
-        delay(minOf(TICKET_WAKE_RECOVERY_ACTION_SETTLE_MILLIS, remainingWakeBudgetMillis(wakeStartedAtMillis, recoveryBudgetMillis)).coerceAtLeast(0L))
+        delay(minOf(TICKET_WAKE_RECOVERY_ACTION_SETTLE_MILLIS, remainingMillis(recoveryBudgetMillis)).coerceAtLeast(0L))
         continue
       }
-      delay(minOf(TICKET_WAKE_FAST_POLL_MILLIS, remainingWakeBudgetMillis(wakeStartedAtMillis, activeBudgetMillis)).coerceAtLeast(0L))
+      delay(minOf(TICKET_WAKE_FAST_POLL_MILLIS, remainingMillis(activeBudgetMillis)).coerceAtLeast(0L))
     }
   }
 
@@ -7556,6 +7754,7 @@ class TicketStreamService : Service() {
     var typeResult = measureInputPhase(phases, "root_virtual_keyboard_type") {
       executeRootControlCodeType(digits, transaction, "control_code_root_virtual_keyboard_type")
     }
+    val initialTypeCompletedAtMillis = SystemClock.elapsedRealtime()
     if (!typeResult.ok) {
       transaction.open?.let { open ->
         recordControlCodeSnapAttempt(
@@ -7598,8 +7797,33 @@ class TicketStreamService : Service() {
     markControlCodeRequestPhase(phases, "first_digit_entry", requestStartedAtMillis)
     var valueProof = waitForEnteredControlCodeValueVisualProof(phases)
     if (valueProof == ControlCodeEnteredValueProof.STATIC_BLANK) {
+      recordTicketEvent(
+        "control_code_value_render_recheck_started",
+        "settle_ms=$CONTROL_CODE_VALUE_RENDER_RECHECK_SETTLE_MILLIS"
+      )
+      delay(CONTROL_CODE_VALUE_RENDER_RECHECK_SETTLE_MILLIS)
+      markControlCodeRequestPhase(phases, "value_render_recheck_started", requestStartedAtMillis)
+      valueProof = waitForEnteredControlCodeValueVisualProof(phases)
+      markControlCodeRequestPhase(phases, "value_render_recheck_finished", requestStartedAtMillis)
+    }
+    if (valueProof == ControlCodeEnteredValueProof.STATIC_BLANK) {
+      val leaseWaitMillis = TicketControlCodeRootInput.remainingInitialKeyboardLeaseMillis(
+        initialTypeCompletedAtMillis = initialTypeCompletedAtMillis,
+        nowMillis = SystemClock.elapsedRealtime(),
+        safetyMarginMillis = CONTROL_CODE_ROOT_RETYPE_LEASE_MARGIN_MILLIS
+      )
+      if (leaseWaitMillis > 0L) {
+        recordTicketEvent(
+          "control_code_root_retype_waiting_for_lease",
+          "wait_ms=$leaseWaitMillis"
+        )
+        delay(leaseWaitMillis)
+      }
       phases["control_code_root_retype_attempted"] = 1L
-      recordTicketEvent("control_code_root_retype_attempted", "blank_unshifted_popup_proved")
+      recordTicketEvent(
+        "control_code_root_retype_attempted",
+        "blank_unshifted_popup_reproved lease_expired=true"
+      )
       typeResult = measureInputPhase(phases, "root_virtual_keyboard_retype") {
         executeRootControlCodeType(
           digits,
@@ -8413,11 +8637,26 @@ class TicketStreamService : Service() {
       )
       return finishGeneratedControlCodeResultFastCleanup(cleanupStart, reason, phases, requestStartedAtMillis)
     }
-    val hierarchy = if (generatedHierarchy.isNotBlank()) {
-      generatedHierarchy
-    } else {
-      controlExitHierarchy().orEmpty()
-    }
+    val hierarchy = TicketControlCodeCleanupHierarchyResolver.resolve(
+      initialHierarchy = generatedHierarchy,
+      maxFreshReads = CONTROL_CODE_CLEANUP_HIERARCHY_REINSPECT_MAX_READS,
+      isUsable = ::isActionableControlCodeExitHierarchy,
+      readFresh = { attempt ->
+        val freshHierarchy = controlExitHierarchy().orEmpty()
+        val state = freshHierarchy
+          .takeIf(String::isNotBlank)
+          ?.let(TicketViviPageEnforcer::classifyForRecovery)
+          ?: TicketViviRecoveryState.UNKNOWN_VIVI
+        recordTicketEvent(
+          "control_code_cleanup_hierarchy_reinspect",
+          "attempt=$attempt state=${state.name}"
+        )
+        freshHierarchy
+      },
+      waitBeforeRetry = {
+        delay(CONTROL_CODE_CLEANUP_HIERARCHY_REINSPECT_GAP_MILLIS)
+      }
+    )
     if (hierarchy.isBlank()) {
       val cleanState = waitForCleanTicketSurfaceFast(
         reason = reason,
@@ -8485,6 +8724,14 @@ class TicketStreamService : Service() {
       }
       else -> false
     }
+  }
+
+  private fun isActionableControlCodeExitHierarchy(hierarchy: String): Boolean {
+    return TicketViviPageEnforcer.classifyForRecovery(hierarchy) in setOf(
+      TicketViviRecoveryState.TICKET_DETAIL,
+      TicketViviRecoveryState.CONTROL_CODE_RESULT,
+      TicketViviRecoveryState.CONTROL_CODE_POPUP
+    )
   }
 
   private suspend fun beginGeneratedControlCodeResultFastClose(
@@ -8627,23 +8874,15 @@ class TicketStreamService : Service() {
     commandReason: String
   ): Boolean {
     val closeCommand = "input tap ${action.x} ${action.y}"
-    val inlineResultClose =
-      action.reason == "close_control_code_result" ||
-        action.reason == "geometry_close_control_code_result"
     recordTicketEvent(
       "control_code_fast_cleanup_close_dispatched",
       "action=${action.reason} x=${action.x} y=${action.y} bounds=${action.bounds ?: "geometry"}"
     )
     val tap = measureInputPhase(phases, commandReason) {
-      if (inlineResultClose) {
-        runFastInlineControlResultCloseInput(closeCommand, commandReason)
-      } else {
-        runFastNonTouchInput(
-          closeCommand,
-          commandReason,
-          postMillis = CONTROL_CODE_FAST_PANEL_SLEEP_CLAMP_POST_MILLIS
-        )
-      }
+      runFastOneShotControlSurfaceCloseInput(
+        closeCommand,
+        commandReason
+      )
     }
     if (!tap.ok) {
       recordTicketEvent("control_code_fast_cleanup_close_failed", "reason=$commandReason duration_ms=${tap.durationMs}")
@@ -9381,39 +9620,18 @@ class TicketStreamService : Service() {
     }
   }
 
-  private suspend fun runFastInlineControlResultCloseInput(
+  private suspend fun runFastOneShotControlSurfaceCloseInput(
     command: String,
     reason: String
   ): RootResult {
     PhoneAutomationServiceBridge.markNonTouchInput("ticket:$reason")
-    val script = """
-      ticket_panel_dir=""
-      for ticket_candidate in /sys/class/backlight/panel0-backlight /sys/class/backlight/*; do
-        if [ -f "${'$'}ticket_candidate/brightness" ]; then
-          ticket_panel_dir="${'$'}ticket_candidate"
-          break
-        fi
-      done
-      ticket_panel_dark() {
-        if [ -n "${'$'}ticket_panel_dir" ]; then
-          echo 0 > "${'$'}ticket_panel_dir/brightness" 2>/dev/null || true
-        else
-          settings put system screen_brightness_mode 0 >/dev/null 2>&1 || true
-          settings put system screen_brightness 0 >/dev/null 2>&1 || true
-        fi
-      }
-      ticket_panel_dark
-      $command
-      ticket_command_rc=${'$'}?
-      ticket_panel_dark
-      exit "${'$'}ticket_command_rc"
-    """.trimIndent()
-    val result = inputRootExecutor.runScript(
-      script,
-      TICKET_INLINE_CLOSE_COMMAND_TIMEOUT_MILLIS.milliseconds
-    ).also { recordInputCommandResult(reason, it) }
-    PhoneAutomationServiceBridge.markNonTouchInput("ticket:$reason:complete")
-    return result
+    return try {
+      val timeout = CONTROL_CODE_FAST_CLOSE_COMMAND_TIMEOUT_MILLIS.milliseconds
+      controlSurfaceCloseRootExecutor.run(command, timeout)
+        .also { recordInputCommandResult(reason, it) }
+    } finally {
+      PhoneAutomationServiceBridge.markNonTouchInput("ticket:$reason:complete")
+    }
   }
 
   private suspend fun runFastNonTouchWakeScript(command: String, reason: String, timeout: Duration): RootResult {
@@ -10348,7 +10566,7 @@ class TicketStreamService : Service() {
     private const val TICKET_SPACETIME_CRITICAL_MESSAGE_TTL_MILLIS = 5 * 60_000L
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
     private const val SESSION_START_TIMEOUT_MILLIS = 70_000L
-    const val SERVER_VERSION = "ticket-stream-2026-07-22-latest-ticket-hydration-v291"
+    const val SERVER_VERSION = "ticket-stream-2026-07-25-spacetime-idle-poll-v294"
     private const val CONTROL_CODE_MARKER_RESULT_HIERARCHY = "__marker_control_code_result__"
     private const val FRAME_ENVELOPE_VERSION = "tsf2"
     private const val FRAME_ENVELOPE_MAGIC = 0x54534632
@@ -10450,7 +10668,9 @@ class TicketStreamService : Service() {
     private const val NON_TOUCH_PANEL_SLEEP_CLAMP_INTERVAL_MILLIS = 5L
     private const val TICKET_WAKE_PANEL_SLEEP_CLAMP_POST_MILLIS = 250L
     private const val CONTROL_CODE_FAST_PANEL_SLEEP_CLAMP_POST_MILLIS = 5L
-    private const val TICKET_INLINE_CLOSE_COMMAND_TIMEOUT_MILLIS = 2_000L
+    private const val CONTROL_CODE_FAST_CLOSE_COMMAND_TIMEOUT_MILLIS = 2_000L
+    private const val CONTROL_CODE_CLEANUP_HIERARCHY_REINSPECT_MAX_READS = 2
+    private const val CONTROL_CODE_CLEANUP_HIERARCHY_REINSPECT_GAP_MILLIS = 90L
     private const val NON_TOUCH_PANEL_SLEEP_CLAMP_POST_MILLIS = 2_500L
     private const val STARTUP_CLIENT_DISCONNECT_GRACE_MILLIS = 5_000L
     private const val CLIENT_DISCONNECT_IDLE_GRACE_MILLIS = 90_000L
@@ -10495,13 +10715,17 @@ class TicketStreamService : Service() {
     private const val LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS = 120_000L
     private const val LATEST_TICKET_RESELECT_MAX_RECOVERY_ACTIONS = 6
     private const val LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS = 30_000L
+    private const val LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS = 60_000L
     private const val LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS = 20_000L
     private const val LATEST_TICKET_RESELECT_PROOF_HOLD_MILLIS =
       LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS + 5_000L
     private const val LATEST_TICKET_RESELECT_PROOF_NUDGE_MILLIS = 1_000L
     private const val LATEST_TICKET_RESELECT_PROOF_IDLE_STOP_GRACE_MILLIS = 2_000L
     private const val LATEST_TICKET_RESELECT_ACTIVE_WINDOW_MILLIS =
-      LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS + LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS + 30_000L
+      LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS +
+        LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS +
+        LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS +
+        30_000L
     private const val CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 0L
     private const val CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS = 250L
     private const val CONTROL_CODE_VISUAL_STATE_POLL_MILLIS = 40L
@@ -10510,6 +10734,8 @@ class TicketStreamService : Service() {
     private const val CONTROL_CODE_SUBMIT_VISUAL_MAX_SAMPLES = 4
     private const val CONTROL_CODE_SUBMIT_VISUAL_PROBE_WAIT_MILLIS = 350L
     private const val CONTROL_CODE_SUBMIT_VISUAL_SAMPLE_GAP_MILLIS = 250L
+    private const val CONTROL_CODE_VALUE_RENDER_RECHECK_SETTLE_MILLIS = 350L
+    private const val CONTROL_CODE_ROOT_RETYPE_LEASE_MARGIN_MILLIS = 250L
     private const val CONTROL_CODE_ROOT_TRANSACTION_TIMEOUT_MILLIS = 4_000L
     private const val CONTROL_CODE_ROOT_SUBMIT_TIMEOUT_MILLIS = 2_500L
     private const val CONTROL_CODE_FAST_POLL_MILLIS = 90L
