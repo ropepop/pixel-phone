@@ -49,7 +49,8 @@ internal object TicketTracePrivacy {
   private val eventPrefixes = setOf(
     "session_", "spacetime_", "startup_phase_", "hardware_", "stream_", "recovery_",
     "root_hardware", "root_capture", "loading_", "client_", "keyframe", "ticket_brightness_",
-    "latest_ticket_reselect_", "control_code_", "ticket_control_code_", "ticket_card_"
+    "latest_ticket_reselect_", "control_code_", "ticket_control_code_", "ticket_card_",
+    "wake_", "fast_public_open_", "root_"
   )
   private val exactEvents = setOf(
     "ticket_state_event", "vivi_hard_reset", "secure_capture_blocked"

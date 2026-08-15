@@ -38,6 +38,7 @@ public final class TicketRootHardwareH264CaptureMain {
   private static final byte[] START_CODE = new byte[] { 0, 0, 0, 1 };
   private static final byte[] ACCESS_UNIT_DELIMITER = new byte[] { 0, 0, 0, 1, 9, 16 };
   private static final int SCREEN_CAPTURE_POLICY_CAPTURE = 1;
+  private static final int SCREEN_CAPTURE_MODE_REQUIRE_OPTIMIZED = 1;
   private static final int VISIBILITY_SAMPLE_WIDTH = 12;
   private static final int VISIBILITY_SAMPLE_HEIGHT = 20;
   private static final long VISIBILITY_PROBE_INTERVAL_MILLIS = 2_000L;
@@ -156,86 +157,92 @@ public final class TicketRootHardwareH264CaptureMain {
         if (source == null) {
           throw new IllegalStateException("ScreenCapture returned no bitmap");
         }
-        boolean shouldProbeVisibility = sent < startupVisibilityFrames || started - lastVisibilityProbeAt >= VISIBILITY_PROBE_INTERVAL_MILLIS;
         boolean visible = lastVisibilityVisible;
-        if (shouldProbeVisibility) {
-          lastVisibilityProbeAt = started;
-          visible = frameLooksVisible(source.bitmap, sourceCrop);
-          lastVisibilityVisible = visible;
-          if (visible) {
-            blockedOrBlankFrames = 0;
-          } else {
-            blockedOrBlankFrames += 1;
-            boolean failure = sent >= startupVisibilityFrames && blockedOrBlankFrames >= Math.max(4, currentTargetFps / 2);
-            System.err.println(
-              "VISIBILITY result=blocked invisible_frames=" + blockedOrBlankFrames +
-                " failure=" + failure +
-                " reason=secure_screen_capture_blocked_or_blank"
-            );
-            if (failure) {
-              source.close();
-              throw new IllegalStateException("secure_screen_capture_blocked_or_blank");
+        int inputPosts = 0;
+        long drawStarted = 0L;
+        long drawFinished = 0L;
+        long encodeStarted = 0L;
+        try {
+          boolean shouldProbeVisibility = sent < startupVisibilityFrames || started - lastVisibilityProbeAt >= VISIBILITY_PROBE_INTERVAL_MILLIS;
+          if (shouldProbeVisibility) {
+            lastVisibilityProbeAt = started;
+            visible = frameLooksVisible(source.bitmap, sourceCrop);
+            lastVisibilityVisible = visible;
+            if (visible) {
+              blockedOrBlankFrames = 0;
+            } else {
+              blockedOrBlankFrames += 1;
+              boolean failure = sent >= startupVisibilityFrames && blockedOrBlankFrames >= Math.max(4, currentTargetFps / 2);
+              System.err.println(
+                "VISIBILITY result=blocked invisible_frames=" + blockedOrBlankFrames +
+                  " failure=" + failure +
+                  " reason=secure_screen_capture_blocked_or_blank"
+              );
+              if (failure) {
+                throw new IllegalStateException("secure_screen_capture_blocked_or_blank");
+              }
             }
           }
-        }
-        if (controlCodeVisualProbeActive) {
-          String state = classifyControlCodeVisualState(
-            source.bitmap,
-            sourceCrop,
-            visualProbeRequest.cleanup,
-            visualProbeRequest.submitLayout
-          );
-          if (state.equals("generated")) {
-            if (visualProbeRequest.generated.compareAndSet(false, true)) {
-              visualProbeRequest.lastReportMillis.set(started);
-              extendUntil(visualProbeRequest.untilMillis, started + CONTROL_CODE_VISUAL_GENERATED_HOLD_MILLIS);
-              System.err.println(
-                "CONTROL_CODE_VISUAL result=generated reason=" + safeDiagnosticValue(visualProbeRequest.reason) +
-                  " probe_id=" + visualProbeRequest.id +
-                  " method=h264_bitmap_probe"
-              );
+          if (controlCodeVisualProbeActive) {
+            String state = classifyControlCodeVisualState(
+              source.bitmap,
+              sourceCrop,
+              visualProbeRequest.cleanup,
+              visualProbeRequest.submitLayout
+            );
+            if (state.equals("generated")) {
+              if (visualProbeRequest.generated.compareAndSet(false, true)) {
+                visualProbeRequest.lastReportMillis.set(started);
+                extendUntil(visualProbeRequest.untilMillis, started + CONTROL_CODE_VISUAL_GENERATED_HOLD_MILLIS);
+                System.err.println(
+                  "CONTROL_CODE_VISUAL result=generated reason=" + safeDiagnosticValue(visualProbeRequest.reason) +
+                    " probe_id=" + visualProbeRequest.id +
+                    " method=h264_bitmap_probe"
+                );
+              } else if (started - visualProbeRequest.lastReportMillis.get() >= CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS) {
+                visualProbeRequest.lastReportMillis.set(started);
+                System.err.println(
+                  "CONTROL_CODE_VISUAL result=generated reason=" + safeDiagnosticValue(visualProbeRequest.reason) +
+                    " probe_id=" + visualProbeRequest.id +
+                    " method=h264_bitmap_probe"
+                );
+              }
             } else if (started - visualProbeRequest.lastReportMillis.get() >= CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS) {
               visualProbeRequest.lastReportMillis.set(started);
               System.err.println(
-                "CONTROL_CODE_VISUAL result=generated reason=" + safeDiagnosticValue(visualProbeRequest.reason) +
+                "CONTROL_CODE_VISUAL result=" + state +
+                  " reason=" + safeDiagnosticValue(visualProbeRequest.reason) +
                   " probe_id=" + visualProbeRequest.id +
                   " method=h264_bitmap_probe"
               );
             }
-          } else if (started - visualProbeRequest.lastReportMillis.get() >= CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS) {
-            visualProbeRequest.lastReportMillis.set(started);
-            System.err.println(
-              "CONTROL_CODE_VISUAL result=" + state +
-                " reason=" + safeDiagnosticValue(visualProbeRequest.reason) +
-                " probe_id=" + visualProbeRequest.id +
-                " method=h264_bitmap_probe"
-            );
           }
-        }
-        int inputPosts = sent == 0 ? startupPrimeInputs : 1;
-        long drawStarted = SystemClock.elapsedRealtime();
-        try {
+          inputPosts = sent == 0 ? startupPrimeInputs : 1;
+          drawStarted = SystemClock.elapsedRealtime();
           for (int post = 0; post < inputPosts; post++) {
             drawBitmap(inputSurface, source.bitmap, sourceCrop, destination, paint);
           }
+          drawFinished = SystemClock.elapsedRealtime();
+          long drainTimeoutUs = sent < Math.max(3, startupFrames)
+            ? Math.min(80_000L, Math.max(25_000L, frameIntervalMillis * 1_000L))
+            : 10_000L;
+          encodeStarted = SystemClock.elapsedRealtime();
+          int drained = drainEncoder(encoder, output, false, drainTimeoutUs);
+          if (drained == 0 && sent == 0) {
+            long remainingFrameBudgetMillis = Math.max(1L, frameIntervalMillis - (SystemClock.elapsedRealtime() - started));
+            long startupDrainDeadline = SystemClock.elapsedRealtime() + Math.min(300L, Math.max(80L, remainingFrameBudgetMillis));
+            while (drained == 0 && SystemClock.elapsedRealtime() < startupDrainDeadline) {
+              long remainingUs = Math.max(1L, (startupDrainDeadline - SystemClock.elapsedRealtime()) * 1_000L);
+              drained += drainEncoder(encoder, output, false, Math.min(80_000L, remainingUs));
+            }
+          }
+          output.flush();
         } finally {
+          // lockHardwareCanvas/unlockCanvasAndPost queues GPU work asynchronously. Keep the
+          // hardware-backed capture result alive until this frame's encoder drain;
+          // closing it immediately after posting can make the encoder reuse an older frame.
           source.close();
         }
-        long drawFinished = SystemClock.elapsedRealtime();
-        long drainTimeoutUs = sent < Math.max(3, startupFrames)
-          ? Math.min(80_000L, Math.max(25_000L, frameIntervalMillis * 1_000L))
-          : 10_000L;
-        long encodeStarted = SystemClock.elapsedRealtime();
-        int drained = drainEncoder(encoder, output, false, drainTimeoutUs);
-        if (drained == 0 && sent == 0) {
-          long remainingFrameBudgetMillis = Math.max(1L, frameIntervalMillis - (SystemClock.elapsedRealtime() - started));
-          long startupDrainDeadline = SystemClock.elapsedRealtime() + Math.min(300L, Math.max(80L, remainingFrameBudgetMillis));
-          while (drained == 0 && SystemClock.elapsedRealtime() < startupDrainDeadline) {
-            long remainingUs = Math.max(1L, (startupDrainDeadline - SystemClock.elapsedRealtime()) * 1_000L);
-            drained += drainEncoder(encoder, output, false, Math.min(80_000L, remainingUs));
-          }
-        }
-        output.flush();
         long encodeFinished = SystemClock.elapsedRealtime();
         sent += inputPosts;
         long elapsed = SystemClock.elapsedRealtime() - started;
@@ -811,6 +818,9 @@ public final class TicketRootHardwareH264CaptureMain {
       Object builder = constructor.newInstance(0);
       invokeIfPresent(builder, "setIncludeSystemOverlays", new Class<?>[] { boolean.class }, true);
       invokeIfPresent(builder, "setPixelFormat", new Class<?>[] { int.class }, PixelFormat.RGBA_8888);
+      if (screenCaptureOptimizationEnabled(screenCapture)) {
+        invokeIfPresent(builder, "setCaptureMode", new Class<?>[] { int.class }, SCREEN_CAPTURE_MODE_REQUIRE_OPTIMIZED);
+      }
       invokeIfPresent(builder, "setPreserveDisplayColors", new Class<?>[] { boolean.class }, false);
       invokeIfPresent(builder, "setSecureContentPolicy", new Class<?>[] { int.class }, SCREEN_CAPTURE_POLICY_CAPTURE);
       invokeIfPresent(builder, "setProtectedContentPolicy", new Class<?>[] { int.class }, SCREEN_CAPTURE_POLICY_CAPTURE);
@@ -871,6 +881,16 @@ public final class TicketRootHardwareH264CaptureMain {
         return null;
       }
       return new CapturedFrame(bitmap, value, buffer);
+    }
+  }
+
+  private static boolean screenCaptureOptimizationEnabled(Class<?> screenCapture) {
+    try {
+      Method method = screenCapture.getDeclaredMethod("isScreenCaptureOptimizationEnabled");
+      Object value = method.invoke(null);
+      return value instanceof Boolean && (Boolean) value;
+    } catch (Throwable ignored) {
+      return false;
     }
   }
 

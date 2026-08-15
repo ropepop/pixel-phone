@@ -45,6 +45,7 @@ class TicketRootHardwareH264CaptureEngine(
   private val startupLock = Any()
   private val keyFrameRequestLock = Any()
   private val controlCodeVisualProbeSequence = AtomicLong(0L)
+  private val captureGeneration = AtomicLong(0L)
   @Volatile private var job: Job? = null
   @Volatile private var encoderProcess: Process? = null
   @Volatile private var wanted = false
@@ -414,25 +415,28 @@ class TicketRootHardwareH264CaptureEngine(
     while (wanted) {
       val request = desiredStartRequest ?: break
       activeStartRequest = request
+      val parserGeneration = captureGeneration.incrementAndGet()
       val parser = TicketH264AnnexBParser { payload, keyFrame ->
-        val now = SystemClock.elapsedRealtime()
-        frames += 1
-        lastFrameAtMillis = now
-        lastFrameBytes = payload.size
-        lastFrameTotalDurationMillis = 0L
-        updateEstimatedBitrate(payload.size, now)
-        if (keyFrame) {
-          keyFrames += 1
-        }
-        onFrame(
-          TicketRootCaptureFrame(
-            keyFrame = keyFrame,
-            timestampUs = SystemClock.elapsedRealtimeNanos() / 1_000L,
-            payload = payload,
-            width = request.targetWidth,
-            height = request.targetHeight
+        if (parserGeneration == captureGeneration.get()) {
+          val now = SystemClock.elapsedRealtime()
+          frames += 1
+          lastFrameAtMillis = now
+          lastFrameBytes = payload.size
+          lastFrameTotalDurationMillis = 0L
+          updateEstimatedBitrate(payload.size, now)
+          if (keyFrame) {
+            keyFrames += 1
+          }
+          onFrame(
+            TicketRootCaptureFrame(
+              keyFrame = keyFrame,
+              timestampUs = SystemClock.elapsedRealtimeNanos() / 1_000L,
+              payload = payload,
+              width = request.targetWidth,
+              height = request.targetHeight
+            )
           )
-        )
+        }
       }
       try {
         consumeCleanStopForFastStart()
@@ -709,6 +713,7 @@ class TicketRootHardwareH264CaptureEngine(
   }
 
   private fun stopProcesses() {
+    captureGeneration.incrementAndGet()
     val encoder = encoderProcess
     encoderProcess = null
     runCatching { encoder?.inputStream?.close() }

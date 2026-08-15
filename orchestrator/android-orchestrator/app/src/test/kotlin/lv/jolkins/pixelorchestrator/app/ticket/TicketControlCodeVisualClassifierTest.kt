@@ -12,7 +12,7 @@ class TicketControlCodeVisualClassifierTest {
     frame.fill(left = 1, top = 8, right = 47, bottom = 15, color = RED)
 
     assertEquals(TicketControlCodeVisualClassifier.RAW_TICKET, classify(frame))
-    assertEquals(TicketControlCodeVisualClassifier.RAW_TICKET, classifyForCleanup(frame))
+    assertEquals(TicketControlCodeVisualClassifier.UNKNOWN, classifyForCleanup(frame))
   }
 
   @Test
@@ -42,13 +42,66 @@ class TicketControlCodeVisualClassifierTest {
   }
 
   @Test
+  fun shiftedMutedGeneratedRowUnderAztecIsRecognized() {
+    val frame = rawTicketFrame()
+    frame.fill(left = 7, top = 32, right = 41, bottom = 37, color = SHIFTED_RESULT_DARK)
+    frame.fill(left = 23, top = 34, right = 27, bottom = 35, color = SHIFTED_RESULT_TEXT)
+    frame.fill(left = 36, top = 33, right = 40, bottom = 35, color = SHIFTED_RESULT_TEXT)
+
+    assertEquals(TicketControlCodeVisualClassifier.GENERATED, classify(frame))
+    assertEquals(TicketControlCodeVisualClassifier.GENERATED, classifyForCleanup(frame))
+  }
+
+  @Test
+  fun generatedResultMovedUpFromPreviousBandIsRecognized() {
+    val frame = rawTicketFrame()
+    frame.fill(left = 7, top = 27, right = 41, bottom = 31, color = RESULT_DARK)
+    frame[24, 28] = LIGHT
+    frame[25, 28] = LIGHT
+    frame[36, 29] = LIGHT
+    frame[37, 29] = LIGHT
+
+    assertEquals(TicketControlCodeVisualClassifier.GENERATED, classify(frame))
+    assertEquals(TicketControlCodeVisualClassifier.GENERATED, classifyForCleanup(frame))
+  }
+
+  @Test
+  fun currentTicketHeaderWithMovedGeneratedRowIsRecognized() {
+    val frame = SanitizedFrame()
+    frame.fill(left = 0, top = 0, right = 48, bottom = 10, color = RED)
+    for (y in 10 until 26) {
+      for (x in 8 until 40) {
+        frame[x, y] = if ((x + y) % 2 == 0) DARK else LIGHT
+      }
+    }
+    frame.fill(left = 7, top = 27, right = 41, bottom = 31, color = RESULT_DARK)
+    frame[24, 28] = LIGHT
+    frame[25, 28] = LIGHT
+    frame[36, 29] = LIGHT
+    frame[37, 29] = LIGHT
+
+    assertEquals(TicketControlCodeVisualClassifier.GENERATED, classify(frame))
+    assertEquals(TicketControlCodeVisualClassifier.GENERATED, classifyForCleanup(frame))
+  }
+
+  @Test
   fun normalPopupWinsOverRawTicketBehindDialog() {
     val frame = rawTicketFrame()
     frame.fill(left = 8, top = 30, right = 40, bottom = 45, color = LIGHT)
     frame.fill(left = 13, top = 39, right = 36, bottom = 40, color = DARK)
 
     assertEquals(TicketControlCodeVisualClassifier.CONTROL_POPUP, classify(frame))
-    assertEquals(TicketControlCodeVisualClassifier.CONTROL_POPUP, classifyForCleanup(frame))
+    assertEquals(TicketControlCodeVisualClassifier.UNKNOWN, classifyForCleanup(frame))
+  }
+
+  @Test
+  fun currentDarkPopupWinsOverGeneratedResultHeuristics() {
+    val frame = rawTicketFrame()
+    frame.fill(left = 4, top = 26, right = 44, bottom = 43, color = DARK_DIALOG)
+    frame.fill(left = 6, top = 35, right = 43, bottom = 38, color = DARK_BLUE)
+
+    assertEquals(TicketControlCodeVisualClassifier.CONTROL_POPUP, classify(frame))
+    assertEquals(TicketControlCodeVisualClassifier.UNKNOWN, classifyForCleanup(frame))
   }
 
   @Test
@@ -224,6 +277,38 @@ class TicketControlCodeVisualClassifierTest {
   }
 
   @Test
+  fun ticketListRegistrationButtonIsASeparateCleanupProof() {
+    val frame = SanitizedFrame()
+    frame.fill(left = 0, top = 0, right = 48, bottom = 10, color = DARK)
+    frame.fill(left = 1, top = 10, right = 47, bottom = 15, color = RED)
+    frame.fill(left = 4, top = 31, right = 44, bottom = 36, color = YELLOW)
+
+    assertEquals(TicketControlCodeVisualClassifier.UNKNOWN, classify(frame))
+    assertEquals(
+      TicketControlCodeVisualClassifier.TICKET_LIST_WITH_REGISTRATION_BUTTON,
+      classifyForCleanup(frame)
+    )
+  }
+
+  @Test
+  fun registeredDetailSliderDoesNotImpersonateTicketListRegistrationButton() {
+    val frame = SanitizedFrame()
+    frame.fill(left = 0, top = 0, right = 48, bottom = 10, color = DARK)
+    frame.fill(left = 1, top = 5, right = 47, bottom = 9, color = RED)
+    frame.fill(left = 4, top = 43, right = 44, bottom = 47, color = YELLOW)
+
+    assertEquals(TicketControlCodeVisualClassifier.UNKNOWN, classifyForCleanup(frame))
+  }
+
+  @Test
+  fun registeredDetailWithAztecAndSliderIsASeparateCleanupProof() {
+    val frame = rawTicketFrame()
+    frame.fill(left = 4, top = 43, right = 44, bottom = 47, color = YELLOW)
+
+    assertEquals(TicketControlCodeVisualClassifier.RAW_TICKET, classifyForCleanup(frame))
+  }
+
+  @Test
   fun almostGeneratedDarkRowCannotFallThroughAsRawTicket() {
     val frame = rawTicketFrame()
     for (y in 36 until 40) {
@@ -332,6 +417,7 @@ class TicketControlCodeVisualClassifierTest {
     val LIGHT = rgb(240, 240, 240)
     val MID = rgb(112, 112, 112)
     val ORANGE = rgb(230, 130, 30)
+    val YELLOW = rgb(255, 190, 0)
     val SWAPPED_ORANGE = rgb(30, 130, 230)
     val PLACEHOLDER = rgb(99, 99, 99)
     val DARK_DIALOG = rgb(18, 26, 37)
@@ -341,6 +427,8 @@ class TicketControlCodeVisualClassifierTest {
     val LIVE_DIGIT_STROKE_75 = rgb(75, 75, 75)
     val RED = rgb(190, 45, 35)
     val RESULT_DARK = rgb(52, 52, 52)
+    val SHIFTED_RESULT_DARK = rgb(72, 72, 72)
+    val SHIFTED_RESULT_TEXT = rgb(190, 190, 190)
 
     fun rgb(red: Int, green: Int, blue: Int): Int =
       (0xff shl 24) or (red shl 16) or (green shl 8) or blue

@@ -18,7 +18,24 @@ public final class TicketControlCodeVisualClassifier {
   public static final String CONTROL_POPUP_KEYBOARD_READY = "control_popup_keyboard_ready";
   public static final String GENERATED = "generated";
   public static final String RAW_TICKET = "raw_ticket";
+  public static final String TICKET_LIST_WITH_REGISTRATION_BUTTON =
+    "ticket_list_with_registration_button";
   public static final String UNKNOWN = "unknown";
+
+  // The result strip sits immediately below the Aztec graphic. ViVi has moved it by a few
+  // pixels across recent app releases, so keep the probe tied to the lower ticket body rather
+  // than one absolute four-row band. These are sanitized-probe coordinates, not device pixels.
+  // The current ViVi release places the strip one to two probe rows higher than the previous
+  // layout. Start above both positions so the phone can publish a marker for the fresh H.264
+  // frame instead of cleaning the generated surface while the browser is still waiting.
+  private static final int RESULT_CHIP_SCAN_START_TOP = 20;
+  private static final int RESULT_CHIP_SCAN_END_TOP = 42;
+  private static final int RESULT_CHIP_HEIGHT = 5;
+  // The current strip is three sampled rows high; its middle row is softened by the display
+  // scale and lands at roughly 25 dark cells instead of the old 29-cell full row.
+  private static final int RESULT_CHIP_MIN_DARK_ROW_PIXELS = 22;
+  private static final int RESULT_CHIP_DARK_LUMINANCE = 100;
+  private static final int RESULT_CHIP_LIGHT_LUMINANCE = 145;
 
   private TicketControlCodeVisualClassifier() {}
 
@@ -46,7 +63,88 @@ public final class TicketControlCodeVisualClassifier {
    * cleanup entry point keeps that recovery contract explicit.</p>
    */
   public static String classifyForCleanup(int[] pixels) {
-    return classify(pixels);
+    if (frameHasTicketListWithRegistrationButton(pixels)) {
+      return TICKET_LIST_WITH_REGISTRATION_BUTTON;
+    }
+    // The generated result is already on the cleanup lane. ViVi can leave its dark result row
+    // under the same geometry that the popup heuristic samples while the row is being cleared;
+    // preserve the generated-result proof here so the post-ACK verifier waits for the actual
+    // transition instead of treating that still-visible result as a popup.
+    if (frameHasGeneratedControlCodeResultChip(pixels) &&
+        !frameHasStrongDarkControlCodeInputPopup(pixels)) {
+      return GENERATED;
+    }
+    if (frameHasRegisteredTicketDetailSurface(pixels)) {
+      return RAW_TICKET;
+    }
+    // The ordinary popup heuristic intentionally stays out of this lane. Its broad white-card
+    // checks also match the registered-detail surface after ViVi clears the result row, so an
+    // ambiguous cleanup frame must remain unknown and use the bounded safe fallback.
+    return UNKNOWN;
+  }
+
+  /**
+   * Proves the post-cleanup ticket list from the existing fixed-size rooted H.264 probe.
+   *
+   * <p>The current ViVi ticket list has a wide yellow "Reģistrēt biļeti" band immediately
+   * below the card body. The registered-ticket detail places its yellow confirmation slider
+   * lower, so the narrow band window distinguishes the two without OCR or exported pixels.</p>
+   */
+  private static boolean frameHasTicketListWithRegistrationButton(int[] pixels) {
+    if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT) {
+      return false;
+    }
+    int qualifyingRows = 0;
+    int widestYellowRow = 0;
+    for (int y = 28; y <= 39; y++) {
+      int yellowPixels = 0;
+      for (int x = 2; x < SAMPLE_WIDTH - 2; x++) {
+        int pixel = pixelAt(pixels, x, y);
+        int red = (pixel >> 16) & 0xff;
+        int green = (pixel >> 8) & 0xff;
+        int blue = pixel & 0xff;
+        if (red >= 180 && green >= 110 && green <= 235 && blue <= 90 && red - green >= 25) {
+          yellowPixels += 1;
+        }
+      }
+      widestYellowRow = Math.max(widestYellowRow, yellowPixels);
+      if (yellowPixels >= 24) {
+        qualifyingRows += 1;
+      }
+    }
+    return qualifyingRows >= 3 && widestYellowRow >= 30;
+  }
+
+  /**
+   * Proves the registered-ticket surface needed for the single detail-to-list return tap.
+   *
+   * <p>The current layout keeps the Aztec graphic in the upper ticket body and the yellow
+   * confirmation slider below it. The slider is deliberately sampled outside the list proof
+   * band, so this cannot authorize the resting list or press its registration button.</p>
+   */
+  private static boolean frameHasRegisteredTicketDetailSurface(int[] pixels) {
+    if (!frameHasTicketDetailBase(pixels)) {
+      return false;
+    }
+    int qualifyingRows = 0;
+    int widestYellowRow = 0;
+    for (int y = 41; y <= 49; y++) {
+      int yellowPixels = 0;
+      for (int x = 2; x < SAMPLE_WIDTH - 2; x++) {
+        int pixel = pixelAt(pixels, x, y);
+        int red = (pixel >> 16) & 0xff;
+        int green = (pixel >> 8) & 0xff;
+        int blue = pixel & 0xff;
+        if (red >= 180 && green >= 110 && green <= 235 && blue <= 90 && red - green >= 25) {
+          yellowPixels += 1;
+        }
+      }
+      widestYellowRow = Math.max(widestYellowRow, yellowPixels);
+      if (yellowPixels >= 24) {
+        qualifyingRows += 1;
+      }
+    }
+    return qualifyingRows >= 3 && widestYellowRow >= 30;
   }
 
   /**
@@ -315,8 +413,35 @@ public final class TicketControlCodeVisualClassifier {
       shiftedDialog.contrast <= 95.0;
     boolean shiftedInputLineVisible = shiftedInputLine.darkRatio >= 0.08 &&
       shiftedInputLine.contrast >= 22.0;
+    VisualStats darkDialog = visualStats(pixels, 4, 26, 44, 43);
+    VisualStats shiftedDarkDialog = visualStats(pixels, 4, 12, 44, 31);
+    boolean darkDialogVisible = darkDialog.mean <= 85.0 &&
+      darkDialog.darkRatio >= 0.65 &&
+      darkDialog.lightRatio <= 0.12 &&
+      darkDialog.contrast <= 90.0;
+    boolean shiftedDarkDialogVisible = shiftedDarkDialog.mean <= 85.0 &&
+      shiftedDarkDialog.darkRatio >= 0.65 &&
+      shiftedDarkDialog.lightRatio <= 0.12 &&
+      shiftedDarkDialog.contrast <= 90.0;
     return (dialogVisible && (frameHasControlCodePopupOrangeOkButton(pixels) || inputLineVisible)) ||
-      (shiftedDialogVisible && (frameHasShiftedControlCodePopupOrangeOkButton(pixels) || shiftedInputLineVisible));
+      (shiftedDialogVisible && (frameHasShiftedControlCodePopupOrangeOkButton(pixels) || shiftedInputLineVisible)) ||
+      (darkDialogVisible && frameHasControlCodePopupBlueButton(pixels, 34, 40)) ||
+      (shiftedDarkDialogVisible && frameHasControlCodePopupBlueButton(pixels, 20, 29));
+  }
+
+  private static boolean frameHasStrongDarkControlCodeInputPopup(int[] pixels) {
+    VisualStats darkDialog = visualStats(pixels, 4, 26, 44, 43);
+    VisualStats shiftedDarkDialog = visualStats(pixels, 4, 12, 44, 31);
+    boolean darkDialogVisible = darkDialog.mean <= 85.0 &&
+      darkDialog.darkRatio >= 0.65 &&
+      darkDialog.lightRatio <= 0.12 &&
+      darkDialog.contrast <= 90.0;
+    boolean shiftedDarkDialogVisible = shiftedDarkDialog.mean <= 85.0 &&
+      shiftedDarkDialog.darkRatio >= 0.65 &&
+      shiftedDarkDialog.lightRatio <= 0.12 &&
+      shiftedDarkDialog.contrast <= 90.0;
+    return (darkDialogVisible && frameHasControlCodePopupBlueButton(pixels, 34, 40)) ||
+      (shiftedDarkDialogVisible && frameHasControlCodePopupBlueButton(pixels, 20, 29));
   }
 
   private static boolean frameHasControlCodePopupOrangeOkButton(int[] pixels) {
@@ -345,19 +470,87 @@ public final class TicketControlCodeVisualClassifier {
     return sampled > 0 && orange / (double) sampled >= 0.08;
   }
 
+  private static boolean frameHasControlCodePopupBlueButton(int[] pixels, int top, int bottom) {
+    int sampled = 0;
+    int blue = 0;
+    for (int y = top; y < bottom; y++) {
+      for (int x = 4; x < 44; x++) {
+        int pixel = pixelAt(pixels, x, y);
+        int red = (pixel >> 16) & 0xff;
+        int green = (pixel >> 8) & 0xff;
+        int blueChannel = pixel & 0xff;
+        if (blueChannel >= 80 && blueChannel - red >= 35 && blueChannel - green >= 20) {
+          blue += 1;
+        }
+        sampled += 1;
+      }
+    }
+    return sampled > 0 && blue / (double) sampled >= 0.18;
+  }
+
   private static boolean frameHasGeneratedControlCodeResultChip(int[] pixels) {
     if (!frameHasTicketDetailBase(pixels)) return false;
-    VisualStats chip = visualStats(pixels, 7, 36, SAMPLE_WIDTH - 7, 40);
-    int chipRows = 0;
-    for (int y = 36; y < 40; y++) {
+    int chipTop = findGeneratedControlCodeResultChipTop(pixels);
+    if (chipTop < 0) return false;
+    VisualStats chip = visualStats(
+      pixels,
+      SAMPLE_WIDTH,
+      SAMPLE_HEIGHT,
+      7,
+      chipTop,
+      SAMPLE_WIDTH - 7,
+      chipTop + RESULT_CHIP_HEIGHT,
+      RESULT_CHIP_DARK_LUMINANCE,
+      RESULT_CHIP_LIGHT_LUMINANCE
+    );
+    int chipRows = generatedChipDarkRows(pixels, chipTop);
+    return chip.darkRatio >= 0.50 && chip.lightRatio >= 0.01 &&
+      chip.lightRatio <= 0.48 && chip.contrast >= 20.0 && chipRows >= 3;
+  }
+
+  private static int findGeneratedControlCodeResultChipTop(int[] pixels) {
+    int bestTop = -1;
+    int bestScore = Integer.MIN_VALUE;
+    for (int top = RESULT_CHIP_SCAN_START_TOP;
+         top <= RESULT_CHIP_SCAN_END_TOP;
+         top++) {
+      int darkRows = generatedChipDarkRows(pixels, top);
+      if (darkRows < 3) continue;
+      VisualStats chip = visualStats(
+        pixels,
+        SAMPLE_WIDTH,
+        SAMPLE_HEIGHT,
+        7,
+        top,
+        SAMPLE_WIDTH - 7,
+        top + RESULT_CHIP_HEIGHT,
+        RESULT_CHIP_DARK_LUMINANCE,
+        RESULT_CHIP_LIGHT_LUMINANCE
+      );
+      if (chip.darkRatio < 0.50 || chip.lightRatio < 0.01 || chip.lightRatio > 0.48 ||
+          chip.contrast < 20.0) {
+        continue;
+      }
+      int score = darkRows * 100 + (int) Math.round(chip.darkRatio * 50.0) +
+        (int) Math.round(chip.contrast);
+      if (score > bestScore) {
+        bestScore = score;
+        bestTop = top;
+      }
+    }
+    return bestTop;
+  }
+
+  private static int generatedChipDarkRows(int[] pixels, int top) {
+    int darkRows = 0;
+    for (int y = top; y < top + RESULT_CHIP_HEIGHT && y < SAMPLE_HEIGHT; y++) {
       int rowDark = 0;
       for (int x = 7; x < SAMPLE_WIDTH - 7; x++) {
-        if (luminance(pixelAt(pixels, x, y)) <= 80) rowDark++;
+        if (luminance(pixelAt(pixels, x, y)) <= RESULT_CHIP_DARK_LUMINANCE) rowDark++;
       }
-      if (rowDark >= 30) chipRows++;
+      if (rowDark >= RESULT_CHIP_MIN_DARK_ROW_PIXELS) darkRows++;
     }
-    return chip.darkRatio >= 0.58 && chip.lightRatio >= 0.02 &&
-      chip.lightRatio <= 0.42 && chip.contrast >= 25.0 && chipRows >= 3;
+    return darkRows;
   }
 
   private static boolean frameHasRawTicketCodeGraphic(int[] pixels) {
@@ -372,7 +565,9 @@ public final class TicketControlCodeVisualClassifier {
   private static boolean frameHasTicketDetailBase(int[] pixels) {
     VisualStats code = visualStats(pixels, 8, 14, 40, 34);
     return frameHasTicketDetailHeader(pixels) &&
-      code.darkRatio >= 0.14 &&
+      // The current ViVi Aztec is antialiased into a little under 14% dark cells at the
+      // sanitized probe size; retain contrast/light-area checks while allowing that edge.
+      code.darkRatio >= 0.10 &&
       code.lightRatio >= 0.18 &&
       code.contrast >= 45.0;
   }
@@ -380,8 +575,22 @@ public final class TicketControlCodeVisualClassifier {
   private static boolean frameHasTicketDetailHeader(int[] pixels) {
     VisualStats label = visualStats(pixels, 2, 2, 19, 7);
     VisualStats topBand = visualStats(pixels, 0, 0, SAMPLE_WIDTH, 10);
-    int redSamples = 0;
-    int redPixels = 0;
+    int currentRedSamples = 0;
+    int currentRedPixels = 0;
+    int legacyRedSamples = 0;
+    int legacyRedPixels = 0;
+    for (int y = 0; y < 10; y++) {
+      for (int x = 1; x < SAMPLE_WIDTH - 1; x++) {
+        int pixel = pixelAt(pixels, x, y);
+        int red = (pixel >> 16) & 0xff;
+        int green = (pixel >> 8) & 0xff;
+        int blue = pixel & 0xff;
+        if (red >= 135 && red - green >= 25 && red - blue >= 35 && green <= 110 && blue <= 115) {
+          currentRedPixels += 1;
+        }
+        currentRedSamples += 1;
+      }
+    }
     for (int y = 8; y < 15; y++) {
       for (int x = 1; x < SAMPLE_WIDTH - 1; x++) {
         int pixel = pixelAt(pixels, x, y);
@@ -389,20 +598,26 @@ public final class TicketControlCodeVisualClassifier {
         int green = (pixel >> 8) & 0xff;
         int blue = pixel & 0xff;
         if (red >= 135 && red - green >= 25 && red - blue >= 35 && green <= 110 && blue <= 115) {
-          redPixels += 1;
+          legacyRedPixels += 1;
         }
-        redSamples += 1;
+        legacyRedSamples += 1;
       }
     }
-    double redRatio = redSamples == 0 ? 0.0 : redPixels / (double) redSamples;
+    double currentRedRatio = currentRedSamples == 0 ? 0.0 : currentRedPixels / (double) currentRedSamples;
+    double legacyRedRatio = legacyRedSamples == 0 ? 0.0 : legacyRedPixels / (double) legacyRedSamples;
     boolean labelPillVisible = label.mean >= 150.0 &&
       label.lightRatio >= 0.48 &&
       label.darkRatio <= 0.34 &&
       label.contrast <= 115.0;
     boolean ticketHeaderShape = topBand.lightRatio >= 0.10 &&
       topBand.darkRatio >= 0.10 &&
-      redRatio >= 0.24;
-    return labelPillVisible && ticketHeaderShape;
+      legacyRedRatio >= 0.24;
+    // Current ViVi renders the orange ticket header immediately after the stream's top crop;
+    // the old probe expected that band eight rows lower and required a light label pill. Keep
+    // that legacy form, but accept the current red header when the shared ticket code graphic
+    // is present. Popup detection runs first, so this cannot authorize a dialog frame.
+    boolean currentTicketHeaderShape = currentRedRatio >= 0.24;
+    return (labelPillVisible && ticketHeaderShape) || currentTicketHeaderShape;
   }
 
   private static VisualStats visualStats(int[] pixels, int left, int top, int right, int bottom) {
@@ -422,6 +637,20 @@ public final class TicketControlCodeVisualClassifier {
     int right,
     int bottom
   ) {
+    return visualStats(pixels, width, height, left, top, right, bottom, 80, 175);
+  }
+
+  private static VisualStats visualStats(
+    int[] pixels,
+    int width,
+    int height,
+    int left,
+    int top,
+    int right,
+    int bottom,
+    int darkLuminance,
+    int lightLuminance
+  ) {
     int sampled = 0;
     int dark = 0;
     int light = 0;
@@ -432,10 +661,10 @@ public final class TicketControlCodeVisualClassifier {
         int luminance = luminance(pixels[y * width + x]);
         sum += luminance;
         sumSquares += (long) luminance * luminance;
-        if (luminance <= 80) {
+        if (luminance <= darkLuminance) {
           dark += 1;
         }
-        if (luminance >= 175) {
+        if (luminance >= lightLuminance) {
           light += 1;
         }
         sampled += 1;

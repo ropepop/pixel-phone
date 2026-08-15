@@ -74,6 +74,10 @@ class TicketLatestTicketReselectRecoveryPolicyTest {
       TicketLatestTicketReselectRecoveryPolicy.actionCategory("open_upcoming_time_ticket_card")
     )
     assertEquals(
+      "ticket_card_selection",
+      TicketLatestTicketReselectRecoveryPolicy.actionCategory("open_fresh_time_ticket_registration_button")
+    )
+    assertEquals(
       "other_recovery",
       TicketLatestTicketReselectRecoveryPolicy.actionCategory("untrusted action text")
     )

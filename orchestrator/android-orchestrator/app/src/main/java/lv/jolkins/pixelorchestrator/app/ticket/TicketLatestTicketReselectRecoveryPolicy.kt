@@ -4,7 +4,10 @@ internal object TicketLatestTicketReselectRecoveryPolicy {
   private val ticketCardSelectionActions = setOf(
     "open_fresh_time_ticket_card",
     "open_upcoming_time_ticket_card",
-    "open_ticket_card"
+    "open_ticket_card",
+    "open_fresh_time_ticket_registration_button",
+    "open_upcoming_time_ticket_registration_button",
+    "open_ticket_registration_button"
   )
   private val finalActionCategories = setOf(
     "none",

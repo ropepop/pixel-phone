@@ -253,7 +253,7 @@ class TicketStreamServiceSourceTest {
   @Test
   fun streamRunsOneFpsIdleAndFourFpsDuringControlDispatch() {
     assertTrue(config.contains("const val ROOT_HARDWARE_H264_STEADY_FPS = 1"))
-    assertTrue(config.contains("const val ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS = 4"))
+    assertTrue(config.contains("const val ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS = 8"))
     assertTrue(h264Engine.contains("controlCodeRequestFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS"))
     assertTrue(service.contains("targetFps = TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS"))
   }
@@ -275,6 +275,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(wait.contains("stopControlCodeRequestBurst(reason)"))
     assertTrue(wait.contains("control_code_browser_capture_ack_timeout"))
     assertTrue(generate.contains("stopControlCodeRequestBurst(\"control_code_request_finally\")"))
+    assertTrue(service.contains("CONTROL_CODE_BROWSER_CAPTURE_ACK_TIMEOUT_MILLIS = 20_000L"))
   }
 
   @Test
@@ -302,6 +303,49 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
+  fun generatedResultKeepsTheCurrentEncoderEpochAndWaitsForARealKeyframe() {
+    val marker = body(
+      service,
+      "private suspend fun markerFirstControlCodeFrameWatermarkForBrowser",
+      "private suspend fun captureGeneratedControlCodeImageBytes"
+    )
+    val watermark = body(
+      service,
+      "private suspend fun requestFreshControlCodeFrameWatermark",
+      "private suspend fun openControlCodePopupFastForRequest"
+    )
+    assertFalse(marker.contains("refreshRootHardwareH264ForControlCodeResult"))
+    assertTrue(marker.contains("requestFreshControlCodeFrameWatermark(reason)"))
+    assertTrue(watermark.contains("val startingEpoch = streamEpoch"))
+    assertTrue(watermark.contains("val startingSequence = frameSequence"))
+    assertTrue(watermark.contains("requestKeyFrame(reason)"))
+    assertTrue(watermark.contains("currentKeyFrameSequence > startingSequence"))
+    assertTrue(watermark.contains("control_code_request_result_marker_frame_wait_timeout"))
+    assertTrue(service.contains("controlCodeResultEncoderRefreshActive"))
+  }
+
+  @Test
+  fun restartedRootEncoderDropsFramesFromThePreviousProcess() {
+    val stop = body(h264Engine, "private fun stopProcesses()", "private fun consumeCleanStopForFastStart")
+    assertTrue(h264Engine.contains("private val captureGeneration = AtomicLong(0L)"))
+    assertTrue(h264Engine.contains("val parserGeneration = captureGeneration.incrementAndGet()"))
+    assertTrue(h264Engine.contains("if (parserGeneration == captureGeneration.get())"))
+    assertTrue(stop.contains("captureGeneration.incrementAndGet()"))
+  }
+
+  @Test
+  fun rootEncoderKeepsHardwareCaptureAliveUntilInputIsDrained() {
+    val loop = body(h264Main, "while (frames <= 0 || sent < frames)", "encoder.signalEndOfInputStream()")
+    val draw = loop.indexOf("drawBitmap(inputSurface")
+    val drain = loop.indexOf("int drained = drainEncoder")
+    val close = loop.indexOf("source.close()")
+    assertTrue(draw >= 0)
+    assertTrue(drain > draw)
+    assertTrue(close > drain)
+    assertTrue(loop.contains("hardware-backed capture result alive until this frame's encoder drain"))
+  }
+
+  @Test
   fun browserCaptureAckIsScopedToTheActiveRequestAndCandidateFrame() {
     val receive = body(service, "private fun handleControlCodeBrowserCapture", "private suspend fun waitForControlCodeBrowserCapture")
     val wait = body(service, "private suspend fun waitForControlCodeBrowserCapture", "private suspend fun ensureTicketSessionForControlCodeRequest")
@@ -309,11 +353,13 @@ class TicketStreamServiceSourceTest {
     assertTrue(receive.contains("frameEpoch = frameEpoch"))
     assertTrue(receive.contains("frameSequence = frameSequence"))
     assertTrue(wait.contains("pendingControlCodeBrowserCaptureAck?.takeIf { it.requestId == requestId }"))
+    assertTrue(service.contains("controlCodeResultEncoderRefreshActive = true"))
+    assertTrue(wait.contains("controlCodeResultEncoderRefreshActive = false"))
   }
 
   @Test
   fun immediatePathOpensWithRootTapBeforeRegisteringTheKeyboard() {
-    val immediate = body(service, "private suspend fun runImmediateControlCodeOpenTypeSubmitForRequest", "private fun requestFreshControlCodeFrameWatermark")
+    val immediate = body(service, "private suspend fun runImmediateControlCodeOpenTypeSubmitForRequest", "private suspend fun requestFreshControlCodeFrameWatermark")
     val type = body(service, "private suspend fun executeRootControlCodeType", "private suspend fun tapControlCodePointWithoutKeyboard")
     val open = body(service, "private suspend fun openControlCodePopupImmediateForRequest", "private suspend fun openControlCodePopupFromVerifiedStateFastForRequest")
     assertTrue(immediate.contains("openControlCodePopupImmediateForRequest(phases, requestStartedAtMillis)"))
@@ -383,7 +429,11 @@ class TicketStreamServiceSourceTest {
     val begin = body(service, "private suspend fun beginGeneratedControlCodeResultFastClose", "private suspend fun finishGeneratedControlCodeResultFastCleanup")
     val send = body(service, "private suspend fun sendFastGeneratedResultCloseTap", "private fun controlCodeResultGeometryCloseAction")
     val oneShot = body(service, "private suspend fun runFastOneShotControlSurfaceCloseInput", "private suspend fun runFastNonTouchWakeScript")
-    assertTrue(begin.contains("TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(generatedHierarchy)"))
+    assertTrue(begin.contains("val closeHierarchy = if (generatedHierarchy == CONTROL_CODE_MARKER_RESULT_HIERARCHY)"))
+    assertTrue(begin.contains("source=${'$'}{if (generatedHierarchy == CONTROL_CODE_MARKER_RESULT_HIERARCHY) \"geometry\""))
+    assertFalse(begin.contains("fastVisibleHierarchy("))
+    assertTrue(begin.contains("val actionHierarchy = if (closeHierarchyState == TicketViviRecoveryState.CONTROL_CODE_RESULT)"))
+    assertTrue(begin.contains("TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(actionHierarchy)"))
     assertTrue(begin.contains("?: controlCodeResultGeometryCloseAction()"))
     assertTrue(begin.indexOf("controlCodeExitCloseActionForHierarchy") < begin.indexOf("controlCodeResultGeometryCloseAction"))
     assertTrue(send.contains("input tap ${'$'}{action.x} ${'$'}{action.y}"))
@@ -482,8 +532,8 @@ class TicketStreamServiceSourceTest {
   fun inlineCloseCoordinatesStillComeFromTheViviResultCross() {
     assertTrue(viviEnforcer.contains("close_control_code_result"))
     assertTrue(viviEnforcer.contains("controlCodeExitCloseActionForHierarchy"))
-    assertTrue(service.contains("CONTROL_EXIT_RESULT_CLOSE_X_FRACTION = 0.82f"))
-    assertTrue(service.contains("CONTROL_EXIT_RESULT_CLOSE_Y_FRACTION = 0.565f"))
+    assertTrue(service.contains("CONTROL_EXIT_RESULT_CLOSE_X_FRACTION = 0.865f"))
+    assertTrue(service.contains("CONTROL_EXIT_RESULT_CLOSE_Y_FRACTION = 0.11f"))
   }
 
   @Test
@@ -492,7 +542,43 @@ class TicketStreamServiceSourceTest {
     assertTrue(service.contains("CONTROL_CODE_FAST_CLEANUP_POLL_MILLIS = 75L"))
     assertTrue(service.contains("CONTROL_CODE_FAST_CLEANUP_VISUAL_SAMPLE_GAP_MILLIS = 200L"))
     assertTrue(service.contains("CONTROL_CODE_FAST_CLEANUP_RAW_VISUAL_PROOF_COUNT = 2"))
-    assertTrue(service.contains("CONTROL_CODE_FAST_PANEL_SLEEP_CLAMP_POST_MILLIS = 5L"))
+    assertTrue(service.contains("CONTROL_CODE_FAST_PANEL_SLEEP_CLAMP_POST_MILLIS = 250L"))
+    assertTrue(service.contains("CONTROL_CODE_FAST_CLEANUP_ROOT_DUMP_TIMEOUT_MILLIS = 1_000L"))
+  }
+
+  @Test
+  fun successfulBrowserCaptureTargetsTicketListRegistrationButtonWithoutPressingIt() {
+    val generate = body(service, "private suspend fun handleGenerateControlCode", "private suspend fun handleGenerateRigasSatiksmeMonthlyTicketQr")
+    val returnRaw = body(service, "private suspend fun returnControlCodeSurfaceToRawTicket", "private fun isActionableControlCodeExitHierarchy")
+    val target = body(service, "private suspend fun completeFastVerifiedTicketRegistrationListControlExitCleanup", "private suspend fun waitForTicketListWithRegistrationButtonAfterFastCleanup")
+    val wait = body(service, "private suspend fun waitForTicketListWithRegistrationButtonAfterFastCleanup", "private suspend fun observeFreshControlCodeCleanupState")
+    assertTrue(generate.contains("returnToTicketListWithRegistrationButton = capture.ok"))
+    assertTrue(generate.contains("recoverTicketRegistrationListForControlCodeRequest"))
+    assertTrue(returnRaw.contains("returnToTicketListWithRegistrationButton"))
+    assertTrue(target.contains("waitForTicketListWithRegistrationButtonAfterFastCleanup"))
+    assertTrue(wait.contains("ticketDetailReturnToListActionForHierarchy"))
+    assertTrue(wait.contains("control_code_fast_cleanup_ticket_list_return_dispatched"))
+    assertTrue(wait.contains("runFastOneShotControlSurfaceCloseInput"))
+    assertTrue(wait.contains("cleanup_ticket_list_return_tap_failed"))
+    assertFalse(wait.contains("bestTicketCardActionForHierarchy"))
+    assertTrue(service.contains("isTicketListWithCardAndRegistrationButton"))
+  }
+
+  @Test
+  fun registrationListRecoveryStopsOnNestedButtonProof() {
+    val recovery = body(service, "private suspend fun observeTicketDetailForWakeWithRoot", "private suspend fun attemptWakeRecoveryActionForRootWake")
+    assertTrue(recovery.contains("requireTicketListWithRegistrationButton"))
+    assertTrue(recovery.contains("isTicketListWithCardAndRegistrationButton"))
+    assertTrue(recovery.contains("wake_root_ticket_list_with_registration_button"))
+    assertTrue(recovery.contains("ticketDetailReturnToListActionForHierarchy"))
+  }
+
+  @Test
+  fun activeGuardDoesNotPressTheRegistrationButtonOnTheRestingList() {
+    val guard = body(service, "private suspend fun enforceViviTicketPageIfNeeded", "private suspend fun attemptActiveGuardRecoveryAction")
+    assertTrue(guard.contains("active_guard_ticket_list_ready"))
+    assertTrue(guard.contains("isTicketListWithCardAndRegistrationButton"))
+    assertTrue(guard.indexOf("active_guard_ticket_list_ready") < guard.indexOf("attemptActiveGuardRecoveryAction"))
   }
 
   @Test
@@ -547,6 +633,23 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
+  fun duplicateBrowserCloseCannotReenterControlExitAfterRawCleanup() {
+    val exit = body(service, "private fun scheduleControlExitSoftSettle", "private fun scheduleControlExitCleanup")
+    assertTrue(exit.contains("ticketSessionState == TICKET_SESSION_LIVE"))
+    assertTrue(exit.contains("!controlCodeModeActive"))
+    assertTrue(exit.contains("lastControlCodeSurfaceState == null"))
+    assertTrue(exit.contains("control_exit_already_clean"))
+    assertTrue(exit.indexOf("control_exit_already_clean") < exit.indexOf("updateTicketSessionState(TICKET_SESSION_CONTROL_EXIT"))
+  }
+
+  @Test
+  fun lateControlSurfaceResetCannotReenterControlExitAfterLiveCleanup() {
+    val reset = body(service, "private fun resetControlCodeMode", "private fun rememberControlCodeSurface")
+    assertTrue(reset.contains("ticketSessionState != TICKET_SESSION_LIVE"))
+    assertTrue(reset.indexOf("ticketSessionState != TICKET_SESSION_LIVE") < reset.indexOf("updateTicketSessionState(TICKET_SESSION_CONTROL_EXIT"))
+  }
+
+  @Test
   fun nextRequestIsReleasedAndMarkedReadyAfterSuccessfulCleanup() {
     val generate = body(service, "private suspend fun handleGenerateControlCode", "private suspend fun handleGenerateRigasSatiksmeMonthlyTicketQr")
     assertTrue(generate.contains("markControlCodeFastReady(\"cleanup:${'$'}cleanupReason\")"))
@@ -570,8 +673,50 @@ class TicketStreamServiceSourceTest {
   fun coldOpenHasExplicitFiveSecondPublicBudget() {
     assertTrue(service.contains("TICKET_FAST_PUBLIC_OPEN_BUDGET_MILLIS = 5_000L"))
     assertTrue(service.contains("remainingFastPublicOpenBudgetMillis"))
-    assertTrue(service.contains("fastWakeReadyFromRecentTicketDetail"))
     assertTrue(service.contains("prepareViviForRootHardwareH264FastOpen"))
+    assertTrue(service.contains("requireNewTicketRegistration = true"))
+    assertTrue(service.contains("ticketDetailReturnToListActionForHierarchy"))
+    assertTrue(service.contains("val listRecoveryStartedAtMillis = SystemClock.elapsedRealtime()"))
+    assertFalse(service.contains("fastWakeReadyFromRecentTicketDetail(reason, wakeStartedAtMillis)"))
+  }
+
+  @Test
+  fun coldOpenCanShowProvisionalRootFramesWithoutUnlockingTicketControls() {
+    val prepare = body(
+      service,
+      "private suspend fun prepareViviForRootHardwareH264FastOpen",
+      "private fun scheduleRootHardwareH264CaptureStart"
+    )
+    val schedule = body(
+      service,
+      "private fun scheduleRootHardwareH264CaptureStart",
+      "private suspend fun prepareRootHardwareH264CaptureWithPhoneMutationOwnership"
+    )
+    assertTrue(prepare.contains("allowProvisionalHardwareH264FramesForFocusedVivi"))
+    assertTrue(prepare.contains("post_launch_stream"))
+    assertTrue(prepare.contains("fast_public_open_post_launch_memory_skipped"))
+    assertTrue(service.contains("hardware_h264_provisional_frames_allowed"))
+    assertTrue(schedule.indexOf("prewarmRootHardwareH264CaptureIfPossible") < schedule.indexOf("controlCodePhoneMutationLane.withOwnership"))
+    assertTrue(service.contains("hardwareCaptureVerified = true"))
+    assertTrue(service.contains("hardwareFrameBroadcastAllowed = true"))
+  }
+
+  @Test
+  fun watchdogDoesNotRestartOrVerifyAProvisionalTicketStream() {
+    val restart = body(service, "private fun restartActiveStreamEngine", "private fun scheduleStreamWatchdog")
+    val watchdog = body(service, "private fun evaluateStreamWatchdog", "private fun configMessage")
+    assertTrue(restart.contains("val verifiedBeforeRestart = hardwareCaptureVerified"))
+    assertTrue(restart.contains("hardwareCaptureVerified = verifiedBeforeRestart"))
+    assertTrue(watchdog.contains("!hardwareFrameBroadcastAllowed || !hardwareCaptureVerified"))
+    assertTrue(watchdog.contains("waiting_ticket_ready"))
+  }
+
+  @Test
+  fun publicOpenAndRootWakeNavigationTelemetryIsPublished() {
+    val allowlist = body(service, "private fun shouldPublishTicketTraceEvent", "private fun safeErrorDetail")
+    assertTrue(allowlist.contains("event.startsWith(\"wake_\")"))
+    assertTrue(allowlist.contains("event.startsWith(\"fast_public_open_\")"))
+    assertTrue(allowlist.contains("event == \"root_readiness\""))
   }
 
   @Test
@@ -649,6 +794,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(recovery.contains("wakeStartedAtMillis = observationStartedAtMillis"))
     assertTrue(recovery.contains("recoveryActionRepeatCooldownMillis = LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS"))
     assertTrue(recovery.contains("ticketCardSelectionGraceMillis = LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS"))
+    assertTrue(recovery.contains("requireNewTicketRegistration = true"))
     assertTrue(recovery.contains("recordLatestTicketReselectRecoveryTelemetry(result)"))
     assertTrue(observation.contains("TicketLatestTicketReselectRecoveryPolicy.remainingMillis("))
     assertTrue(observation.contains("ticketCardSelectionGraceDeadlineMillis("))
@@ -692,6 +838,8 @@ class TicketStreamServiceSourceTest {
     assertFalse(reselectCommandPolicy.contains("commandType == \"prepare_control_code\""))
     assertTrue(cycle.contains("TicketLatestTicketReselectPreemptionPolicy.shouldYieldFor(it.commandType)"))
     assertTrue(spacetimeWorker.contains("\"prepare_control_code\" -> 9"))
+    assertTrue(cycle.contains("command.commandType == \"prepare_control_code\" && controlCodeWorkStartedThisCycle"))
+    assertFalse(cycle.contains("command.commandType == \"prepare_control_code\" &&\n        (controlCodeWorkStartedThisCycle || service.ticketSpacetimeControlCodeRequestActive())"))
     assertTrue(deferredCheck >= 0)
     assertTrue(deferredReport > deferredCheck)
     assertTrue(deferredBreak > deferredReport)
@@ -807,10 +955,20 @@ class TicketStreamServiceSourceTest {
     assertTrue(observe.contains("actionRemainingMillis"))
     assertTrue(observe.contains("actionSucceeded || recoveryActionRepeatCooldownMillis > 0L"))
     assertTrue(observe.contains("timeoutMillis = minOf(NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS, actionRemainingMillis)"))
-    assertTrue(attempt.contains("timeout = timeoutMillis.milliseconds"))
+    assertTrue(attempt.contains("runFastRecoveryInput("))
+    assertTrue(attempt.contains("minOf(timeoutMillis, TICKET_WAKE_RECOVERY_INPUT_TIMEOUT_MILLIS).milliseconds"))
     assertTrue(input.contains("timeout: Duration = NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS.milliseconds"))
     assertTrue(input.contains("val commandTimeout = (timeout - postMillis.milliseconds).coerceAtLeast(250.milliseconds)"))
     assertTrue(input.contains("commandTimeout = commandTimeout"))
+  }
+
+  @Test
+  fun recoveryTapsUseAnIndependentShortLivedRootLane() {
+    val recovery = body(service, "private suspend fun runFastRecoveryInput", "private suspend fun runFastNonTouchWakeScript")
+    assertTrue(service.contains("private val recoveryInputRootExecutor = SuRootExecutor()"))
+    assertTrue(recovery.contains("recoveryInputRootExecutor.run(command, timeout)"))
+    assertTrue(recovery.contains("TICKET_WAKE_RECOVERY_INPUT_TIMEOUT_MILLIS.milliseconds"))
+    assertFalse(recovery.contains("wrapNonTouchPanelSleepClamp("))
   }
 
   @Test
