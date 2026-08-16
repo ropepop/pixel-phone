@@ -89,6 +89,7 @@ class TicketControlCodeVisualClassifierTest {
     val frame = rawTicketFrame()
     frame.fill(left = 8, top = 30, right = 40, bottom = 45, color = LIGHT)
     frame.fill(left = 13, top = 39, right = 36, bottom = 40, color = DARK)
+    frame.fill(left = 31, top = 39, right = 42, bottom = 44, color = ORANGE)
 
     assertEquals(TicketControlCodeVisualClassifier.CONTROL_POPUP, classify(frame))
     assertEquals(TicketControlCodeVisualClassifier.UNKNOWN, classifyForCleanup(frame))
@@ -261,8 +262,42 @@ class TicketControlCodeVisualClassifierTest {
   }
 
   @Test
+  fun shortestValueSurvivesAdjacentProbePixelCollapse() {
+    val entered = blankSubmitFrame()
+    // The live two-digit minimum can collapse to two neighboring samples on the same row after
+    // the rooted H.264 source is reduced to the privacy-safe submit probe.
+    entered[46, 68] = LIVE_DIGIT_STROKE_60
+    entered[47, 68] = LIVE_DIGIT_STROKE_75
+
+    assertEquals(
+      TicketControlCodeVisualClassifier.CONTROL_POPUP_VALUE_READY,
+      TicketControlCodeVisualClassifier.classifySubmitLayout(entered.pixels)
+    )
+  }
+
+  @Test
   fun rawTicketGraphicIsRecognizedWithoutPopupOrResultMarkers() {
     assertEquals(TicketControlCodeVisualClassifier.RAW_TICKET, classify(rawTicketFrame()))
+  }
+
+  @Test
+  fun denseAztecRowsWithoutAContinuousResultStripRemainRawTicket() {
+    val frame = rawTicketFrame()
+    for (y in 20 until 27) {
+      for (x in 8 until 40) {
+        frame[x, y] = if (x % 7 < 5) DARK else LIGHT
+      }
+    }
+
+    assertEquals(TicketControlCodeVisualClassifier.RAW_TICKET, classify(frame))
+  }
+
+  @Test
+  fun registeredTicketDetailCannotBeMistakenForControlPopup() {
+    val frame = rawTicketFrame()
+    frame.fill(left = 4, top = 43, right = 44, bottom = 47, color = YELLOW)
+
+    assertEquals(TicketControlCodeVisualClassifier.RAW_TICKET, classify(frame))
   }
 
   @Test

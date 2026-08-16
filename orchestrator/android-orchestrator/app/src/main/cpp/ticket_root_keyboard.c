@@ -25,6 +25,7 @@
 #define KEYBOARD_LEASE_MS 6000
 #define HELPER_DEADLINE_MS 2700
 #define TAP_POLL_MS 10
+#define DIGIT_EVENT_GAP_MS 20
 #define CLEAR_KEY_COUNT 8
 #define MAX_DIGITS 8
 #define MAX_EVENTS ((1 + CLEAR_KEY_COUNT + MAX_DIGITS) * 4)
@@ -448,6 +449,23 @@ static void append_key(struct input_event events[MAX_EVENTS], int *count, int ke
   append_event(events, count, EV_SYN, SYN_REPORT, 0);
 }
 
+static bool write_events(const struct input_event *events, int count) {
+  const unsigned char *cursor = (const unsigned char *)events;
+  size_t remaining = (size_t)count * sizeof(struct input_event);
+  while (remaining > 0) {
+    ssize_t written = write(keyboard_fd, cursor, remaining);
+    if (written < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      return false;
+    }
+    cursor += written;
+    remaining -= (size_t)written;
+  }
+  return true;
+}
+
 static int digit_key_code(char digit) {
   return digit_key_codes[digit - '0'];
 }
@@ -457,25 +475,24 @@ static bool inject_value(const char *digits, int digit_count) {
   int event_count = 0;
   bool success = true;
   append_key(events, &event_count, KEY_END);
+  success = write_events(events, event_count);
+  event_count = 0;
   for (int index = 0; index < CLEAR_KEY_COUNT; index++) {
     append_key(events, &event_count, KEY_BACKSPACE);
   }
+  if (success) {
+    success = write_events(events, event_count);
+  }
+  event_count = 0;
   for (int index = 0; index < digit_count; index++) {
     append_key(events, &event_count, digit_key_code(digits[index]));
-  }
-  const unsigned char *cursor = (const unsigned char *)events;
-  size_t remaining = (size_t)event_count * sizeof(struct input_event);
-  while (remaining > 0) {
-    ssize_t written = write(keyboard_fd, cursor, remaining);
-    if (written < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      success = false;
-      break;
+    if (success) {
+      success = write_events(events, event_count);
     }
-    cursor += written;
-    remaining -= (size_t)written;
+    event_count = 0;
+    if (success && index + 1 < digit_count) {
+      sleep_millis(DIGIT_EVENT_GAP_MS);
+    }
   }
   secure_zero(events, sizeof(events));
   return success;

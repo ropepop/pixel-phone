@@ -34,6 +34,8 @@ public final class TicketControlCodeVisualClassifier {
   // The current strip is three sampled rows high; its middle row is softened by the display
   // scale and lands at roughly 25 dark cells instead of the old 29-cell full row.
   private static final int RESULT_CHIP_MIN_DARK_ROW_PIXELS = 22;
+  private static final int RESULT_CHIP_MIN_LONG_DARK_RUN_PIXELS = 10;
+  private static final int RESULT_CHIP_MIN_LONG_RUN_ROWS = 2;
   private static final int RESULT_CHIP_DARK_LUMINANCE = 100;
   private static final int RESULT_CHIP_LIGHT_LUMINANCE = 145;
 
@@ -234,7 +236,37 @@ public final class TicketControlCodeVisualClassifier {
     int veryDarkPixels = submitDarkPixelCount(pixels, 28, 64, 68, 72, 90);
     int veryDarkColumns = submitDarkColumnCount(pixels, 28, 64, 68, 72, 90);
     int veryDarkColumnSpan = submitDarkColumnSpan(pixels, 28, 64, 68, 72, 90);
-    return veryDarkPixels >= 2 && veryDarkColumns >= 2 && veryDarkColumnSpan >= 2;
+    // At the native 1080px Pixel resolution the shortest accepted value can be reduced by the
+    // 96x144 probe to two adjacent dark samples on one row. Keep the wider-span rule for normal
+    // glyphs, but accept that compact shape only when it is horizontal: a caret is one vertical
+    // column and must remain a blank value.
+    int maximumDarkPixelsInOneRow = submitMaximumDarkPixelsInOneRow(
+      pixels, 28, 64, 68, 72, 90
+    );
+    boolean compactTwoSampleValue = veryDarkColumnSpan >= 1 && maximumDarkPixelsInOneRow >= 2;
+    return veryDarkPixels >= 2 && veryDarkColumns >= 2 &&
+      (veryDarkColumnSpan >= 2 || compactTwoSampleValue);
+  }
+
+  private static int submitMaximumDarkPixelsInOneRow(
+    int[] pixels,
+    int left,
+    int top,
+    int right,
+    int bottom,
+    int maxLuminance
+  ) {
+    int maximum = 0;
+    for (int y = Math.max(0, top); y < Math.min(SUBMIT_SAMPLE_HEIGHT, bottom); y++) {
+      int rowDark = 0;
+      for (int x = Math.max(0, left); x < Math.min(SUBMIT_SAMPLE_WIDTH, right); x++) {
+        if (luminance(submitPixelAt(pixels, x, y)) <= maxLuminance) {
+          rowDark += 1;
+        }
+      }
+      maximum = Math.max(maximum, rowDark);
+    }
+    return maximum;
   }
 
   private static int submitDarkPixelCount(
@@ -398,21 +430,15 @@ public final class TicketControlCodeVisualClassifier {
 
   private static boolean frameHasControlCodeInputPopup(int[] pixels) {
     VisualStats dialog = visualStats(pixels, 8, 30, 40, 45);
-    VisualStats inputLine = visualStats(pixels, 13, 38, 36, 41);
     VisualStats shiftedDialog = visualStats(pixels, 8, 16, 40, 30);
-    VisualStats shiftedInputLine = visualStats(pixels, 13, 21, 36, 25);
     boolean dialogVisible = dialog.mean >= 125.0 &&
       dialog.lightRatio >= 0.46 &&
       dialog.darkRatio <= 0.28 &&
       dialog.contrast <= 95.0;
-    boolean inputLineVisible = inputLine.darkRatio >= 0.08 &&
-      inputLine.contrast >= 22.0;
     boolean shiftedDialogVisible = shiftedDialog.mean >= 125.0 &&
       shiftedDialog.lightRatio >= 0.46 &&
       shiftedDialog.darkRatio <= 0.28 &&
       shiftedDialog.contrast <= 95.0;
-    boolean shiftedInputLineVisible = shiftedInputLine.darkRatio >= 0.08 &&
-      shiftedInputLine.contrast >= 22.0;
     VisualStats darkDialog = visualStats(pixels, 4, 26, 44, 43);
     VisualStats shiftedDarkDialog = visualStats(pixels, 4, 12, 44, 31);
     boolean darkDialogVisible = darkDialog.mean <= 85.0 &&
@@ -423,8 +449,11 @@ public final class TicketControlCodeVisualClassifier {
       shiftedDarkDialog.darkRatio >= 0.65 &&
       shiftedDarkDialog.lightRatio <= 0.12 &&
       shiftedDarkDialog.contrast <= 90.0;
-    return (dialogVisible && (frameHasControlCodePopupOrangeOkButton(pixels) || inputLineVisible)) ||
-      (shiftedDialogVisible && (frameHasShiftedControlCodePopupOrangeOkButton(pixels) || shiftedInputLineVisible)) ||
+    // A dark input line is not sufficient proof: the Aztec ticket detail also contains dark
+    // text and separators in this area. Require the popup's colored action band for light
+    // sheets, just as the dark-sheet path already requires its blue action band.
+    return (dialogVisible && frameHasControlCodePopupOrangeOkButton(pixels)) ||
+      (shiftedDialogVisible && frameHasShiftedControlCodePopupOrangeOkButton(pixels)) ||
       (darkDialogVisible && frameHasControlCodePopupBlueButton(pixels, 34, 40)) ||
       (shiftedDarkDialogVisible && frameHasControlCodePopupBlueButton(pixels, 20, 29));
   }
@@ -455,7 +484,9 @@ public final class TicketControlCodeVisualClassifier {
   private static boolean frameHasOrangeControlCodePopupButton(int[] pixels, int top, int bottom) {
     int sampled = 0;
     int orange = 0;
+    int qualifyingRows = 0;
     for (int y = top; y < bottom; y++) {
+      int rowOrange = 0;
       for (int x = 31; x < 42; x++) {
         int pixel = pixelAt(pixels, x, y);
         int red = (pixel >> 16) & 0xff;
@@ -463,11 +494,15 @@ public final class TicketControlCodeVisualClassifier {
         int blue = pixel & 0xff;
         if (red >= 155 && green >= 80 && green <= 190 && blue <= 95 && red - green >= 20 && green - blue >= 25) {
           orange += 1;
+          rowOrange += 1;
         }
         sampled += 1;
       }
+      if (rowOrange >= 6) {
+        qualifyingRows += 1;
+      }
     }
-    return sampled > 0 && orange / (double) sampled >= 0.08;
+    return sampled > 0 && qualifyingRows >= 3 && orange / (double) sampled >= 0.08;
   }
 
   private static boolean frameHasControlCodePopupBlueButton(int[] pixels, int top, int bottom) {
@@ -504,8 +539,10 @@ public final class TicketControlCodeVisualClassifier {
       RESULT_CHIP_LIGHT_LUMINANCE
     );
     int chipRows = generatedChipDarkRows(pixels, chipTop);
+    int longRunRows = generatedChipLongRunRows(pixels, chipTop);
     return chip.darkRatio >= 0.50 && chip.lightRatio >= 0.01 &&
-      chip.lightRatio <= 0.48 && chip.contrast >= 20.0 && chipRows >= 3;
+      chip.lightRatio <= 0.48 && chip.contrast >= 20.0 && chipRows >= 3 &&
+      longRunRows >= RESULT_CHIP_MIN_LONG_RUN_ROWS;
   }
 
   private static int findGeneratedControlCodeResultChipTop(int[] pixels) {
@@ -551,6 +588,26 @@ public final class TicketControlCodeVisualClassifier {
       if (rowDark >= RESULT_CHIP_MIN_DARK_ROW_PIXELS) darkRows++;
     }
     return darkRows;
+  }
+
+  private static int generatedChipLongRunRows(int[] pixels, int top) {
+    int qualifyingRows = 0;
+    for (int y = top; y < top + RESULT_CHIP_HEIGHT && y < SAMPLE_HEIGHT; y++) {
+      int longestRun = 0;
+      int currentRun = 0;
+      for (int x = 7; x < SAMPLE_WIDTH - 7; x++) {
+        if (luminance(pixelAt(pixels, x, y)) <= RESULT_CHIP_DARK_LUMINANCE) {
+          currentRun += 1;
+          longestRun = Math.max(longestRun, currentRun);
+        } else {
+          currentRun = 0;
+        }
+      }
+      if (longestRun >= RESULT_CHIP_MIN_LONG_DARK_RUN_PIXELS) {
+        qualifyingRows += 1;
+      }
+    }
+    return qualifyingRows;
   }
 
   private static boolean frameHasRawTicketCodeGraphic(int[] pixels) {

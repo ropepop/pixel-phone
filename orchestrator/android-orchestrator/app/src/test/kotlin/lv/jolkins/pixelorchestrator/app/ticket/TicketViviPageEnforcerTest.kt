@@ -109,9 +109,32 @@ class TicketViviPageEnforcerTest {
     assertEquals(540, action?.x)
     assertEquals(1233, action?.y)
     assertEquals("[68,1160][1012,1307]", action?.bounds)
+    val detailAction = TicketViviPageEnforcer.ticketCardDetailActionForHierarchy(xml)
+    assertEquals("open_fresh_time_ticket_detail_card", detailAction?.reason)
+    assertEquals(540, detailAction?.x)
+    assertEquals("[0,536][1080,1793]", detailAction?.bounds)
+    assertTrue((detailAction?.y ?: -1) in 560..1136)
+    assertFalse((detailAction?.y ?: -1) in 1160..1307)
     assertTrue(TicketViviPageEnforcer.isTicketListWithCardAndRegistrationButton(xml))
-    assertEquals("open_fresh_time_ticket_registration_button", TicketViviPageEnforcer.recoveryActionForHierarchy(xml)?.reason)
+    assertEquals("open_fresh_time_ticket_detail_card", TicketViviPageEnforcer.recoveryActionForHierarchy(xml)?.reason)
     assertTrue(TicketViviPageEnforcer.ticketCardSelectionSummaryForHierarchy(xml).contains("target=new_ticket_registration_button"))
+  }
+
+  @Test
+  fun ticketListIsOnlyARecoverySourceAndNeverTheFinalTicketDetailState() {
+    val currentRange = currentTicketDateRange()
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="Manas biļetes" bounds="[288,158][792,270]" />
+        <node package="com.pv.vivi" class="android.widget.ImageView" content-desc="Cena–Rīga&#10;30 dienu biļete&#10;Derīga&#10;$currentRange&#10;Cena&#10;46.00€&#10;Biļete reģistrēta&#10;AS “Pasažieru Vilciens” PVN Reģ. Nr. LV40003567907" clickable="true" bounds="[0,536][1080,1793]">
+          <node package="com.pv.vivi" class="android.widget.Button" content-desc="Reģistrēt biļeti&#10;jaunam braucienam" clickable="true" enabled="true" bounds="[68,1160][1012,1307]" />
+        </node>
+      </hierarchy>
+    """.trimIndent()
+
+    assertEquals(TicketViviRecoveryState.TICKET_LIST_WITH_CARD, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertFalse(TicketViviPageEnforcer.isTicketDetail(xml))
+    assertEquals("open_fresh_time_ticket_detail_card", TicketViviPageEnforcer.recoveryActionForHierarchy(xml)?.reason)
   }
 
   @Test
@@ -249,7 +272,7 @@ class TicketViviPageEnforcerTest {
     assertEquals("open_fresh_time_ticket_card", action?.reason)
     assertEquals(540, action?.x)
     assertEquals(1466, action?.y)
-    assertEquals("open_fresh_time_ticket_card", recoveryAction?.reason)
+    assertEquals("open_fresh_time_ticket_detail_card", recoveryAction?.reason)
     assertEquals(540, recoveryAction?.x)
     assertEquals(1466, recoveryAction?.y)
   }
@@ -592,7 +615,7 @@ class TicketViviPageEnforcerTest {
   }
 
   @Test
-  fun detectsControlCodeResultCloseWithoutTreatingItAsTicketDetail() {
+  fun rejectsTicketHeaderCloseAsGeneratedBadgeCleanup() {
     val xml = """
       <hierarchy>
         <node package="com.pv.vivi" text="Kontroles kods" bounds="[124,548][700,604]" />
@@ -605,10 +628,7 @@ class TicketViviPageEnforcerTest {
 
     assertFalse(TicketViviPageEnforcer.isTicketDetail(xml))
     assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
-    assertEquals("close_control_code_result", close?.reason)
-    assertEquals(908, close?.x)
-    assertEquals(1220, close?.y)
-    assertEquals("[868,1180][948,1260]", close?.bounds)
+    assertNull(close)
     assertEquals("253986", LegacyTicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
   }
 
@@ -693,7 +713,7 @@ class TicketViviPageEnforcerTest {
   }
 
   @Test
-  fun generatedGraphicCloseFallbackIgnoresTopRightTicketExit() {
+  fun generatedGraphicRequiresAnActualBadgeCross() {
     val xml = """
       <hierarchy>
         <node package="com.pv.vivi" text="Kontroles kods" bounds="[124,548][700,604]" />
@@ -705,12 +725,11 @@ class TicketViviPageEnforcerTest {
     val close = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml)
 
     assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
-    assertEquals("close_control_code_result", close?.reason)
-    assertTrue("generated-code close must be aligned with the Aztec, not the ticket exit", close?.y ?: 0 > 900)
+    assertNull(close)
   }
 
   @Test
-  fun detectsGeneratedCodeResultFromSpacedNumericRowWithoutCloseNode() {
+  fun generatedNumericRowWithoutCloseNodeIsNotActionable() {
     val xml = """
       <hierarchy>
         <node package="com.pv.vivi" text="2 5 6 9 8 4 1 5" bounds="[354,1340][760,1418]" />
@@ -721,8 +740,7 @@ class TicketViviPageEnforcerTest {
 
     assertFalse(TicketViviPageEnforcer.isTicketDetail(xml))
     assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
-    assertEquals("close_control_code_result", close?.reason)
-    assertTrue("synthetic close should be to the right of the generated code", close?.x ?: 0 > 760)
+    assertNull(close)
     assertEquals("25698415", LegacyTicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
   }
 
@@ -776,7 +794,72 @@ class TicketViviPageEnforcerTest {
   }
 
   @Test
-  fun detectsNineDigitGeneratedCodeResultOverTicketDetail() {
+  fun generatedBadgeCrossWinsOverTheTicketHeaderCrossAtTheCurrentViViLayout() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.widget.Button" clickable="true" bounds="[870,205][996,331]" />
+        <node package="com.pv.vivi" class="android.widget.ImageView" bounds="[304,535][776,1008]" />
+        <node package="com.pv.vivi" text="1234" bounds="[148,1047][934,1152]" />
+        <node package="com.pv.vivi" text="×" clickable="true" bounds="[853,1082][886,1117]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val close = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml)
+
+    assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("close_control_code_result", close?.reason)
+    assertEquals(869, close?.x)
+    assertEquals(1099, close?.y)
+    assertEquals("[853,1082][886,1117]", close?.bounds)
+    assertFalse(close?.x in 870..996 && close?.y in 205..331)
+  }
+
+  @Test
+  fun detectsTwoDigitGeneratedCodeResultOverTicketDetail() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="KONTROLES KODS" clickable="true" bounds="[126,231][312,304]" />
+        <node package="com.pv.vivi" content-desc="ZONAS" bounds="[68,409][190,461]" />
+        <node package="com.pv.vivi" content-desc="PV-ELB-20260423-0RJB2M" bounds="[119,1329][961,1423]" />
+        <node package="com.pv.vivi" content-desc="12" bounds="[503,1055][577,1144]" />
+        <node package="com.pv.vivi" content-desc="Aizvērt" clickable="true" bounds="[807,1047][933,1152]" />
+        <node package="com.pv.vivi" text="30 dienu biļete" bounds="[396,1268][684,1328]" />
+        <node package="com.pv.vivi" text="24.07.2026–22.08.2026" bounds="[81,1546][601,1614]" />
+        <node package="com.pv.vivi" text="46.00€" bounds="[849,1546][999,1614]" />
+        <node package="com.pv.vivi" text="AS Pasažieru Vilciens PVN Reģ. Nr. LV40003567907" bounds="[81,1921][769,1961]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val close = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml)
+
+    assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("close_control_code_result", close?.reason)
+    assertEquals(870, close?.x)
+    assertEquals(1099, close?.y)
+    assertEquals("[807,1047][933,1152]", close?.bounds)
+  }
+
+  @Test
+  fun detectsSingleDigitRenderedGeneratedCodeWithBadgeCross() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.widget.ImageView" bounds="[304,535][776,1008]" />
+        <node package="com.pv.vivi" content-desc="8" bounds="[522,1055][558,1144]" />
+        <node package="com.pv.vivi" content-desc="Aizvērt" clickable="true" bounds="[807,1047][933,1152]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val close = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml)
+
+    assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
+    assertEquals("close_control_code_result", close?.reason)
+    assertEquals(870, close?.x)
+    assertEquals(1099, close?.y)
+    assertEquals("[807,1047][933,1152]", close?.bounds)
+  }
+
+  @Test
+  fun detectsEightDigitGeneratedCodeResultOverTicketDetail() {
     val xml = """
       <hierarchy>
         <node package="com.pv.vivi" content-desc="KONTROLES KODS" clickable="true" bounds="[53,264][450,390]" />
@@ -784,7 +867,7 @@ class TicketViviPageEnforcerTest {
         <node package="com.pv.vivi" content-desc="PV-ELB-20260423-0RJB2M" bounds="[119,1329][961,1423]" />
         <node package="com.pv.vivi" text="30 dienu biļete" bounds="[396,1593][684,1653]" />
         <node package="com.pv.vivi" text="23.04.2026 - 22.05.2026" bounds="[120,1840][700,1910]" />
-        <node package="com.pv.vivi" text="561649898" bounds="[176,1178][900,1280]" />
+        <node package="com.pv.vivi" text="56164989" bounds="[176,1178][900,1280]" />
         <node package="com.pv.vivi" text="×" clickable="true" bounds="[824,1176][916,1282]" />
       </hierarchy>
     """.trimIndent()
@@ -793,14 +876,14 @@ class TicketViviPageEnforcerTest {
 
     assertFalse(TicketViviPageEnforcer.isTicketDetail(xml))
     assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
-    assertEquals("561649898", LegacyTicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
+    assertEquals("56164989", LegacyTicketViviPageEnforcer.controlCodeResultValueForHierarchy(xml))
     assertEquals("close_control_code_result", close?.reason)
     assertEquals(870, close?.x)
     assertEquals(1229, close?.y)
   }
 
   @Test
-  fun fallsBackToGeneratedCodeRowGeometryWhenInlineCloseIsMissing() {
+  fun generatedCodeRowWithoutInlineCloseIsNotActionable() {
     val xml = """
       <hierarchy>
         <node package="com.pv.vivi" content-desc="KONTROLES KODS" clickable="true" bounds="[53,264][450,390]" />
@@ -816,10 +899,7 @@ class TicketViviPageEnforcerTest {
     val close = TicketViviPageEnforcer.controlCodeExitCloseActionForHierarchy(xml)
 
     assertEquals(TicketViviRecoveryState.CONTROL_CODE_RESULT, TicketViviPageEnforcer.classifyForRecovery(xml))
-    assertEquals("close_control_code_result", close?.reason)
-    assertEquals(908, close?.x)
-    assertEquals(1379, close?.y)
-    assertEquals("[869,1340][947,1418]", close?.bounds)
+    assertNull(close)
   }
 
   @Test
@@ -957,7 +1037,7 @@ class TicketViviPageEnforcerTest {
     assertEquals("close_control_code_result", TicketViviPageEnforcer.recoveryActionForHierarchy(resultXml)?.reason)
     val listXml = ticketsListXml()
     assertEquals(TicketViviRecoveryState.TICKET_LIST_WITH_CARD, TicketViviPageEnforcer.classifyForRecovery(listXml))
-    assertEquals("open_fresh_time_ticket_card", TicketViviPageEnforcer.recoveryActionForHierarchy(listXml)?.reason)
+    assertEquals("open_fresh_time_ticket_detail_card", TicketViviPageEnforcer.recoveryActionForHierarchy(listXml)?.reason)
     val otherTabXml = """
       <hierarchy>
         <node package="com.pv.vivi" content-desc="Maršruta plānošana" bounds="[200,300][900,390]" />
