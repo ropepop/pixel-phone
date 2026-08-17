@@ -147,17 +147,19 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     return withContext(Dispatchers.Main.immediate) {
       val root = rootForPackage(expectedPackageName) ?: return@withContext emptyList()
       val flattenedNodes = flattenNodes(root).toList()
-      val visibleNodes = flattenedNodes.filter { node -> node.isVisibleToUser }
-      visibleNodes.ifEmpty {
-        // Some secure/Flutter windows can expose useful semantic nodes while
-        // reporting them as not visible to the in-process AccessibilityService.
-        // Keep the snapshot cheap by reusing the current node tree instead of
-        // falling back to the ~2.4s uiautomator shell dump.
-        flattenedNodes.filter { node ->
+      // Some secure/Flutter windows expose the popup's editable field and
+      // prompt semantics while reporting those nodes as not visible to the
+      // in-process service. Keep those important semantic nodes in the same
+      // cheap tree; otherwise the fast path sees the OK button but cannot
+      // prove the input surface. This still avoids the multi-second shell
+      // uiautomator dump and does not expose arbitrary hidden nodes.
+      flattenedNodes.filter { node ->
+        node.isVisibleToUser ||
+          node.isEditable ||
+          node.className?.toString()?.contains("EditText", ignoreCase = true) == true ||
           node.textValue().isNotBlank() ||
-            node.contentDescriptionValue().isNotBlank() ||
-            node.resourceIdValue().isNotBlank()
-        }
+          node.contentDescriptionValue().isNotBlank() ||
+          node.resourceIdValue().isNotBlank()
       }
         .map { node ->
           val bounds = Rect()

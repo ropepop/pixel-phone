@@ -571,6 +571,24 @@ class TicketViviPageEnforcerTest {
   }
 
   @Test
+  fun recognizesAccessibilityPromptWordingWithoutInputHint() {
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" class="android.view.View" content-desc="Ievadi kontroles kodu" bounds="[236,1096][845,1149]" />
+        <node package="com.pv.vivi" class="android.widget.EditText" clickable="true" enabled="true" focusable="true" bounds="[251,1175][829,1301]" />
+        <node package="com.pv.vivi" class="android.widget.Button" content-desc="OK" clickable="true" enabled="true" bounds="[713,1327][881,1453]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val surface = TicketViviPageEnforcer.controlCodePopupSurfaceForHierarchy(xml)
+
+    assertEquals("focus_control_code_input", surface?.input?.reason)
+    assertEquals("submit_control_code_popup", surface?.submit?.reason)
+    assertEquals(540, surface?.input?.x)
+    assertEquals(1390, surface?.submit?.y)
+  }
+
+  @Test
   fun detectsLiveControlCodePopupSubmitButton() {
     val xml = """
       <hierarchy>

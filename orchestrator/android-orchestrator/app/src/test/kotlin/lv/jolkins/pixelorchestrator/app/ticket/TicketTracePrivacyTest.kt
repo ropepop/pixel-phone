@@ -9,10 +9,21 @@ class TicketTracePrivacyTest {
   @Test
   fun keepsOnlyBoundedNumericAndBooleanFields() {
     val fields = TicketTracePrivacy.allowlistedFields(
-      "viewer=account-42 reason=/data/local/private output=secret generation=9 ok=true duration_ms=250"
+      "viewer=account-42 reason=/data/local/private output=secret generation=9 ok=true duration_ms=250 " +
+        "database_to_phone_ms=362 popup_open_ms=2997 popup_to_first_input_ms=935"
     )
 
-    assertEquals(mapOf("generation" to "9", "ok" to "true", "duration_ms" to "250"), fields)
+    assertEquals(
+      mapOf(
+        "generation" to "9",
+        "ok" to "true",
+        "duration_ms" to "250",
+        "database_to_phone_ms" to "362",
+        "popup_open_ms" to "2997",
+        "popup_to_first_input_ms" to "935"
+      ),
+      fields
+    )
     assertFalse(fields.containsKey("viewer"))
     assertFalse(fields.containsKey("reason"))
     assertFalse(fields.containsKey("output"))

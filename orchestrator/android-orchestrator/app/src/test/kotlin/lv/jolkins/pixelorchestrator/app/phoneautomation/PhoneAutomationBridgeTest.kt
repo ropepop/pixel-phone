@@ -489,7 +489,8 @@ class PhoneAutomationBridgeTest {
     assertTrue(source.contains("windows.asSequence()"))
     assertTrue(source.contains("rootForPackage(expectedPackageName) ?: return@withContext"))
     assertTrue("Flutter/secure windows can expose the expected package only on descendant nodes", source.contains("nodePackageMatchesExpected"))
-    assertTrue("Snapshot should fall back to semantically useful nodes when accessibility marks all nodes not-visible", source.contains("visibleNodes.ifEmpty"))
+    assertTrue("Snapshot should retain semantic input nodes when accessibility marks them not-visible", source.contains("node.isEditable"))
+    assertTrue("Snapshot should retain EditText nodes when accessibility marks them not-visible", source.contains("contains(\"EditText\", ignoreCase = true)"))
     assertTrue("RS Flutter code fields may be exposed as enabled EditText nodes even when visible=false", source.contains("private fun editableNodes(root: AccessibilityNodeInfo)"))
     assertTrue("Editable field lookup should prefer visible nodes but fall back to enabled semantic EditText nodes", source.contains("editableNodes(root).firstOrNull { node -> node.isVisibleToUser }\n      ?: editableNodes(root).firstOrNull()"))
   }

@@ -1,11 +1,13 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.runInterruptible
 import lv.jolkins.pixelorchestrator.rootexec.RootExecutor
 import lv.jolkins.pixelorchestrator.rootexec.RootResult
 import java.io.BufferedReader
@@ -40,12 +42,17 @@ class TicketRootCommandWorker : RootExecutor, AutoCloseable {
       try {
         withTimeout(timeout) {
           mutex.withLock {
-            executeLocked(script, start, timeout)
+            runInterruptible {
+              executeLocked(script, start, timeout)
+            }
           }
         }
       } catch (timeoutError: TimeoutCancellationException) {
         restartLocked()
         rootCommandTimedOut(script, start, timeout)
+      } catch (cancelled: CancellationException) {
+        restartLocked()
+        throw cancelled
       } catch (error: Throwable) {
         restartLocked()
         RootResult(
