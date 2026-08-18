@@ -51,6 +51,34 @@ internal data class TicketSliderApplicationResult(
   val scheduledResetAt: String = ""
 )
 
+internal fun sliderApplied(
+  ok: Boolean,
+  reason: String,
+  status: String,
+  sequence: Long,
+  progress: Int,
+  leasePhase: String,
+  leaseExpiresAt: String = "",
+  ownerPublicId: String = "",
+  controlId: String = "",
+  activationRevision: String = "",
+  activationAt: String = "",
+  scheduledResetAt: String = ""
+) = TicketSliderApplicationResult(
+  ok = ok,
+  reason = reason,
+  status = status,
+  lastAppliedSequence = sequence.toString(),
+  lastAppliedProgress = progress,
+  leasePhase = leasePhase,
+  leaseExpiresAt = leaseExpiresAt,
+  ownerPublicId = ownerPublicId,
+  controlId = controlId,
+  activationRevision = activationRevision,
+  activationAt = activationAt,
+  scheduledResetAt = scheduledResetAt
+)
+
 internal data class TicketRegistrationProof(
   val status: String,
   val reason: String,

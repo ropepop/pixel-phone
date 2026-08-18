@@ -1,6 +1,12 @@
 # Ticket Streaming Architecture
 
-This is the canonical architecture map for the Pixel-side ticket streaming subsystem. The current measurement history lives in [ticket-streaming-responsiveness-analysis-20260502.md](../../ops/reports/ticket-streaming-responsiveness-analysis-20260502.md); keep stable flow and safety rules here. Use [Touch Brightness Architecture](./TOUCH_BRIGHTNESS_ARCHITECTURE.md) for panel-brightness ownership and [ROOT_OPERATIONS](../runbooks/ROOT_OPERATIONS.md) for general Pixel operations.
+This is the deep Pixel stream and capture note. It is not the first Ticket document.
+
+For live Ticket page work, start from the ops checkout `workloads/ticket-remote/CURRENT.md`. The current product is: open the signed-in page, get a live ticket picture, show the oval only after that picture is there, swipe to register with a short picture burst, open a fresh unused ticket from inside ViVi, and request a control code when needed.
+
+Old Ticket pictures and proof packs now live in `archive/ticket/`. Do not start there.
+
+The older measurement history lives in [ticket-streaming-responsiveness-analysis-20260502.md](../../ops/reports/ticket-streaming-responsiveness-analysis-20260502.md). Use [Touch Brightness Architecture](./TOUCH_BRIGHTNESS_ARCHITECTURE.md) for panel-brightness ownership and [ROOT_OPERATIONS](../runbooks/ROOT_OPERATIONS.md) for general Pixel operations.
 
 ## Source Of Truth By Flow
 

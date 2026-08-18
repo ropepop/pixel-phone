@@ -1268,6 +1268,7 @@ class TicketStreamService : Service() {
     if (activeTicketSliderGesture != null) {
       return TicketSpacetimeCommandResult(false, "slider_already_active", ticketSpacetimeStreamState())
     }
+    beginTicketSliderCaptureBurst("ticket_slider_claim_received")
     val startedAtMillis = SystemClock.elapsedRealtime()
     val reusedProof = currentTicketRegistrationProof?.takeIf { proof ->
       proof.status == "unactivated_ready" &&
@@ -1394,17 +1395,7 @@ class TicketStreamService : Service() {
     }
     if (phase == "heartbeat") {
       active.lastAppliedSequence = sequence
-      return TicketSliderApplicationResult(
-        ok = true,
-        reason = "slider_heartbeat_applied",
-        status = "control_active",
-        lastAppliedSequence = sequence.toString(),
-        lastAppliedProgress = progress,
-        leasePhase = "active",
-        leaseExpiresAt = interaction.leaseExpiresAt,
-        ownerPublicId = interaction.ownerPublicId,
-        controlId = interaction.controlId
-      )
+      return sliderApplied(true, "slider_heartbeat_applied", "control_active", sequence, progress, "active", interaction.leaseExpiresAt, interaction.ownerPublicId, interaction.controlId)
     }
     val duration = sliderSegmentDurationMillis(active.lastAppliedProgress, progress)
     val moved = if (phase == "up" || phase == "cancel") {
@@ -1428,45 +1419,15 @@ class TicketStreamService : Service() {
       activeTicketSliderGesture = null
       endTicketSliderCaptureBurst("ticket_slider_stroke_failed")
       recordTicketEvent("ticket_slider_stroke_failed", "reason=accessibility_gesture_dispatch_failed")
-      return TicketSliderApplicationResult(
-        ok = false,
-        reason = "accessibility_gesture_dispatch_failed",
-        status = "unactivated_ready",
-        lastAppliedSequence = sequence.toString(),
-        lastAppliedProgress = progress,
-        leasePhase = "cooldown",
-        leaseExpiresAt = interaction.leaseExpiresAt,
-        ownerPublicId = interaction.ownerPublicId,
-        controlId = interaction.controlId
-      )
+      return sliderApplied(false, "accessibility_gesture_dispatch_failed", "unactivated_ready", sequence, progress, "cooldown", interaction.leaseExpiresAt, interaction.ownerPublicId, interaction.controlId)
     }
     if (phase == "up" || phase == "cancel") {
       activeTicketSliderGesture = null
       endTicketSliderCaptureBurst("ticket_slider_stroke_ended")
       recordTicketEvent("ticket_slider_stroke_ended", "phase=$phase progress=$progress")
-      return TicketSliderApplicationResult(
-        ok = true,
-        reason = if (phase == "cancel") "slider_cancelled" else "slider_released_below_completion",
-        status = "unactivated_ready",
-        lastAppliedSequence = sequence.toString(),
-        lastAppliedProgress = progress,
-        leasePhase = "cooldown",
-        leaseExpiresAt = interaction.leaseExpiresAt,
-        ownerPublicId = "",
-        controlId = ""
-      )
+      return sliderApplied(true, if (phase == "cancel") "slider_cancelled" else "slider_released_below_completion", "unactivated_ready", sequence, progress, "cooldown", interaction.leaseExpiresAt)
     }
-    return TicketSliderApplicationResult(
-      ok = true,
-      reason = "slider_input_applied",
-      status = "control_active",
-      lastAppliedSequence = sequence.toString(),
-      lastAppliedProgress = progress,
-      leasePhase = interaction.leasePhase,
-      leaseExpiresAt = interaction.leaseExpiresAt,
-      ownerPublicId = interaction.ownerPublicId,
-      controlId = interaction.controlId
-    )
+    return sliderApplied(true, "slider_input_applied", "control_active", sequence, progress, interaction.leasePhase, interaction.leaseExpiresAt, interaction.ownerPublicId, interaction.controlId)
   }
 
   private suspend fun completeTicketSliderInteraction(
@@ -1490,52 +1451,20 @@ class TicketStreamService : Service() {
     if (!ended) {
       activeTicketSliderGesture = null
       endTicketSliderCaptureBurst("ticket_slider_completion_gesture_failed")
-      return TicketSliderApplicationResult(
-        ok = false,
-        reason = "slider_completion_gesture_failed",
-        status = "unactivated_ready",
-        lastAppliedSequence = sequence.toString(),
-        lastAppliedProgress = progress,
-        leasePhase = "cooldown",
-        leaseExpiresAt = "",
-        ownerPublicId = active.controlId,
-        controlId = active.controlId
-      )
+      return sliderApplied(false, "slider_completion_gesture_failed", "unactivated_ready", sequence, progress, "cooldown", ownerPublicId = active.controlId, controlId = active.controlId)
     }
     val activated = awaitActivatedTicketProof()
     activeTicketSliderGesture = null
     endTicketSliderCaptureBurst("ticket_slider_completion_finished")
     if (!activated) {
       recordTicketEvent("ticket_slider_activation_failed", "reason=activated_detail_unproved")
-      return TicketSliderApplicationResult(
-        ok = false,
-        reason = "activated_detail_unproved",
-        status = "needs_attention",
-        lastAppliedSequence = sequence.toString(),
-        lastAppliedProgress = progress,
-        leasePhase = "cooldown",
-        leaseExpiresAt = "",
-        ownerPublicId = "",
-        controlId = ""
-      )
+      return sliderApplied(false, "activated_detail_unproved", "needs_attention", sequence, progress, "cooldown")
     }
     val activationRevision = "activation_${SystemClock.elapsedRealtime()}_${frameSequence}".take(120)
     pendingActivationRevision = activationRevision
     recordTicketEvent("ticket_slider_activation_proved", "activation_revision=$activationRevision")
     requestKeyFrame("ticket_slider_activation_proved")
-    return TicketSliderApplicationResult(
-      ok = true,
-      reason = "activated_aztec_proved",
-      status = "activated",
-      lastAppliedSequence = sequence.toString(),
-      lastAppliedProgress = progress,
-      leasePhase = "none",
-      leaseExpiresAt = "",
-      ownerPublicId = "",
-      controlId = "",
-      activationRevision = activationRevision,
-      activationAt = java.time.Instant.now().toString()
-    )
+    return sliderApplied(true, "activated_aztec_proved", "activated", sequence, progress, "none", activationRevision = activationRevision, activationAt = java.time.Instant.now().toString())
   }
 
   private fun nullResultForSlider(
@@ -1543,17 +1472,7 @@ class TicketStreamService : Service() {
     sequence: Long,
     progress: Int
   ): TicketSliderApplicationResult {
-    return TicketSliderApplicationResult(
-      ok = true,
-      reason = "slider_completion_in_progress",
-      status = "completing",
-      lastAppliedSequence = sequence.toString(),
-      lastAppliedProgress = progress,
-      leasePhase = "active",
-      leaseExpiresAt = "",
-      ownerPublicId = "",
-      controlId = active.controlId
-    )
+    return sliderApplied(true, "slider_completion_in_progress", "completing", sequence, progress, "active", controlId = active.controlId)
   }
 
   private fun sliderSegmentDurationMillis(previousProgress: Int, progress: Int): Long {
@@ -2192,6 +2111,7 @@ class TicketStreamService : Service() {
               )
               markLatestTicketReselectTicketDetailObserved(result)
               beginLatestTicketReselectStreamProof(reason, commandId)
+              beginTicketSliderCaptureBurst("unused_ticket_reset_ready")
               true
             }
           } else {
@@ -2222,7 +2142,9 @@ class TicketStreamService : Service() {
         updateTicketSessionState(TICKET_SESSION_LIVE, "latest_ticket_reselect_ticket_detail_ready")
         cacheForegroundViolation(null)
         startForegroundGuard()
-        if (requireUnactivatedRegistration && ticketSpacetimeBackgroundStreamAlreadyHealthy()) {
+        if (requireUnactivatedRegistration) {
+          requestKeyFrame("latest_ticket_reselect_ticket_detail_ready")
+        } else if (ticketSpacetimeBackgroundStreamAlreadyHealthy()) {
           requestKeyFrame("latest_ticket_reselect_ticket_detail_ready")
         } else {
           restartActiveStreamEngine("latest_ticket_reselect")
@@ -4840,8 +4762,8 @@ class TicketStreamService : Service() {
       payload = frame.payload
     )
     hardwareCaptureSnapshot = rootHardwareH264CaptureEngine.snapshot()
-    if (hardwareCaptureVerified) {
-      recordStartupTracePhase("first_visible_frame_sent", "sequence=$frameSequence keyframe=${frame.keyFrame}", once = true, complete = true)
+    if (hardwareCaptureVerified || firstVisibleFrame) {
+      recordStartupTracePhase("first_visible_frame_sent", "sequence=$frameSequence keyframe=${frame.keyFrame}", once = true, complete = hardwareCaptureVerified)
       if (lastStreamRecoveryResult == "started") {
         lastStreamRecoveryResult = "succeeded"
         lastStreamRecoveryFailureReason = null
@@ -12697,12 +12619,12 @@ class TicketStreamService : Service() {
     private const val LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS = 30_000L
     private const val LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS = 60_000L
     private const val LATEST_TICKET_RESELECT_IN_APP_ACTION_GRACE_MILLIS = 2_500L
-    private const val LATEST_TICKET_RESELECT_IN_APP_RESET_BUDGET_MILLIS = 12_000L
-    private const val LATEST_TICKET_RESELECT_IN_APP_ACTION_SETTLE_MILLIS = 180L
-    private const val LATEST_TICKET_RESELECT_IN_APP_ACTION_COOLDOWN_MILLIS = 700L
-    private const val LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS = 20_000L
+    private const val LATEST_TICKET_RESELECT_IN_APP_RESET_BUDGET_MILLIS = 8_000L
+    private const val LATEST_TICKET_RESELECT_IN_APP_ACTION_SETTLE_MILLIS = 80L
+    private const val LATEST_TICKET_RESELECT_IN_APP_ACTION_COOLDOWN_MILLIS = 280L
+    private const val LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS = 4_000L
     private const val LATEST_TICKET_RESELECT_PROOF_HOLD_MILLIS =
-      LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS + 5_000L
+      LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS + 1_500L
     private const val LATEST_TICKET_RESELECT_PROOF_NUDGE_MILLIS = 1_000L
     private const val LATEST_TICKET_RESELECT_PROOF_IDLE_STOP_GRACE_MILLIS = 2_000L
     private const val LATEST_TICKET_RESELECT_ACTIVE_WINDOW_MILLIS =

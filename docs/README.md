@@ -4,6 +4,7 @@ Architecture first:
 - [Architecture Index](./architecture/INDEX.md)
 - [Pixel Stack Architecture](./architecture/PIXEL_STACK_ARCHITECTURE.md)
 - [Ticket Streaming Architecture](./architecture/TICKET_STREAMING_ARCHITECTURE.md)
+- Live Ticket page work starts from the ops checkout `workloads/ticket-remote/CURRENT.md`. Leftover Ticket pictures and proof packs are in `archive/ticket/`.
 
 Canonical operations manual:
 - [ROOT_OPERATIONS](./runbooks/ROOT_OPERATIONS.md)
