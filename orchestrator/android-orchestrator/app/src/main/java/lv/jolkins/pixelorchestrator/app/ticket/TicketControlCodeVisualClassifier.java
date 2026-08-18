@@ -86,6 +86,27 @@ public final class TicketControlCodeVisualClassifier {
   }
 
   /**
+   * Proves the normal activated ticket detail after hierarchy has already proved the activated
+   * ViVi state. The ordinary classifier intentionally gives a dark generated-result strip
+   * precedence over the Aztec graphic; the activated ticket has its own dark status strip, so
+   * reusing that precedence would reject a real activated detail. The hierarchy gate remains
+   * mandatory in the caller, and this method still requires the fresh Aztec/detail visual.
+   */
+  public static String classifyForActivatedTicket(int[] pixels) {
+    if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT) {
+      return UNKNOWN;
+    }
+    if (frameHasControlCodeInputPopup(pixels)) {
+      return CONTROL_POPUP;
+    }
+    // The activated status strip occupies the separator row that the ordinary RAW_TICKET
+    // classifier uses to distinguish a plain ticket from a generated-result overlay. For this
+    // proof the hierarchy has already established the activated state, so the fresh header plus
+    // Aztec/detail base is the correct visual requirement.
+    return frameHasTicketDetailBase(pixels) ? RAW_TICKET : UNKNOWN;
+  }
+
+  /**
    * Proves the post-cleanup ticket list from the existing fixed-size rooted H.264 probe.
    *
    * <p>The current ViVi ticket list has a wide yellow "Reģistrēt biļeti" band immediately
@@ -147,6 +168,97 @@ public final class TicketControlCodeVisualClassifier {
       }
     }
     return qualifyingRows >= 3 && widestYellowRow >= 30;
+  }
+
+  /**
+   * Returns the privacy-safe probe rectangle of the registration slider, or an empty string.
+   *
+   * <p>This deliberately reports only four coordinates from the already down-sampled rooted
+   * probe. It does not export the probe pixels. The hierarchy supplies the semantic registration
+   * anchor; this method supplies the actual wide orange track and its left-hand dark thumb so the
+   * caller can reject a narrow text node or a ticket-list registration button.</p>
+   */
+  public static String registrationSliderBounds(int[] pixels) {
+    if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT ||
+        !frameHasTicketDetailBase(pixels)) {
+      return "";
+    }
+    int bestLeft = -1;
+    int bestTop = -1;
+    int bestRight = -1;
+    int bestBottom = -1;
+    int bestScore = Integer.MIN_VALUE;
+    int bandStart = -1;
+    int bandLeft = SAMPLE_WIDTH;
+    int bandRight = -1;
+    for (int y = 38; y <= 55; y++) {
+      int rowLeft = SAMPLE_WIDTH;
+      int rowRight = -1;
+      int orangePixels = 0;
+      for (int x = 2; x < SAMPLE_WIDTH - 2; x++) {
+        if (isRegistrationOrange(pixelAt(pixels, x, y))) {
+          orangePixels += 1;
+          rowLeft = Math.min(rowLeft, x);
+          rowRight = Math.max(rowRight, x);
+        }
+      }
+      boolean qualifyingRow = orangePixels >= 20 && rowRight > rowLeft;
+      if (qualifyingRow) {
+        if (bandStart < 0) {
+          bandStart = y;
+          bandLeft = rowLeft;
+          bandRight = rowRight;
+        } else {
+          bandLeft = Math.min(bandLeft, rowLeft);
+          bandRight = Math.max(bandRight, rowRight);
+        }
+        int bandBottom = y + 1;
+        int bandHeight = bandBottom - bandStart;
+        int bandWidth = bandRight - bandLeft + 1;
+        int score = bandHeight * 100 + bandWidth * 3 + orangePixels;
+        if (bandHeight >= 3 && bandWidth >= 24 && score > bestScore) {
+          bestScore = score;
+          bestLeft = bandLeft;
+          bestTop = bandStart;
+          bestRight = bandRight + 1;
+          bestBottom = bandBottom;
+        }
+      } else if (bandStart >= 0) {
+        // A gap terminates the candidate. The next qualifying row starts a new band.
+        bandStart = -1;
+        bandLeft = SAMPLE_WIDTH;
+        bandRight = -1;
+      }
+    }
+    if (bestLeft < 0) {
+      return "";
+    }
+
+    int leftZoneEnd = Math.min(bestRight, bestLeft + Math.max(5, (bestRight - bestLeft) / 4));
+    int darkThumbPixels = 0;
+    for (int y = bestTop; y < bestBottom; y++) {
+      for (int x = bestLeft; x < leftZoneEnd; x++) {
+        if (luminance(pixelAt(pixels, x, y)) <= 120 &&
+            !isRegistrationOrange(pixelAt(pixels, x, y))) {
+          darkThumbPixels += 1;
+        }
+      }
+    }
+    if (darkThumbPixels < 3) {
+      return "";
+    }
+    int left = Math.max(0, bestLeft - 1);
+    int top = Math.max(0, bestTop - 1);
+    int right = Math.min(SAMPLE_WIDTH, bestRight + 1);
+    int bottom = Math.min(SAMPLE_HEIGHT, bestBottom + 1);
+    return left + "," + top + "," + right + "," + bottom;
+  }
+
+  private static boolean isRegistrationOrange(int pixel) {
+    int red = (pixel >> 16) & 0xff;
+    int green = (pixel >> 8) & 0xff;
+    int blue = pixel & 0xff;
+    return red >= 180 && green >= 100 && green <= 235 && blue <= 100 && red - green >= 25;
   }
 
   /**

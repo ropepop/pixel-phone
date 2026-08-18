@@ -184,12 +184,19 @@ public final class TicketRootHardwareH264CaptureMain {
             }
           }
           if (controlCodeVisualProbeActive) {
-            String state = classifyControlCodeVisualState(
+            VisualProbeClassification visual = classifyControlCodeVisualState(
               source.bitmap,
               sourceCrop,
               visualProbeRequest.cleanup,
-              visualProbeRequest.submitLayout
+              visualProbeRequest.submitLayout,
+              "ticket_detail".equals(visualProbeRequest.reason) ||
+                visualProbeRequest.activatedTicket,
+              visualProbeRequest.activatedTicket
             );
+            String state = visual.state;
+            String boundsDiagnostic = visual.sliderBounds.isEmpty()
+              ? ""
+              : " slider_bounds=" + visual.sliderBounds;
             if (state.equals("generated")) {
               if (visualProbeRequest.generated.compareAndSet(false, true)) {
                 visualProbeRequest.lastReportMillis.set(started);
@@ -197,14 +204,14 @@ public final class TicketRootHardwareH264CaptureMain {
                 System.err.println(
                   "CONTROL_CODE_VISUAL result=generated reason=" + safeDiagnosticValue(visualProbeRequest.reason) +
                     " probe_id=" + visualProbeRequest.id +
-                    " method=h264_bitmap_probe"
+                    " method=h264_bitmap_probe" + boundsDiagnostic
                 );
               } else if (started - visualProbeRequest.lastReportMillis.get() >= CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS) {
                 visualProbeRequest.lastReportMillis.set(started);
                 System.err.println(
                   "CONTROL_CODE_VISUAL result=generated reason=" + safeDiagnosticValue(visualProbeRequest.reason) +
                     " probe_id=" + visualProbeRequest.id +
-                    " method=h264_bitmap_probe"
+                    " method=h264_bitmap_probe" + boundsDiagnostic
                 );
               }
             } else if (started - visualProbeRequest.lastReportMillis.get() >= CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS) {
@@ -213,7 +220,7 @@ public final class TicketRootHardwareH264CaptureMain {
                 "CONTROL_CODE_VISUAL result=" + state +
                   " reason=" + safeDiagnosticValue(visualProbeRequest.reason) +
                   " probe_id=" + visualProbeRequest.id +
-                  " method=h264_bitmap_probe"
+                  " method=h264_bitmap_probe" + boundsDiagnostic
               );
             }
           }
@@ -317,7 +324,8 @@ public final class TicketRootHardwareH264CaptureMain {
             cmd.startsWith("control_code_request_visual_probe:") ||
             cmd.startsWith("control_code_submit_visual_probe:") ||
             cmd.startsWith("control_code_cleanup_visual_probe:") ||
-            cmd.startsWith("ticket_detail_visual_probe:")
+            cmd.startsWith("ticket_detail_visual_probe:") ||
+            cmd.startsWith("ticket_activated_visual_probe:")
           ) {
             int separator = cmd.lastIndexOf(':');
             long probeId = parseLong(cmd.substring(separator + 1), 0L);
@@ -327,12 +335,14 @@ public final class TicketRootHardwareH264CaptureMain {
             boolean cleanup = cmd.startsWith("control_code_cleanup_visual_probe:");
             boolean submitLayout = cmd.startsWith("control_code_submit_visual_probe:");
             boolean ticketDetail = cmd.startsWith("ticket_detail_visual_probe:");
+            boolean activatedTicket = cmd.startsWith("ticket_activated_visual_probe:");
             boolean requestCadence = cmd.startsWith("control_code_request_visual_probe:") || submitLayout;
             controlCodeVisualProbeRequest.set(new ControlCodeVisualProbeRequest(
               probeId,
-              ticketDetail ? "ticket_detail" : (cleanup ? "control_code_cleanup" : (submitLayout ? "control_code_submit_layout" : "control_code_after_ok")),
+              activatedTicket ? "ticket_activated" : (ticketDetail ? "ticket_detail" : (cleanup ? "control_code_cleanup" : (submitLayout ? "control_code_submit_layout" : "control_code_after_ok"))),
               cleanup,
               submitLayout,
+              activatedTicket,
               requestCadence ? controlCodeRequestFps : startupFps,
               SystemClock.elapsedRealtime() + CONTROL_CODE_VISUAL_PROBE_MILLIS
             ));
@@ -354,6 +364,7 @@ public final class TicketRootHardwareH264CaptureMain {
     final String reason;
     final boolean cleanup;
     final boolean submitLayout;
+    final boolean activatedTicket;
     final int targetFps;
     final AtomicLong untilMillis;
     final AtomicLong lastReportMillis = new AtomicLong(0L);
@@ -364,6 +375,7 @@ public final class TicketRootHardwareH264CaptureMain {
       String reason,
       boolean cleanup,
       boolean submitLayout,
+      boolean activatedTicket,
       int targetFps,
       long untilMillis
     ) {
@@ -371,12 +383,13 @@ public final class TicketRootHardwareH264CaptureMain {
       this.reason = reason;
       this.cleanup = cleanup;
       this.submitLayout = submitLayout;
+      this.activatedTicket = activatedTicket;
       this.targetFps = Math.max(1, targetFps);
       this.untilMillis = new AtomicLong(untilMillis);
     }
 
     static ControlCodeVisualProbeRequest idle() {
-      return new ControlCodeVisualProbeRequest(0L, "idle", false, false, 1, 0L);
+      return new ControlCodeVisualProbeRequest(0L, "idle", false, false, false, 1, 0L);
     }
   }
 
@@ -579,11 +592,13 @@ public final class TicketRootHardwareH264CaptureMain {
     }
   }
 
-  private static String classifyControlCodeVisualState(
+  private static VisualProbeClassification classifyControlCodeVisualState(
     Bitmap source,
     Rect sourceCrop,
     boolean cleanupProbe,
-    boolean submitLayoutProbe
+    boolean submitLayoutProbe,
+    boolean ticketDetailProbe,
+    boolean activatedTicketProbe
   ) {
     Bitmap readableSource = source;
     boolean copiedSource = false;
@@ -628,16 +643,39 @@ public final class TicketRootHardwareH264CaptureMain {
         probeHeight
       );
       if (submitLayoutProbe) {
-        return TicketControlCodeVisualClassifier.classifySubmitLayout(pixels);
+        return new VisualProbeClassification(
+          TicketControlCodeVisualClassifier.classifySubmitLayout(pixels),
+          ""
+        );
       }
-      return cleanupProbe
-        ? TicketControlCodeVisualClassifier.classifyForCleanup(pixels)
-        : TicketControlCodeVisualClassifier.classify(pixels);
+      String state;
+      if (activatedTicketProbe) {
+        state = TicketControlCodeVisualClassifier.classifyForActivatedTicket(pixels);
+      } else if (cleanupProbe) {
+        state = TicketControlCodeVisualClassifier.classifyForCleanup(pixels);
+      } else {
+        state = TicketControlCodeVisualClassifier.classify(pixels);
+      }
+      String sliderBounds = "";
+      if (ticketDetailProbe) {
+        sliderBounds = TicketControlCodeVisualClassifier.registrationSliderBounds(pixels);
+      }
+      return new VisualProbeClassification(state, sliderBounds);
     } finally {
       probe.recycle();
       if (copiedSource && readableSource != null) {
         readableSource.recycle();
       }
+    }
+  }
+
+  private static final class VisualProbeClassification {
+    final String state;
+    final String sliderBounds;
+
+    VisualProbeClassification(String state, String sliderBounds) {
+      this.state = state;
+      this.sliderBounds = sliderBounds == null ? "" : sliderBounds;
     }
   }
 

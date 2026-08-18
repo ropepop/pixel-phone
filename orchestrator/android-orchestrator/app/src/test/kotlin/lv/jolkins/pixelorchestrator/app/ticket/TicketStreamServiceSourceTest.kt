@@ -120,6 +120,31 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
+  fun spacetimeHttpWritesAreBoundedAndConnectionsAreAlwaysClosed() {
+    val boundedOperation = body(
+      spacetimeWorker,
+      "private suspend fun <T> boundedTicketHttpOperation",
+      "internal object TicketSpacetimePollingPolicy"
+    )
+    val clientPost = body(
+      spacetimeWorker,
+      "private suspend fun post(path: String, contentType: String, body: String): String",
+      "private fun decodeSQLRows"
+    )
+    val logPost = body(
+      spacetimeWorker,
+      "private suspend fun post(path: String, body: String)",
+      "private fun postBlocking(path: String, body: String)"
+    )
+    assertTrue(boundedOperation.contains("withTimeout(timeoutMillis.toLong())"))
+    assertTrue(boundedOperation.contains("runInterruptible"))
+    assertTrue(clientPost.contains("boundedTicketHttpOperation(config.httpTimeoutMillis)"))
+    assertTrue(logPost.contains("boundedTicketHttpOperation(httpTimeoutMillis)"))
+    assertTrue(spacetimeWorker.contains("setFixedLengthStreamingMode(bodyBytes.size)"))
+    assertTrue(spacetimeWorker.contains("finally {\n      connection.disconnect()"))
+  }
+
+  @Test
   fun malformedPhoneMessagesAndWorkerFailuresNeverPersistRawContent() {
     val publish = body(
       spacetimeWorker,
@@ -962,7 +987,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(service.contains("TICKET_FAST_PUBLIC_OPEN_BUDGET_MILLIS = 5_000L"))
     assertTrue(service.contains("remainingFastPublicOpenBudgetMillis"))
     assertTrue(service.contains("prepareViviForRootHardwareH264FastOpen"))
-    assertTrue(service.contains("requireNewTicketRegistration = true"))
+    assertTrue(service.contains("requireUnactivatedRegistration = requireUnactivatedRegistration"))
     assertTrue(service.contains("ticketDetailReturnToListActionForHierarchy"))
     assertTrue(service.contains("val listRecoveryStartedAtMillis = SystemClock.elapsedRealtime()"))
     assertFalse(service.contains("fastWakeReadyFromRecentTicketDetail(reason, wakeStartedAtMillis)"))
@@ -1047,8 +1072,11 @@ class TicketStreamServiceSourceTest {
     assertFalse(fallback.contains("runFastNonTouchInput"))
     assertFalse(fallback.contains("PhoneAutomationServiceBridge"))
     assertTrue(h264Engine.contains("fun requestTicketDetailVisualProbe"))
+    assertTrue(h264Engine.contains("fun requestActivatedTicketVisualProbe"))
     assertTrue(h264Engine.contains("ticket_detail_visual_probe"))
+    assertTrue(h264Engine.contains("ticket_activated_visual_probe"))
     assertTrue(h264Main.contains("cmd.startsWith(\"ticket_detail_visual_probe:\")"))
+    assertTrue(h264Main.contains("cmd.startsWith(\"ticket_activated_visual_probe:\")"))
   }
 
   @Test
@@ -1099,24 +1127,91 @@ class TicketStreamServiceSourceTest {
     assertTrue(yielding.contains("latestTicketReselectPhase = \"control_code_yielded\""))
     assertTrue(yielding.contains("jobsToCancel.forEach { it.cancel() }"))
     assertTrue(scheduling.contains("controlCodePhoneMutationLane.withOwnership"))
-    assertTrue(recovery.indexOf("launchViviForWake") < recovery.indexOf("val observationStartedAtMillis"))
+    assertTrue(recovery.contains("latest_ticket_reselect_in_app_reset_started"))
+    assertTrue(recovery.contains("return@run runInAppUnactivatedRegistrationReset("))
+    assertTrue(recovery.contains("ticketSpacetimeBackgroundStreamAlreadyHealthy()"))
+    assertTrue(recovery.indexOf("if (requireUnactivatedRegistration)") < recovery.indexOf("recordViviHardReset"))
+    assertTrue(recovery.indexOf("recordViviHardReset") < recovery.indexOf("launchViviForWake"))
     assertTrue(recovery.contains("wakeStartedAtMillis = observationStartedAtMillis"))
     assertTrue(recovery.contains("recoveryActionRepeatCooldownMillis = LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS"))
-    assertTrue(recovery.contains("ticketCardSelectionGraceMillis = LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS"))
-    assertTrue(recovery.contains("requireNewTicketRegistration = true"))
+    assertTrue(recovery.contains("LATEST_TICKET_RESELECT_IN_APP_ACTION_GRACE_MILLIS"))
+    assertTrue(recovery.contains("LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS"))
+    assertTrue(recovery.contains("requireNewTicketRegistration = requireUnactivatedRegistration"))
     assertTrue(recovery.contains("recordLatestTicketReselectRecoveryTelemetry(result)"))
     assertTrue(observation.contains("TicketLatestTicketReselectRecoveryPolicy.remainingMillis("))
+    val inAppReset = body(service, "private suspend fun runInAppUnactivatedRegistrationReset", "private fun recordLatestTicketReselectRecoveryTelemetry")
+    assertTrue(inAppReset.contains("ticketDetailReturnToListActionForHierarchy"))
+    assertTrue(inAppReset.contains("bestTicketCardActionForHierarchy"))
+    assertTrue(inAppReset.contains("return_to_ticket_list_for_registration"))
+    assertFalse(inAppReset.contains("am force-stop"))
+    assertFalse(inAppReset.contains("launchViviForWake"))
     assertTrue(observation.contains("ticketCardSelectionGraceDeadlineMillis("))
     assertTrue(observation.contains("latest_ticket_reselect_ticket_card_action_grace_started"))
     assertTrue(service.contains("LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS = 120_000L"))
     assertTrue(service.contains("LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS = 30_000L"))
     assertTrue(service.contains("LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS = 60_000L"))
+    assertTrue(service.contains("LATEST_TICKET_RESELECT_IN_APP_ACTION_GRACE_MILLIS = 2_500L"))
+    assertTrue(service.contains("LATEST_TICKET_RESELECT_IN_APP_RESET_BUDGET_MILLIS = 12_000L"))
     assertTrue(service.contains("LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS +\n        LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS"))
     assertTrue(recovery.contains("TicketLatestTicketReselectRecoveryPolicy.finalTelemetryEvent("))
     assertFalse(recovery.contains("latest_ticket_reselect_final_state_"))
     assertFalse(recovery.contains("latest_ticket_reselect_final_action_"))
     assertTrue(current.contains("latestTicketReselectGeneration == generation"))
     assertTrue(current.contains("latestTicketReselectCommandId == commandId"))
+  }
+
+  @Test
+  fun ticketRegistrationProofIsPublishedEvenWithoutAnExistingInteractionRow() {
+    val publish = body(
+      spacetimeWorker,
+      "private suspend fun publishTicketRegistrationProof",
+      "private suspend fun processTicketSliderInteraction"
+    )
+    val status = body(
+      spacetimeWorker,
+      "private suspend fun publishTicketInteractionStatus",
+      "private suspend fun clearFailedTicketSliderClaim"
+    )
+    assertTrue(publish.contains("emptyTicketInteraction()"))
+    assertTrue(status.contains("emptyTicketInteraction()"))
+    assertFalse(publish.contains("ticketInteraction(config) ?: return"))
+    assertTrue(spacetimeWorker.contains("internal fun emptyTicketInteraction()"))
+  }
+
+  @Test
+  fun ticketSliderStartReusesCurrentProofThenChasesFingerProgress() {
+    val start = body(
+      service,
+      "private suspend fun startTicketSliderInteraction",
+      "internal suspend fun applyTicketSliderInteraction"
+    )
+    assertTrue(start.contains("currentTicketRegistrationProof"))
+    assertTrue(start.contains("proof.streamEpoch == streamEpoch"))
+    assertTrue(start.contains("sliderGeometryAgrees("))
+    assertTrue(start.contains("beginTicketSliderCaptureBurst(\"ticket_slider_stroke_started\")"))
+    assertTrue(start.contains("lastAppliedProgress = 0"))
+    assertTrue(start.contains("continueTicketSliderGesture("))
+    assertTrue(start.contains("ticketSliderTargetX(bounds, chaseProgress)"))
+    assertFalse(start.contains("lastAppliedProgress = initialProgress"))
+  }
+
+  @Test
+  fun ticketSliderCaptureBurstStopsWhenTheStrokeEnds() {
+    val apply = body(
+      service,
+      "internal suspend fun applyTicketSliderInteraction",
+      "private suspend fun completeTicketSliderInteraction"
+    )
+    val complete = body(
+      service,
+      "private suspend fun completeTicketSliderInteraction",
+      "private fun nullResultForSlider"
+    )
+    assertTrue(apply.contains("endTicketSliderCaptureBurst(\"ticket_slider_stroke_failed\")"))
+    assertTrue(apply.contains("endTicketSliderCaptureBurst(\"ticket_slider_stroke_ended\")"))
+    assertTrue(complete.contains("endTicketSliderCaptureBurst(\"ticket_slider_completion_finished\")"))
+    assertTrue(service.contains("startControlCodeRequestBurst(reason)"))
+    assertTrue(service.contains("stopControlCodeRequestBurst(reason)"))
   }
 
   @Test
@@ -1186,7 +1281,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(pendingCommands.contains(".thenBy { it.createdAt }"))
     assertTrue(pendingCommands.contains(".thenBy { it.id }"))
     assertTrue(pendingCommands.contains("!ticketSpacetimeCommandExpired(row.expiresAt, now)"))
-    assertTrue(commandPriority.contains("\"force_ticket_reselect\" -> 3"))
+    assertTrue(commandPriority.contains("\"force_ticket_reselect\", \"reset_ticket_registration\", \"slider_control_start\" -> 3"))
   }
 
   @Test

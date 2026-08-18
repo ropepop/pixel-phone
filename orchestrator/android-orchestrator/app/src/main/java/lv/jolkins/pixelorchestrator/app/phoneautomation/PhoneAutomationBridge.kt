@@ -116,6 +116,15 @@ internal interface PhoneAutomationAccessibilityHost {
     expectedPackageName: String
   ): List<PhoneAutomationVisibleNode>
 
+  /**
+   * Returns only the small set of ViVi registration semantic nodes needed by
+   * the ticket reset/slider fast path.  This deliberately does not walk the
+   * entire accessibility tree.
+   */
+  suspend fun snapshotTicketRegistrationNodes(
+    expectedPackageName: String
+  ): List<PhoneAutomationVisibleNode> = emptyList()
+
   suspend fun setTextInFocusedInput(
     expectedPackageName: String,
     text: String,
@@ -155,6 +164,26 @@ internal interface PhoneAutomationAccessibilityHost {
     yRatio: Double,
     timeoutMillis: Long
   ): Boolean
+
+  suspend fun startTicketSliderGesture(
+    startX: Int,
+    startY: Int,
+    timeoutMillis: Long
+  ): Boolean = false
+
+  suspend fun continueTicketSliderGesture(
+    endX: Int,
+    endY: Int,
+    durationMillis: Long,
+    timeoutMillis: Long
+  ): Boolean = false
+
+  suspend fun endTicketSliderGesture(
+    endX: Int,
+    endY: Int,
+    durationMillis: Long,
+    timeoutMillis: Long
+  ): Boolean = false
 
   suspend fun performBack(): Boolean
 }
@@ -461,6 +490,15 @@ object PhoneAutomationServiceBridge {
     }.orEmpty()
   }
 
+  suspend fun snapshotTicketRegistrationNodes(
+    expectedPackageName: String
+  ): List<PhoneAutomationVisibleNode> {
+    val service = accessibilityService.value ?: return emptyList()
+    return withTimeoutOrNull(ACCESSIBILITY_CALL_GRACE_TIMEOUT_MILLIS) {
+      service.snapshotTicketRegistrationNodes(expectedPackageName)
+    }.orEmpty()
+  }
+
   suspend fun setTextInFocusedInput(
     expectedPackageName: String,
     text: String,
@@ -531,6 +569,37 @@ object PhoneAutomationServiceBridge {
     val service = accessibilityService.value ?: return false
     return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
       service.tapScreenRatio(expectedPackageName, xRatio, yRatio, timeoutMillis)
+    } ?: false
+  }
+
+  suspend fun startTicketSliderGesture(startX: Int, startY: Int, timeoutMillis: Long): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
+      service.startTicketSliderGesture(startX, startY, timeoutMillis)
+    } ?: false
+  }
+
+  suspend fun continueTicketSliderGesture(
+    endX: Int,
+    endY: Int,
+    durationMillis: Long,
+    timeoutMillis: Long
+  ): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
+      service.continueTicketSliderGesture(endX, endY, durationMillis, timeoutMillis)
+    } ?: false
+  }
+
+  suspend fun endTicketSliderGesture(
+    endX: Int,
+    endY: Int,
+    durationMillis: Long,
+    timeoutMillis: Long
+  ): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
+      service.endTicketSliderGesture(endX, endY, durationMillis, timeoutMillis)
     } ?: false
   }
 

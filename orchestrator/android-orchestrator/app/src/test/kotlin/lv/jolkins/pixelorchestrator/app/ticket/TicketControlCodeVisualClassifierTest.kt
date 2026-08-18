@@ -29,6 +29,20 @@ class TicketControlCodeVisualClassifierTest {
   }
 
   @Test
+  fun activatedTicketProofAcceptsAztecWhenStatusStripLooksLikeGeneratedResult() {
+    val frame = rawTicketFrame()
+    frame.fill(left = 7, top = 36, right = 41, bottom = 40, color = RESULT_DARK)
+    frame[24, 37] = LIGHT
+    frame[25, 37] = LIGHT
+
+    assertEquals(TicketControlCodeVisualClassifier.GENERATED, classify(frame))
+    assertEquals(
+      TicketControlCodeVisualClassifier.RAW_TICKET,
+      TicketControlCodeVisualClassifier.classifyForActivatedTicket(frame.pixels)
+    )
+  }
+
+  @Test
   fun nearSolidGeneratedRowWithSparseWhiteDigitsIsRecognized() {
     val frame = rawTicketFrame()
     frame.fill(left = 7, top = 36, right = 41, bottom = 40, color = RESULT_DARK)
@@ -341,6 +355,15 @@ class TicketControlCodeVisualClassifierTest {
     frame.fill(left = 4, top = 43, right = 44, bottom = 47, color = YELLOW)
 
     assertEquals(TicketControlCodeVisualClassifier.RAW_TICKET, classifyForCleanup(frame))
+  }
+
+  @Test
+  fun registrationSliderBoundsUseTheWideTrackAndNotTheTextAnchor() {
+    val frame = rawTicketFrame()
+    frame.fill(left = 4, top = 43, right = 44, bottom = 47, color = YELLOW)
+    frame.fill(left = 8, top = 43, right = 12, bottom = 47, color = DARK)
+
+    assertEquals("3,42,45,48", TicketControlCodeVisualClassifier.registrationSliderBounds(frame.pixels))
   }
 
   @Test

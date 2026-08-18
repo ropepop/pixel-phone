@@ -189,6 +189,15 @@ class TicketStreamService : Service() {
     val completedAtMillis: Long
   )
 
+  private data class ActiveTicketSliderGesture(
+    val interactionRevision: String,
+    val controlId: String,
+    val bounds: TicketViviGraphicBounds,
+    var lastAppliedSequence: Long = 0L,
+    var lastAppliedProgress: Int = 0,
+    var completing: Boolean = false
+  )
+
   /**
    * Owns the request-lifetime IME suppression without making request admission
    * wait for the root command to report readiness. The critical field tap is
@@ -386,7 +395,9 @@ class TicketStreamService : Service() {
     val state: TicketViviRecoveryState,
     val step: String,
     val finalActionCategory: String = "none",
-    val finalActionOutcome: String = "not_attempted"
+    val finalActionOutcome: String = "not_attempted",
+    val finalHierarchy: String = "",
+    val finalSliderBounds: TicketViviGraphicBounds? = null
   )
 
   private enum class TicketRecoveryMode { ACTIVE_SOFT, FRESH_RESET }
@@ -445,6 +456,12 @@ class TicketStreamService : Service() {
   private val sessionMutex = Mutex()
 
   private val controlCodePhoneMutationLane = ControlCodePhoneMutationLane()
+  private val ticketSliderStateLock = Any()
+  @Volatile private var activeTicketSliderGesture: ActiveTicketSliderGesture? = null
+  @Volatile private var lastTicketRegistrationProof: TicketRegistrationProof? = null
+  @Volatile private var currentTicketRegistrationProof: TicketRegistrationProof? = null
+  @Volatile private var ticketSliderBurstActive: Boolean = false
+  @Volatile private var pendingActivationRevision: String? = null
   private val controlCodeBrowserCaptureLock = Object()
   private val running = AtomicBoolean(false)
   private val rootHardwareH264CaptureEngine = TicketRootHardwareH264CaptureEngine(
@@ -626,6 +643,11 @@ class TicketStreamService : Service() {
   @Volatile private var latestTicketReselectProofSource: String = ""
   @Volatile private var latestTicketReselectProofHoldUntilMillis: Long = 0L
   @Volatile private var latestTicketReselectLastProofNudgeAtMillis: Long = 0L
+  @Volatile private var latestTicketReselectRequireUnactivatedRegistration: Boolean = false
+  // The recovery result already contains a fresh rooted hierarchy/slider proof. Keep that
+  // proof for the short stream-settle window instead of invalidating a successful reset merely
+  // because no later accessibility event refreshed the memory snapshot.
+  @Volatile private var latestTicketReselectFinalUnactivatedProved: Boolean = false
   private val latestTicketReselectStateLock = Any()
   private var latestTicketReselectLastDeferredKey: String = ""
   @Volatile private var latestTicketReselectGeneration: Long = 0L
@@ -1139,7 +1161,18 @@ class TicketStreamService : Service() {
         }
         "force_ticket_reselect" -> forceLatestTicketReselect(
           reason = reason.ifBlank { "admin_force_latest_ticket_reselect" },
-          commandId = command.id
+          commandId = command.id,
+          requireUnactivatedRegistration = payload?.stringValue("flow") == "activation_expiry_reset"
+        )
+        "reset_ticket_registration" -> forceLatestTicketReselect(
+          reason = reason.ifBlank { "ticket_reset_registration" },
+          commandId = command.id,
+          requireUnactivatedRegistration = true
+        )
+        "slider_control_start" -> startTicketSliderInteraction(
+          interactionRevision = payload?.stringValue("interactionRevision").orEmpty(),
+          controlId = payload?.stringValue("controlId").orEmpty(),
+          initialProgress = payload?.longValue("initialProgress")?.toInt() ?: 0
         )
         "generate_control_code" -> {
           serviceScope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -1191,6 +1224,393 @@ class TicketStreamService : Service() {
       recordTicketEvent("spacetime_command_failed", "${command.commandType}:${safeErrorDetail(error)}")
       TicketSpacetimeCommandResult(ok = false, reason = safeErrorDetail(error).ifBlank { "command_failed" }, streamState = ticketSpacetimeStreamState())
     }
+  }
+
+  internal fun ticketSpacetimeSliderActive(): Boolean {
+    return activeTicketSliderGesture != null
+  }
+
+  internal fun takeTicketRegistrationProof(): TicketRegistrationProof? {
+    val proof = lastTicketRegistrationProof
+    lastTicketRegistrationProof = null
+    return proof
+  }
+
+  private fun rememberTicketRegistrationProof(proof: TicketRegistrationProof) {
+    currentTicketRegistrationProof = proof
+    lastTicketRegistrationProof = proof
+  }
+
+  internal fun takePendingActivationRevision(): String? {
+    val revision = pendingActivationRevision
+    pendingActivationRevision = null
+    return revision
+  }
+
+  internal fun pendingTicketActivationRevision(): String? = pendingActivationRevision
+
+  internal fun clearPendingTicketActivationRevision(revision: String) {
+    if (pendingActivationRevision == revision) {
+      pendingActivationRevision = null
+    }
+  }
+
+  private suspend fun startTicketSliderInteraction(
+    interactionRevision: String,
+    controlId: String,
+    initialProgress: Int
+  ): TicketSpacetimeCommandResult {
+    val cleanRevision = interactionRevision.trim()
+    val cleanControlId = controlId.trim()
+    if (cleanRevision.isBlank() || cleanControlId.isBlank()) {
+      return TicketSpacetimeCommandResult(false, "slider_identity_missing", ticketSpacetimeStreamState())
+    }
+    if (activeTicketSliderGesture != null) {
+      return TicketSpacetimeCommandResult(false, "slider_already_active", ticketSpacetimeStreamState())
+    }
+    val startedAtMillis = SystemClock.elapsedRealtime()
+    val reusedProof = currentTicketRegistrationProof?.takeIf { proof ->
+      proof.status == "unactivated_ready" &&
+        proof.hasSliderBounds &&
+        proof.streamEpoch == streamEpoch
+    }
+    val observation = observeAccessibilityViviState("ticket_slider_start")
+    val hierarchy = observation.hierarchy.orEmpty()
+    if (
+      observation.state != TicketViviRecoveryState.TICKET_DETAIL ||
+      !TicketViviPageEnforcer.isUnactivatedRegistrationDetail(hierarchy)
+    ) {
+      recordTicketEvent("ticket_slider_start_rejected", "reason=unactivated_detail_unproved state=${observation.state.name}")
+      return TicketSpacetimeCommandResult(false, "unactivated_detail_unproved", ticketSpacetimeStreamState())
+    }
+    val semanticBounds = TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(hierarchy)
+    if (semanticBounds == null) {
+      recordTicketEvent("ticket_slider_start_rejected", "reason=slider_semantic_anchor_unproved")
+      return TicketSpacetimeCommandResult(false, "slider_semantic_anchor_unproved", ticketSpacetimeStreamState())
+    }
+    val bounds = if (
+      reusedProof != null &&
+      sliderGeometryAgrees(
+        hierarchyBounds = semanticBounds,
+        visualBounds = reusedProof.toGraphicBounds(),
+        displayWidth = resources.displayMetrics.widthPixels.coerceAtLeast(1),
+        displayHeight = resources.displayMetrics.heightPixels.coerceAtLeast(1)
+      )
+    ) {
+      reusedProof.toGraphicBounds()
+    } else {
+      detectFreshTicketRegistrationSliderBounds(
+        hierarchyBounds = semanticBounds,
+        reason = "ticket_slider_start_visual"
+      )
+    }
+    if (bounds == null) {
+      recordTicketEvent("ticket_slider_start_rejected", "reason=slider_visual_unproved")
+      return TicketSpacetimeCommandResult(false, "slider_visual_unproved", ticketSpacetimeStreamState())
+    }
+    val thumbRadius = ((bounds.bottom - bounds.top) / 2).coerceAtLeast(12)
+    val startX = (bounds.left + thumbRadius).coerceIn(bounds.left, (bounds.right - 1).coerceAtLeast(bounds.left))
+    val startY = ((bounds.top + bounds.bottom) / 2)
+    val started = PhoneAutomationServiceBridge.startTicketSliderGesture(
+      startX = startX,
+      startY = startY,
+      timeoutMillis = TICKET_SLIDER_GESTURE_TIMEOUT_MILLIS
+    )
+    if (!started) {
+      recordTicketEvent("ticket_slider_start_failed", "reason=accessibility_gesture_start_failed")
+      return TicketSpacetimeCommandResult(false, "accessibility_gesture_start_failed", ticketSpacetimeStreamState())
+    }
+    beginTicketSliderCaptureBurst("ticket_slider_stroke_started")
+    synchronized(ticketSliderStateLock) {
+      activeTicketSliderGesture = ActiveTicketSliderGesture(
+        interactionRevision = cleanRevision,
+        controlId = cleanControlId,
+        bounds = bounds,
+        lastAppliedProgress = 0
+      )
+    }
+    val chaseProgress = initialProgress.coerceIn(0, 10_000)
+    if (chaseProgress > 0) {
+      val chaseX = ticketSliderTargetX(bounds, chaseProgress)
+      val chased = PhoneAutomationServiceBridge.continueTicketSliderGesture(
+        endX = chaseX,
+        endY = startY,
+        durationMillis = sliderSegmentDurationMillis(0, chaseProgress),
+        timeoutMillis = TICKET_SLIDER_GESTURE_TIMEOUT_MILLIS
+      )
+      if (chased) {
+        synchronized(ticketSliderStateLock) {
+          activeTicketSliderGesture?.lastAppliedProgress = chaseProgress
+        }
+      } else {
+        endTicketSliderCaptureBurst("ticket_slider_initial_chase_failed")
+        activeTicketSliderGesture = null
+        recordTicketEvent("ticket_slider_start_failed", "reason=accessibility_gesture_chase_failed")
+        return TicketSpacetimeCommandResult(false, "accessibility_gesture_chase_failed", ticketSpacetimeStreamState())
+      }
+    }
+    rememberTicketRegistrationProof(
+      TicketRegistrationProof(
+      status = "unactivated_ready",
+      reason = "unactivated_registration_proved",
+      interactionRevision = cleanRevision,
+      streamEpoch = streamEpoch,
+      frameSequence = frameSequence,
+      phoneDisplayWidth = resources.displayMetrics.widthPixels,
+      phoneDisplayHeight = resources.displayMetrics.heightPixels,
+      sliderLeft = bounds.left,
+      sliderTop = bounds.top,
+      sliderRight = bounds.right,
+      sliderBottom = bounds.bottom
+      )
+    )
+    recordTicketEvent(
+      "ticket_slider_stroke_started",
+      "duration_ms=${(SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)} reused_proof=${reusedProof != null} bounds=${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}"
+    )
+    return TicketSpacetimeCommandResult(true, "slider_stroke_started", ticketSpacetimeStreamState())
+  }
+
+  internal suspend fun applyTicketSliderInteraction(
+    interaction: TicketSpacetimeInteractionSnapshot
+  ): TicketSliderApplicationResult? {
+    val active = activeTicketSliderGesture ?: return null
+    if (
+      active.interactionRevision != interaction.interactionRevision ||
+      active.controlId != interaction.controlId
+    ) {
+      return null
+    }
+    val sequence = interaction.latestInputSequence.toLongOrNull() ?: return null
+    if (sequence <= active.lastAppliedSequence) return null
+    val progress = interaction.latestProgress.coerceIn(0, 10_000)
+    val phase = interaction.latestInputPhase
+    val sliderY = (active.bounds.top + active.bounds.bottom) / 2
+    val targetX = ticketSliderTargetX(active.bounds, progress)
+    val usableRight = ticketSliderUsableRight(active.bounds)
+
+    if (progress >= TICKET_SLIDER_COMPLETION_PROGRESS && phase != "cancel") {
+      return completeTicketSliderInteraction(active, sequence, progress, sliderY, usableRight)
+    }
+    if (phase == "heartbeat") {
+      active.lastAppliedSequence = sequence
+      return TicketSliderApplicationResult(
+        ok = true,
+        reason = "slider_heartbeat_applied",
+        status = "control_active",
+        lastAppliedSequence = sequence.toString(),
+        lastAppliedProgress = progress,
+        leasePhase = "active",
+        leaseExpiresAt = interaction.leaseExpiresAt,
+        ownerPublicId = interaction.ownerPublicId,
+        controlId = interaction.controlId
+      )
+    }
+    val duration = sliderSegmentDurationMillis(active.lastAppliedProgress, progress)
+    val moved = if (phase == "up" || phase == "cancel") {
+      PhoneAutomationServiceBridge.endTicketSliderGesture(
+        endX = targetX,
+        endY = sliderY,
+        durationMillis = duration,
+        timeoutMillis = TICKET_SLIDER_GESTURE_TIMEOUT_MILLIS
+      )
+    } else {
+      PhoneAutomationServiceBridge.continueTicketSliderGesture(
+        endX = targetX,
+        endY = sliderY,
+        durationMillis = duration,
+        timeoutMillis = TICKET_SLIDER_GESTURE_TIMEOUT_MILLIS
+      )
+    }
+    active.lastAppliedSequence = sequence
+    active.lastAppliedProgress = progress
+    if (!moved) {
+      activeTicketSliderGesture = null
+      endTicketSliderCaptureBurst("ticket_slider_stroke_failed")
+      recordTicketEvent("ticket_slider_stroke_failed", "reason=accessibility_gesture_dispatch_failed")
+      return TicketSliderApplicationResult(
+        ok = false,
+        reason = "accessibility_gesture_dispatch_failed",
+        status = "unactivated_ready",
+        lastAppliedSequence = sequence.toString(),
+        lastAppliedProgress = progress,
+        leasePhase = "cooldown",
+        leaseExpiresAt = interaction.leaseExpiresAt,
+        ownerPublicId = interaction.ownerPublicId,
+        controlId = interaction.controlId
+      )
+    }
+    if (phase == "up" || phase == "cancel") {
+      activeTicketSliderGesture = null
+      endTicketSliderCaptureBurst("ticket_slider_stroke_ended")
+      recordTicketEvent("ticket_slider_stroke_ended", "phase=$phase progress=$progress")
+      return TicketSliderApplicationResult(
+        ok = true,
+        reason = if (phase == "cancel") "slider_cancelled" else "slider_released_below_completion",
+        status = "unactivated_ready",
+        lastAppliedSequence = sequence.toString(),
+        lastAppliedProgress = progress,
+        leasePhase = "cooldown",
+        leaseExpiresAt = interaction.leaseExpiresAt,
+        ownerPublicId = "",
+        controlId = ""
+      )
+    }
+    return TicketSliderApplicationResult(
+      ok = true,
+      reason = "slider_input_applied",
+      status = "control_active",
+      lastAppliedSequence = sequence.toString(),
+      lastAppliedProgress = progress,
+      leasePhase = interaction.leasePhase,
+      leaseExpiresAt = interaction.leaseExpiresAt,
+      ownerPublicId = interaction.ownerPublicId,
+      controlId = interaction.controlId
+    )
+  }
+
+  private suspend fun completeTicketSliderInteraction(
+    active: ActiveTicketSliderGesture,
+    sequence: Long,
+    progress: Int,
+    sliderY: Int,
+    usableRight: Int
+  ): TicketSliderApplicationResult {
+    if (active.completing) return nullResultForSlider(active, sequence, progress)
+    active.completing = true
+    recordTicketEvent("ticket_slider_completion_started", "progress=$progress")
+    val ended = PhoneAutomationServiceBridge.endTicketSliderGesture(
+      endX = usableRight,
+      endY = sliderY,
+      durationMillis = TICKET_SLIDER_COMPLETION_DURATION_MILLIS,
+      timeoutMillis = TICKET_SLIDER_GESTURE_TIMEOUT_MILLIS
+    )
+    active.lastAppliedSequence = sequence
+    active.lastAppliedProgress = progress
+    if (!ended) {
+      activeTicketSliderGesture = null
+      endTicketSliderCaptureBurst("ticket_slider_completion_gesture_failed")
+      return TicketSliderApplicationResult(
+        ok = false,
+        reason = "slider_completion_gesture_failed",
+        status = "unactivated_ready",
+        lastAppliedSequence = sequence.toString(),
+        lastAppliedProgress = progress,
+        leasePhase = "cooldown",
+        leaseExpiresAt = "",
+        ownerPublicId = active.controlId,
+        controlId = active.controlId
+      )
+    }
+    val activated = awaitActivatedTicketProof()
+    activeTicketSliderGesture = null
+    endTicketSliderCaptureBurst("ticket_slider_completion_finished")
+    if (!activated) {
+      recordTicketEvent("ticket_slider_activation_failed", "reason=activated_detail_unproved")
+      return TicketSliderApplicationResult(
+        ok = false,
+        reason = "activated_detail_unproved",
+        status = "needs_attention",
+        lastAppliedSequence = sequence.toString(),
+        lastAppliedProgress = progress,
+        leasePhase = "cooldown",
+        leaseExpiresAt = "",
+        ownerPublicId = "",
+        controlId = ""
+      )
+    }
+    val activationRevision = "activation_${SystemClock.elapsedRealtime()}_${frameSequence}".take(120)
+    pendingActivationRevision = activationRevision
+    recordTicketEvent("ticket_slider_activation_proved", "activation_revision=$activationRevision")
+    requestKeyFrame("ticket_slider_activation_proved")
+    return TicketSliderApplicationResult(
+      ok = true,
+      reason = "activated_aztec_proved",
+      status = "activated",
+      lastAppliedSequence = sequence.toString(),
+      lastAppliedProgress = progress,
+      leasePhase = "none",
+      leaseExpiresAt = "",
+      ownerPublicId = "",
+      controlId = "",
+      activationRevision = activationRevision,
+      activationAt = java.time.Instant.now().toString()
+    )
+  }
+
+  private fun nullResultForSlider(
+    active: ActiveTicketSliderGesture,
+    sequence: Long,
+    progress: Int
+  ): TicketSliderApplicationResult {
+    return TicketSliderApplicationResult(
+      ok = true,
+      reason = "slider_completion_in_progress",
+      status = "completing",
+      lastAppliedSequence = sequence.toString(),
+      lastAppliedProgress = progress,
+      leasePhase = "active",
+      leaseExpiresAt = "",
+      ownerPublicId = "",
+      controlId = active.controlId
+    )
+  }
+
+  private fun sliderSegmentDurationMillis(previousProgress: Int, progress: Int): Long {
+    val distance = kotlin.math.abs(progress - previousProgress)
+    return (32L + (distance / 10000f * 68f).roundToInt()).coerceIn(32L, 100L)
+  }
+
+  private fun ticketSliderUsableLeft(bounds: TicketViviGraphicBounds): Int {
+    val thumbRadius = ((bounds.bottom - bounds.top) / 2).coerceAtLeast(12)
+    return bounds.left + thumbRadius
+  }
+
+  private fun ticketSliderUsableRight(bounds: TicketViviGraphicBounds): Int {
+    return (bounds.right - ((bounds.bottom - bounds.top) / 2).coerceAtLeast(12))
+      .coerceAtLeast(ticketSliderUsableLeft(bounds))
+  }
+
+  private fun ticketSliderTargetX(bounds: TicketViviGraphicBounds, progress: Int): Int {
+    val usableLeft = ticketSliderUsableLeft(bounds)
+    val usableRight = ticketSliderUsableRight(bounds)
+    return (usableLeft + ((usableRight - usableLeft) * progress.coerceIn(0, 10_000) / 10_000f).roundToInt())
+      .coerceIn(usableLeft, usableRight)
+  }
+
+  private fun beginTicketSliderCaptureBurst(reason: String) {
+    if (controlCodeRequestActive()) return
+    val started = rootHardwareH264CaptureEngine.startControlCodeRequestBurst(reason)
+    ticketSliderBurstActive = true
+    recordTicketEvent("ticket_slider_capture_burst_started", "reason=$reason started=$started")
+  }
+
+  private fun endTicketSliderCaptureBurst(reason: String) {
+    if (!ticketSliderBurstActive) return
+    ticketSliderBurstActive = false
+    if (controlCodeRequestActive()) return
+    rootHardwareH264CaptureEngine.stopControlCodeRequestBurst(reason)
+    recordTicketEvent("ticket_slider_capture_burst_stopped", "reason=$reason")
+  }
+
+  private suspend fun awaitActivatedTicketProof(): Boolean {
+    val deadline = SystemClock.elapsedRealtime() + TICKET_SLIDER_ACTIVATED_PROOF_TIMEOUT_MILLIS
+    while (SystemClock.elapsedRealtime() < deadline) {
+      val observation = observeRootViviStateForWake(
+        reason = "ticket_slider_activated_proof",
+        timeoutMillis = minOf(TICKET_SLIDER_PROOF_TIMEOUT_MILLIS, (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1L))
+      )
+      val hierarchy = observation.hierarchy.orEmpty()
+      if (
+        observation.state == TicketViviRecoveryState.TICKET_DETAIL &&
+        TicketViviPageEnforcer.isActivatedTicketDetail(hierarchy) &&
+        verifyFreshTicketDetailVisualProof("ticket_slider_activated_visual")
+      ) {
+        return true
+      }
+      delay(TICKET_SLIDER_PROOF_POLL_MILLIS)
+    }
+    return false
   }
 
   internal suspend fun handleTicketSpacetimeDesiredActive(reason: String): TicketSpacetimeCommandResult {
@@ -1414,7 +1834,11 @@ class TicketStreamService : Service() {
     return result
   }
 
-  private fun forceLatestTicketReselect(reason: String, commandId: String): TicketSpacetimeCommandResult {
+  private fun forceLatestTicketReselect(
+    reason: String,
+    commandId: String,
+    requireUnactivatedRegistration: Boolean = false
+  ): TicketSpacetimeCommandResult {
     val cleanReason = reason.ifBlank { "admin_force_latest_ticket_reselect" }
     val cleanCommandId = commandId.ifBlank { "unknown" }
     val decision = synchronized(latestTicketReselectStateLock) {
@@ -1452,7 +1876,7 @@ class TicketStreamService : Service() {
       }
       TicketLatestTicketReselectCommandDisposition.START -> Unit
     }
-    markLatestTicketReselectStarted(cleanReason, cleanCommandId)
+    markLatestTicketReselectStarted(cleanReason, cleanCommandId, requireUnactivatedRegistration)
     recordTicketEvent("latest_ticket_reselect_command_received", "reason=$cleanReason command=$cleanCommandId")
     viviStateMemory.clear("root", "force_ticket_reselect:$cleanCommandId")
     recordTicketEvent(
@@ -1460,7 +1884,7 @@ class TicketStreamService : Service() {
       "command=$cleanCommandId stale_memory_bypass=true"
     )
     recordTicketEvent("latest_ticket_reselect_requested", "reason=$cleanReason command=$cleanCommandId")
-    scheduleLatestTicketReselectRecovery(cleanReason, cleanCommandId)
+    scheduleLatestTicketReselectRecovery(cleanReason, cleanCommandId, requireUnactivatedRegistration)
     if (streamActive) {
       requestKeyFrame("latest_ticket_reselect_requested")
     }
@@ -1495,6 +1919,8 @@ class TicketStreamService : Service() {
       latestTicketReselectProofSource = ""
       latestTicketReselectProofHoldUntilMillis = 0L
       latestTicketReselectLastProofNudgeAtMillis = 0L
+      latestTicketReselectRequireUnactivatedRegistration = false
+      latestTicketReselectFinalUnactivatedProved = false
       latestTicketReselectLastDeferredKey = ""
       jobs
     }
@@ -1544,6 +1970,8 @@ class TicketStreamService : Service() {
       latestTicketReselectProofSource = ""
       latestTicketReselectProofHoldUntilMillis = 0L
       latestTicketReselectLastProofNudgeAtMillis = 0L
+      latestTicketReselectRequireUnactivatedRegistration = false
+      latestTicketReselectFinalUnactivatedProved = false
       latestTicketReselectLastDeferredKey = ""
       jobs
     }
@@ -1574,7 +2002,11 @@ class TicketStreamService : Service() {
     }
   }
 
-  private fun markLatestTicketReselectStarted(reason: String, commandId: String) {
+  private fun markLatestTicketReselectStarted(
+    reason: String,
+    commandId: String,
+    requireUnactivatedRegistration: Boolean
+  ) {
     synchronized(latestTicketReselectStateLock) {
       latestTicketReselectRecoveryJob?.cancel()
       latestTicketReselectRecoveryJob = null
@@ -1594,13 +2026,19 @@ class TicketStreamService : Service() {
       latestTicketReselectProofSource = ""
       latestTicketReselectProofHoldUntilMillis = 0L
       latestTicketReselectLastProofNudgeAtMillis = 0L
+      latestTicketReselectRequireUnactivatedRegistration = requireUnactivatedRegistration
+      latestTicketReselectFinalUnactivatedProved = false
       latestTicketReselectLastDeferredKey = ""
       latestTicketReselectGeneration += 1L
     }
     broadcastStatus()
   }
 
-  private fun scheduleLatestTicketReselectRecovery(reason: String, commandId: String) {
+  private fun scheduleLatestTicketReselectRecovery(
+    reason: String,
+    commandId: String,
+    requireUnactivatedRegistration: Boolean
+  ) {
     val recoveryJob = synchronized(latestTicketReselectStateLock) {
       latestTicketReselectRecoveryJob?.cancel()
       val generation = latestTicketReselectGeneration
@@ -1608,7 +2046,12 @@ class TicketStreamService : Service() {
         try {
           controlCodePhoneMutationLane.withOwnership {
             if (latestTicketReselectGenerationIsCurrent(generation, commandId)) {
-              runLatestTicketReselectRecovery(reason, commandId, generation)
+              runLatestTicketReselectRecovery(
+                reason = reason,
+                commandId = commandId,
+                generation = generation,
+                requireUnactivatedRegistration = requireUnactivatedRegistration
+              )
             }
           }
         } catch (cancelled: CancellationException) {
@@ -1634,28 +2077,82 @@ class TicketStreamService : Service() {
     recoveryJob.start()
   }
 
-  private suspend fun runLatestTicketReselectRecovery(reason: String, commandId: String, generation: Long) {
+  private suspend fun runLatestTicketReselectRecovery(
+    reason: String,
+    commandId: String,
+    generation: Long,
+    requireUnactivatedRegistration: Boolean
+  ) {
     val recoveryStartedAtMillis = SystemClock.elapsedRealtime()
     val recoveryReason = "latest_ticket_reselect:${commandId.takeLast(12)}"
     if (streamActive) {
       updateTicketSessionState(TICKET_SESSION_STARTING, "latest_ticket_reselect_recovery_started")
     }
-    recordTicketEvent("latest_ticket_reselect_vivi_opening", "reason=$reason command=$commandId")
-    recordViviHardReset("recovery:$reason")
-    wakeRootExecutor.run("am force-stop ${TicketScreenConfig.VIVI_PACKAGE}", 1_500.milliseconds)
-    delay(LATEST_TICKET_RESELECT_RELAUNCH_DELAY_MILLIS)
-    launchViviForWake(recoveryReason)
-    recordTicketEvent("latest_ticket_reselect_vivi_opened", "reason=$reason command=$commandId")
-    val observationStartedAtMillis = SystemClock.elapsedRealtime()
-    val result = observeTicketDetailForWakeWithRoot(
-      reason = recoveryReason,
-      wakeStartedAtMillis = observationStartedAtMillis,
-      budgetMillis = LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS,
-      maxRecoveryActions = LATEST_TICKET_RESELECT_MAX_RECOVERY_ACTIONS,
-      recoveryActionRepeatCooldownMillis = LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS,
-      ticketCardSelectionGraceMillis = LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS,
-      requireNewTicketRegistration = true
-    )
+    val quickExistingUnactivatedProof = if (requireUnactivatedRegistration) {
+      // When the ticket is already on the registration screen, use the live
+      // accessibility hierarchy for the semantic check and keep rooted H.264
+      // as the visual proof. This avoids spending the reset command budget on
+      // a slow uiautomator window dump.
+      val existing = observeAccessibilityViviState("ticket_registration_existing:$reason")
+      val existingHierarchy = existing.hierarchy.orEmpty()
+      val existingSemanticBounds = TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(existingHierarchy)
+      val existingVisualBounds = if (
+        existing.state == TicketViviRecoveryState.TICKET_DETAIL &&
+        existingSemanticBounds != null &&
+        TicketViviPageEnforcer.isUnactivatedRegistrationDetail(existingHierarchy)
+      ) {
+        detectFreshTicketRegistrationSliderBounds(
+          hierarchyBounds = existingSemanticBounds,
+          reason = "ticket_registration_existing_visual"
+        )
+      } else {
+        null
+      }
+      if (existingVisualBounds != null) {
+        TicketAutopilotResult(
+          success = true,
+          state = existing.state,
+          step = "existing_unactivated_registration_reproved",
+          finalHierarchy = existingHierarchy,
+          finalSliderBounds = existingVisualBounds
+        )
+      } else {
+        null
+      }
+    } else {
+      null
+    }
+    val result = quickExistingUnactivatedProof ?: run {
+      if (requireUnactivatedRegistration) {
+        return@run runInAppUnactivatedRegistrationReset(
+          reason = recoveryReason,
+          commandId = commandId
+        )
+      } else {
+        recordTicketEvent("latest_ticket_reselect_vivi_opening", "reason=$reason command=$commandId")
+        recordViviHardReset("recovery:$reason")
+        wakeRootExecutor.run("am force-stop ${TicketScreenConfig.VIVI_PACKAGE}", 1_500.milliseconds)
+        delay(LATEST_TICKET_RESELECT_RELAUNCH_DELAY_MILLIS)
+        launchViviForWake(recoveryReason)
+        recordTicketEvent("latest_ticket_reselect_vivi_opened", "reason=$reason command=$commandId")
+      }
+      val observationStartedAtMillis = SystemClock.elapsedRealtime()
+      observeTicketDetailForWakeWithRoot(
+        reason = recoveryReason,
+        wakeStartedAtMillis = observationStartedAtMillis,
+        budgetMillis = LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS,
+        maxRecoveryActions = LATEST_TICKET_RESELECT_MAX_RECOVERY_ACTIONS,
+        recoveryActionRepeatCooldownMillis = LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS,
+        ticketCardSelectionGraceMillis = if (requireUnactivatedRegistration) {
+          LATEST_TICKET_RESELECT_IN_APP_ACTION_GRACE_MILLIS
+        } else {
+          LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS
+        },
+        requireNewTicketRegistration = requireUnactivatedRegistration,
+        requireUnactivatedRegistration = requireUnactivatedRegistration,
+        requireFreshAztecVisualProof = !requireUnactivatedRegistration
+      )
+    }
     markWakeReadyIfNeeded(recoveryStartedAtMillis, result)
     recordLatestTicketReselectRecoveryTelemetry(result)
     recordTicketEvent(
@@ -1671,8 +2168,37 @@ class TicketStreamService : Service() {
             "latest_ticket_reselect_ticket_detail_observed",
             "state=${result.state.name} step=${result.step} command=$commandId"
           )
-          markLatestTicketReselectTicketDetailObserved(result)
-          beginLatestTicketReselectStreamProof(reason, commandId)
+          if (requireUnactivatedRegistration) {
+            val sliderBounds = result.finalSliderBounds
+            if (sliderBounds == null) {
+              latestTicketReselectPhase = "unactivated_slider_bounds_failed"
+              false
+            } else {
+              latestTicketReselectFinalUnactivatedProved = true
+              rememberTicketRegistrationProof(
+                TicketRegistrationProof(
+                status = "unactivated_ready",
+                reason = "unactivated_registration_proved",
+                interactionRevision = "reset_${SystemClock.elapsedRealtime()}",
+                streamEpoch = streamEpoch,
+                frameSequence = frameSequence,
+                phoneDisplayWidth = resources.displayMetrics.widthPixels,
+                phoneDisplayHeight = resources.displayMetrics.heightPixels,
+                sliderLeft = sliderBounds.left,
+                sliderTop = sliderBounds.top,
+                sliderRight = sliderBounds.right,
+                sliderBottom = sliderBounds.bottom
+                )
+              )
+              markLatestTicketReselectTicketDetailObserved(result)
+              beginLatestTicketReselectStreamProof(reason, commandId)
+              true
+            }
+          } else {
+            markLatestTicketReselectTicketDetailObserved(result)
+            beginLatestTicketReselectStreamProof(reason, commandId)
+            true
+          }
         } else {
           recordTicketEvent(
             "latest_ticket_reselect_failed",
@@ -1684,6 +2210,11 @@ class TicketStreamService : Service() {
       }
     }
     if (!acceptedResult) {
+      markLatestTicketReselectFailed(
+        reason = "unactivated_slider_bounds_failed",
+        generation = generation,
+        commandId = commandId
+      )
       return
     }
     if (result.success) {
@@ -1691,8 +2222,12 @@ class TicketStreamService : Service() {
         updateTicketSessionState(TICKET_SESSION_LIVE, "latest_ticket_reselect_ticket_detail_ready")
         cacheForegroundViolation(null)
         startForegroundGuard()
-        restartActiveStreamEngine("latest_ticket_reselect")
-        requestKeyFrame("latest_ticket_reselect_ticket_detail_ready")
+        if (requireUnactivatedRegistration && ticketSpacetimeBackgroundStreamAlreadyHealthy()) {
+          requestKeyFrame("latest_ticket_reselect_ticket_detail_ready")
+        } else {
+          restartActiveStreamEngine("latest_ticket_reselect")
+          requestKeyFrame("latest_ticket_reselect_ticket_detail_ready")
+        }
       } else {
         startTicketSession()
       }
@@ -1714,6 +2249,119 @@ class TicketStreamService : Service() {
       )
     }
     broadcastStatus()
+  }
+
+
+  private suspend fun runInAppUnactivatedRegistrationReset(
+    reason: String,
+    commandId: String
+  ): TicketAutopilotResult {
+    recordTicketEvent(
+      "latest_ticket_reselect_in_app_reset_started",
+      "reason=$reason command=$commandId"
+    )
+    val startedAtMillis = SystemClock.elapsedRealtime()
+    val deadlineMillis = startedAtMillis + LATEST_TICKET_RESELECT_IN_APP_RESET_BUDGET_MILLIS
+    var lastState = TicketViviRecoveryState.UNKNOWN_VIVI
+    var lastStep = "in_app_reset_unobserved"
+    var closedActivatedDetail = false
+    var pressedNewRideButton = false
+    var lastActionKey = ""
+    var lastActionAtMillis = 0L
+    while (SystemClock.elapsedRealtime() < deadlineMillis) {
+      val remainingMillis = (deadlineMillis - SystemClock.elapsedRealtime()).coerceAtLeast(1L)
+      val observation = observeRootViviStateForWake(
+        reason = "in_app_reset:$reason",
+        timeoutMillis = minOf(TICKET_WAKE_FAST_POST_LAUNCH_TIMEOUT_MILLIS, remainingMillis)
+      )
+      val hierarchy = observation.hierarchy.orEmpty()
+      lastState = observation.state
+      if (hierarchy.isBlank()) {
+        lastStep = "in_app_reset_hierarchy_unavailable"
+        delay(TICKET_SLIDER_PROOF_POLL_MILLIS)
+        continue
+      }
+      if (
+        observation.state == TicketViviRecoveryState.TICKET_DETAIL &&
+        TicketViviPageEnforcer.isUnactivatedRegistrationDetail(hierarchy)
+      ) {
+        val semanticBounds = TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(hierarchy)
+        val sliderBounds = semanticBounds?.let {
+          detectFreshTicketRegistrationSliderBounds(
+            hierarchyBounds = it,
+            reason = "in_app_reset_slider:$reason"
+          )
+        }
+        if (sliderBounds != null) {
+          recordTicketEvent(
+            "latest_ticket_reselect_in_app_reset_ready",
+            "closed=$closedActivatedDetail yellow=$pressedNewRideButton"
+          )
+          return TicketAutopilotResult(
+            success = true,
+            state = observation.state,
+            step = "in_app_reset_unactivated_registration_ready",
+            finalActionCategory = if (pressedNewRideButton) "ticket_card_selection" else "none",
+            finalActionOutcome = if (pressedNewRideButton) "succeeded" else "not_attempted",
+            finalHierarchy = hierarchy,
+            finalSliderBounds = sliderBounds
+          )
+        }
+        lastStep = "in_app_reset_slider_unproved"
+        delay(TICKET_SLIDER_PROOF_POLL_MILLIS)
+        continue
+      }
+      val action = when {
+        observation.state == TicketViviRecoveryState.TICKET_DETAIL ->
+          TicketViviPageEnforcer.ticketDetailReturnToListActionForHierarchy(hierarchy)
+        observation.state == TicketViviRecoveryState.TICKET_LIST_WITH_CARD ->
+          TicketViviPageEnforcer.bestTicketCardActionForHierarchy(hierarchy)
+        else -> TicketViviPageEnforcer.recoveryActionForHierarchy(hierarchy)
+      }
+      if (action == null) {
+        lastStep = "in_app_reset_no_action_${observation.state.name.lowercase()}"
+        delay(TICKET_SLIDER_PROOF_POLL_MILLIS)
+        continue
+      }
+      val actionKey = "${observation.state.name}:${action.reason}:${action.x}:${action.y}"
+      val nowMillis = SystemClock.elapsedRealtime()
+      if (
+        actionKey == lastActionKey &&
+        nowMillis - lastActionAtMillis < LATEST_TICKET_RESELECT_IN_APP_ACTION_COOLDOWN_MILLIS
+      ) {
+        lastStep = "in_app_reset_action_cooling"
+        delay(TICKET_SLIDER_PROOF_POLL_MILLIS)
+        continue
+      }
+      val tapped = attemptWakeRecoveryActionForRootWake(
+        state = observation.state,
+        hierarchy = hierarchy,
+        action = action,
+        reason = reason,
+        timeoutMillis = minOf(TICKET_WAKE_RECOVERY_INPUT_TIMEOUT_MILLIS, remainingMillis)
+      )
+      lastActionKey = actionKey
+      lastActionAtMillis = SystemClock.elapsedRealtime()
+      if (action.reason == "return_to_ticket_list_for_registration") {
+        closedActivatedDetail = closedActivatedDetail || tapped
+      }
+      if (TicketLatestTicketReselectRecoveryPolicy.actionCategory(action.reason) == "ticket_card_selection") {
+        pressedNewRideButton = pressedNewRideButton || tapped
+      }
+      lastStep = "in_app_reset_${action.reason}_${if (tapped) "ok" else "failed"}"
+      delay(LATEST_TICKET_RESELECT_IN_APP_ACTION_SETTLE_MILLIS)
+    }
+    recordTicketEvent(
+      "latest_ticket_reselect_in_app_reset_failed",
+      "state=${lastState.name} step=$lastStep closed=$closedActivatedDetail yellow=$pressedNewRideButton"
+    )
+    return TicketAutopilotResult(
+      success = false,
+      state = lastState,
+      step = lastStep,
+      finalActionCategory = if (pressedNewRideButton) "ticket_card_selection" else "other_recovery",
+      finalActionOutcome = "failed"
+    )
   }
 
   private fun recordLatestTicketReselectRecoveryTelemetry(result: TicketAutopilotResult) {
@@ -1898,12 +2546,33 @@ class TicketStreamService : Service() {
       return false
     }
     val current = viviStateMemory.current()
-    val currentAgeMillis = ageMillis(current.observedAtMillis, nowMillis) ?: return false
-    if (
-      current.state != TicketViviRecoveryState.TICKET_DETAIL ||
-      currentAgeMillis > CONTROL_CODE_RESELECT_FRESH_TICKET_MAX_AGE_MILLIS
-    ) {
-      return false
+    val currentAgeMillis = ageMillis(current.observedAtMillis, nowMillis)
+    if (latestTicketReselectRequireUnactivatedRegistration) {
+      val currentIsFresh = currentAgeMillis != null &&
+        currentAgeMillis <= CONTROL_CODE_RESELECT_FRESH_TICKET_MAX_AGE_MILLIS
+      // A fresh conflicting observation must still win. When there is no fresh conflicting
+      // event, the recovery's own fresh hierarchy + rooted slider proof is authoritative for
+      // this serialized reset operation.
+      if (currentIsFresh &&
+        (current.state != TicketViviRecoveryState.TICKET_DETAIL ||
+          !TicketViviPageEnforcer.isUnactivatedRegistrationDetail(current.hierarchy.orEmpty()))
+      ) {
+        return false
+      }
+      if (!latestTicketReselectFinalUnactivatedProved &&
+        (!currentIsFresh || current.state != TicketViviRecoveryState.TICKET_DETAIL ||
+          !TicketViviPageEnforcer.isUnactivatedRegistrationDetail(current.hierarchy.orEmpty()))
+      ) {
+        return false
+      }
+    } else {
+      if (
+        current.state != TicketViviRecoveryState.TICKET_DETAIL ||
+        currentAgeMillis == null ||
+        currentAgeMillis > CONTROL_CODE_RESELECT_FRESH_TICKET_MAX_AGE_MILLIS
+      ) {
+        return false
+      }
     }
     if (latestTicketReselectFreshFrameAtMillis == 0L) {
       latestTicketReselectFreshFrameAtMillis = nowMillis
@@ -4495,6 +5164,9 @@ class TicketStreamService : Service() {
       event.startsWith("control_code_") ||
       event.startsWith("ticket_control_code_") ||
       event.startsWith("ticket_card_") ||
+      event.startsWith("ticket_detail_") ||
+      event.startsWith("ticket_registration_") ||
+      event.startsWith("ticket_slider_") ||
       event == "ticket_state_event" ||
       event == "vivi_hard_reset" ||
       event == "secure_capture_blocked"
@@ -5169,7 +5841,8 @@ class TicketStreamService : Service() {
     parallelTicketDetailProofAfterTicketCardSelection: Boolean = false,
     requireNewTicketRegistration: Boolean = false,
     requireTicketListWithRegistrationButton: Boolean = false,
-    requireFreshAztecVisualProof: Boolean = false
+    requireFreshAztecVisualProof: Boolean = false,
+    requireUnactivatedRegistration: Boolean = false
   ): TicketAutopilotResult {
     var lastState = TicketViviRecoveryState.UNKNOWN_VIVI
     var lastStep = "wake_root_unavailable"
@@ -5195,14 +5868,18 @@ class TicketStreamService : Service() {
     fun result(
       success: Boolean,
       state: TicketViviRecoveryState,
-      step: String
+      step: String,
+      finalHierarchy: String = "",
+      finalSliderBounds: TicketViviGraphicBounds? = null
     ): TicketAutopilotResult {
       return TicketAutopilotResult(
         success = success,
         state = state,
         step = step,
         finalActionCategory = finalActionCategory,
-        finalActionOutcome = finalActionOutcome
+        finalActionOutcome = finalActionOutcome,
+        finalHierarchy = finalHierarchy,
+        finalSliderBounds = finalSliderBounds
       )
     }
     while (true) {
@@ -5236,25 +5913,51 @@ class TicketStreamService : Service() {
           recordTicketWakePhase("ticket_ready", wakeStartedAtMillis)
           return result(true, state, "wake_root_ticket_list_with_registration_button")
         }
+        val alreadyUnactivatedRegistration = requireUnactivatedRegistration &&
+          TicketViviPageEnforcer.isUnactivatedRegistrationDetail(observation.hierarchy.orEmpty())
         if (state == TicketViviRecoveryState.TICKET_DETAIL &&
           !requireTicketListWithRegistrationButton &&
-          (!requireNewTicketRegistration || newTicketRegistrationAttempted)
+          ((!requireNewTicketRegistration || newTicketRegistrationAttempted) || alreadyUnactivatedRegistration)
         ) {
-          val aztecVisualProofed = !requireFreshAztecVisualProof ||
-            verifyFreshTicketDetailVisualProof("wake_root:$reason")
-          if (aztecVisualProofed) {
-            recordTicketWakePhase("ticket_ready", wakeStartedAtMillis)
-            return result(
-              true,
-              state,
-              if (requireNewTicketRegistration) {
-                "wake_root_ticket_detail_after_new_registration"
-              } else {
-                "wake_root_ticket_detail_aztec_proved"
-              }
-            )
+          if (requireUnactivatedRegistration &&
+            TicketViviPageEnforcer.isUnactivatedRegistrationDetail(observation.hierarchy.orEmpty())) {
+            val semanticBounds = TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(observation.hierarchy.orEmpty())
+            val sliderBounds = semanticBounds?.let {
+              detectFreshTicketRegistrationSliderBounds(
+                hierarchyBounds = it,
+                reason = "wake_root_unactivated:$reason"
+              )
+            }
+            if (sliderBounds != null) {
+              recordTicketWakePhase("ticket_ready", wakeStartedAtMillis)
+              return result(
+                true,
+                state,
+                "wake_root_unactivated_registration_ready",
+                observation.hierarchy.orEmpty(),
+                finalSliderBounds = sliderBounds
+              )
+            }
+            lastStep = "wake_root_unactivated_visual_unproved"
           }
-          lastStep = "wake_root_ticket_detail_aztec_visual_unproved"
+          if (!requireUnactivatedRegistration) {
+            val aztecVisualProofed = !requireFreshAztecVisualProof ||
+              verifyFreshTicketDetailVisualProof("wake_root:$reason")
+            if (aztecVisualProofed) {
+              recordTicketWakePhase("ticket_ready", wakeStartedAtMillis)
+              return result(
+                true,
+                state,
+                if (requireNewTicketRegistration) {
+                  "wake_root_ticket_detail_after_new_registration"
+                } else {
+                  "wake_root_ticket_detail_aztec_proved"
+                },
+                observation.hierarchy.orEmpty()
+              )
+            }
+            lastStep = "wake_root_ticket_detail_aztec_visual_unproved"
+          }
         }
         if (
           state == TicketViviRecoveryState.LOGIN_REQUIRED &&
@@ -5697,7 +6400,7 @@ class TicketStreamService : Service() {
         continue
       }
       val probeStartedAtMillis = SystemClock.elapsedRealtime()
-      val probeId = rootHardwareH264CaptureEngine.requestTicketDetailVisualProbe(
+      val probeId = rootHardwareH264CaptureEngine.requestActivatedTicketVisualProbe(
         "${reason}_aztec_${sampleIndex + 1}"
       )
       if (probeId == null) {
@@ -5741,6 +6444,128 @@ class TicketStreamService : Service() {
       "reason=$reason samples=$sampleIndex last=$lastResult duration_ms=${(SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)}"
     )
     return false
+  }
+
+  /**
+   * Requires fresh rooted H.264 geometry to agree with the semantic registration anchors.
+   * The helper returns only the mapped rectangle; no captured image leaves the phone.
+   */
+  private suspend fun detectFreshTicketRegistrationSliderBounds(
+    hierarchyBounds: TicketViviGraphicBounds,
+    reason: String,
+    timeoutMillis: Long = TICKET_SLIDER_PROOF_TIMEOUT_MILLIS
+  ): TicketViviGraphicBounds? {
+    val displayWidth = resources.displayMetrics.widthPixels.coerceAtLeast(1)
+    val displayHeight = resources.displayMetrics.heightPixels.coerceAtLeast(1)
+    val sourceTopCrop = TicketScreenConfig.TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS
+      .coerceIn(0, (displayHeight - 1).coerceAtLeast(0))
+    val sourceVisibleHeight = (displayHeight - sourceTopCrop).coerceAtLeast(1)
+    val deadlineMillis = SystemClock.elapsedRealtime() + timeoutMillis.coerceAtLeast(1L)
+    var previous: TicketViviGraphicBounds? = null
+    var stableSamples = 0
+    var sampleCount = 0
+    while (SystemClock.elapsedRealtime() < deadlineMillis) {
+      if (!rootHardwareH264CaptureEngine.snapshot().active) {
+        delay(TICKET_FAST_PUBLIC_OPEN_VISUAL_PROOF_POLL_MILLIS)
+        continue
+      }
+      val probeStartedAtMillis = SystemClock.elapsedRealtime()
+      val probeId = rootHardwareH264CaptureEngine.requestTicketDetailVisualProbe(
+        "${reason}_slider_${sampleCount + 1}"
+      )
+      if (probeId == null) {
+        delay(TICKET_FAST_PUBLIC_OPEN_VISUAL_PROOF_POLL_MILLIS)
+        continue
+      }
+      sampleCount += 1
+      val remainingMillis = (deadlineMillis - SystemClock.elapsedRealtime()).coerceAtLeast(1L)
+      val visualProbe = waitForFreshControlCodeVisualProbe(
+        visualProbeStartedAtMillis = probeStartedAtMillis,
+        expectedProbeId = probeId,
+        timeoutMillis = minOf(CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS, remainingMillis)
+      )
+      val rawBounds = visualProbe?.sliderBounds
+      val mapped = if (
+        visualProbe?.result == TicketControlCodeVisualClassifier.RAW_TICKET && rawBounds != null
+      ) {
+        TicketViviGraphicBounds(
+          left = (rawBounds.left / TicketControlCodeVisualClassifier.SAMPLE_WIDTH.toFloat() * displayWidth)
+            .roundToInt()
+            .coerceIn(0, displayWidth),
+          top = (sourceTopCrop + rawBounds.top / TicketControlCodeVisualClassifier.SAMPLE_HEIGHT.toFloat() * sourceVisibleHeight)
+            .roundToInt()
+            .coerceIn(sourceTopCrop, displayHeight),
+          right = (rawBounds.right / TicketControlCodeVisualClassifier.SAMPLE_WIDTH.toFloat() * displayWidth)
+            .roundToInt()
+            .coerceIn(0, displayWidth),
+          bottom = (sourceTopCrop + rawBounds.bottom / TicketControlCodeVisualClassifier.SAMPLE_HEIGHT.toFloat() * sourceVisibleHeight)
+            .roundToInt()
+            .coerceIn(sourceTopCrop, displayHeight)
+        ).takeIf { it.width >= 220 && it.height >= 24 && it.width >= it.height * 3 }
+      } else {
+        null
+      }
+      if (mapped != null && sliderGeometryAgrees(hierarchyBounds, mapped, displayWidth, displayHeight)) {
+        stableSamples = if (previous != null && sliderGeometryClose(previous, mapped)) {
+          stableSamples + 1
+        } else {
+          1
+        }
+        previous = mapped
+        if (stableSamples >= TICKET_DETAIL_VISUAL_PROOF_SAMPLE_COUNT) {
+          recordTicketEvent(
+            "ticket_registration_slider_visual_proofed",
+            "reason=$reason samples=$sampleCount bounds=${mapped.left},${mapped.top},${mapped.right},${mapped.bottom}"
+          )
+          return mapped
+        }
+      } else {
+        stableSamples = 0
+        previous = null
+      }
+      delay(TICKET_SLIDER_PROOF_POLL_MILLIS)
+    }
+    recordTicketEvent(
+      "ticket_registration_slider_visual_proof_failed",
+      "reason=$reason samples=$sampleCount"
+    )
+    return null
+  }
+
+  private fun sliderGeometryAgrees(
+    hierarchyBounds: TicketViviGraphicBounds,
+    visualBounds: TicketViviGraphicBounds,
+    displayWidth: Int,
+    displayHeight: Int
+  ): Boolean {
+    if (
+      visualBounds.left < 0 || visualBounds.top < 0 ||
+      visualBounds.right > displayWidth || visualBounds.bottom > displayHeight ||
+      visualBounds.width < 220 || visualBounds.height < 24 ||
+      visualBounds.width < visualBounds.height * 3
+    ) {
+      return false
+    }
+    val horizontalOverlap = minOf(hierarchyBounds.right, visualBounds.right) -
+      maxOf(hierarchyBounds.left, visualBounds.left)
+    val hierarchyCenterY = (hierarchyBounds.top + hierarchyBounds.bottom) / 2
+    val verticalDistance = when {
+      hierarchyCenterY < visualBounds.top -> visualBounds.top - hierarchyCenterY
+      hierarchyCenterY > visualBounds.bottom -> hierarchyCenterY - visualBounds.bottom
+      else -> 0
+    }
+    return horizontalOverlap >= 1 && verticalDistance <= maxOf(visualBounds.height, 120)
+  }
+
+  private fun sliderGeometryClose(
+    previous: TicketViviGraphicBounds?,
+    current: TicketViviGraphicBounds
+  ): Boolean {
+    if (previous == null) return false
+    return kotlin.math.abs(previous.left - current.left) <= 48 &&
+      kotlin.math.abs(previous.top - current.top) <= 48 &&
+      kotlin.math.abs(previous.right - current.right) <= 48 &&
+      kotlin.math.abs(previous.bottom - current.bottom) <= 48
   }
 
   /**
@@ -6467,6 +7292,7 @@ class TicketStreamService : Service() {
     val now = SystemClock.elapsedRealtime()
     return controlCodeModeActive ||
       controlCodeRequestActive() ||
+      activeTicketSliderGesture != null ||
       now < controlCodeTransitionGraceUntilMillis ||
       ticketSessionState == TICKET_SESSION_CONTROL_EXIT
   }
@@ -8196,6 +9022,31 @@ class TicketStreamService : Service() {
       recordTicketEvent("fast_visible_hierarchy_empty", "reason=$reason package=$expectedPackageName duration_ms=$durationMs")
       return ""
     }
+    return buildFastVisibleHierarchy(nodes, expectedPackageName, reason, durationMs)
+  }
+
+  private suspend fun fastTicketRegistrationHierarchy(reason: String): String {
+    val startedAt = SystemClock.elapsedRealtime()
+    val nodes = PhoneAutomationServiceBridge.snapshotTicketRegistrationNodes(
+      TicketScreenConfig.VIVI_PACKAGE
+    )
+    val durationMs = SystemClock.elapsedRealtime() - startedAt
+    if (nodes.isEmpty()) {
+      recordTicketEvent(
+        "fast_ticket_registration_hierarchy_empty",
+        "reason=$reason duration_ms=$durationMs"
+      )
+      return ""
+    }
+    return buildFastVisibleHierarchy(nodes, TicketScreenConfig.VIVI_PACKAGE, reason, durationMs)
+  }
+
+  private fun buildFastVisibleHierarchy(
+    nodes: List<PhoneAutomationVisibleNode>,
+    expectedPackageName: String,
+    reason: String,
+    durationMs: Long
+  ): String {
     val hierarchy = buildString {
       append("<hierarchy>")
       nodes.forEachIndexed { index, node ->
@@ -8223,10 +9074,7 @@ class TicketStreamService : Service() {
 
   private suspend fun observeAccessibilityViviState(reason: String): RootViviObservation {
     val startedAtMillis = SystemClock.elapsedRealtime()
-    val hierarchy = fastVisibleHierarchy(
-      expectedPackageName = TicketScreenConfig.VIVI_PACKAGE,
-      reason = reason
-    ).takeIf(String::isNotBlank)
+    val hierarchy = fastTicketRegistrationHierarchy(reason).takeIf(String::isNotBlank)
     if (hierarchy == null) {
       val durationMillis = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
       return RootViviObservation(
@@ -11753,6 +12601,12 @@ class TicketStreamService : Service() {
     private const val TICKET_FAST_PUBLIC_OPEN_VISUAL_RAW_TICKET_PROOF_COUNT = 2
     private const val TICKET_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS = 2_000L
     private const val TICKET_DETAIL_VISUAL_PROOF_SAMPLE_COUNT = 2
+    private const val TICKET_SLIDER_PROOF_TIMEOUT_MILLIS = 1_500L
+    private const val TICKET_SLIDER_PROOF_POLL_MILLIS = 80L
+    private const val TICKET_SLIDER_GESTURE_TIMEOUT_MILLIS = 450L
+    private const val TICKET_SLIDER_COMPLETION_DURATION_MILLIS = 150L
+    private const val TICKET_SLIDER_ACTIVATED_PROOF_TIMEOUT_MILLIS = 2_000L
+    private const val TICKET_SLIDER_COMPLETION_PROGRESS = 5_000
     private const val TICKET_WAKE_RECOVERY_BUDGET_MILLIS = 60_000L
     private const val TICKET_WAKE_RECOVERY_MAX_ACTIONS = 4
     private const val TICKET_WAKE_RECOVERY_MIN_ACTION_TIMEOUT_MILLIS = 4_000L
@@ -11842,6 +12696,10 @@ class TicketStreamService : Service() {
     private const val LATEST_TICKET_RESELECT_MAX_RECOVERY_ACTIONS = 6
     private const val LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS = 30_000L
     private const val LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS = 60_000L
+    private const val LATEST_TICKET_RESELECT_IN_APP_ACTION_GRACE_MILLIS = 2_500L
+    private const val LATEST_TICKET_RESELECT_IN_APP_RESET_BUDGET_MILLIS = 12_000L
+    private const val LATEST_TICKET_RESELECT_IN_APP_ACTION_SETTLE_MILLIS = 180L
+    private const val LATEST_TICKET_RESELECT_IN_APP_ACTION_COOLDOWN_MILLIS = 700L
     private const val LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS = 20_000L
     private const val LATEST_TICKET_RESELECT_PROOF_HOLD_MILLIS =
       LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS + 5_000L

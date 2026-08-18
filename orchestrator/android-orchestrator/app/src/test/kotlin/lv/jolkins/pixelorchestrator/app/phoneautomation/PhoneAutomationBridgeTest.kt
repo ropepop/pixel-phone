@@ -466,6 +466,37 @@ class PhoneAutomationBridgeTest {
   }
 
   @Test
+  fun ticketSliderUsesDispatchAcceptanceForContinuingSegments() {
+    val source = readFirstExisting(
+      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
+      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
+    )
+    val dispatch = source.substringAfter("private fun dispatchTicketSliderStroke(")
+      .substringBefore("override suspend fun openFirstEditableInput(")
+
+    assertTrue(dispatch.contains("dispatchGesture("))
+    assertTrue(dispatch.contains("return dispatched"))
+    assertTrue(source.contains("StrokeDescription(path, 0L, 120L, true)"))
+    assertTrue(source.contains("lineTo(heldX.toFloat(), y.toFloat())"))
+    assertTrue(source.contains("ticketSliderNextDispatchAtMillis"))
+    assertTrue(source.contains("delay(waitMillis)"))
+    assertTrue(source.contains("willContinue segment"))
+    assertTrue(source.contains("rooted H.264/state proof remains the authoritative completion check"))
+    assertFalse(dispatch.contains("suspendCancellableCoroutine"))
+    assertFalse(dispatch.contains("continuation.resume(true)"))
+  }
+
+  @Test
+  fun accessibilityServiceDeclaresGestureCapability() {
+    val xml = readFirstExisting(
+      Path.of("app/src/main/res/xml/phone_automation_accessibility_service.xml"),
+      Path.of("src/main/res/xml/phone_automation_accessibility_service.xml")
+    )
+
+    assertTrue(xml.contains("android:canPerformGestures=\"true\""))
+  }
+
+  @Test
   fun openFirstEditableInputDelegatesToAccessibilityHost() = runTest {
     PhoneAutomationServiceBridge.resetForTests()
     val host = FakeAccessibilityHost().apply {

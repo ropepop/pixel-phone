@@ -9,6 +9,7 @@ import android.graphics.PixelFormat
 import android.os.Bundle
 import android.os.Build
 import android.os.Looper
+import android.os.SystemClock
 import android.graphics.Rect
 import android.view.Gravity
 import android.view.MotionEvent
@@ -27,6 +28,11 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
   private var blackoutOverlayActivePointerCount = 0
   private var viviControlCodePreviousKeyboardShowMode: Int? = null
   private var viviControlCodeKeyboardExpectedPackageName: String? = null
+  private var ticketSliderStroke: GestureDescription.StrokeDescription? = null
+  private var ticketSliderLastX: Int = 0
+  private var ticketSliderLastY: Int = 0
+  private var ticketSliderDispatchGeneration: Long = 0L
+  private var ticketSliderNextDispatchAtMillis: Long = 0L
 
   override fun onServiceConnected() {
     super.onServiceConnected()
@@ -66,6 +72,9 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
 
   override fun onUnbind(intent: android.content.Intent?): Boolean {
     syncBlackoutOverlayVisibility(false)
+    ticketSliderDispatchGeneration += 1L
+    ticketSliderStroke = null
+    ticketSliderNextDispatchAtMillis = 0L
     if (Looper.myLooper() == Looper.getMainLooper()) {
       restoreViviControlCodeKeyboardModeOnMainThread(null)
     }
@@ -179,6 +188,99 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
           )
         }
         .toList()
+    }
+  }
+
+  override suspend fun snapshotTicketRegistrationNodes(
+    expectedPackageName: String
+  ): List<PhoneAutomationVisibleNode> {
+    return withContext(Dispatchers.Main.immediate) {
+      // rootForPackage() falls back to a recursive tree walk when Android
+      // exposes an overlay root. That walk is useful for broad recovery but
+      // can block the phone lane for seconds on ViVi's Flutter tree. The
+      // registration fast path only needs the active ViVi root and a handful
+      // of semantic anchors, so keep this lookup direct and bounded.
+      val root = fastRootForPackage(expectedPackageName) ?: return@withContext emptyList()
+      val semanticTerms = listOf(
+        "reģistrēt biļeti",
+        "reģistrēt bileti",
+        "pavelc",
+        "apstiprin",
+        "biļete reģistrēta",
+        "bilete registreta",
+        "pasažieru vilciens",
+        "pasazieru vilciens",
+        "derīga",
+        "deriga"
+      )
+      val matchedNodes = LinkedHashMap<String, AccessibilityNodeInfo>()
+      var visitedNodes = 0
+      val walkDeadline = SystemClock.uptimeMillis() + 180L
+
+      // ViVi exposes the useful labels as content descriptions on generic
+      // android.view.View nodes, so findAccessibilityNodeInfosByText() does
+      // not see them. Walk only this bounded active root instead of using the
+      // unbounded snapshotVisibleNodes() traversal.
+      fun collect(node: AccessibilityNodeInfo, depth: Int) {
+        if (
+          visitedNodes >= 192 ||
+          depth > 24 ||
+          SystemClock.uptimeMillis() >= walkDeadline
+        ) {
+          return
+        }
+        visitedNodes += 1
+        val label = listOf(
+          node.textValue(),
+          node.contentDescriptionValue(),
+          node.hintText?.toString().orEmpty()
+        ).joinToString(" ").lowercase().replace(Regex("\\s+"), " ")
+        if (semanticTerms.any(label::contains)) {
+          val bounds = Rect()
+          node.getBoundsInScreen(bounds)
+          val key = buildString {
+            append(node.textValue()).append('|')
+            append(node.contentDescriptionValue()).append('|')
+            append(node.resourceIdValue()).append('|')
+            append(bounds.left).append(',').append(bounds.top).append(',')
+              .append(bounds.right).append(',').append(bounds.bottom)
+          }
+          matchedNodes.putIfAbsent(key, node)
+        }
+        for (index in 0 until node.childCount.coerceAtMost(48)) {
+          if (SystemClock.uptimeMillis() >= walkDeadline) return
+          node.getChild(index)?.let { child -> collect(child, depth + 1) }
+        }
+      }
+      collect(root, 0)
+      if (matchedNodes.isEmpty()) {
+        return@withContext emptyList()
+      }
+
+      // Include a short parent chain because the large clickable ticket
+      // surface normally carries the slider bounds while its child carries
+      // the instruction text. No arbitrary descendants are traversed.
+      val nodes = LinkedHashMap<String, AccessibilityNodeInfo>()
+      matchedNodes.values.forEach { matched ->
+        var current: AccessibilityNodeInfo? = matched
+        repeat(5) {
+          val node = current ?: return@repeat
+          val key = buildString {
+            append(node.textValue()).append('|')
+            append(node.contentDescriptionValue()).append('|')
+            append(node.resourceIdValue()).append('|')
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            append(bounds.left).append(',').append(bounds.top).append(',')
+              .append(bounds.right).append(',').append(bounds.bottom)
+          }
+          nodes.putIfAbsent(key, node)
+          current = node.parent
+        }
+      }
+      nodes.values
+        .filter { node -> nodePackageMatchesExpected(node, expectedPackageName) }
+        .map { node -> visibleNodeSnapshot(node) }
     }
   }
 
@@ -333,6 +435,155 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     return false
   }
 
+  override suspend fun startTicketSliderGesture(
+    startX: Int,
+    startY: Int,
+    timeoutMillis: Long
+  ): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+    return withContext(Dispatchers.Main.immediate) {
+      if (ticketSliderStroke != null) return@withContext false
+      val width = resources.displayMetrics.widthPixels.coerceAtLeast(1)
+      val height = resources.displayMetrics.heightPixels.coerceAtLeast(1)
+      val x = startX.coerceIn(0, width - 1)
+      val y = startY.coerceIn(0, height - 1)
+      // A zero-length continued stroke is treated as a tap by some Android
+      // accessibility implementations. Give the pointer a one-pixel hold
+      // segment so ViVi receives a real down/held gesture before the next
+      // continuation, while keeping the visual starting position unchanged.
+      val heldX = (x + 1).coerceAtMost(width - 1)
+      val path = Path().apply {
+        moveTo(x.toFloat(), y.toFloat())
+        lineTo(heldX.toFloat(), y.toFloat())
+      }
+      val stroke = GestureDescription.StrokeDescription(path, 0L, 120L, true)
+      val generation = ++ticketSliderDispatchGeneration
+      ticketSliderStroke = stroke
+      val ok = dispatchTicketSliderStroke(stroke, "ticket_slider_start", generation)
+      if (ok) {
+        ticketSliderLastX = heldX
+        ticketSliderLastY = y
+        ticketSliderNextDispatchAtMillis = SystemClock.uptimeMillis() + 120L
+      } else if (ticketSliderDispatchGeneration == generation) {
+        ticketSliderStroke = null
+        ticketSliderNextDispatchAtMillis = 0L
+      }
+      ok
+    }
+  }
+
+  override suspend fun continueTicketSliderGesture(
+    endX: Int,
+    endY: Int,
+    durationMillis: Long,
+    timeoutMillis: Long
+  ): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+    val waitMillis = withContext(Dispatchers.Main.immediate) {
+      (ticketSliderNextDispatchAtMillis - SystemClock.uptimeMillis()).coerceAtLeast(0L)
+    }
+    if (waitMillis > 0L) delay(waitMillis)
+    return withContext(Dispatchers.Main.immediate) {
+      val current = ticketSliderStroke ?: return@withContext false
+      val width = resources.displayMetrics.widthPixels.coerceAtLeast(1)
+      val height = resources.displayMetrics.heightPixels.coerceAtLeast(1)
+      val x = endX.coerceIn(0, width - 1)
+      val y = endY.coerceIn(0, height - 1)
+      val path = Path().apply {
+        moveTo(ticketSliderLastX.toFloat(), ticketSliderLastY.toFloat())
+        lineTo(x.toFloat(), y.toFloat())
+      }
+      val next = current.continueStroke(path, 0L, durationMillis.coerceIn(32L, 100L), true)
+      val generation = ++ticketSliderDispatchGeneration
+      ticketSliderStroke = next
+      val ok = dispatchTicketSliderStroke(next, "ticket_slider_continue", generation)
+      if (ok) {
+        ticketSliderLastX = x
+        ticketSliderLastY = y
+        ticketSliderNextDispatchAtMillis = SystemClock.uptimeMillis() + durationMillis.coerceIn(32L, 100L)
+      } else if (ticketSliderDispatchGeneration == generation) {
+        ticketSliderStroke = null
+        ticketSliderNextDispatchAtMillis = 0L
+      }
+      ok
+    }
+  }
+
+  override suspend fun endTicketSliderGesture(
+    endX: Int,
+    endY: Int,
+    durationMillis: Long,
+    timeoutMillis: Long
+  ): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+    val waitMillis = withContext(Dispatchers.Main.immediate) {
+      (ticketSliderNextDispatchAtMillis - SystemClock.uptimeMillis()).coerceAtLeast(0L)
+    }
+    if (waitMillis > 0L) delay(waitMillis)
+    return withContext(Dispatchers.Main.immediate) {
+      val current = ticketSliderStroke ?: return@withContext false
+      val width = resources.displayMetrics.widthPixels.coerceAtLeast(1)
+      val height = resources.displayMetrics.heightPixels.coerceAtLeast(1)
+      val x = endX.coerceIn(0, width - 1)
+      val y = endY.coerceIn(0, height - 1)
+      val path = Path().apply {
+        moveTo(ticketSliderLastX.toFloat(), ticketSliderLastY.toFloat())
+        lineTo(x.toFloat(), y.toFloat())
+      }
+      val next = current.continueStroke(path, 0L, durationMillis.coerceIn(32L, 180L), false)
+      val generation = ++ticketSliderDispatchGeneration
+      ticketSliderStroke = next
+      val ok = dispatchTicketSliderStroke(next, "ticket_slider_end", generation)
+      if (ok) {
+        ticketSliderStroke = null
+        ticketSliderNextDispatchAtMillis = 0L
+        ticketSliderLastX = x
+        ticketSliderLastY = y
+      } else if (ticketSliderDispatchGeneration == generation) {
+        ticketSliderStroke = null
+        ticketSliderNextDispatchAtMillis = 0L
+      }
+      ok
+    }
+  }
+
+  /**
+   * Accessibility dispatch acknowledges that a segment was accepted, not that a
+   * continued stroke has reached its final endpoint. Waiting for onCompleted on
+   * a willContinue segment blocks the Spacetime command lane indefinitely on
+   * Android builds that defer that callback until the stroke is ended. The
+   * rooted H.264/state proof remains the authoritative completion check.
+   */
+  private fun dispatchTicketSliderStroke(
+    stroke: GestureDescription.StrokeDescription,
+    reason: String,
+    generation: Long
+  ): Boolean {
+    PhoneAutomationServiceBridge.markNonTouchInput(reason)
+    val gesture = GestureDescription.Builder().addStroke(stroke).build()
+    val dispatched = runCatching {
+      dispatchGesture(
+        gesture,
+        object : GestureResultCallback() {
+          override fun onCompleted(gestureDescription: GestureDescription?) = Unit
+
+          override fun onCancelled(gestureDescription: GestureDescription?) {
+            if (ticketSliderDispatchGeneration == generation) {
+              ticketSliderStroke = null
+              ticketSliderNextDispatchAtMillis = 0L
+            }
+          }
+        },
+        null
+      )
+    }.getOrDefault(false)
+    if (!dispatched && ticketSliderDispatchGeneration == generation) {
+      ticketSliderStroke = null
+      ticketSliderNextDispatchAtMillis = 0L
+    }
+    return dispatched
+  }
+
   override suspend fun openFirstEditableInput(
     expectedPackageName: String,
     timeoutMillis: Long
@@ -368,6 +619,33 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     return windows.asSequence()
       .mapNotNull { window -> window.root }
       .firstOrNull { root -> rootPackageMatchesExpected(root, expectedPackageName) }
+  }
+
+  private fun fastRootForPackage(expectedPackageName: String): AccessibilityNodeInfo? {
+    rootInActiveWindow
+      ?.takeIf { root -> root.packageName?.toString().orEmpty() == expectedPackageName }
+      ?.let { return it }
+    return windows.asSequence()
+      .mapNotNull { window -> window.root }
+      .firstOrNull { root -> root.packageName?.toString().orEmpty() == expectedPackageName }
+  }
+
+  private fun visibleNodeSnapshot(node: AccessibilityNodeInfo): PhoneAutomationVisibleNode {
+    val bounds = Rect()
+    node.getBoundsInScreen(bounds)
+    return PhoneAutomationVisibleNode(
+      text = node.textValue(),
+      resourceId = node.resourceIdValue(),
+      contentDescription = node.contentDescriptionValue(),
+      className = node.className?.toString().orEmpty(),
+      bounds = "[${bounds.left},${bounds.top}][${bounds.right},${bounds.bottom}]",
+      clickable = node.isClickable,
+      enabled = node.isEnabled,
+      focused = node.isFocused,
+      editable = node.isEditable,
+      focusable = node.isFocusable,
+      hint = node.hintText?.toString().orEmpty()
+    )
   }
 
   private fun rootPackageMatchesExpected(root: AccessibilityNodeInfo, expectedPackageName: String): Boolean {

@@ -160,6 +160,7 @@ class TicketViviPageEnforcerTest {
         <node package="com.pv.vivi" class="android.widget.Button" clickable="true" enabled="true" bounds="[870,205][996,331]" />
         <node package="com.pv.vivi" content-desc="30 dienu biļete" bounds="[396,1123][684,1184]" />
         <node package="com.pv.vivi" content-desc="Derīga" bounds="[81,1339][191,1391]" />
+        <node package="com.pv.vivi" content-desc="Derīga" bounds="[81,1339][191,1391]" />
         <node package="com.pv.vivi" content-desc="24.07.2026–22.08.2026" bounds="[81,1402][601,1470]" />
         <node package="com.pv.vivi" content-desc="Reģistrēt biļeti" bounds="[396,1543][684,1604]" />
         <node package="com.pv.vivi" content-desc="Pavelc, lai apstiprinātu" bounds="[362,1604][718,1654]" />
@@ -173,6 +174,44 @@ class TicketViviPageEnforcerTest {
     assertEquals(933, action?.x)
     assertEquals(268, action?.y)
     assertEquals("[870,205][996,331]", action?.bounds)
+  }
+
+  @Test
+  fun distinguishesUnactivatedRegistrationFromActivatedTicketDetail() {
+    val registration = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="30 dienu biļete" bounds="[396,1123][684,1184]" />
+        <node package="com.pv.vivi" content-desc="Derīga" bounds="[81,1339][191,1391]" />
+        <node package="com.pv.vivi" content-desc="24.07.2026–22.08.2026" bounds="[81,1402][601,1470]" />
+        <node package="com.pv.vivi" class="android.widget.Button" clickable="true" enabled="true" content-desc="Reģistrēt biļeti&#10;Pavelc, lai apstiprinātu" bounds="[68,1543][1012,1654]" />
+        <node package="com.pv.vivi" content-desc="Reģistrēt biļeti" bounds="[396,1543][684,1604]" />
+        <node package="com.pv.vivi" content-desc="Pavelc, lai apstiprinātu" bounds="[362,1604][718,1654]" />
+        <node package="com.pv.vivi" content-desc="AS Pasažieru Vilciens PVN Reģ. Nr. LV40003567907" bounds="[81,1777][769,1816]" />
+      </hierarchy>
+    """.trimIndent()
+    assertTrue(TicketViviPageEnforcer.isUnactivatedRegistrationDetail(registration))
+    assertFalse(TicketViviPageEnforcer.isActivatedTicketDetail(registration))
+    val bounds = TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(registration)
+    assertEquals(68, bounds?.left)
+    assertEquals(1543, bounds?.top)
+    assertEquals(1012, bounds?.right)
+    assertEquals(1654, bounds?.bottom)
+  }
+
+  @Test
+  fun activatedDetailIsTheOnlyRestingLifecycleProof() {
+    val activated = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="30 dienu biļete" bounds="[396,1123][684,1184]" />
+        <node package="com.pv.vivi" content-desc="Derīga" bounds="[81,1339][191,1391]" />
+        <node package="com.pv.vivi" content-desc="Biļete reģistrēta" bounds="[350,1450][730,1510]" />
+        <node package="com.pv.vivi" content-desc="Aktivizēts 17.08.2026 12:00" bounds="[350,1510][730,1570]" />
+        <node package="com.pv.vivi" content-desc="AS Pasažieru Vilciens PVN Reģ. Nr. LV40003567907" bounds="[81,1777][769,1816]" />
+        <node package="com.pv.vivi" class="android.widget.ImageView" content-desc="Aztec kontroles kods" bounds="[250,780][830,1360]" />
+      </hierarchy>
+    """.trimIndent()
+    assertTrue(TicketViviPageEnforcer.isActivatedTicketDetail(activated))
+    assertFalse(TicketViviPageEnforcer.isUnactivatedRegistrationDetail(activated))
   }
 
   @Test

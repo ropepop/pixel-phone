@@ -22,8 +22,19 @@ data class TicketControlCodeVisualProbe(
   val probeId: Long,
   val result: String,
   val reason: String,
-  val atMillis: Long
+  val atMillis: Long,
+  val sliderBounds: TicketControlCodeVisualBounds? = null
 )
+
+data class TicketControlCodeVisualBounds(
+  val left: Int,
+  val top: Int,
+  val right: Int,
+  val bottom: Int
+) {
+  val width: Int get() = (right - left).coerceAtLeast(0)
+  val height: Int get() = (bottom - top).coerceAtLeast(0)
+}
 
 class TicketRootHardwareH264CaptureEngine(
   private val scope: CoroutineScope,
@@ -83,6 +94,7 @@ class TicketRootHardwareH264CaptureEngine(
   @Volatile private var lastControlCodeVisualProbeReason = ""
   @Volatile private var lastControlCodeVisualProbeId = 0L
   @Volatile private var lastControlCodeVisualProbeAtMillis = 0L
+  @Volatile private var lastControlCodeVisualSliderBounds: TicketControlCodeVisualBounds? = null
   @Volatile private var controlCodeBurstActive = false
   @Volatile private var controlCodeBurstState = "idle"
   @Volatile private var lastControlCodeBurstAtMillis = 0L
@@ -278,6 +290,14 @@ class TicketRootHardwareH264CaptureEngine(
   fun requestTicketDetailVisualProbe(reason: String): Long? =
     requestControlCodeVisualProbe("ticket_detail_visual_probe", reason)
 
+  /**
+   * Proves the activated ticket detail with a visual classifier that does not confuse ViVi's
+   * dark activated-status strip with the generated control-code result strip. Hierarchy proof
+   * remains a separate mandatory gate in the caller.
+   */
+  fun requestActivatedTicketVisualProbe(reason: String): Long? =
+    requestControlCodeVisualProbe("ticket_activated_visual_probe", reason)
+
   fun startControlCodeRequestBurst(reason: String): Boolean =
     writeHardwareCommand("control_code_burst_start\n", "control_code_burst_start", reason)
 
@@ -289,6 +309,7 @@ class TicketRootHardwareH264CaptureEngine(
     lastControlCodeVisualProbeResult = "requested"
     lastControlCodeVisualProbeReason = reason
     lastControlCodeVisualProbeId = probeId
+    lastControlCodeVisualSliderBounds = null
     return if (writeHardwareCommand("$command:$probeId\n", command, reason)) probeId else null
   }
 
@@ -299,6 +320,7 @@ class TicketRootHardwareH264CaptureEngine(
     val atMillis = lastControlCodeVisualProbeAtMillis
     val result = lastControlCodeVisualProbeResult
     val probeId = lastControlCodeVisualProbeId
+    val sliderBounds = lastControlCodeVisualSliderBounds
     if (
       probeId != expectedProbeId ||
       atMillis < startedAtMillis ||
@@ -311,7 +333,8 @@ class TicketRootHardwareH264CaptureEngine(
       probeId = probeId,
       result = result,
       reason = lastControlCodeVisualProbeReason,
-      atMillis = atMillis
+      atMillis = atMillis,
+      sliderBounds = sliderBounds
     )
   }
 
@@ -657,6 +680,7 @@ class TicketRootHardwareH264CaptureEngine(
         lastControlCodeVisualProbeId = fields["probe_id"]?.toLongOrNull() ?: 0L
         lastControlCodeVisualProbeResult = fields["result"].orEmpty().ifBlank { "unknown" }
         lastControlCodeVisualProbeReason = fields["reason"].orEmpty()
+        lastControlCodeVisualSliderBounds = parseVisualBounds(fields["slider_bounds"])
         lastControlCodeVisualProbeAtMillis = SystemClock.elapsedRealtime()
       }
       line.startsWith("CONTROL_CODE_BURST ") -> {
@@ -680,6 +704,14 @@ class TicketRootHardwareH264CaptureEngine(
         }
       }
       .toMap()
+  }
+
+  private fun parseVisualBounds(value: String?): TicketControlCodeVisualBounds? {
+    val values = value.orEmpty().split(',').mapNotNull { it.toIntOrNull() }
+    if (values.size != 4) return null
+    val (left, top, right, bottom) = values
+    return TicketControlCodeVisualBounds(left, top, right, bottom)
+      .takeIf { it.width > 0 && it.height > 0 }
   }
 
   private fun updateEstimatedBitrate(bytes: Int, nowMillis: Long) {
