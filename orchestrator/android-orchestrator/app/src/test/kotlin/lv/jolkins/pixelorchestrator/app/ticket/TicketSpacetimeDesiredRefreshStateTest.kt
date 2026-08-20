@@ -11,6 +11,30 @@ import org.junit.Test
 
 class TicketSpacetimeDesiredRefreshStateTest {
   @Test
+  fun inactiveStreamBootstrapsBeforeReset() {
+    val ordered = prioritizePendingCommandsForStreamState(
+      listOf(command("reset_ticket_registration"), command("keyframe"), command("start"), command("recover_stream")),
+      streamActive = false
+    )
+    assertEquals(
+      listOf("start", "recover_stream", "reset_ticket_registration", "keyframe"),
+      ordered.map { it.commandType }
+    )
+  }
+
+  @Test
+  fun activeStreamPreservesControlFirstServerOrder() {
+    val ordered = prioritizePendingCommandsForStreamState(
+      listOf(command("reset_ticket_registration"), command("slider_control_start"), command("recover_stream"), command("start")),
+      streamActive = true
+    )
+    assertEquals(
+      listOf("reset_ticket_registration", "slider_control_start", "recover_stream", "start"),
+      ordered.map { it.commandType }
+    )
+  }
+
+  @Test
   fun idleCommandArrivesThenLiveRefreshesOnceBeforeReportingDesiredActive() {
     val state = TicketSpacetimeDesiredRefreshState<Boolean>()
     state.onClientConnected()
@@ -28,6 +52,20 @@ class TicketSpacetimeDesiredRefreshStateTest {
       assertFalse(state.shouldRefresh(hotLaneActive = true, hasPendingCommands = false, nowMillis = 10_000L + it))
     }
   }
+
+  private fun command(type: String) = TicketSpacetimeCommand(
+    id = type,
+    ticketId = "ticket",
+    backendId = "pixel",
+    commandType = type,
+    status = "pending",
+    revision = "revision",
+    reason = "test",
+    payloadJson = "{}",
+    createdAt = "2026-08-19T00:00:00Z",
+    updatedAt = "2026-08-19T00:00:00Z",
+    expiresAt = "2026-08-20T00:00:00Z"
+  )
 
   @Test
   fun reconnectWhileLiveDefersForCommandsThenRefreshesOnceBeforeReportingDesiredActive() {
@@ -137,7 +175,7 @@ class TicketSpacetimeDesiredRefreshStateTest {
   fun workerResolvesTheActiveOrSignaledCommandLaneBeforeCanonicalDesiredRefresh() {
     val worker = source("ticket/TicketSpacetimeWorker.kt")
     val connection = body(worker, "private fun onSpacetimeClientConnected", "private suspend fun runCycle")
-    val cycle = body(worker, "private suspend fun runCycle", "private fun commandCanBePreemptedByControlCode")
+    val cycle = body(worker, "private suspend fun runCycle", "private fun shouldMeasureBrowserCriticalCommand")
     val register = worker.indexOf("client.register()")
     val connected = worker.indexOf("onSpacetimeClientConnected()", register)
     val eagerLane = cycle.indexOf("val eagerCommandLane = eagerCommandLaneActive()")

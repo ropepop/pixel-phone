@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import android.view.accessibility.AccessibilityManager
 import androidx.core.app.NotificationManagerCompat
 import kotlinx.coroutines.flow.Flow
@@ -185,12 +186,26 @@ internal interface PhoneAutomationAccessibilityHost {
     timeoutMillis: Long
   ): Boolean = false
 
+  suspend fun retryTicketSliderFullStroke(
+    startX: Int,
+    startY: Int,
+    endX: Int,
+    endY: Int,
+    durationMillis: Long,
+    timeoutMillis: Long
+  ): Boolean = false
+
   suspend fun performBack(): Boolean
 }
 
 object PhoneAutomationServiceBridge {
   private const val ACCESSIBILITY_SNAPSHOT_TIMEOUT_MILLIS = 750L
   private const val ACCESSIBILITY_CALL_GRACE_TIMEOUT_MILLIS = 250L
+  private const val TICKET_SLIDER_DIAGNOSTIC_TAG = "PixelTicketSlider"
+
+  fun logTicketSliderDiagnostic(message: String) {
+    Log.i(TICKET_SLIDER_DIAGNOSTIC_TAG, message.take(800))
+  }
 
   private val accessibilityService = MutableStateFlow<PhoneAutomationAccessibilityHost?>(null)
   private val notificationListenerConnected = MutableStateFlow(false)
@@ -350,6 +365,22 @@ object PhoneAutomationServiceBridge {
         reason = reason,
         observedAtUptimeMillis = observedAtUptimeMillis,
         suppressedUntilUptimeMillis = untilMillis
+      )
+    )
+  }
+
+  fun clearNonTouchInputTailForBrowserCriticalAction(
+    reason: String,
+    observedAtUptimeMillis: Long = SystemClock.uptimeMillis()
+  ) {
+    nonTouchInputSuppressedUntilUptimeMillis.update { current ->
+      if (current > observedAtUptimeMillis) observedAtUptimeMillis else current
+    }
+    rawNonTouchInputEvents.tryEmit(
+      PhoneAutomationNonTouchInputEvent(
+        reason = reason,
+        observedAtUptimeMillis = observedAtUptimeMillis,
+        suppressedUntilUptimeMillis = observedAtUptimeMillis
       )
     )
   }
@@ -598,8 +629,32 @@ object PhoneAutomationServiceBridge {
     timeoutMillis: Long
   ): Boolean {
     val service = accessibilityService.value ?: return false
-    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
+    // A terminal continuation rejected before Android accepts it gets one fresh-stroke retry
+    // in the accessibility service. Keep the outer bridge budget large enough for both bounded
+    // attempts; cancellation and timeout are not replayed.
+    return withTimeoutOrNull(timeoutMillis.terminalGestureCallTimeoutMillis()) {
       service.endTicketSliderGesture(endX, endY, durationMillis, timeoutMillis)
+    } ?: false
+  }
+
+  suspend fun retryTicketSliderFullStroke(
+    startX: Int,
+    startY: Int,
+    endX: Int,
+    endY: Int,
+    durationMillis: Long,
+    timeoutMillis: Long
+  ): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
+      service.retryTicketSliderFullStroke(
+        startX,
+        startY,
+        endX,
+        endY,
+        durationMillis,
+        timeoutMillis
+      )
     } ?: false
   }
 
@@ -610,6 +665,10 @@ object PhoneAutomationServiceBridge {
 
   private fun Long.accessibilityCallTimeoutMillis(): Long {
     return coerceAtLeast(1L) + ACCESSIBILITY_CALL_GRACE_TIMEOUT_MILLIS
+  }
+
+  private fun Long.terminalGestureCallTimeoutMillis(): Long {
+    return coerceAtLeast(1L) * 2L + ACCESSIBILITY_CALL_GRACE_TIMEOUT_MILLIS
   }
 
   suspend fun awaitNotificationPostedAfter(

@@ -215,6 +215,38 @@ class TicketViviPageEnforcerTest {
   }
 
   @Test
+  fun acceptsRegisteredTicketMarkerUsedByCurrentViviScreen() {
+    val registered = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="30 dienu biļete" bounds="[396,1123][684,1184]" />
+        <node package="com.pv.vivi" content-desc="Reģistrēti biļeti" bounds="[350,1450][730,1510]" />
+        <node package="com.pv.vivi" content-desc="Pavelc, lai atjauninātu" bounds="[350,1510][730,1570]" />
+        <node package="com.pv.vivi" content-desc="Derīga" bounds="[81,1339][191,1391]" />
+        <node package="com.pv.vivi" content-desc="AS Pasažieru Vilciens" bounds="[81,1777][769,1816]" />
+        <node package="com.pv.vivi" class="android.widget.ImageView" content-desc="Aztec kontroles kods" bounds="[250,780][830,1360]" />
+      </hierarchy>
+    """.trimIndent()
+
+    assertTrue(TicketViviPageEnforcer.isActivatedTicketDetail(registered))
+    assertFalse(TicketViviPageEnforcer.isUnactivatedRegistrationDetail(registered))
+  }
+
+  @Test
+  fun conflictingRegisteredAndRegistrationMarkersAreUnknownForLifecycleProof() {
+    val conflicting = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="30 dienu biļete" bounds="[396,1123][684,1184]" />
+        <node package="com.pv.vivi" content-desc="Biļete reģistrēta" bounds="[350,1450][730,1510]" />
+        <node package="com.pv.vivi" content-desc="Reģistrēt biļeti" bounds="[396,1543][684,1604]" />
+        <node package="com.pv.vivi" content-desc="Pavelc, lai apstiprinātu" bounds="[362,1604][718,1654]" />
+      </hierarchy>
+    """.trimIndent()
+
+    assertFalse(TicketViviPageEnforcer.isActivatedTicketDetail(conflicting))
+    assertFalse(TicketViviPageEnforcer.isUnactivatedRegistrationDetail(conflicting))
+  }
+
+  @Test
   fun detectsViviLoginScreenAndTargetsLoginControls() {
     val xml = loginScreenXml()
 

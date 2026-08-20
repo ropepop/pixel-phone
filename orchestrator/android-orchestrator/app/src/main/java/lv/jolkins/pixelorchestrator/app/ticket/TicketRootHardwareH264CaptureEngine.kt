@@ -98,6 +98,18 @@ class TicketRootHardwareH264CaptureEngine(
   @Volatile private var controlCodeBurstActive = false
   @Volatile private var controlCodeBurstState = "idle"
   @Volatile private var lastControlCodeBurstAtMillis = 0L
+  @Volatile private var cadenceFpsTarget: Int? = null
+  @Volatile private var cadenceTier = "static"
+  @Volatile private var cadenceChanges = 0L
+  @Volatile private var cadenceDeadlineMisses = 0L
+  @Volatile private var cadenceSkippedTicks = 0L
+  @Volatile private var cadenceLastLatenessMillis: Long? = null
+  @Volatile private var cadenceLastSkippedTicks = 0L
+  @Volatile private var lastCadenceCommand: String? = null
+  @Volatile private var lastCadenceCommandAccepted: Boolean? = null
+  @Volatile private var lastCadenceCommandAtMillis = 0L
+  /** The latest service-selected tier, replayed when a restarted helper is ready. */
+  @Volatile private var desiredCadenceFps: Int? = null
   @Volatile private var encoderProcessCount = 0
   @Volatile private var staleCaptureProcessCount = 0
   @Volatile private var lastCaptureCleanupResult = "not_run"
@@ -304,6 +316,22 @@ class TicketRootHardwareH264CaptureEngine(
   fun stopControlCodeRequestBurst(reason: String): Boolean =
     writeHardwareCommand("control_code_burst_stop\n", "control_code_burst_stop", reason)
 
+  /** Change capture cadence in the running helper without restarting MediaCodec. */
+  fun requestCadence(fps: Int, reason: String = "cadence_request"): Boolean {
+    val command = "${TicketScreenConfig.ROOT_HARDWARE_H264_CADENCE_COMMAND_PREFIX}$fps\n"
+    val supported = TicketCaptureCadenceScheduler.isSupportedFps(fps)
+    if (supported) {
+      // A viewer can attach while the helper process is still starting. Keep the
+      // accepted tier in-process and replay it as soon as the process exists.
+      desiredCadenceFps = fps
+    }
+    val accepted = supported && (writeHardwareCommand(command, "cadence", reason) || desiredCadenceFps == fps)
+    lastCadenceCommand = command.trim()
+    lastCadenceCommandAccepted = accepted
+    lastCadenceCommandAtMillis = SystemClock.elapsedRealtime()
+    return accepted
+  }
+
   private fun requestControlCodeVisualProbe(command: String, reason: String): Long? {
     val probeId = controlCodeVisualProbeSequence.incrementAndGet()
     lastControlCodeVisualProbeResult = "requested"
@@ -402,6 +430,16 @@ class TicketRootHardwareH264CaptureEngine(
         TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FRAMES > 0
       },
       controlCodeRequestFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS,
+      cadenceFpsTarget = cadenceFpsTarget,
+      cadenceTier = cadenceTier,
+      cadenceChanges = cadenceChanges,
+      cadenceDeadlineMisses = cadenceDeadlineMisses,
+      cadenceSkippedTicks = cadenceSkippedTicks,
+      cadenceLastLatenessMillis = cadenceLastLatenessMillis,
+      cadenceLastSkippedTicks = cadenceLastSkippedTicks,
+      lastCadenceCommand = lastCadenceCommand,
+      lastCadenceCommandAccepted = lastCadenceCommandAccepted,
+      lastCadenceCommandAgoMillis = ageMillis(lastCadenceCommandAtMillis, nowMillis),
       controlCodeBurstActive = controlCodeBurstActive,
       controlCodeBurstState = controlCodeBurstState,
       lastControlCodeBurstAgoMillis = ageMillis(lastControlCodeBurstAtMillis, nowMillis),
@@ -485,6 +523,7 @@ class TicketRootHardwareH264CaptureEngine(
           .redirectErrorStream(false)
           .start()
         encoderProcess = localEncoder
+        flushDesiredCadenceCommand("encoder_started")
         flushPendingKeyFrameRequest("encoder_started")
         readStderrTail(localEncoder)
         schedulePostStartProcessSanityCheck()
@@ -666,6 +705,13 @@ class TicketRootHardwareH264CaptureEngine(
         lastDrawDurationMillis = fields["draw_ms"]?.toLongOrNull()
         lastEncodeDurationMillis = fields["encode_ms"]?.toLongOrNull()
         fields["fps_target"]?.toIntOrNull()?.let { fps = it }
+        fields["cadence_fps"]?.toIntOrNull()?.let { cadenceFpsTarget = it }
+        fields["cadence_tier"]?.takeIf { it.isNotBlank() }?.let { cadenceTier = it }
+        fields["cadence_changes"]?.toLongOrNull()?.let { cadenceChanges = it }
+        fields["deadline_misses"]?.toLongOrNull()?.let { cadenceDeadlineMisses = it }
+        fields["skipped_ticks"]?.toLongOrNull()?.let { cadenceSkippedTicks = it }
+        fields["deadline_late_ms"]?.toLongOrNull()?.let { cadenceLastLatenessMillis = it }
+        fields["last_skipped_ticks"]?.toLongOrNull()?.let { cadenceLastSkippedTicks = it }
         fields["visibility"]?.takeIf { it.isNotBlank() }?.let { lastVisibilityCheckResult = it }
       }
       line.startsWith("VISIBILITY ") -> {
@@ -688,6 +734,19 @@ class TicketRootHardwareH264CaptureEngine(
         controlCodeBurstState = fields["state"].orEmpty().ifBlank { "unknown" }
         controlCodeBurstActive = controlCodeBurstState == "started"
         lastControlCodeBurstAtMillis = SystemClock.elapsedRealtime()
+      }
+      line.startsWith("CADENCE ") -> {
+        val fields = diagnosticFields(line)
+        fields["command"]?.takeIf { it.isNotBlank() }?.let { lastCadenceCommand = it }
+        fields["accepted"]?.toBooleanStrictOrNull()?.let { lastCadenceCommandAccepted = it }
+        lastCadenceCommandAtMillis = SystemClock.elapsedRealtime()
+        fields["fps"]?.toIntOrNull()?.let { cadenceFpsTarget = it }
+        fields["tier"]?.takeIf { it.isNotBlank() }?.let { cadenceTier = it }
+        fields["changes"]?.toLongOrNull()?.let { cadenceChanges = it }
+        fields["deadline_misses"]?.toLongOrNull()?.let { cadenceDeadlineMisses = it }
+        fields["skipped_ticks"]?.toLongOrNull()?.let { cadenceSkippedTicks = it }
+        fields["last_lateness_ms"]?.toLongOrNull()?.let { cadenceLastLatenessMillis = it }
+        fields["last_skipped_ticks"]?.toLongOrNull()?.let { cadenceLastSkippedTicks = it }
       }
     }
   }
@@ -729,6 +788,7 @@ class TicketRootHardwareH264CaptureEngine(
     return when {
       controlCodeBurstActive -> "control_code_request_burst"
       request.startupFrameCount > 0 && frames < request.startupFrameCount -> "startup_burst"
+      cadenceFpsTarget != null -> "adaptive_${cadenceTier}"
       else -> "fixed"
     }
   }
@@ -737,6 +797,7 @@ class TicketRootHardwareH264CaptureEngine(
     val request = activeStartRequest ?: desiredStartRequest
     val currentFps = when {
       controlCodeBurstActive -> TicketScreenConfig.ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS
+      cadenceFpsTarget != null -> cadenceFpsTarget
       request != null && request.startupFrameCount > 0 && frames < request.startupFrameCount -> request.startupFps
       request != null -> request.targetFps
       else -> fps
@@ -792,6 +853,23 @@ class TicketRootHardwareH264CaptureEngine(
     controlCodeBurstActive = false
     controlCodeBurstState = "idle"
     lastControlCodeBurstAtMillis = 0L
+    cadenceFpsTarget = null
+    cadenceTier = "static"
+    cadenceChanges = 0L
+    cadenceDeadlineMisses = 0L
+    cadenceSkippedTicks = 0L
+    cadenceLastLatenessMillis = null
+    cadenceLastSkippedTicks = 0L
+    lastCadenceCommand = null
+    lastCadenceCommandAccepted = null
+    lastCadenceCommandAtMillis = 0L
+    desiredCadenceFps = null
+  }
+
+  private fun flushDesiredCadenceCommand(reason: String) {
+    val fps = desiredCadenceFps ?: return
+    val command = "${TicketScreenConfig.ROOT_HARDWARE_H264_CADENCE_COMMAND_PREFIX}$fps\n"
+    writeHardwareCommand(command, "cadence", reason)
   }
 
   private fun schedulePostStartProcessSanityCheck() {

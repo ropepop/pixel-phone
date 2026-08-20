@@ -8,8 +8,10 @@ import android.graphics.Path
 import android.graphics.PixelFormat
 import android.os.Bundle
 import android.os.Build
+import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.graphics.Rect
 import android.view.Gravity
 import android.view.MotionEvent
@@ -18,17 +20,75 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
 
 class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomationAccessibilityHost {
+  private enum class TicketSliderTerminalDispatchResult {
+    COMPLETED,
+    CANCELLED,
+    REJECTED,
+    TIMED_OUT
+  }
+
+  private class TicketSliderTerminalGestureAwaiter(
+    private val owner: PhoneAutomationAccessibilityService,
+    private val reason: String,
+    private val generation: Long,
+    private val continuation: CancellableContinuation<TicketSliderTerminalDispatchResult>
+  ) : GestureResultCallback(), Runnable, (Throwable?) -> Unit {
+    private val handler = Handler(Looper.getMainLooper())
+
+    fun scheduleTimeout(timeoutMillis: Long) {
+      handler.postDelayed(this, timeoutMillis.coerceAtLeast(1L))
+    }
+
+    fun finish(result: TicketSliderTerminalDispatchResult) {
+      handler.removeCallbacks(this)
+      Log.i(
+        TICKET_SLIDER_DIAGNOSTIC_TAG,
+        "terminal_callback reason=$reason generation=$generation result=${result.name.lowercase()}"
+      )
+      if (continuation.isActive) continuation.resume(result)
+    }
+
+    override fun onCompleted(gestureDescription: GestureDescription?) {
+      finish(TicketSliderTerminalDispatchResult.COMPLETED)
+    }
+
+    override fun onCancelled(gestureDescription: GestureDescription?) {
+      if (owner.ticketSliderDispatchGeneration == generation) {
+        owner.ticketSliderStroke = null
+        owner.ticketSliderNextDispatchAtMillis = 0L
+      }
+      finish(TicketSliderTerminalDispatchResult.CANCELLED)
+    }
+
+    override fun run() {
+      finish(TicketSliderTerminalDispatchResult.TIMED_OUT)
+    }
+
+    override fun invoke(cause: Throwable?) {
+      handler.removeCallbacks(this)
+      Log.i(
+        TICKET_SLIDER_DIAGNOSTIC_TAG,
+        "terminal_callback reason=$reason generation=$generation result=coroutine_cancelled"
+      )
+    }
+  }
+
   private lateinit var windowManager: WindowManager
   private var blackoutOverlayView: View? = null
   private var blackoutOverlayActivePointerCount = 0
   private var viviControlCodePreviousKeyboardShowMode: Int? = null
   private var viviControlCodeKeyboardExpectedPackageName: String? = null
   private var ticketSliderStroke: GestureDescription.StrokeDescription? = null
+  private var ticketSliderStartX: Int = 0
+  private var ticketSliderStartY: Int = 0
   private var ticketSliderLastX: Int = 0
   private var ticketSliderLastY: Int = 0
   private var ticketSliderDispatchGeneration: Long = 0L
@@ -200,7 +260,16 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
       // can block the phone lane for seconds on ViVi's Flutter tree. The
       // registration fast path only needs the active ViVi root and a handful
       // of semantic anchors, so keep this lookup direct and bounded.
-      val root = fastRootForPackage(expectedPackageName) ?: return@withContext emptyList()
+      // Flutter can briefly expose a non-package active root while the ViVi
+      // window is already foreground. Keep the cheap exact-root lookup as the
+      // normal path, but fall back to the existing bounded package-root
+      // resolver before declaring the registration proof unavailable. The
+      // caller still requires the same deterministic markers and rooted frame
+      // proof; this only prevents a transient accessibility-root mismatch from
+      // turning a visible registration screen into a false failure.
+      val root = fastRootForPackage(expectedPackageName)
+        ?: rootForPackage(expectedPackageName)
+        ?: return@withContext emptyList()
       val semanticTerms = listOf(
         "reģistrēt biļeti",
         "reģistrēt bileti",
@@ -442,7 +511,20 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
   ): Boolean {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
     return withContext(Dispatchers.Main.immediate) {
-      if (ticketSliderStroke != null) return@withContext false
+      if (ticketSliderStroke != null) {
+        // TicketStreamService serializes slider ownership and only asks for a new start after
+        // its prior interaction has ended. A leftover continued-stroke handle here is therefore
+        // orphaned. Invalidate its callback generation before dispatching the replacement so a
+        // delayed cancellation from the old gesture cannot clear the new stroke.
+        val staleGeneration = ticketSliderDispatchGeneration
+        ticketSliderDispatchGeneration += 1L
+        ticketSliderStroke = null
+        ticketSliderNextDispatchAtMillis = 0L
+        Log.i(
+          TICKET_SLIDER_DIAGNOSTIC_TAG,
+          "start_recover_stale previous_generation=$staleGeneration replacement_generation=$ticketSliderDispatchGeneration"
+        )
+      }
       val width = resources.displayMetrics.widthPixels.coerceAtLeast(1)
       val height = resources.displayMetrics.heightPixels.coerceAtLeast(1)
       val x = startX.coerceIn(0, width - 1)
@@ -459,11 +541,19 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
       val stroke = GestureDescription.StrokeDescription(path, 0L, 120L, true)
       val generation = ++ticketSliderDispatchGeneration
       ticketSliderStroke = stroke
+      Log.i(
+        TICKET_SLIDER_DIAGNOSTIC_TAG,
+        "start generation=$generation display=${width}x$height requested=$startX,$startY actual=$x,$y hold_end=$heldX,$y duration_ms=120"
+      )
       val ok = dispatchTicketSliderStroke(stroke, "ticket_slider_start", generation)
+      Log.i(TICKET_SLIDER_DIAGNOSTIC_TAG, "start_dispatch generation=$generation accepted=$ok")
       if (ok) {
+        ticketSliderStartX = x
+        ticketSliderStartY = y
         ticketSliderLastX = heldX
         ticketSliderLastY = y
-        ticketSliderNextDispatchAtMillis = SystemClock.uptimeMillis() + 120L
+        ticketSliderNextDispatchAtMillis = SystemClock.uptimeMillis() + 120L +
+          TICKET_SLIDER_CONTINUATION_HANDOFF_GRACE_MILLIS
       } else if (ticketSliderDispatchGeneration == generation) {
         ticketSliderStroke = null
         ticketSliderNextDispatchAtMillis = 0L
@@ -496,11 +586,17 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
       val next = current.continueStroke(path, 0L, durationMillis.coerceIn(32L, 100L), true)
       val generation = ++ticketSliderDispatchGeneration
       ticketSliderStroke = next
+      Log.i(
+        TICKET_SLIDER_DIAGNOSTIC_TAG,
+        "continue generation=$generation from=$ticketSliderLastX,$ticketSliderLastY requested=$endX,$endY actual=$x,$y duration_ms=${durationMillis.coerceIn(32L, 100L)} handoff_wait_ms=$waitMillis"
+      )
       val ok = dispatchTicketSliderStroke(next, "ticket_slider_continue", generation)
+      Log.i(TICKET_SLIDER_DIAGNOSTIC_TAG, "continue_dispatch generation=$generation accepted=$ok")
       if (ok) {
         ticketSliderLastX = x
         ticketSliderLastY = y
-        ticketSliderNextDispatchAtMillis = SystemClock.uptimeMillis() + durationMillis.coerceIn(32L, 100L)
+        ticketSliderNextDispatchAtMillis = SystemClock.uptimeMillis() +
+          durationMillis.coerceIn(32L, 100L) + TICKET_SLIDER_CONTINUATION_HANDOFF_GRACE_MILLIS
       } else if (ticketSliderDispatchGeneration == generation) {
         ticketSliderStroke = null
         ticketSliderNextDispatchAtMillis = 0L
@@ -530,10 +626,59 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
         moveTo(ticketSliderLastX.toFloat(), ticketSliderLastY.toFloat())
         lineTo(x.toFloat(), y.toFloat())
       }
-      val next = current.continueStroke(path, 0L, durationMillis.coerceIn(32L, 180L), false)
-      val generation = ++ticketSliderDispatchGeneration
+      // ViVi's Flutter slider intermittently ignores a fast synthetic fling even though Android
+      // accepts the gesture. Permit the caller's bounded human-like terminal sweep; ordinary
+      // interactive continuation segments retain their separate 100 ms cap above.
+      val terminalDurationMillis = durationMillis.coerceIn(32L, 1_000L)
+      val next = current.continueStroke(path, 0L, terminalDurationMillis, false)
+      var generation = ++ticketSliderDispatchGeneration
       ticketSliderStroke = next
-      val ok = dispatchTicketSliderStroke(next, "ticket_slider_end", generation)
+      Log.i(
+        TICKET_SLIDER_DIAGNOSTIC_TAG,
+        "end generation=$generation from=$ticketSliderLastX,$ticketSliderLastY requested=$endX,$endY actual=$x,$y original_start=$ticketSliderStartX,$ticketSliderStartY duration_ms=$terminalDurationMillis handoff_wait_ms=$waitMillis"
+      )
+      var dispatchResult = dispatchTerminalTicketSliderStroke(
+        stroke = next,
+        reason = "ticket_slider_end",
+        generation = generation,
+        timeoutMillis = timeoutMillis
+      )
+      Log.i(
+        TICKET_SLIDER_DIAGNOSTIC_TAG,
+        "end_result generation=$generation result=${dispatchResult.name.lowercase()}"
+      )
+      if (dispatchResult == TicketSliderTerminalDispatchResult.REJECTED) {
+        // Rejection proves Android never accepted the terminal continuation, so one bounded
+        // full-track retry from the original thumb is safe. Cancellation or timeout is
+        // ambiguous: the first sweep may already have crossed ViVi's activation threshold,
+        // so those outcomes must proceed to state proof without replaying physical input.
+        delay(TICKET_SLIDER_TERMINAL_RETRY_DELAY_MILLIS)
+        ticketSliderStroke = null
+        ticketSliderNextDispatchAtMillis = 0L
+        val retryPath = Path().apply {
+          moveTo(ticketSliderStartX.toFloat(), ticketSliderStartY.toFloat())
+          lineTo(x.toFloat(), y.toFloat())
+        }
+        val retry = GestureDescription.StrokeDescription(
+          retryPath,
+          0L,
+          terminalDurationMillis,
+          false
+        )
+        generation = ++ticketSliderDispatchGeneration
+        ticketSliderStroke = retry
+        Log.i(
+          TICKET_SLIDER_DIAGNOSTIC_TAG,
+          "end_rejected_retry generation=$generation from=$ticketSliderStartX,$ticketSliderStartY to=$x,$y duration_ms=$terminalDurationMillis"
+        )
+        dispatchResult = dispatchTerminalTicketSliderStroke(
+          stroke = retry,
+          reason = "ticket_slider_end_retry",
+          generation = generation,
+          timeoutMillis = timeoutMillis
+        )
+      }
+      val ok = dispatchResult == TicketSliderTerminalDispatchResult.COMPLETED
       if (ok) {
         ticketSliderStroke = null
         ticketSliderNextDispatchAtMillis = 0L
@@ -545,6 +690,92 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
       }
       ok
     }
+  }
+
+  override suspend fun retryTicketSliderFullStroke(
+    startX: Int,
+    startY: Int,
+    endX: Int,
+    endY: Int,
+    durationMillis: Long,
+    timeoutMillis: Long
+  ): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+    return withContext(Dispatchers.Main.immediate) {
+      if (ticketSliderStroke != null) return@withContext false
+      val width = resources.displayMetrics.widthPixels.coerceAtLeast(1)
+      val height = resources.displayMetrics.heightPixels.coerceAtLeast(1)
+      val start = startX.coerceIn(0, width - 1) to startY.coerceIn(0, height - 1)
+      val end = endX.coerceIn(0, width - 1) to endY.coerceIn(0, height - 1)
+      val path = Path().apply {
+        moveTo(start.first.toFloat(), start.second.toFloat())
+        lineTo(end.first.toFloat(), end.second.toFloat())
+      }
+      val stroke = GestureDescription.StrokeDescription(
+        path,
+        0L,
+        durationMillis.coerceIn(32L, 1_000L),
+        false
+      )
+      val generation = ++ticketSliderDispatchGeneration
+      ticketSliderStroke = stroke
+      Log.i(
+        TICKET_SLIDER_DIAGNOSTIC_TAG,
+        "fresh_retry generation=$generation display=${width}x$height requested_start=$startX,$startY actual_start=${start.first},${start.second} requested_end=$endX,$endY actual_end=${end.first},${end.second} duration_ms=${durationMillis.coerceIn(32L, 1_000L)}"
+      )
+      val result = dispatchTerminalTicketSliderStroke(
+        stroke = stroke,
+        reason = "ticket_slider_fresh_unactivated_retry",
+        generation = generation,
+        timeoutMillis = timeoutMillis
+      )
+      if (ticketSliderDispatchGeneration == generation) {
+        ticketSliderStroke = null
+        ticketSliderNextDispatchAtMillis = 0L
+      }
+      Log.i(
+        TICKET_SLIDER_DIAGNOSTIC_TAG,
+        "fresh_retry_result generation=$generation result=${result.name.lowercase()}"
+      )
+      result == TicketSliderTerminalDispatchResult.COMPLETED
+    }
+  }
+
+  /** Waits for Android to finish the terminal segment before ViVi state proof begins. */
+  private suspend fun dispatchTerminalTicketSliderStroke(
+    stroke: GestureDescription.StrokeDescription,
+    reason: String,
+    generation: Long,
+    timeoutMillis: Long
+  ): TicketSliderTerminalDispatchResult {
+    PhoneAutomationServiceBridge.clearNonTouchInputTailForBrowserCriticalAction(reason)
+    val gesture = GestureDescription.Builder().addStroke(stroke).build()
+    return awaitTerminalTicketSliderStroke(gesture, reason, generation, timeoutMillis)
+  }
+
+  /**
+   * Keep the Android callback bridge in its own suspend function.  The ticket
+   * service is loaded by root app_process as well as by the normal Android
+   * runtime; keeping this callback out of the timeout lambda avoids a nested
+   * continuation class that some of the split dex loaders failed to resolve.
+   */
+  private suspend fun awaitTerminalTicketSliderStroke(
+    gesture: GestureDescription,
+    reason: String,
+    generation: Long,
+    timeoutMillis: Long
+  ): TicketSliderTerminalDispatchResult = suspendCancellableCoroutine { continuation ->
+    val awaiter = TicketSliderTerminalGestureAwaiter(this, reason, generation, continuation)
+    continuation.invokeOnCancellation(awaiter)
+    awaiter.scheduleTimeout(timeoutMillis)
+    val dispatched = runCatching {
+      dispatchGesture(gesture, awaiter, null)
+    }.getOrDefault(false)
+    Log.i(
+      TICKET_SLIDER_DIAGNOSTIC_TAG,
+      "terminal_dispatch reason=$reason generation=$generation accepted=$dispatched timeout_ms=${timeoutMillis.coerceAtLeast(1L)}"
+    )
+    if (!dispatched) awaiter.finish(TicketSliderTerminalDispatchResult.REJECTED)
   }
 
   /**
@@ -559,7 +790,9 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     reason: String,
     generation: Long
   ): Boolean {
-    PhoneAutomationServiceBridge.markNonTouchInput(reason)
+    // Browser-owned slider segments should keep the panel dark only for the
+    // accepted segment, without the generic four-second suppression tail.
+    PhoneAutomationServiceBridge.clearNonTouchInputTailForBrowserCriticalAction(reason)
     val gesture = GestureDescription.Builder().addStroke(stroke).build()
     val dispatched = runCatching {
       dispatchGesture(
@@ -983,6 +1216,9 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
   }
 
   private companion object {
+    private const val TICKET_SLIDER_DIAGNOSTIC_TAG = "PixelTicketSlider"
     private const val OVERLAY_WAKE_REFRESH_MILLIS = 250L
+    private const val TICKET_SLIDER_CONTINUATION_HANDOFF_GRACE_MILLIS = 80L
+    private const val TICKET_SLIDER_TERMINAL_RETRY_DELAY_MILLIS = 80L
   }
 }

@@ -1,5 +1,8 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
+import java.nio.charset.StandardCharsets
+import java.util.UUID
+
 /**
  * Current-only interaction state read from SpacetimeDB. Pointer history never
  * enters this object; the latest browser sample replaces the previous one.
@@ -48,7 +51,8 @@ internal data class TicketSliderApplicationResult(
   val controlId: String,
   val activationRevision: String = "",
   val activationAt: String = "",
-  val scheduledResetAt: String = ""
+  val scheduledResetAt: String = "",
+  val activationAttemptId: String = ""
 )
 
 internal fun sliderApplied(
@@ -63,7 +67,8 @@ internal fun sliderApplied(
   controlId: String = "",
   activationRevision: String = "",
   activationAt: String = "",
-  scheduledResetAt: String = ""
+  scheduledResetAt: String = "",
+  activationAttemptId: String = ""
 ) = TicketSliderApplicationResult(
   ok = ok,
   reason = reason,
@@ -76,7 +81,8 @@ internal fun sliderApplied(
   controlId = controlId,
   activationRevision = activationRevision,
   activationAt = activationAt,
-  scheduledResetAt = scheduledResetAt
+  scheduledResetAt = scheduledResetAt,
+  activationAttemptId = activationAttemptId
 )
 
 internal data class TicketRegistrationProof(
@@ -87,11 +93,38 @@ internal data class TicketRegistrationProof(
   val frameSequence: Long,
   val phoneDisplayWidth: Int,
   val phoneDisplayHeight: Int,
+  val provedAtUptimeMillis: Long = 0L,
+  val activationRevision: String = "",
+  val activationAt: String = "",
+  val activationAttemptId: String = "",
   val sliderLeft: Int = 0,
   val sliderTop: Int = 0,
   val sliderRight: Int = 0,
   val sliderBottom: Int = 0
 )
+
+/**
+ * The browser binds an unactivated slider to the stream epoch/frame that proved its geometry.
+ * A reset can finish before the rooted H.264 stream settles on its final epoch, so a stale row
+ * must be revalidated before it is exposed to the browser again.
+ */
+internal fun ticketRegistrationProofRequiresRefresh(
+  status: String,
+  interactionRevision: String,
+  proofRevision: String,
+  proofEpoch: Long,
+  proofFrameSequence: Long,
+  currentEpoch: Long,
+  currentFrameSequence: Long,
+  hasSliderBounds: Boolean
+): Boolean {
+  if (status != "unactivated_ready") return false
+  if (interactionRevision.isBlank() || proofRevision != interactionRevision) return true
+  if (!hasSliderBounds) return true
+  if (proofEpoch <= 0L || proofFrameSequence <= 0L) return true
+  if (currentEpoch <= 0L || currentFrameSequence <= 0L) return true
+  return proofEpoch != currentEpoch || proofFrameSequence > currentFrameSequence
+}
 
 internal val TicketRegistrationProof.hasSliderBounds: Boolean
   get() = sliderRight > sliderLeft && sliderBottom > sliderTop
@@ -103,4 +136,12 @@ internal fun TicketRegistrationProof.toGraphicBounds(): TicketViviGraphicBounds 
     right = sliderRight,
     bottom = sliderBottom
   )
+}
+
+internal fun instantSliderActivationRevision(commandId: String, interactionRevision: String): String {
+  val identity = "${commandId.trim()}|${interactionRevision.trim()}"
+  val uuid = UUID.nameUUIDFromBytes(identity.toByteArray(StandardCharsets.UTF_8))
+    .toString()
+    .replace("-", "")
+  return "activation_button_$uuid"
 }

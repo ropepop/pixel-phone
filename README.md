@@ -29,7 +29,6 @@ No setup command was inferred from the sanitized project files.
 
 ## Project Map
 
-- `.github/`: GitHub workflow and repository automation files.
 - `archive/`: Public project file or directory included in the sanitized copy.
 - `automation/`: Automation jobs and supporting scripts.
 - `docs/`: Project documentation and reference material.
@@ -39,6 +38,7 @@ No setup command was inferred from the sanitized project files.
 - `observations/`: Public project file or directory included in the sanitized copy.
 - `ops/`: Public project file or directory included in the sanitized copy.
 - `orchestrator/`: Runtime orchestration and deployment support.
+- `standards/`: Public project file or directory included in the sanitized copy.
 
 ## Testing
 

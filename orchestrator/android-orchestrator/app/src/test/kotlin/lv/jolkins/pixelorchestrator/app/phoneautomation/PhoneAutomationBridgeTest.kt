@@ -115,6 +115,24 @@ class PhoneAutomationBridgeTest {
   }
 
   @Test
+  fun browserCriticalNoTailExplicitlyClearsAnOlderSuppressionDeadline() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    PhoneAutomationServiceBridge.markNonTouchInput(
+      reason = "older_operation",
+      durationMillis = 4_000L,
+      observedAtUptimeMillis = 1_000L
+    )
+    assertTrue(PhoneAutomationServiceBridge.isNonTouchInputSuppressed(1_100L))
+
+    PhoneAutomationServiceBridge.clearNonTouchInputTailForBrowserCriticalAction(
+      reason = "ticket_slider",
+      observedAtUptimeMillis = 1_100L
+    )
+
+    assertFalse(PhoneAutomationServiceBridge.isNonTouchInputSuppressed(1_101L))
+  }
+
+  @Test
   fun blackoutWakeStoresWallClockTimestamp() {
     PhoneAutomationServiceBridge.resetForTests()
     val before = System.currentTimeMillis()
@@ -484,6 +502,118 @@ class PhoneAutomationBridgeTest {
     assertTrue(source.contains("rooted H.264/state proof remains the authoritative completion check"))
     assertFalse(dispatch.contains("suspendCancellableCoroutine"))
     assertFalse(dispatch.contains("continuation.resume(true)"))
+  }
+
+  @Test
+  fun ticketSliderStartInvalidatesAnOrphanedContinuationBeforeReplacement() {
+    val source = readFirstExisting(
+      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
+      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
+    )
+    val start = source.substringAfter("override suspend fun startTicketSliderGesture(")
+      .substringBefore("override suspend fun continueTicketSliderGesture(")
+
+    assertTrue(start.contains("if (ticketSliderStroke != null)"))
+    assertTrue(start.contains("val staleGeneration = ticketSliderDispatchGeneration"))
+    assertTrue(start.contains("ticketSliderDispatchGeneration += 1L"))
+    assertTrue(start.contains("ticketSliderStroke = null"))
+    assertTrue(start.contains("ticketSliderNextDispatchAtMillis = 0L"))
+    assertTrue(start.contains("start_recover_stale previous_generation="))
+    assertTrue(start.indexOf("ticketSliderDispatchGeneration += 1L") < start.indexOf("val generation = ++ticketSliderDispatchGeneration"))
+    assertFalse(start.contains("if (ticketSliderStroke != null) return@withContext false"))
+  }
+
+  @Test
+  fun ticketSliderTerminalSegmentWaitsForAndroidCompletion() {
+    val source = readFirstExisting(
+      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
+      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
+    )
+    val end = source.substringAfter("override suspend fun endTicketSliderGesture(")
+      .substringBefore("private suspend fun dispatchTerminalTicketSliderStroke(")
+    val terminal = source.substringAfter("private suspend fun dispatchTerminalTicketSliderStroke(")
+      .substringBefore("private suspend fun awaitTerminalTicketSliderStroke(")
+    val callbackWait = source.substringAfter("private suspend fun awaitTerminalTicketSliderStroke(")
+      .substringBefore("private fun dispatchTicketSliderStroke(")
+    val awaiter = source.substringAfter("private class TicketSliderTerminalGestureAwaiter(")
+      .substringBefore("private lateinit var windowManager")
+
+    assertTrue(end.contains("dispatchTerminalTicketSliderStroke("))
+    assertTrue(terminal.contains("awaitTerminalTicketSliderStroke(gesture, reason, generation, timeoutMillis)"))
+    assertFalse(terminal.contains("withTimeoutOrNull"))
+    assertFalse(terminal.contains("suspendCancellableCoroutine"))
+    assertFalse(terminal.contains("object : GestureResultCallback()"))
+    assertTrue(callbackWait.contains("suspendCancellableCoroutine"))
+    assertTrue(callbackWait.contains("TicketSliderTerminalGestureAwaiter(this, reason, generation, continuation)"))
+    assertTrue(callbackWait.contains("continuation.invokeOnCancellation(awaiter)"))
+    assertTrue(callbackWait.contains("awaiter.scheduleTimeout(timeoutMillis)"))
+    assertTrue(callbackWait.contains("dispatchGesture(gesture, awaiter, null)"))
+    assertTrue(callbackWait.contains("TicketSliderTerminalDispatchResult.REJECTED"))
+    assertTrue(awaiter.contains("override fun onCompleted"))
+    assertTrue(awaiter.contains("TicketSliderTerminalDispatchResult.COMPLETED"))
+    assertTrue(awaiter.contains("override fun onCancelled"))
+    assertTrue(awaiter.contains("TicketSliderTerminalDispatchResult.CANCELLED"))
+    assertTrue(awaiter.contains("override fun run()"))
+    assertTrue(awaiter.contains("TicketSliderTerminalDispatchResult.TIMED_OUT"))
+    assertTrue(awaiter.contains("handler.postDelayed(this, timeoutMillis.coerceAtLeast(1L))"))
+    assertTrue(source.contains("terminal_dispatch reason=\$reason generation=\$generation accepted=\$dispatched"))
+    assertTrue(source.contains("terminal_callback reason=\$reason generation=\$generation result="))
+  }
+
+  @Test
+  fun ticketSliderTerminalSegmentRetriesWithFreshStrokeAfterContinuationFailure() {
+    val source = readFirstExisting(
+      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
+      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
+    )
+    val end = source.substringAfter("override suspend fun endTicketSliderGesture(")
+      .substringBefore("private suspend fun dispatchTerminalTicketSliderStroke(")
+
+    assertTrue(end.contains("dispatchResult == TicketSliderTerminalDispatchResult.REJECTED"))
+    assertTrue(end.contains("TICKET_SLIDER_TERMINAL_RETRY_DELAY_MILLIS"))
+    assertTrue(end.contains("ticketSliderStroke = null"))
+    assertTrue(end.contains("val retryPath = Path().apply"))
+    assertTrue(end.contains("moveTo(ticketSliderStartX.toFloat(), ticketSliderStartY.toFloat())"))
+    assertTrue(end.contains("reason = \"ticket_slider_end_retry\""))
+    assertTrue(end.contains("generation = generation"))
+    assertFalse(end.contains("dispatchResult == TicketSliderTerminalDispatchResult.CANCELLED ||"))
+    assertFalse(end.contains("dispatchResult == TicketSliderTerminalDispatchResult.TIMED_OUT ||"))
+    assertTrue(source.contains("TICKET_SLIDER_CONTINUATION_HANDOFF_GRACE_MILLIS"))
+  }
+
+  @Test
+  fun ticketSliderFreshUnactivatedRetryIsOneIndependentCompletedStroke() {
+    val source = readFirstExisting(
+      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
+      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
+    )
+    val retry = source.substringAfter("override suspend fun retryTicketSliderFullStroke(")
+      .substringBefore("/** Waits for Android to finish the terminal segment")
+
+    assertTrue(retry.contains("if (ticketSliderStroke != null) return@withContext false"))
+    assertTrue(retry.contains("GestureDescription.StrokeDescription("))
+    assertTrue(retry.contains("false"))
+    assertTrue(retry.contains("reason = \"ticket_slider_fresh_unactivated_retry\""))
+    assertTrue(retry.contains("dispatchTerminalTicketSliderStroke("))
+    assertTrue(retry.contains("result == TicketSliderTerminalDispatchResult.COMPLETED"))
+  }
+
+  @Test
+  fun ticketSliderBridgeBudgetAllowsTwoBoundedTerminalAttempts() {
+    val source = readFirstExisting(
+      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationBridge.kt"),
+      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationBridge.kt")
+    )
+    val bridge = source.substringAfter("object PhoneAutomationServiceBridge")
+    val end = bridge.substringAfter("suspend fun endTicketSliderGesture(")
+      .substringBefore("suspend fun performBack()")
+    val budget = bridge.substringAfter("private fun Long.terminalGestureCallTimeoutMillis()")
+      .substringBefore("private fun Int.isInInclusiveRange")
+
+    assertTrue(end.contains("timeoutMillis.terminalGestureCallTimeoutMillis()"))
+    assertTrue(budget.contains("coerceAtLeast(1L) * 2L"))
+    assertTrue(source.contains("private const val TICKET_SLIDER_DIAGNOSTIC_TAG = \"PixelTicketSlider\""))
+    assertTrue(source.contains("Log.i(TICKET_SLIDER_DIAGNOSTIC_TAG, message.take(800))"))
   }
 
   @Test
