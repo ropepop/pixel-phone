@@ -631,13 +631,13 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
       // interactive continuation segments retain their separate 100 ms cap above.
       val terminalDurationMillis = durationMillis.coerceIn(32L, 1_000L)
       val next = current.continueStroke(path, 0L, terminalDurationMillis, false)
-      var generation = ++ticketSliderDispatchGeneration
+      val generation = ++ticketSliderDispatchGeneration
       ticketSliderStroke = next
       Log.i(
         TICKET_SLIDER_DIAGNOSTIC_TAG,
         "end generation=$generation from=$ticketSliderLastX,$ticketSliderLastY requested=$endX,$endY actual=$x,$y original_start=$ticketSliderStartX,$ticketSliderStartY duration_ms=$terminalDurationMillis handoff_wait_ms=$waitMillis"
       )
-      var dispatchResult = dispatchTerminalTicketSliderStroke(
+      val dispatchResult = dispatchTerminalTicketSliderStroke(
         stroke = next,
         reason = "ticket_slider_end",
         generation = generation,
@@ -647,37 +647,6 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
         TICKET_SLIDER_DIAGNOSTIC_TAG,
         "end_result generation=$generation result=${dispatchResult.name.lowercase()}"
       )
-      if (dispatchResult == TicketSliderTerminalDispatchResult.REJECTED) {
-        // Rejection proves Android never accepted the terminal continuation, so one bounded
-        // full-track retry from the original thumb is safe. Cancellation or timeout is
-        // ambiguous: the first sweep may already have crossed ViVi's activation threshold,
-        // so those outcomes must proceed to state proof without replaying physical input.
-        delay(TICKET_SLIDER_TERMINAL_RETRY_DELAY_MILLIS)
-        ticketSliderStroke = null
-        ticketSliderNextDispatchAtMillis = 0L
-        val retryPath = Path().apply {
-          moveTo(ticketSliderStartX.toFloat(), ticketSliderStartY.toFloat())
-          lineTo(x.toFloat(), y.toFloat())
-        }
-        val retry = GestureDescription.StrokeDescription(
-          retryPath,
-          0L,
-          terminalDurationMillis,
-          false
-        )
-        generation = ++ticketSliderDispatchGeneration
-        ticketSliderStroke = retry
-        Log.i(
-          TICKET_SLIDER_DIAGNOSTIC_TAG,
-          "end_rejected_retry generation=$generation from=$ticketSliderStartX,$ticketSliderStartY to=$x,$y duration_ms=$terminalDurationMillis"
-        )
-        dispatchResult = dispatchTerminalTicketSliderStroke(
-          stroke = retry,
-          reason = "ticket_slider_end_retry",
-          generation = generation,
-          timeoutMillis = timeoutMillis
-        )
-      }
       val ok = dispatchResult == TicketSliderTerminalDispatchResult.COMPLETED
       if (ok) {
         ticketSliderStroke = null
@@ -1219,6 +1188,5 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     private const val TICKET_SLIDER_DIAGNOSTIC_TAG = "PixelTicketSlider"
     private const val OVERLAY_WAKE_REFRESH_MILLIS = 250L
     private const val TICKET_SLIDER_CONTINUATION_HANDOFF_GRACE_MILLIS = 80L
-    private const val TICKET_SLIDER_TERMINAL_RETRY_DELAY_MILLIS = 80L
   }
 }

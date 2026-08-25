@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -45,6 +46,45 @@ class RootTouchMonitorTest {
 
     assertEquals("synaptics_tcm_touch", devices.first().name)
     assertEquals("/dev/input/event2", devices[1].path)
+  }
+
+  @Test
+  fun perNodeDiscoveryDoesNotDependOnTheBrokenGlobalInputWatcher() {
+    val command = RootInputDeviceCapabilities.PER_NODE_DISCOVERY_COMMAND
+
+    assertTrue(command.contains("for device in /dev/input/event*"))
+    assertTrue(command.contains("getevent -lp \"\$device\""))
+    assertFalse(command.lineSequence().any { it.trim() == "getevent -lp" })
+  }
+
+  @Test
+  fun parsesCurrentPixelPerNodeCapabilities() {
+    val devices = RootTouchDeviceDiscovery.parseTouchDevices(
+      """
+      add device 1: /dev/input/event0
+        name:     "gpio_keys"
+        events:
+          KEY (0001): KEY_VOLUMEDOWN        KEY_VOLUMEUP          KEY_POWER
+        input props:
+          <none>
+      add device 1: /dev/input/event2
+        name:     "synaptics_tcm_touch"
+        events:
+          KEY (0001): KEY_WAKEUP            BTN_TOOL_FINGER       BTN_TOUCH
+          ABS (0003): ABS_X                 : value 0, min 0, max 10799
+                      ABS_MT_SLOT           : value 0, min 0, max 9
+                      ABS_MT_POSITION_X     : value 0, min 0, max 10799
+                      ABS_MT_POSITION_Y     : value 0, min 0, max 24239
+                      ABS_MT_TRACKING_ID    : value 0, min 0, max 65535
+        input props:
+          INPUT_PROP_DIRECT
+      """.trimIndent()
+    )
+
+    assertEquals(
+      listOf(RootTouchDevice("/dev/input/event2", "synaptics_tcm_touch", 109)),
+      devices
+    )
   }
 
   @Test
@@ -273,6 +313,29 @@ class RootPowerKeyMonitorTest {
   }
 
   @Test
+  fun parsesCurrentPixelPowerKeyPerNodeCapabilities() {
+    val devices = RootPowerKeyDeviceDiscovery.parsePowerKeyDevices(
+      """
+      add device 1: /dev/input/event0
+        name:     "gpio_keys"
+        events:
+          KEY (0001): KEY_VOLUMEDOWN        KEY_VOLUMEUP          KEY_POWER
+        input props:
+          <none>
+      add device 1: /dev/input/event1
+        name:     "goodix_fingerprint"
+        events:
+          KEY (0001): KEY_HOME              KEY_POWER             KEY_CAMERA
+        input props:
+          <none>
+      """.trimIndent()
+    )
+
+    assertEquals("gpio_keys", devices.first().name)
+    assertEquals("goodix_fingerprint", devices[1].name)
+  }
+
+  @Test
   fun androidRootPowerKeyMonitorPublishesPowerButtonDown() = runTest {
     val processFactory = FakeRootTouchProcessFactory(
       capabilitiesOutput = """
@@ -325,7 +388,7 @@ private class FakeRootTouchProcessFactory(
 ) : RootTouchProcessFactory {
   override fun start(command: String): RootTouchProcess {
     return when {
-      command == "getevent -lp" -> FakeRootTouchProcess(
+      command == RootInputDeviceCapabilities.PER_NODE_DISCOVERY_COMMAND -> FakeRootTouchProcess(
         stdout = capabilitiesOutput,
         stderr = "",
         exitCode = 0

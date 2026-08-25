@@ -43,6 +43,44 @@ class TicketCaptureCadenceSchedulerTest {
     assertEquals(5, scheduler.targetFps())
   }
 
+  @Test
+  fun immediateCaptureRequestCoalescesAndResumesTheSelectedCadence() {
+    val scheduler = TicketCaptureCadenceScheduler(
+      TicketCaptureCadenceScheduler.STATIC_FPS,
+      10_000L
+    )
+    assertFalse(scheduler.beginCapture(10_000L).immediate)
+    assertEquals(1_000L, scheduler.waitMillis(10_000L))
+
+    assertTrue(scheduler.requestImmediateCapture(10_100L))
+    assertFalse(scheduler.requestImmediateCapture(10_101L))
+    assertTrue(scheduler.hasImmediateCapturePending())
+    assertEquals(0L, scheduler.waitMillis(10_101L))
+
+    assertTrue(scheduler.beginCapture(10_101L).immediate)
+    assertFalse(scheduler.hasImmediateCapturePending())
+    assertEquals(TicketCaptureCadenceScheduler.STATIC_FPS, scheduler.targetFps())
+    assertEquals(999L, scheduler.waitMillis(10_101L))
+
+    assertTrue(scheduler.requestImmediateCapture(10_150L))
+    assertEquals(0L, scheduler.waitMillis(10_150L))
+    assertTrue(scheduler.beginCapture(10_150L).immediate)
+    assertFalse(scheduler.beginCapture(11_150L).immediate)
+  }
+
+  @Test
+  fun cadenceTransitionIsDueNowButIsNotAnExplicitImmediateCapture() {
+    val scheduler = TicketCaptureCadenceScheduler(
+      TicketCaptureCadenceScheduler.MODERATE_FPS,
+      20_000L
+    )
+    assertFalse(scheduler.beginCapture(20_000L).immediate)
+
+    assertTrue(scheduler.setTargetFps(TicketCaptureCadenceScheduler.STATIC_FPS, 20_050L))
+    assertEquals(0L, scheduler.waitMillis(20_050L))
+    assertFalse(scheduler.beginCapture(20_050L).immediate)
+  }
+
   @Test(expected = IllegalArgumentException::class)
   fun constructorRejectsUnsupportedCadence() {
     TicketCaptureCadenceScheduler(2, 0L)

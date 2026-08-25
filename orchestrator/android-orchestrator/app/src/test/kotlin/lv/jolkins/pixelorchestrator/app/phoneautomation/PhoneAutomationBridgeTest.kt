@@ -1,6 +1,7 @@
 package lv.jolkins.pixelorchestrator.app.phoneautomation
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -39,6 +40,53 @@ class PhoneAutomationBridgeTest {
   }
 
   @Test
+  fun accessibilityConnectionWaitsForATransientServiceRebind() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    val host = FakeAccessibilityHost()
+    val pending = async {
+      PhoneAutomationServiceBridge.awaitAccessibilityConnection(timeoutMillis = 5_000L)
+    }
+
+    runCurrent()
+    assertFalse(pending.isCompleted)
+
+    PhoneAutomationServiceBridge.bindAccessibilityService(host)
+    runCurrent()
+
+    assertTrue(pending.await())
+    PhoneAutomationServiceBridge.unbindAccessibilityService(host)
+  }
+
+  @Test
+  fun ticketSliderStartDistinguishesAcceptedRejectedAndUnknownResults() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    assertEquals(
+      TicketSliderGestureStartResult.REJECTED,
+      PhoneAutomationServiceBridge.startTicketSliderGesture(10, 20, 10L)
+    )
+
+    val host = FakeAccessibilityHost()
+    PhoneAutomationServiceBridge.bindAccessibilityService(host)
+    host.ticketSliderStartResult = true
+    assertEquals(
+      TicketSliderGestureStartResult.ACCEPTED,
+      PhoneAutomationServiceBridge.startTicketSliderGesture(10, 20, 10L)
+    )
+    host.ticketSliderStartResult = false
+    assertEquals(
+      TicketSliderGestureStartResult.REJECTED,
+      PhoneAutomationServiceBridge.startTicketSliderGesture(10, 20, 10L)
+    )
+    host.ticketSliderStartNeverReturns = true
+    assertEquals(
+      TicketSliderGestureStartResult.UNKNOWN,
+      PhoneAutomationServiceBridge.startTicketSliderGesture(10, 20, 10L)
+    )
+    assertEquals(3, host.ticketSliderStartCalls)
+    PhoneAutomationServiceBridge.unbindAccessibilityService(host)
+  }
+
+  @Test
   fun touchEventsArePublishedAndUpdateSharedState() = runTest {
     PhoneAutomationServiceBridge.resetForTests()
     val observedEvents = mutableListOf<PhoneAutomationTouchEvent>()
@@ -59,6 +107,49 @@ class PhoneAutomationBridgeTest {
       observedEvents
     )
     assertFalse(PhoneAutomationServiceBridge.isTouchInteractionActive())
+    job.cancel()
+  }
+
+  @Test
+  fun rootConfirmedPhysicalTouchProjectionIsPublishedAndReset() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    val observed = mutableListOf<PhoneAutomationRootPhysicalTouchState>()
+    val job = backgroundScope.launch {
+      PhoneAutomationServiceBridge.rootPhysicalTouchStates.take(2).toList(observed)
+    }
+    runCurrent()
+
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(
+      active = true,
+      observedAtUptimeMillis = 55L
+    )
+    runCurrent()
+
+    assertEquals(
+      PhoneAutomationRootPhysicalTouchState(
+        available = true,
+        active = true,
+        observedAtUptimeMillis = 55L
+      ),
+      PhoneAutomationServiceBridge.currentRootPhysicalTouchState()
+    )
+    assertEquals(
+      listOf(
+        PhoneAutomationRootPhysicalTouchState(),
+        PhoneAutomationRootPhysicalTouchState(
+          available = true,
+          active = true,
+          observedAtUptimeMillis = 55L
+        )
+      ),
+      observed
+    )
+
+    PhoneAutomationServiceBridge.resetForTests()
+    assertEquals(
+      PhoneAutomationRootPhysicalTouchState(),
+      PhoneAutomationServiceBridge.currentRootPhysicalTouchState()
+    )
     job.cancel()
   }
 
@@ -530,7 +621,7 @@ class PhoneAutomationBridgeTest {
       Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
     )
     val end = source.substringAfter("override suspend fun endTicketSliderGesture(")
-      .substringBefore("private suspend fun dispatchTerminalTicketSliderStroke(")
+      .substringBefore("override suspend fun retryTicketSliderFullStroke(")
     val terminal = source.substringAfter("private suspend fun dispatchTerminalTicketSliderStroke(")
       .substringBefore("private suspend fun awaitTerminalTicketSliderStroke(")
     val callbackWait = source.substringAfter("private suspend fun awaitTerminalTicketSliderStroke(")
@@ -561,23 +652,21 @@ class PhoneAutomationBridgeTest {
   }
 
   @Test
-  fun ticketSliderTerminalSegmentRetriesWithFreshStrokeAfterContinuationFailure() {
+  fun ticketSliderTerminalSegmentNeverDispatchesASecondStroke() {
     val source = readFirstExisting(
       Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
       Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
     )
     val end = source.substringAfter("override suspend fun endTicketSliderGesture(")
-      .substringBefore("private suspend fun dispatchTerminalTicketSliderStroke(")
+      .substringBefore("override suspend fun retryTicketSliderFullStroke(")
 
-    assertTrue(end.contains("dispatchResult == TicketSliderTerminalDispatchResult.REJECTED"))
-    assertTrue(end.contains("TICKET_SLIDER_TERMINAL_RETRY_DELAY_MILLIS"))
-    assertTrue(end.contains("ticketSliderStroke = null"))
-    assertTrue(end.contains("val retryPath = Path().apply"))
-    assertTrue(end.contains("moveTo(ticketSliderStartX.toFloat(), ticketSliderStartY.toFloat())"))
-    assertTrue(end.contains("reason = \"ticket_slider_end_retry\""))
-    assertTrue(end.contains("generation = generation"))
-    assertFalse(end.contains("dispatchResult == TicketSliderTerminalDispatchResult.CANCELLED ||"))
-    assertFalse(end.contains("dispatchResult == TicketSliderTerminalDispatchResult.TIMED_OUT ||"))
+    assertEquals(1, Regex("dispatchTerminalTicketSliderStroke\\(").findAll(end).count())
+    assertTrue(end.contains("reason = \"ticket_slider_end\""))
+    assertFalse(end.contains("TicketSliderTerminalDispatchResult.REJECTED"))
+    assertFalse(end.contains("TICKET_SLIDER_TERMINAL_RETRY_DELAY_MILLIS"))
+    assertFalse(end.contains("val retryPath = Path().apply"))
+    assertFalse(end.contains("moveTo(ticketSliderStartX.toFloat(), ticketSliderStartY.toFloat())"))
+    assertFalse(end.contains("ticket_slider_end_retry"))
     assertTrue(source.contains("TICKET_SLIDER_CONTINUATION_HANDOFF_GRACE_MILLIS"))
   }
 
@@ -599,19 +688,18 @@ class PhoneAutomationBridgeTest {
   }
 
   @Test
-  fun ticketSliderBridgeBudgetAllowsTwoBoundedTerminalAttempts() {
+  fun ticketSliderBridgeBudgetAllowsExactlyOneTerminalAttempt() {
     val source = readFirstExisting(
       Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationBridge.kt"),
       Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationBridge.kt")
     )
     val bridge = source.substringAfter("object PhoneAutomationServiceBridge")
     val end = bridge.substringAfter("suspend fun endTicketSliderGesture(")
-      .substringBefore("suspend fun performBack()")
-    val budget = bridge.substringAfter("private fun Long.terminalGestureCallTimeoutMillis()")
-      .substringBefore("private fun Int.isInInclusiveRange")
+      .substringBefore("suspend fun retryTicketSliderFullStroke(")
 
-    assertTrue(end.contains("timeoutMillis.terminalGestureCallTimeoutMillis()"))
-    assertTrue(budget.contains("coerceAtLeast(1L) * 2L"))
+    assertTrue(end.contains("timeoutMillis.accessibilityCallTimeoutMillis()"))
+    assertFalse(bridge.contains("terminalGestureCallTimeoutMillis"))
+    assertFalse(end.contains("* 2L"))
     assertTrue(source.contains("private const val TICKET_SLIDER_DIAGNOSTIC_TAG = \"PixelTicketSlider\""))
     assertTrue(source.contains("Log.i(TICKET_SLIDER_DIAGNOSTIC_TAG, message.take(800))"))
   }
@@ -680,6 +768,9 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
   var restoreControlCodeKeyboardModeResult = true
   var backResult = false
   var backCalls = 0
+  var ticketSliderStartResult = false
+  var ticketSliderStartNeverReturns = false
+  var ticketSliderStartCalls = 0
 
   override fun syncBlackoutOverlayVisibility(visible: Boolean): Boolean {
     syncedVisibility += visible
@@ -767,6 +858,16 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
     yRatio: Double,
     timeoutMillis: Long
   ): Boolean = false
+
+  override suspend fun startTicketSliderGesture(
+    startX: Int,
+    startY: Int,
+    timeoutMillis: Long
+  ): Boolean {
+    ticketSliderStartCalls += 1
+    if (ticketSliderStartNeverReturns) awaitCancellation()
+    return ticketSliderStartResult
+  }
 
   override suspend fun performBack(): Boolean {
     backCalls += 1

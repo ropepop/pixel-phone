@@ -7,41 +7,36 @@ internal data class TicketViviStateMemorySnapshot(
   val ticketId: String? = null,
   val observedAtMillis: Long = 0L,
   val source: String = "none",
-  val reason: String = "none",
-  val hierarchy: String? = null
-)
+  val reason: String = "none"
+) {
+  /** Compile-only bridge for legacy callers. Ticket hierarchy bytes are never retained. */
+  val hierarchy: String? get() = null
+}
 
 internal class TicketViviStateMemory(
   private val clockMillis: () -> Long = { SystemClock.elapsedRealtime() }
 ) {
   @Volatile private var snapshot = TicketViviStateMemorySnapshot()
   @Volatile private var lastTicketDetailSnapshot = TicketViviStateMemorySnapshot()
-  @Volatile private var lastRootTicketDetailSnapshot = TicketViviStateMemorySnapshot()
 
   fun record(
     state: TicketViviRecoveryState,
     ticketId: String?,
     source: String,
     reason: String,
+    @Suppress("UNUSED_PARAMETER")
     hierarchy: String? = null
   ): TicketViviStateMemorySnapshot {
-    val previousDetail = lastTicketDetailSnapshot
     val next = TicketViviStateMemorySnapshot(
       state = state,
       ticketId = ticketId,
       observedAtMillis = clockMillis(),
       source = source,
-      reason = reason,
-      hierarchy = hierarchy?.takeIf { it.isNotBlank() }
-        ?: state.takeIf { it == TicketViviRecoveryState.TICKET_DETAIL }
-          ?.let { previousDetail.hierarchy }
+      reason = reason
     )
     snapshot = next
     if (state == TicketViviRecoveryState.TICKET_DETAIL) {
       lastTicketDetailSnapshot = next
-      if (source == "root" && !hierarchy.isNullOrBlank()) {
-        lastRootTicketDetailSnapshot = next
-      }
     }
     return next
   }
@@ -49,7 +44,6 @@ internal class TicketViviStateMemory(
   fun clear(source: String, reason: String): TicketViviStateMemorySnapshot {
     val next = record(TicketViviRecoveryState.UNKNOWN_VIVI, null, source, reason)
     lastTicketDetailSnapshot = TicketViviStateMemorySnapshot()
-    lastRootTicketDetailSnapshot = TicketViviStateMemorySnapshot()
     return next
   }
 
@@ -64,34 +58,11 @@ internal class TicketViviStateMemory(
     return current.takeIf { ageMillis in 0..maxAgeMillis }
   }
 
-  /**
-   * Returns the last hierarchy-backed ticket-detail proof while it is still fresh.
-   *
-   * Visual observations may refresh the general detail memory, but they must not replace the
-   * rooted hierarchy proof used by the fast-state handoff. This keeps the request fast without
-   * accepting accessibility-only or stale detail memory as a button-target source.
-   */
-  fun recentTicketDetailHierarchyWithin(maxAgeMillis: Long): TicketViviStateMemorySnapshot? {
-    val detail = recentTicketDetailWithin(maxAgeMillis) ?: return null
-    val rooted = lastRootTicketDetailSnapshot
-    if (
-      rooted.state != TicketViviRecoveryState.TICKET_DETAIL ||
-      rooted.hierarchy.isNullOrBlank() ||
-      rooted.observedAtMillis <= 0L
-    ) {
-      return null
-    }
-    val ageMillis = clockMillis() - rooted.observedAtMillis
-    if (ageMillis !in 0..maxAgeMillis) {
-      return null
-    }
-    if (
-      detail.ticketId != null && rooted.ticketId != null &&
-      detail.ticketId != rooted.ticketId
-    ) {
-      return null
-    }
-    return rooted
+  /** Retained temporarily for legacy callers; hierarchy-backed Ticket proof is retired. */
+  fun recentTicketDetailHierarchyWithin(
+    @Suppress("UNUSED_PARAMETER") maxAgeMillis: Long
+  ): TicketViviStateMemorySnapshot? {
+    return null
   }
 
   fun health(nowMillis: Long): TicketViviStateHealth {

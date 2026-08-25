@@ -154,7 +154,7 @@ internal class AndroidRootPowerKeyMonitor(
   }
 
   private suspend fun discoverPowerKeyDevices(): List<RootPowerKeyDevice> {
-    val result = runRootCommand("getevent -lp")
+    val result = runRootCommand(RootInputDeviceCapabilities.PER_NODE_DISCOVERY_COMMAND)
     if (result.exitCode != 0) {
       return emptyList()
     }

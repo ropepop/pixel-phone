@@ -12,15 +12,15 @@ Canonical source repository for the rooted Pixel phone runtime, orchestration, a
 ## Highlights
 
 - Repository structure is summarized so visitors can quickly understand what is included.
-- Primary detected language signals: Kotlin, Shell, Python, Java.
+- Primary detected language signals: Kotlin, Shell, Java, Python.
 - Previous public README content is available in README.previous.md.
 
 ## Tech Stack
 
 - Kotlin.
 - Shell.
-- Python.
 - Java.
+- Python.
 - C.
 
 ## Quick Start

@@ -37,6 +37,37 @@ class RuntimeEntrypointSpeedSourceTest {
     assertFalse(lock.contains("rm -rf"))
   }
 
+  @Test
+  fun ticketStopRestoresTheTwoValueSecureCaptureRecordBeforeClearingIt() {
+    val source = source("app/src/main/assets/runtime/entrypoints/pixel-ticket-stop.sh")
+    val restore = source.substringAfter("restore_secure_capture_state() {")
+      .substringBefore("ticket_lock_acquire")
+
+    assertTrue(restore.contains("saved_debuggable=${'$'}(sed -n '1p'"))
+    assertTrue(restore.contains("saved_disable_secure_windows=${'$'}(sed -n '2p'"))
+    assertTrue(restore.contains("settings delete secure disable_secure_windows"))
+    assertTrue(restore.contains("settings put secure disable_secure_windows \"${'$'}saved_disable_secure_windows\""))
+    assertTrue(restore.contains("resetprop ro.debuggable \"${'$'}saved_debuggable\""))
+    assertTrue(restore.contains("current_debuggable=${'$'}(getprop ro.debuggable"))
+    assertTrue(restore.contains("current_disable_secure_windows=${'$'}(settings get secure disable_secure_windows"))
+    assertTrue(restore.contains("if [ ! -e \"${'$'}state_file\" ]; then"))
+    assertTrue(restore.contains("settings put secure disable_secure_windows 0"))
+    assertTrue(restore.contains("resetprop ro.debuggable 0"))
+    assertTrue(restore.indexOf("[ \"${'$'}current_debuggable\" = \"${'$'}saved_debuggable\" ]") <
+      restore.indexOf("rm -f \"${'$'}state_file\""))
+    assertTrue(restore.indexOf("[ \"${'$'}current_disable_secure_windows\" = \"${'$'}saved_disable_secure_windows\" ]") <
+      restore.indexOf("rm -f \"${'$'}state_file\""))
+    val stopLifecycle = source.substringAfter("ticket_lock_acquire \"${'$'}LOCK\"")
+    assertFalse(stopLifecycle.contains("settings put secure disable_secure_windows 0 >/dev/null"))
+    assertTrue(source.contains("SECURE_CAPTURE_RESTORE_OK=0"))
+    assertTrue(source.indexOf("restore_secure_capture_state || SECURE_CAPTURE_RESTORE_OK=0") >
+      source.indexOf("if listening; then"))
+    assertTrue(source.indexOf("restore_secure_capture_state || SECURE_CAPTURE_RESTORE_OK=0") >
+      source.indexOf("if ticket_service_active; then"))
+    assertTrue(source.contains("dumpsys activity services \"${'$'}{APP}/.app.ticket.TicketStreamService\""))
+    assertFalse(source.contains("dumpsys activity services \"${'$'}{APP}/.app.SupervisorService\""))
+  }
+
   private fun source(relative: String): String {
     val roots = listOf(Path.of(relative), Path.of("../$relative"), Path.of("../../$relative"))
     val path = roots.firstOrNull(Files::exists) ?: error("Missing source file for $relative")

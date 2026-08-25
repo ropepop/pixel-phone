@@ -45,7 +45,13 @@ object TicketScreenConfig {
   const val ROOT_HARDWARE_H264_CAPTURE_METHOD = "app_process_mediacodec_surface_secure_screen_capture"
   const val ROOT_HARDWARE_H264_COLOR_CORRECTION = "red_blue_swap_high_brightness_sdr_gpu_paint_r1.08_g1.05_b1.03"
   const val ROOT_HARDWARE_H264_COLOR_STANDARD = "bt709_limited_sdr"
+  // ScreenCapture exposes a one-pixel native display ring. Live encoded-frame proof requires
+  // two additional source pixels on the left and one on the right/bottom so filtered 1080-to-720
+  // sampling and 4:2:0 chroma cannot carry that saturated edge into the encoded outer pixels.
+  const val TICKET_MEDIA_LEFT_CROP_SOURCE_PIXELS = 4
   const val TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS = 200
+  const val TICKET_MEDIA_RIGHT_CROP_SOURCE_PIXELS = 3
+  const val TICKET_MEDIA_BOTTOM_CROP_SOURCE_PIXELS = 3
   const val ROOT_CAPTURE_QUALITY_PROFILE = ROOT_HARDWARE_H264_QUALITY_PROFILE
 
   val localStorePackages = listOf(
@@ -82,6 +88,7 @@ data class TicketStreamHealth(
   val controlCodeRequest: TicketControlCodeRequestHealth = TicketControlCodeRequestHealth(),
   val rigasSatiksmeBatch: TicketRigasSatiksmeBatchHealth = TicketRigasSatiksmeBatchHealth(),
   val brightnessGuard: TicketBrightnessGuardHealth = TicketBrightnessGuardHealth(),
+  val actionPanelDarkLease: TicketActionPanelDarkLeaseHealth = TicketActionPanelDarkLeaseHealth(),
   val visibleFrame: TicketVisibleFrameHealth = TicketVisibleFrameHealth(),
   val hardwareH264: TicketHardwareH264Health = TicketHardwareH264Health(),
   val recovery: TicketRecoveryHealth = TicketRecoveryHealth(),
@@ -104,7 +111,11 @@ data class TicketStreamPipeline(
   val configuredHeight: Int? = null,
   val configuredSourceWidth: Int? = null,
   val configuredSourceHeight: Int? = null,
+  val sourceLeftCrop: Int = TicketScreenConfig.TICKET_MEDIA_LEFT_CROP_SOURCE_PIXELS,
   val sourceTopCrop: Int = TicketScreenConfig.TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS,
+  val sourceRightCrop: Int = TicketScreenConfig.TICKET_MEDIA_RIGHT_CROP_SOURCE_PIXELS,
+  val sourceBottomCrop: Int = TicketScreenConfig.TICKET_MEDIA_BOTTOM_CROP_SOURCE_PIXELS,
+  val sourceVisibleWidth: Int? = null,
   val sourceVisibleHeight: Int? = null,
   val configuredBitrate: Int? = null,
   val lastFrameBytes: Int = 0,
@@ -180,6 +191,8 @@ data class TicketHardwareH264Health(
   val lastCadenceCommand: String? = null,
   val lastCadenceCommandAccepted: Boolean? = null,
   val lastCadenceCommandAgoMillis: Long? = null,
+  val encoderLivenessRecoveryCount: Long = 0L,
+  val lastEncoderLivenessRecoveryAgoMillis: Long? = null,
   val controlCodeBurstActive: Boolean = false,
   val controlCodeBurstState: String = "idle",
   val lastControlCodeBurstAgoMillis: Long? = null,
@@ -208,6 +221,7 @@ data class TicketHardwareH264Health(
   val restartCount: Long = 0L,
   val lastExitReason: String? = null,
   val lastExitAgoMillis: Long? = null,
+  val lastTicketActionDiagnostic: String = "",
   val stderrTail: String = ""
 )
 
@@ -272,6 +286,18 @@ data class TicketBrightnessGuardHealth(
   val failures: Long = 0L,
   val lastReason: String? = null,
   val message: String = "Ticket brightness guard is inactive"
+)
+
+@Serializable
+data class TicketActionPanelDarkLeaseHealth(
+  val active: Boolean = false,
+  val ownerActionId: String = "",
+  val ageMillis: Long? = null,
+  val lastZeroConfirmationAgoMillis: Long? = null,
+  val failure: String = "",
+  val failures: Long = 0L,
+  val physicalTouchPreempted: Boolean = false,
+  val releaseReason: String = "idle"
 )
 
 @Serializable
@@ -343,25 +369,117 @@ data class TicketStreamSize(
   val height: Int,
   val sourceWidth: Int,
   val sourceHeight: Int,
-  val sourceTopCrop: Int = 0
+  val sourceLeftCrop: Int = 0,
+  val sourceTopCrop: Int = 0,
+  val sourceRightCrop: Int = 0,
+  val sourceBottomCrop: Int = 0
 ) {
-  val sourceVisibleHeight: Int = (sourceHeight - sourceTopCrop).coerceAtLeast(1)
+  val sourceVisibleWidth: Int =
+    (sourceWidth - sourceLeftCrop - sourceRightCrop).coerceAtLeast(1)
+  val sourceVisibleHeight: Int =
+    (sourceHeight - sourceTopCrop - sourceBottomCrop).coerceAtLeast(1)
 
+}
+
+internal data class TicketSourceCrop(
+  val left: Int,
+  val top: Int,
+  val right: Int,
+  val bottom: Int
+) {
+  val width: Int get() = (right - left).coerceAtLeast(1)
+  val height: Int get() = (bottom - top).coerceAtLeast(1)
+}
+
+internal data class TicketNormalizedBounds(
+  val leftBasisPoints: Int,
+  val topBasisPoints: Int,
+  val rightBasisPoints: Int,
+  val bottomBasisPoints: Int
+)
+
+internal object TicketCaptureGeometry {
+  fun sourceCrop(sourceWidth: Int, sourceHeight: Int): TicketSourceCrop {
+    val cleanWidth = sourceWidth.coerceAtLeast(1)
+    val cleanHeight = sourceHeight.coerceAtLeast(1)
+    val left = TicketScreenConfig.TICKET_MEDIA_LEFT_CROP_SOURCE_PIXELS
+      .coerceIn(0, (cleanWidth - 1).coerceAtLeast(0))
+    val rightCrop = TicketScreenConfig.TICKET_MEDIA_RIGHT_CROP_SOURCE_PIXELS
+      .coerceIn(0, (cleanWidth - left - 1).coerceAtLeast(0))
+    val top = TicketScreenConfig.TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS
+      .coerceIn(0, (cleanHeight - 1).coerceAtLeast(0))
+    val bottomCrop = TicketScreenConfig.TICKET_MEDIA_BOTTOM_CROP_SOURCE_PIXELS
+      .coerceIn(0, (cleanHeight - top - 1).coerceAtLeast(0))
+    return TicketSourceCrop(
+      left = left,
+      top = top,
+      right = cleanWidth - rightCrop,
+      bottom = cleanHeight - bottomCrop
+    )
+  }
+
+  fun mapProbeBoundsToDevice(
+    bounds: TicketVisualProbeBounds,
+    probeWidth: Int,
+    probeHeight: Int,
+    sourceWidth: Int,
+    sourceHeight: Int
+  ): TicketViviGraphicBounds {
+    val crop = sourceCrop(sourceWidth, sourceHeight)
+    val safeProbeWidth = probeWidth.coerceAtLeast(1)
+    val safeProbeHeight = probeHeight.coerceAtLeast(1)
+    return TicketViviGraphicBounds(
+      left = (crop.left + bounds.left / safeProbeWidth.toFloat() * crop.width)
+        .roundToInt().coerceIn(crop.left, crop.right),
+      top = (crop.top + bounds.top / safeProbeHeight.toFloat() * crop.height)
+        .roundToInt().coerceIn(crop.top, crop.bottom),
+      right = (crop.left + bounds.right / safeProbeWidth.toFloat() * crop.width)
+        .roundToInt().coerceIn(crop.left, crop.right),
+      bottom = (crop.top + bounds.bottom / safeProbeHeight.toFloat() * crop.height)
+        .roundToInt().coerceIn(crop.top, crop.bottom)
+    )
+  }
+
+  fun normalizeProbeBounds(
+    bounds: TicketVisualProbeBounds,
+    probeWidth: Int,
+    probeHeight: Int
+  ): TicketNormalizedBounds? {
+    if (probeWidth <= 0 || probeHeight <= 0 || bounds.width <= 0 || bounds.height <= 0) {
+      return null
+    }
+    fun basisPoints(value: Int, extent: Int): Int =
+      (value / extent.toFloat() * 10_000f).roundToInt().coerceIn(0, 10_000)
+    val normalized = TicketNormalizedBounds(
+      leftBasisPoints = basisPoints(bounds.left, probeWidth),
+      topBasisPoints = basisPoints(bounds.top, probeHeight),
+      rightBasisPoints = basisPoints(bounds.right, probeWidth),
+      bottomBasisPoints = basisPoints(bounds.bottom, probeHeight)
+    )
+    return normalized.takeIf {
+      it.leftBasisPoints < it.rightBasisPoints &&
+        it.topBasisPoints < it.bottomBasisPoints
+    }
+  }
 }
 
 object TicketStreamSizing {
   fun rootHardwareH264(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
-    val sourceTopCrop = TicketScreenConfig.TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS
-      .coerceIn(0, (sourceHeight - 1).coerceAtLeast(0))
-    val visibleSourceHeight = (sourceHeight - sourceTopCrop).coerceAtLeast(1)
+    val crop = TicketCaptureGeometry.sourceCrop(sourceWidth, sourceHeight)
+    // Preserve the deployed encoded dimensions. The new native-edge crop is scaled into the
+    // same output rectangle so the H.264/TSF2 and browser layout contracts stay stable.
+    val legacyVisibleSourceHeight = (sourceHeight - crop.top).coerceAtLeast(1)
     val width = minOf(sourceWidth, TicketScreenConfig.ROOT_HARDWARE_H264_TARGET_WIDTH).evenAtLeastTwo()
-    val height = ((visibleSourceHeight / sourceWidth.toFloat()) * width).roundToInt().evenAtLeastTwo()
+    val height = ((legacyVisibleSourceHeight / sourceWidth.toFloat()) * width).roundToInt().evenAtLeastTwo()
     return TicketStreamSize(
       width = width,
       height = height,
       sourceWidth = sourceWidth,
       sourceHeight = sourceHeight,
-      sourceTopCrop = sourceTopCrop
+      sourceLeftCrop = crop.left,
+      sourceTopCrop = crop.top,
+      sourceRightCrop = sourceWidth - crop.right,
+      sourceBottomCrop = sourceHeight - crop.bottom
     )
   }
 
@@ -396,6 +514,24 @@ internal object TicketInactivityPolicy {
       nowMillis = nowMillis,
       timeoutMillis = timeoutMillis
     ) <= 0L
+  }
+
+  fun shouldRetain(
+    lastInputAtMillis: Long,
+    nowMillis: Long,
+    activeViewerDemand: Boolean,
+    timeoutMillis: Long = TIMEOUT_MILLIS
+  ): Boolean {
+    return activeViewerDemand && timedOut(lastInputAtMillis, nowMillis, timeoutMillis)
+  }
+
+  fun shouldStop(
+    lastInputAtMillis: Long,
+    nowMillis: Long,
+    activeViewerDemand: Boolean,
+    timeoutMillis: Long = TIMEOUT_MILLIS
+  ): Boolean {
+    return !activeViewerDemand && timedOut(lastInputAtMillis, nowMillis, timeoutMillis)
   }
 
   fun nextTickMillis(remainingMillis: Long): Long {

@@ -26,6 +26,46 @@ class TicketSpacetimeCommandExpiryTest {
   }
 
   @Test
+  fun startDispatchRequiresFreshRemotePendingStateAndFreshLocalDeadline() {
+    assertTrue(
+      shouldDispatchRevalidatedStartCommand(
+        commandType = "start",
+        remotelyDispatchable = true,
+        expiresAt = "2026-07-23T18:00:00.001Z",
+        now = now
+      )
+    )
+    assertFalse(
+      shouldDispatchRevalidatedStartCommand(
+        commandType = "start",
+        remotelyDispatchable = false,
+        expiresAt = "2026-07-23T18:00:00.001Z",
+        now = now
+      )
+    )
+    assertFalse(
+      shouldDispatchRevalidatedStartCommand(
+        commandType = "start",
+        remotelyDispatchable = true,
+        expiresAt = "2026-07-23T18:00:00Z",
+        now = now
+      )
+    )
+  }
+
+  @Test
+  fun nonStartCommandsKeepTheirExistingDispatchPath() {
+    assertTrue(
+      shouldDispatchRevalidatedStartCommand(
+        commandType = "keyframe",
+        remotelyDispatchable = false,
+        expiresAt = "",
+        now = now
+      )
+    )
+  }
+
+  @Test
   fun missingCommandNeedsTwoSuccessfulConfirmations() {
     val confirmation = TicketSpacetimeMissingCommandConfirmation()
 

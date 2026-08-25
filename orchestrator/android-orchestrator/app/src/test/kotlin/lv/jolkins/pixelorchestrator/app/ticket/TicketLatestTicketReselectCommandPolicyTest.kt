@@ -54,6 +54,30 @@ class TicketLatestTicketReselectCommandPolicyTest {
   }
 
   @Test
+  fun scheduledRefreshCannotAcknowledgeReadyWithoutFreshUnactivatedProof() {
+    assertDecision(
+      expectedDisposition = TicketLatestTicketReselectCommandDisposition.DEFER,
+      expectedReason = "latest_ticket_reselect_unactivated_proof_pending",
+      currentCommandId = "schedule-command",
+      currentStatus = "succeeded",
+      currentPhase = "ready",
+      incomingCommandId = "schedule-command",
+      incomingRequireUnactivatedRegistration = true,
+      currentFinalUnactivatedProved = false
+    )
+    assertDecision(
+      expectedDisposition = TicketLatestTicketReselectCommandDisposition.SUCCEEDED,
+      expectedReason = "latest_ticket_reselect_succeeded",
+      currentCommandId = "schedule-command",
+      currentStatus = "succeeded",
+      currentPhase = "ready",
+      incomingCommandId = "schedule-command",
+      incomingRequireUnactivatedRegistration = true,
+      currentFinalUnactivatedProved = true
+    )
+  }
+
+  @Test
   fun reportsSameCommandTerminalFailure() {
     assertDecision(
       expectedDisposition = TicketLatestTicketReselectCommandDisposition.FAILED,
@@ -256,14 +280,18 @@ class TicketLatestTicketReselectCommandPolicyTest {
     currentStatus: String,
     currentPhase: String,
     incomingCommandId: String,
-    controlSensitiveWindowActive: Boolean = false
+    controlSensitiveWindowActive: Boolean = false,
+    incomingRequireUnactivatedRegistration: Boolean = false,
+    currentFinalUnactivatedProved: Boolean = false
   ) {
     val decision = TicketLatestTicketReselectCommandPolicy.decide(
       currentCommandId = currentCommandId,
       currentStatus = currentStatus,
       currentPhase = currentPhase,
       incomingCommandId = incomingCommandId,
-      controlSensitiveWindowActive = controlSensitiveWindowActive
+      controlSensitiveWindowActive = controlSensitiveWindowActive,
+      incomingRequireUnactivatedRegistration = incomingRequireUnactivatedRegistration,
+      currentFinalUnactivatedProved = currentFinalUnactivatedProved
     )
 
     assertEquals(expectedDisposition, decision.disposition)

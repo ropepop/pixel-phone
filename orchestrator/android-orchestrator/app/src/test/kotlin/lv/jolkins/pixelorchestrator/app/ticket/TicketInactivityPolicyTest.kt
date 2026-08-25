@@ -53,6 +53,45 @@ class TicketInactivityPolicyTest {
   }
 
   @Test
+  fun activeViewerDemandRetainsTheSessionBeyondTenMinutesButDisconnectStillTimesOut() {
+    var lastInputAtMillis = 1_000L
+    repeat(3) {
+      val nowMillis = lastInputAtMillis + TicketInactivityPolicy.TIMEOUT_MILLIS
+      assertTrue(
+        TicketInactivityPolicy.shouldRetain(
+          lastInputAtMillis = lastInputAtMillis,
+          nowMillis = nowMillis,
+          activeViewerDemand = true
+        )
+      )
+      assertFalse(
+        TicketInactivityPolicy.shouldStop(
+          lastInputAtMillis = lastInputAtMillis,
+          nowMillis = nowMillis,
+          activeViewerDemand = true
+        )
+      )
+      lastInputAtMillis = nowMillis
+    }
+
+    val disconnectedAtMillis = lastInputAtMillis + TicketInactivityPolicy.TIMEOUT_MILLIS
+    assertFalse(
+      TicketInactivityPolicy.shouldRetain(
+        lastInputAtMillis = lastInputAtMillis,
+        nowMillis = disconnectedAtMillis,
+        activeViewerDemand = false
+      )
+    )
+    assertTrue(
+      TicketInactivityPolicy.shouldStop(
+        lastInputAtMillis = lastInputAtMillis,
+        nowMillis = disconnectedAtMillis,
+        activeViewerDemand = false
+      )
+    )
+  }
+
+  @Test
   fun inactivityTimeoutStopsStreamWithoutResetAndBlocksBrowserAutoStart() {
     assertFalse(
       TicketSessionStopPolicy.shouldResetViviToTicket(

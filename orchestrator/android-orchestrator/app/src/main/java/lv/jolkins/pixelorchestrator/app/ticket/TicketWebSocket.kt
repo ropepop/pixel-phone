@@ -12,17 +12,51 @@ internal class TicketWebSocket(
   private val input: BufferedInputStream,
   private val output: BufferedOutputStream,
   private val onText: suspend (String) -> Unit,
-  private val onClose: () -> Unit
+  private val onClose: () -> Unit,
+  binaryFramesInitiallyAllowed: Boolean = true
 ) {
   private val open = AtomicBoolean(true)
   private val writeLock = Any()
+  private var binaryFramesAllowed = binaryFramesInitiallyAllowed
 
   fun sendText(value: String) {
     sendFrame(opcode = OPCODE_TEXT, payload = value.toByteArray(Charsets.UTF_8))
   }
 
-  fun sendBinary(payload: ByteArray) {
-    sendFrame(opcode = OPCODE_BINARY, payload = payload)
+  fun sendConfigAndAllowBinary(value: String): Boolean {
+    return sendFrame(
+      opcode = OPCODE_TEXT,
+      payload = value.toByteArray(Charsets.UTF_8),
+      allowBinaryAfterSend = true
+    )
+  }
+
+  fun sendConfigAndAllowBinaryIf(value: String, canSend: () -> Boolean): Boolean {
+    return sendFrame(
+      opcode = OPCODE_TEXT,
+      payload = value.toByteArray(Charsets.UTF_8),
+      allowBinaryAfterSend = true,
+      canSend = canSend,
+      closeOnFailure = false
+    )
+  }
+
+  fun binaryFramesAllowed(): Boolean = synchronized(writeLock) {
+    open.get() && binaryFramesAllowed
+  }
+
+  fun sendBinary(payload: ByteArray): Boolean {
+    return sendFrame(opcode = OPCODE_BINARY, payload = payload, requireBinaryAllowed = true)
+  }
+
+  fun sendBinaryIf(payload: ByteArray, canSend: () -> Boolean): Boolean {
+    return sendFrame(
+      opcode = OPCODE_BINARY,
+      payload = payload,
+      requireBinaryAllowed = true,
+      canSend = canSend,
+      closeOnFailure = false
+    )
   }
 
   suspend fun readLoop() {
@@ -77,19 +111,30 @@ internal class TicketWebSocket(
     }
   }
 
-  fun close() {
+  fun close(): Boolean {
     if (!open.getAndSet(false)) {
-      return
+      return false
     }
     runCatching { socket.close() }
     onClose()
+    return true
   }
 
-  private fun sendFrame(opcode: Int, payload: ByteArray) {
+  private fun sendFrame(
+    opcode: Int,
+    payload: ByteArray,
+    requireBinaryAllowed: Boolean = false,
+    allowBinaryAfterSend: Boolean = false,
+    canSend: () -> Boolean = { true },
+    closeOnFailure: Boolean = true
+  ): Boolean {
     if (!open.get()) {
-      return
+      return false
     }
-    synchronized(writeLock) {
+    return synchronized(writeLock) {
+      if (!open.get() || (requireBinaryAllowed && !binaryFramesAllowed) || !canSend()) {
+        return@synchronized false
+      }
       runCatching {
         output.write(0x80 or opcode)
         when {
@@ -109,9 +154,18 @@ internal class TicketWebSocket(
         }
         output.write(payload)
         output.flush()
-      }.onFailure {
-        close()
-      }
+      }.fold(
+        onSuccess = {
+          if (allowBinaryAfterSend) {
+            binaryFramesAllowed = true
+          }
+          true
+        },
+        onFailure = {
+          if (closeOnFailure) close()
+          false
+        }
+      )
     }
   }
 

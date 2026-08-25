@@ -3,6 +3,7 @@ package lv.jolkins.pixelorchestrator.app.ticket
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationVisibleNode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -121,6 +122,26 @@ class TicketViviPageEnforcerTest {
   }
 
   @Test
+  fun refusesToLabelRegistrationButtonSpaceAsTicketCardBody() {
+    val currentRange = currentTicketDateRange()
+    val xml = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="Manas biļetes" bounds="[288,158][792,270]" />
+        <node package="com.pv.vivi" class="android.widget.ImageView" content-desc="Cena–Rīga&#10;30 dienu biļete&#10;Derīga&#10;$currentRange&#10;Cena&#10;46.00€" clickable="true" bounds="[0,536][1080,900]">
+          <node package="com.pv.vivi" class="android.widget.Button" content-desc="Reģistrēt biļeti&#10;jaunam braucienam" clickable="true" enabled="true" bounds="[68,550][1012,850]" />
+        </node>
+      </hierarchy>
+    """.trimIndent()
+
+    assertEquals(
+      "open_fresh_time_ticket_registration_button",
+      TicketViviPageEnforcer.bestTicketCardActionForHierarchy(xml)?.reason
+    )
+    assertNull(TicketViviPageEnforcer.ticketCardDetailActionForHierarchy(xml))
+    assertNull(TicketViviPageEnforcer.recoveryActionForHierarchy(xml))
+  }
+
+  @Test
   fun ticketListIsOnlyARecoverySourceAndNeverTheFinalTicketDetailState() {
     val currentRange = currentTicketDateRange()
     val xml = """
@@ -196,6 +217,163 @@ class TicketViviPageEnforcerTest {
     assertEquals(1543, bounds?.top)
     assertEquals(1012, bounds?.right)
     assertEquals(1654, bounds?.bottom)
+  }
+
+  @Test
+  fun splitRegistrationLabelsDefineTheWholeSliderRow() {
+    val registration = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="30 dienu biļete" bounds="[396,1123][684,1184]" />
+        <node package="com.pv.vivi" content-desc="Derīga" bounds="[81,1339][191,1391]" />
+        <node package="com.pv.vivi" content-desc="24.07.2026–22.08.2026" bounds="[81,1402][601,1470]" />
+        <node package="com.pv.vivi" content-desc="Reģistrēt biļeti" bounds="[396,1543][684,1604]" />
+        <node package="com.pv.vivi" content-desc="Pavelc, lai apstiprinātu" bounds="[362,1604][718,1654]" />
+        <node package="com.pv.vivi" content-desc="AS Pasažieru Vilciens PVN Reģ. Nr. LV40003567907" bounds="[81,1777][769,1816]" />
+      </hierarchy>
+    """.trimIndent()
+
+    val semantic = TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(registration)
+    assertEquals(TicketViviGraphicBounds(left = 362, top = 1543, right = 718, bottom = 1654), semantic)
+
+    val gesture = ticketSliderGestureBoundsAfterVisualProof(
+      hierarchyBounds = requireNotNull(semantic),
+      visualBounds = TicketViviGraphicBounds(left = 45, top = 1497, right = 1035, bottom = 1714),
+      displayWidth = 1080,
+      displayHeight = 2424
+    )
+    assertEquals(TicketViviGraphicBounds(left = 45, top = 1490, right = 1035, bottom = 1707), gesture)
+    val contract = ticketSliderGestureContract(requireNotNull(gesture))
+    assertEquals(126, contract.startX)
+    assertEquals(954, contract.endX)
+    assertEquals(1598, (gesture.top + gesture.bottom) / 2)
+  }
+
+  @Test
+  fun missingOrDistantSwipeInstructionCannotDefineARegistrationSlider() {
+    val missingInstruction = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="30 dienu biļete" bounds="[396,1123][684,1184]" />
+        <node package="com.pv.vivi" content-desc="Derīga" bounds="[81,1339][191,1391]" />
+        <node package="com.pv.vivi" content-desc="24.07.2026–22.08.2026" bounds="[81,1402][601,1470]" />
+        <node package="com.pv.vivi" content-desc="Reģistrēt biļeti" bounds="[396,1543][684,1604]" />
+        <node package="com.pv.vivi" content-desc="AS Pasažieru Vilciens PVN Reģ. Nr. LV40003567907" bounds="[81,1777][769,1816]" />
+      </hierarchy>
+    """.trimIndent()
+    val distantInstruction = missingInstruction.replace(
+      "<node package=\"com.pv.vivi\" content-desc=\"AS Pasažieru Vilciens",
+      "<node package=\"com.pv.vivi\" content-desc=\"Pavelc, lai apstiprinātu\" bounds=\"[362,1800][718,1850]\" />\n        <node package=\"com.pv.vivi\" content-desc=\"AS Pasažieru Vilciens"
+    )
+
+    assertNull(TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(missingInstruction))
+    assertNull(TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(distantInstruction))
+  }
+
+  @Test
+  fun recognizesUpcomingTicketBeforeTheRegistrationSliderBecomesAvailable() {
+    val today = LocalDate.of(2026, 8, 23)
+    val upcomingRange = ticketDateRange(today.plusDays(1), today.plusDays(30))
+    val detail = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="30 dienu biļete" bounds="[396,1123][684,1184]" />
+        <node package="com.pv.vivi" content-desc="Derīga" bounds="[81,1339][191,1391]" />
+        <node package="com.pv.vivi" content-desc="$upcomingRange" bounds="[81,1402][601,1470]" />
+        <node package="com.pv.vivi" content-desc="Reģistrēt biļeti" bounds="[396,1543][684,1604]" />
+        <node package="com.pv.vivi" content-desc="AS Pasažieru Vilciens PVN Reģ. Nr. LV40003567907" bounds="[81,1777][769,1816]" />
+      </hierarchy>
+    """.trimIndent()
+
+    assertEquals(TicketViviRecoveryState.TICKET_DETAIL, TicketViviPageEnforcer.classifyForRecovery(detail))
+    assertTrue(TicketViviPageEnforcer.isUpcomingPreValidityTicketDetail(detail, today))
+    assertFalse(TicketViviPageEnforcer.isActivatedTicketDetail(detail))
+    assertFalse(TicketViviPageEnforcer.isUnactivatedRegistrationDetail(detail))
+    assertNull(TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(detail))
+  }
+
+  @Test
+  fun upcomingPreValidityProofRejectsLifecycleAndSurfaceLookalikes() {
+    val today = LocalDate.of(2026, 8, 23)
+    val upcomingRange = ticketDateRange(today.plusDays(1), today.plusDays(30))
+    val detail = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="30 dienu biļete" bounds="[396,1123][684,1184]" />
+        <node package="com.pv.vivi" content-desc="Derīga" bounds="[81,1339][191,1391]" />
+        <node package="com.pv.vivi" content-desc="$upcomingRange" bounds="[81,1402][601,1470]" />
+        <node package="com.pv.vivi" content-desc="Reģistrēt biļeti" bounds="[396,1543][684,1604]" />
+        <node package="com.pv.vivi" content-desc="AS Pasažieru Vilciens PVN Reģ. Nr. LV40003567907" bounds="[81,1777][769,1816]" />
+      </hierarchy>
+    """.trimIndent()
+    val startsToday = detail.replace(
+      upcomingRange,
+      ticketDateRange(today, today.plusDays(29))
+    )
+    val registered = detail.replace(
+      "<node package=\"com.pv.vivi\" content-desc=\"Reģistrēt biļeti\"",
+      "<node package=\"com.pv.vivi\" content-desc=\"Biļete reģistrēta\" bounds=\"[350,1480][730,1530]\" />\n        <node package=\"com.pv.vivi\" content-desc=\"Reģistrēt biļeti\""
+    )
+    val fullUnactivated = detail.replace(
+      "<node package=\"com.pv.vivi\" content-desc=\"AS Pasažieru Vilciens",
+      "<node package=\"com.pv.vivi\" content-desc=\"Pavelc, lai apstiprinātu\" bounds=\"[362,1604][718,1654]\" />\n        <node package=\"com.pv.vivi\" content-desc=\"AS Pasažieru Vilciens"
+    )
+    val reversed = detail.replace(
+      upcomingRange,
+      ticketDateRange(today.plusDays(30), today.plusDays(1))
+    )
+    val malformed = detail.replace(upcomingRange, "24/08/2026 - 22/09/2026")
+    val result = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="Kontroles kods" bounds="[124,548][700,604]" />
+        <node package="com.pv.vivi" content-desc="12345" bounds="[360,1180][720,1260]" />
+      </hierarchy>
+    """.trimIndent()
+
+    listOf(
+      startsToday,
+      registered,
+      fullUnactivated,
+      reversed,
+      malformed,
+      ticketListWithOnlyFutureCardsXml(today),
+      controlCodePopupXml(inputFocused = false),
+      result
+    ).forEach { lookalike ->
+      assertFalse(TicketViviPageEnforcer.isUpcomingPreValidityTicketDetail(lookalike, today))
+    }
+    assertTrue(TicketViviPageEnforcer.isUnactivatedRegistrationDetail(fullUnactivated))
+    assertNotNull(TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(fullUnactivated))
+  }
+
+  @Test
+  fun ambiguousSplitRegistrationLabelsFailClosed() {
+    val registration = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="30 dienu biļete" bounds="[396,1123][684,1184]" />
+        <node package="com.pv.vivi" content-desc="Derīga" bounds="[81,1339][191,1391]" />
+        <node package="com.pv.vivi" content-desc="24.07.2026–22.08.2026" bounds="[81,1402][601,1470]" />
+        <node package="com.pv.vivi" content-desc="Reģistrēt biļeti" bounds="[396,1543][684,1604]" />
+        <node package="com.pv.vivi" content-desc="Pavelc, lai apstiprinātu" bounds="[362,1604][718,1654]" />
+        <node package="com.pv.vivi" content-desc="Pavelc lai apstiprinatu" bounds="[300,1600][650,1650]" />
+        <node package="com.pv.vivi" content-desc="AS Pasažieru Vilciens PVN Reģ. Nr. LV40003567907" bounds="[81,1777][769,1816]" />
+      </hierarchy>
+    """.trimIndent()
+
+    assertNull(TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(registration))
+  }
+
+  @Test
+  fun disabledCombinedRegistrationControlFailsClosed() {
+    val registration = """
+      <hierarchy>
+        <node package="com.pv.vivi" content-desc="30 dienu biļete" bounds="[396,1123][684,1184]" />
+        <node package="com.pv.vivi" content-desc="Derīga" bounds="[81,1339][191,1391]" />
+        <node package="com.pv.vivi" content-desc="24.07.2026–22.08.2026" bounds="[81,1402][601,1470]" />
+        <node package="com.pv.vivi" class="android.widget.Button" clickable="true" enabled="false" content-desc="Reģistrēt biļeti&#10;Pavelc, lai apstiprinātu" bounds="[68,1543][1012,1654]" />
+        <node package="com.pv.vivi" content-desc="Reģistrēt biļeti" bounds="[396,1543][684,1604]" />
+        <node package="com.pv.vivi" content-desc="Pavelc, lai apstiprinātu" bounds="[362,1604][718,1654]" />
+        <node package="com.pv.vivi" content-desc="AS Pasažieru Vilciens PVN Reģ. Nr. LV40003567907" bounds="[81,1777][769,1816]" />
+      </hierarchy>
+    """.trimIndent()
+
+    assertNull(TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(registration))
   }
 
   @Test
@@ -357,11 +535,18 @@ class TicketViviPageEnforcerTest {
       xml,
       today = today
     )
+    val detailAction = TicketViviPageEnforcer.ticketCardDetailActionForHierarchy(
+      xml,
+      today = today
+    )
 
     assertEquals(TicketViviRecoveryState.TICKET_LIST_WITH_CARD, TicketViviPageEnforcer.classifyForRecovery(xml))
     assertEquals("open_upcoming_time_ticket_card", action?.reason)
     assertEquals(540, action?.x)
     assertEquals(1092, action?.y)
+    assertEquals("open_upcoming_time_ticket_detail_card", detailAction?.reason)
+    assertEquals(540, detailAction?.x)
+    assertEquals(1092, detailAction?.y)
   }
 
   @Test

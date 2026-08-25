@@ -18,12 +18,18 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
-data class TicketControlCodeVisualProbe(
+internal data class TicketControlCodeVisualProbe(
   val probeId: Long,
   val result: String,
   val reason: String,
   val atMillis: Long,
-  val sliderBounds: TicketControlCodeVisualBounds? = null
+  val sliderBounds: TicketControlCodeVisualBounds? = null,
+  val closeBounds: TicketControlCodeVisualBounds? = null,
+  val inputBounds: TicketControlCodeVisualBounds? = null,
+  val submitBounds: TicketControlCodeVisualBounds? = null,
+  val visualSignature: String = "",
+  val visualSignatureEpoch: String = "",
+  val ticketActionObservation: TicketVisualActionObservation? = null
 )
 
 data class TicketControlCodeVisualBounds(
@@ -36,11 +42,12 @@ data class TicketControlCodeVisualBounds(
   val height: Int get() = (bottom - top).coerceAtLeast(0)
 }
 
-class TicketRootHardwareH264CaptureEngine(
+class TicketRootHardwareH264CaptureEngine internal constructor(
   private val scope: CoroutineScope,
   private val rootExecutor: RootExecutor,
   private val onFrame: (TicketRootCaptureFrame) -> Unit,
-  private val onStateChanged: (TicketHardwareH264Health) -> Unit
+  private val onStateChanged: (TicketHardwareH264Health) -> Unit,
+  private val pendingKeyFrameRequest: TicketPendingKeyFrameRequest = TicketPendingKeyFrameRequest()
 ) {
   private data class HardwareH264StartRequest(
     val sourceWidth: Int,
@@ -55,6 +62,8 @@ class TicketRootHardwareH264CaptureEngine(
 
   private val startupLock = Any()
   private val keyFrameRequestLock = Any()
+  private val controlCodeVisualProbeResultLock = Any()
+  private val controlCodeVisualProbeResults = linkedMapOf<Long, TicketControlCodeVisualProbe>()
   private val controlCodeVisualProbeSequence = AtomicLong(0L)
   private val captureGeneration = AtomicLong(0L)
   @Volatile private var job: Job? = null
@@ -95,6 +104,11 @@ class TicketRootHardwareH264CaptureEngine(
   @Volatile private var lastControlCodeVisualProbeId = 0L
   @Volatile private var lastControlCodeVisualProbeAtMillis = 0L
   @Volatile private var lastControlCodeVisualSliderBounds: TicketControlCodeVisualBounds? = null
+  @Volatile private var lastControlCodeVisualCloseBounds: TicketControlCodeVisualBounds? = null
+  @Volatile private var lastControlCodeVisualInputBounds: TicketControlCodeVisualBounds? = null
+  @Volatile private var lastControlCodeVisualSubmitBounds: TicketControlCodeVisualBounds? = null
+  @Volatile private var lastTicketActionObservation: TicketVisualActionObservation? = null
+  @Volatile private var lastTicketActionDiagnostic = ""
   @Volatile private var controlCodeBurstActive = false
   @Volatile private var controlCodeBurstState = "idle"
   @Volatile private var lastControlCodeBurstAtMillis = 0L
@@ -108,6 +122,9 @@ class TicketRootHardwareH264CaptureEngine(
   @Volatile private var lastCadenceCommand: String? = null
   @Volatile private var lastCadenceCommandAccepted: Boolean? = null
   @Volatile private var lastCadenceCommandAtMillis = 0L
+  private val encoderLivenessRecoveryLock = Any()
+  private var encoderLivenessRecoveryCount = 0L
+  private var lastEncoderLivenessRecoveryAtMillis = 0L
   /** The latest service-selected tier, replayed when a restarted helper is ready. */
   @Volatile private var desiredCadenceFps: Int? = null
   @Volatile private var encoderProcessCount = 0
@@ -115,7 +132,6 @@ class TicketRootHardwareH264CaptureEngine(
   @Volatile private var lastCaptureCleanupResult = "not_run"
   @Volatile private var cleanStopReadyForNextStart = false
   @Volatile private var helperClasspath: String? = null
-  @Volatile private var pendingKeyFrameReason: String? = null
   @Volatile private var desiredStartRequest: HardwareH264StartRequest? = null
   @Volatile private var activeStartRequest: HardwareH264StartRequest? = null
   @Volatile private var pendingCaptureRestartReason: String? = null
@@ -273,11 +289,8 @@ class TicketRootHardwareH264CaptureEngine(
   }
 
   fun requestKeyFrame(reason: String) {
-    if (!writeHardwareKeyFrameRequest(reason)) {
-      synchronized(keyFrameRequestLock) {
-        pendingKeyFrameReason = reason
-      }
-    }
+    pendingKeyFrameRequest.offer(reason)
+    flushPendingKeyFrameRequest("request")
   }
 
   fun requestControlCodeVisualProbe(reason: String): Long? =
@@ -310,6 +323,13 @@ class TicketRootHardwareH264CaptureEngine(
   fun requestActivatedTicketVisualProbe(reason: String): Long? =
     requestControlCodeVisualProbe("ticket_activated_visual_probe", reason)
 
+  /** Returns only a typed state and opaque action anchors from fresh rooted pixels. */
+  fun requestTicketActionVisualProbe(reason: String): Long? =
+    requestControlCodeVisualProbe("ticket_action_visual_probe", reason)
+
+  fun requestTicketCurrentVisualProbe(reason: String): Long? =
+    requestControlCodeVisualProbe("ticket_current_visual_probe", reason)
+
   fun startControlCodeRequestBurst(reason: String): Boolean =
     writeHardwareCommand("control_code_burst_start\n", "control_code_burst_start", reason)
 
@@ -338,32 +358,28 @@ class TicketRootHardwareH264CaptureEngine(
     lastControlCodeVisualProbeReason = reason
     lastControlCodeVisualProbeId = probeId
     lastControlCodeVisualSliderBounds = null
+    lastControlCodeVisualCloseBounds = null
+    lastControlCodeVisualInputBounds = null
+    lastControlCodeVisualSubmitBounds = null
+    lastTicketActionObservation = null
     return if (writeHardwareCommand("$command:$probeId\n", command, reason)) probeId else null
   }
 
-  fun recentControlCodeVisualProbeAfter(
+  internal fun recentControlCodeVisualProbeAfter(
     expectedProbeId: Long,
     startedAtMillis: Long
   ): TicketControlCodeVisualProbe? {
-    val atMillis = lastControlCodeVisualProbeAtMillis
-    val result = lastControlCodeVisualProbeResult
-    val probeId = lastControlCodeVisualProbeId
-    val sliderBounds = lastControlCodeVisualSliderBounds
+    val probe = synchronized(controlCodeVisualProbeResultLock) {
+      controlCodeVisualProbeResults[expectedProbeId]
+    } ?: return null
     if (
-      probeId != expectedProbeId ||
-      atMillis < startedAtMillis ||
-      result == "not_run" ||
-      result == "requested"
+      probe.atMillis < startedAtMillis ||
+      probe.result == "not_run" ||
+      probe.result == "requested"
     ) {
       return null
     }
-    return TicketControlCodeVisualProbe(
-      probeId = probeId,
-      result = result,
-      reason = lastControlCodeVisualProbeReason,
-      atMillis = atMillis,
-      sliderBounds = sliderBounds
-    )
+    return probe
   }
 
   private fun writeHardwareKeyFrameRequest(reason: String): Boolean {
@@ -388,15 +404,9 @@ class TicketRootHardwareH264CaptureEngine(
   }
 
   private fun flushPendingKeyFrameRequest(reason: String) {
-    val pending = synchronized(keyFrameRequestLock) {
-      val value = pendingKeyFrameReason
-      pendingKeyFrameReason = null
-      value
-    } ?: return
-    if (!writeHardwareKeyFrameRequest("$reason:$pending")) {
-      synchronized(keyFrameRequestLock) {
-        pendingKeyFrameReason = pending
-      }
+    val pending = pendingKeyFrameRequest.take() ?: return
+    if (!writeHardwareKeyFrameRequest("$reason:${pending.reason}")) {
+      pendingKeyFrameRequest.restoreIfEmpty(pending)
     }
   }
 
@@ -410,6 +420,10 @@ class TicketRootHardwareH264CaptureEngine(
   }
 
   fun snapshot(nowMillis: Long = SystemClock.elapsedRealtime()): TicketHardwareH264Health {
+    val (encoderLivenessRecoveryCountSnapshot, lastEncoderLivenessRecoveryAgoMillisSnapshot) =
+      synchronized(encoderLivenessRecoveryLock) {
+        encoderLivenessRecoveryCount to ageMillis(lastEncoderLivenessRecoveryAtMillis, nowMillis)
+      }
     return TicketHardwareH264Health(
       available = available,
       active = job?.isActive == true && encoderProcess?.isAlive == true,
@@ -440,6 +454,8 @@ class TicketRootHardwareH264CaptureEngine(
       lastCadenceCommand = lastCadenceCommand,
       lastCadenceCommandAccepted = lastCadenceCommandAccepted,
       lastCadenceCommandAgoMillis = ageMillis(lastCadenceCommandAtMillis, nowMillis),
+      encoderLivenessRecoveryCount = encoderLivenessRecoveryCountSnapshot,
+      lastEncoderLivenessRecoveryAgoMillis = lastEncoderLivenessRecoveryAgoMillisSnapshot,
       controlCodeBurstActive = controlCodeBurstActive,
       controlCodeBurstState = controlCodeBurstState,
       lastControlCodeBurstAgoMillis = ageMillis(lastControlCodeBurstAtMillis, nowMillis),
@@ -468,6 +484,7 @@ class TicketRootHardwareH264CaptureEngine(
       restartCount = restartCount,
       lastExitReason = lastExitReason,
       lastExitAgoMillis = ageMillis(lastExitAtMillis, nowMillis),
+      lastTicketActionDiagnostic = lastTicketActionDiagnostic,
       stderrTail = stderrTail
     )
   }
@@ -476,7 +493,7 @@ class TicketRootHardwareH264CaptureEngine(
     while (wanted) {
       val request = desiredStartRequest ?: break
       activeStartRequest = request
-      val parserGeneration = captureGeneration.incrementAndGet()
+      val parserGeneration = advanceCaptureGeneration()
       val parser = TicketH264AnnexBParser { payload, keyFrame ->
         if (parserGeneration == captureGeneration.get()) {
           val now = SystemClock.elapsedRealtime()
@@ -525,7 +542,7 @@ class TicketRootHardwareH264CaptureEngine(
         encoderProcess = localEncoder
         flushDesiredCadenceCommand("encoder_started")
         flushPendingKeyFrameRequest("encoder_started")
-        readStderrTail(localEncoder)
+        readStderrTail(localEncoder, parserGeneration)
         schedulePostStartProcessSanityCheck()
         state = "active"
         message = "Hardware H.264 capture is active"
@@ -645,7 +662,14 @@ class TicketRootHardwareH264CaptureEngine(
   ): String {
     val cleanStartupFps = startupFps.coerceAtLeast(targetFps)
     val cleanStartupFrames = startupFrameCount.coerceAtLeast(0)
-    val commonArgs = "--source-width $sourceWidth --source-height $sourceHeight --width $width --height $height --crop-top-source ${TicketScreenConfig.TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS} --fps $targetFps --startup-fps $cleanStartupFps --startup-frames $cleanStartupFrames --control-code-request-fps ${TicketScreenConfig.ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS} --bitrate $targetBitrate --keyframe-interval-millis ${TicketScreenConfig.ROOT_HARDWARE_H264_KEYFRAME_INTERVAL_MILLIS}"
+    val commonArgs = "--source-width $sourceWidth --source-height $sourceHeight --width $width --height $height " +
+      "--crop-left-source ${TicketScreenConfig.TICKET_MEDIA_LEFT_CROP_SOURCE_PIXELS} " +
+      "--crop-top-source ${TicketScreenConfig.TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS} " +
+      "--crop-right-source ${TicketScreenConfig.TICKET_MEDIA_RIGHT_CROP_SOURCE_PIXELS} " +
+      "--crop-bottom-source ${TicketScreenConfig.TICKET_MEDIA_BOTTOM_CROP_SOURCE_PIXELS} " +
+      "--fps $targetFps --startup-fps $cleanStartupFps --startup-frames $cleanStartupFrames " +
+      "--control-code-request-fps ${TicketScreenConfig.ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS} " +
+      "--bitrate $targetBitrate --keyframe-interval-millis ${TicketScreenConfig.ROOT_HARDWARE_H264_KEYFRAME_INTERVAL_MILLIS}"
     return rootCaptureHelperCommand(commonArgs)
   }
 
@@ -677,19 +701,34 @@ class TicketRootHardwareH264CaptureEngine(
     return "'" + value.replace("'", "'\"'\"'") + "'"
   }
 
-  private fun readStderrTail(process: Process) {
+  private fun readStderrTail(process: Process, sourceGeneration: Long) {
     scope.launch(Dispatchers.IO) {
       runCatching {
         process.errorStream.bufferedReader().forEachLine { line ->
-          if (line.isNotBlank()) appendStderr(line)
+          if (line.isNotBlank()) appendStderr(line, sourceGeneration)
         }
       }
     }
   }
 
   private fun appendStderr(line: String) {
+    ingestStderrLine(line, SystemClock.elapsedRealtime(), sourceGeneration = null)
+  }
+
+  private fun appendStderr(line: String, sourceGeneration: Long) {
+    ingestStderrLine(line, SystemClock.elapsedRealtime(), sourceGeneration)
+  }
+
+  internal fun ingestStderrLine(
+    line: String,
+    nowMillis: Long,
+    sourceGeneration: Long? = null
+  ) {
     val cleanLine = sanitizeStderrLine(line)
-    parseHelperDiagnostic(cleanLine)
+    parseHelperDiagnostic(cleanLine, nowMillis, sourceGeneration)
+    if (cleanLine.startsWith("ENCODER_LIVENESS ") || cleanLine.startsWith("CONTROL_CODE_VISUAL ")) {
+      return
+    }
     stderrTail = (stderrTail + "\n" + cleanLine).trim().takeLast(STDERR_TAIL_CHARS)
   }
 
@@ -697,7 +736,7 @@ class TicketRootHardwareH264CaptureEngine(
     return line.filter { ch -> ch == '\t' || ch >= ' ' }.take(STDERR_LINE_CHARS)
   }
 
-  private fun parseHelperDiagnostic(line: String) {
+  private fun parseHelperDiagnostic(line: String, nowMillis: Long, sourceGeneration: Long?) {
     when {
       line.startsWith("METRIC ") -> {
         val fields = diagnosticFields(line)
@@ -722,24 +761,75 @@ class TicketRootHardwareH264CaptureEngine(
         }
       }
       line.startsWith("CONTROL_CODE_VISUAL ") -> {
+        if (sourceGeneration != null && sourceGeneration != captureGeneration.get()) {
+          return
+        }
         val fields = diagnosticFields(line)
-        lastControlCodeVisualProbeId = fields["probe_id"]?.toLongOrNull() ?: 0L
-        lastControlCodeVisualProbeResult = fields["result"].orEmpty().ifBlank { "unknown" }
-        lastControlCodeVisualProbeReason = fields["reason"].orEmpty()
-        lastControlCodeVisualSliderBounds = parseVisualBounds(fields["slider_bounds"])
-        lastControlCodeVisualProbeAtMillis = SystemClock.elapsedRealtime()
+        val probeId = fields["probe_id"]?.toLongOrNull() ?: 0L
+        val result = fields["result"].orEmpty().ifBlank { "unknown" }
+        val reason = fields["reason"].orEmpty()
+        val diagnostic = fields["diagnostic"].orEmpty()
+        if (diagnostic.isNotBlank()) {
+          lastTicketActionDiagnostic = diagnostic
+          // Keep only the classifier's aggregate, content-free explanation. The helper never
+          // emits pixels, dates, ticket text, or coordinates in this value.
+          stderrTail = (stderrTail + "\nTICKET_ACTION_VISUAL diagnostic=" + diagnostic)
+            .trim()
+            .takeLast(STDERR_TAIL_CHARS)
+        }
+        val sliderBounds = parseVisualBounds(fields["slider_bounds"])
+        val closeBounds = parseVisualBounds(fields["close_bounds"])
+        val inputBounds = parseVisualBounds(fields["input_bounds"])
+        val submitBounds = parseVisualBounds(fields["submit_bounds"])
+        val rawVisualSignature = fields["visual_signature"].orEmpty()
+        val rawVisualSignatureEpoch = fields["visual_signature_epoch"].orEmpty()
+        val signatureFieldsValid = rawVisualSignature.matches(VISUAL_SIGNATURE_PATTERN) &&
+          rawVisualSignatureEpoch.matches(VISUAL_SIGNATURE_EPOCH_PATTERN)
+        val visualSignature = rawVisualSignature.takeIf { signatureFieldsValid }.orEmpty()
+        val visualSignatureEpoch = rawVisualSignatureEpoch.takeIf { signatureFieldsValid }.orEmpty()
+        val ticketActionObservation = parseTicketActionObservation(
+          probeId = probeId,
+          fields = fields,
+          atMillis = nowMillis
+        )
+        lastControlCodeVisualProbeId = probeId
+        lastControlCodeVisualProbeResult = result
+        lastControlCodeVisualProbeReason = reason
+        lastControlCodeVisualSliderBounds = sliderBounds
+        lastControlCodeVisualCloseBounds = closeBounds
+        lastControlCodeVisualInputBounds = inputBounds
+        lastControlCodeVisualSubmitBounds = submitBounds
+        lastTicketActionObservation = ticketActionObservation
+        lastControlCodeVisualProbeAtMillis = nowMillis
+        if (probeId > 0L) {
+          rememberControlCodeVisualProbeResult(
+            TicketControlCodeVisualProbe(
+              probeId = probeId,
+              result = result,
+              reason = reason,
+              atMillis = nowMillis,
+              sliderBounds = sliderBounds,
+              closeBounds = closeBounds,
+              inputBounds = inputBounds,
+              submitBounds = submitBounds,
+              visualSignature = visualSignature,
+              visualSignatureEpoch = visualSignatureEpoch,
+              ticketActionObservation = ticketActionObservation
+            )
+          )
+        }
       }
       line.startsWith("CONTROL_CODE_BURST ") -> {
         val fields = diagnosticFields(line)
         controlCodeBurstState = fields["state"].orEmpty().ifBlank { "unknown" }
         controlCodeBurstActive = controlCodeBurstState == "started"
-        lastControlCodeBurstAtMillis = SystemClock.elapsedRealtime()
+        lastControlCodeBurstAtMillis = nowMillis
       }
       line.startsWith("CADENCE ") -> {
         val fields = diagnosticFields(line)
         fields["command"]?.takeIf { it.isNotBlank() }?.let { lastCadenceCommand = it }
         fields["accepted"]?.toBooleanStrictOrNull()?.let { lastCadenceCommandAccepted = it }
-        lastCadenceCommandAtMillis = SystemClock.elapsedRealtime()
+        lastCadenceCommandAtMillis = nowMillis
         fields["fps"]?.toIntOrNull()?.let { cadenceFpsTarget = it }
         fields["tier"]?.takeIf { it.isNotBlank() }?.let { cadenceTier = it }
         fields["changes"]?.toLongOrNull()?.let { cadenceChanges = it }
@@ -747,6 +837,20 @@ class TicketRootHardwareH264CaptureEngine(
         fields["skipped_ticks"]?.toLongOrNull()?.let { cadenceSkippedTicks = it }
         fields["last_lateness_ms"]?.toLongOrNull()?.let { cadenceLastLatenessMillis = it }
         fields["last_skipped_ticks"]?.toLongOrNull()?.let { cadenceLastSkippedTicks = it }
+      }
+      line.startsWith("ENCODER_LIVENESS ") -> {
+        val fields = diagnosticFields(line)
+        if (fields["state"] == "sync_requested") {
+          synchronized(encoderLivenessRecoveryLock) {
+            if (sourceGeneration != null && sourceGeneration != captureGeneration.get()) {
+              return@synchronized
+            }
+            if (encoderLivenessRecoveryCount < Long.MAX_VALUE) {
+              encoderLivenessRecoveryCount += 1L
+            }
+            lastEncoderLivenessRecoveryAtMillis = nowMillis
+          }
+        }
       }
     }
   }
@@ -772,6 +876,89 @@ class TicketRootHardwareH264CaptureEngine(
     return TicketControlCodeVisualBounds(left, top, right, bottom)
       .takeIf { it.width > 0 && it.height > 0 }
   }
+
+  private fun rememberControlCodeVisualProbeResult(probe: TicketControlCodeVisualProbe) {
+    synchronized(controlCodeVisualProbeResultLock) {
+      val expiredBeforeMillis = probe.atMillis - CONTROL_CODE_VISUAL_PROBE_TTL_MILLIS
+      val iterator = controlCodeVisualProbeResults.entries.iterator()
+      while (iterator.hasNext()) {
+        if (iterator.next().value.atMillis < expiredBeforeMillis) iterator.remove()
+      }
+      controlCodeVisualProbeResults[probe.probeId] = probe
+      while (controlCodeVisualProbeResults.size > CONTROL_CODE_VISUAL_PROBE_RESULT_CAPACITY) {
+        val oldest = controlCodeVisualProbeResults.entries.iterator()
+        if (oldest.hasNext()) {
+          oldest.next()
+          oldest.remove()
+        }
+      }
+    }
+  }
+
+  internal fun clearTransientControlCodeVisualProbes() {
+    synchronized(controlCodeVisualProbeResultLock) {
+      controlCodeVisualProbeResults.clear()
+    }
+  }
+
+  private fun parseTicketActionObservation(
+    probeId: Long,
+    fields: Map<String, String>,
+    atMillis: Long
+  ): TicketVisualActionObservation? {
+    if (fields["method"] != "ticket_action_visual_probe") return null
+    val cardsWire = fields["cards"].orEmpty()
+    val cards = if (cardsWire.isBlank()) {
+      emptyList()
+    } else {
+      cardsWire.split(';').map { raw ->
+        val parts = raw.split('@')
+        if (parts.size !in 4..5 || parts[0].isBlank()) return null
+        val bounds = parseVisualBounds(parts[1])?.toActionBounds() ?: return null
+        val registration = parts[2].takeUnless { it == "-" }
+          ?.let(::parseVisualBounds)
+          ?.toActionBounds()
+        if (parts[2] != "-" && registration == null) return null
+        val activatedDetail = if (parts.size == 5) {
+          parts[3].takeUnless { it == "-" }
+            ?.let(::parseVisualBounds)
+            ?.toActionBounds()
+        } else {
+          null
+        }
+        if (parts.size == 5 && parts[3] != "-" && activatedDetail == null) return null
+        TicketVisualCardAnchor(
+          anchor = parts[0].take(32),
+          bounds = bounds,
+          registrationBounds = registration,
+          activatedDetailBounds = activatedDetail,
+          latest = parts.last() == "1"
+        )
+      }
+    }
+    val state = TicketVisualPhoneState.fromWireName(
+      fields["state"].orEmpty().ifBlank { fields["result"].orEmpty() }
+    )
+    val timeTicketsTabBounds = parseVisualBounds(fields["time"])?.toActionBounds()
+    if ((state == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY) !=
+      (timeTicketsTabBounds != null)
+    ) return null
+    return TicketVisualActionObservation(
+      probeId = probeId,
+      state = state,
+      currentAnchor = fields["anchor"].orEmpty().take(32),
+      sliderBounds = parseVisualBounds(fields["slider"])?.toActionBounds(),
+      controlCodeBounds = parseVisualBounds(fields["control"])?.toActionBounds(),
+      backBounds = parseVisualBounds(fields["back"])?.toActionBounds(),
+      ticketsTabBounds = parseVisualBounds(fields["tickets"])?.toActionBounds(),
+      timeTicketsTabBounds = timeTicketsTabBounds,
+      cards = cards,
+      atMillis = atMillis
+    )
+  }
+
+  private fun TicketControlCodeVisualBounds.toActionBounds(): TicketVisualProbeBounds =
+    TicketVisualProbeBounds(left, top, right, bottom)
 
   private fun updateEstimatedBitrate(bytes: Int, nowMillis: Long) {
     if (bitrateWindowStartedAtMillis == 0L || nowMillis - bitrateWindowStartedAtMillis > BITRATE_WINDOW_MILLIS) {
@@ -806,7 +993,7 @@ class TicketRootHardwareH264CaptureEngine(
   }
 
   private fun stopProcesses() {
-    captureGeneration.incrementAndGet()
+    advanceCaptureGeneration()
     val encoder = encoderProcess
     encoderProcess = null
     runCatching { encoder?.inputStream?.close() }
@@ -863,7 +1050,23 @@ class TicketRootHardwareH264CaptureEngine(
     lastCadenceCommand = null
     lastCadenceCommandAccepted = null
     lastCadenceCommandAtMillis = 0L
+    synchronized(controlCodeVisualProbeResultLock) {
+      controlCodeVisualProbeResults.clear()
+    }
+    resetEncoderLivenessRecoveryMetrics()
     desiredCadenceFps = null
+  }
+
+  internal fun resetEncoderLivenessRecoveryMetrics() {
+    synchronized(encoderLivenessRecoveryLock) {
+      encoderLivenessRecoveryCount = 0L
+      lastEncoderLivenessRecoveryAtMillis = 0L
+    }
+  }
+
+  internal fun advanceCaptureGeneration(): Long {
+    clearTransientControlCodeVisualProbes()
+    return captureGeneration.incrementAndGet()
   }
 
   private fun flushDesiredCadenceCommand(reason: String) {
@@ -1021,6 +1224,10 @@ class TicketRootHardwareH264CaptureEngine(
     private const val BITRATE_WINDOW_MILLIS = 1_000L
     private const val STDERR_TAIL_CHARS = 4_000
     private const val STDERR_LINE_CHARS = 800
+    private const val CONTROL_CODE_VISUAL_PROBE_RESULT_CAPACITY = 16
+    private const val CONTROL_CODE_VISUAL_PROBE_TTL_MILLIS = 10_000L
+    private val VISUAL_SIGNATURE_PATTERN = Regex("[0-9a-f]{24}")
+    private val VISUAL_SIGNATURE_EPOCH_PATTERN = Regex("[0-9a-f]{12}")
     private const val DIRECT_CLEANUP_WAIT_MILLIS = 700L
     private const val POST_START_PROCESS_SANITY_DELAY_MILLIS = 250L
   }

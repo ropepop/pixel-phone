@@ -2,29 +2,30 @@ package lv.jolkins.pixelorchestrator.app.ticket
 
 internal object TicketUiautomatorDump {
   private const val LOCK_PATH = "/data/local/tmp/pixel-ticket-uiautomator.lock"
-  private val KNOWN_DUMP_PATHS = listOf(
-    "/sdcard/pixel-ticket-window.xml",
-    "/data/local/tmp/pixel-vivi-fast-return-window.xml",
-    "/data/local/tmp/rs-direct-window.xml"
-  )
+  private const val RS_DUMP_PATH = "/data/local/tmp/rs-direct-window.xml"
   private const val OUTER_TIMEOUT_CUSHION_MILLIS = 1_000L
   private const val MIN_SHELL_TIMEOUT_MILLIS = 250L
   private const val POST_FAILURE_LOCK_SETTLE_MILLIS = 500L
   private const val MIN_SAFE_OUTER_TIMEOUT_MILLIS = 1_000L
 
-  fun command(path: String, timeoutMillis: Long, emitContent: Boolean = true): String {
+  /**
+   * UiAutomator is retained only for the unrelated Rigas Satiksme driver. ViVi/Ticket callers
+   * intentionally have no generic path-taking entry point, so Ticket state and navigation
+   * cannot silently fall back from rooted pixels to hierarchy text.
+   */
+  fun commandForRigasSatiksme(timeoutMillis: Long, emitContent: Boolean = true): String {
     val mode = if (emitContent) "cat" else "nocat"
     return """
       ${functionDefinition(timeoutMillis)}
-      ticket_safe_uiautomator_dump ${shellWord(path)} $mode
+      ticket_safe_uiautomator_dump ${shellWord(RS_DUMP_PATH)} $mode
     """.trimIndent()
   }
 
   fun startupSweepCommand(): String {
-    return "/system/bin/rm -f ${KNOWN_DUMP_PATHS.joinToString(" ") { shellWord(it) }} >/dev/null 2>&1 || true"
+    return "/system/bin/rm -f ${shellWord(RS_DUMP_PATH)} >/dev/null 2>&1 || true"
   }
 
-  fun functionDefinition(timeoutMillis: Long): String {
+  private fun functionDefinition(timeoutMillis: Long): String {
     if (timeoutMillis < MIN_SAFE_OUTER_TIMEOUT_MILLIS) {
       return """
         ticket_safe_uiautomator_dump() {

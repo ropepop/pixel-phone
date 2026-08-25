@@ -1,6 +1,7 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TicketControlCodeVisualClassifierTest {
@@ -26,6 +27,17 @@ class TicketControlCodeVisualClassifierTest {
 
     assertEquals(TicketControlCodeVisualClassifier.GENERATED, classify(frame))
     assertEquals(TicketControlCodeVisualClassifier.GENERATED, classifyForCleanup(frame))
+    assertTrue(TicketControlCodeVisualClassifier.generatedResultCloseBounds(frame.pixels).isNotBlank())
+  }
+
+  @Test
+  fun ambiguousBrightGeneratedStripDoesNotYieldCloseGeometry() {
+    val frame = rawTicketFrame()
+    frame.fill(left = 7, top = 36, right = 41, bottom = 41, color = RESULT_DARK)
+    frame.fill(left = 34, top = 36, right = 41, bottom = 41, color = LIGHT)
+
+    assertEquals(TicketControlCodeVisualClassifier.GENERATED, classifyForCleanup(frame))
+    assertEquals("", TicketControlCodeVisualClassifier.generatedResultCloseBounds(frame.pixels))
   }
 
   @Test
@@ -147,6 +159,8 @@ class TicketControlCodeVisualClassifierTest {
       TicketControlCodeVisualClassifier.CONTROL_POPUP_STATIC_READY,
       TicketControlCodeVisualClassifier.classifySubmitLayout(submitFrame.pixels)
     )
+    assertTrue(TicketControlCodeVisualClassifier.submitInputBounds(submitFrame.pixels).isNotBlank())
+    assertTrue(TicketControlCodeVisualClassifier.submitButtonBounds(submitFrame.pixels).isNotBlank())
   }
 
   @Test
@@ -174,6 +188,8 @@ class TicketControlCodeVisualClassifierTest {
       TicketControlCodeVisualClassifier.CONTROL_POPUP_STATIC_READY,
       TicketControlCodeVisualClassifier.classifySubmitLayout(blank.pixels)
     )
+    assertTrue(TicketControlCodeVisualClassifier.submitInputBounds(blank.pixels).isNotBlank())
+    assertTrue(TicketControlCodeVisualClassifier.submitButtonBounds(blank.pixels).isNotBlank())
 
     val entered = darkSubmitFrame()
     entered.fill(left = 42, top = 62, right = 47, bottom = 65, color = LIGHT)
@@ -295,6 +311,34 @@ class TicketControlCodeVisualClassifierTest {
   }
 
   @Test
+  fun ticketCodeVisualSignatureIsStableIgnoresNoiseAndChangesWithTheBoundedGraphic() {
+    val before = rawTicketFrame()
+    val same = rawTicketFrame()
+    val noisy = rawTicketFrame().also { it[12, 20] = MID }
+    val after = rawTicketFrame().also {
+      it.fill(left = 8, top = 14, right = 24, bottom = 22, color = LIGHT)
+    }
+
+    val beforeSignature = TicketControlCodeVisualClassifier.ticketCodeVisualSignature(before.pixels)
+    assertTrue(beforeSignature.matches(Regex("[0-9a-f]{24}")))
+    assertTrue(TicketControlCodeVisualClassifier.ticketCodeVisualSignatureEpoch().matches(Regex("[0-9a-f]{12}")))
+    assertEquals(beforeSignature, TicketControlCodeVisualClassifier.ticketCodeVisualSignature(same.pixels))
+    assertEquals(beforeSignature, TicketControlCodeVisualClassifier.ticketCodeVisualSignature(noisy.pixels))
+    assertTrue(beforeSignature != TicketControlCodeVisualClassifier.ticketCodeVisualSignature(after.pixels))
+  }
+
+  @Test
+  fun popupAndMalformedFramesDoNotYieldATicketCodeSignature() {
+    val popup = rawTicketFrame()
+    popup.fill(left = 8, top = 30, right = 40, bottom = 45, color = LIGHT)
+    popup.fill(left = 13, top = 39, right = 36, bottom = 40, color = DARK)
+    popup.fill(left = 31, top = 39, right = 42, bottom = 44, color = ORANGE)
+
+    assertEquals("", TicketControlCodeVisualClassifier.ticketCodeVisualSignature(popup.pixels))
+    assertEquals("", TicketControlCodeVisualClassifier.ticketCodeVisualSignature(IntArray(1)))
+  }
+
+  @Test
   fun denseAztecRowsWithoutAContinuousResultStripRemainRawTicket() {
     val frame = rawTicketFrame()
     for (y in 20 until 27) {
@@ -364,6 +408,64 @@ class TicketControlCodeVisualClassifierTest {
     frame.fill(left = 8, top = 43, right = 12, bottom = 47, color = DARK)
 
     assertEquals("3,42,45,48", TicketControlCodeVisualClassifier.registrationSliderBounds(frame.pixels))
+  }
+
+  @Test
+  fun currentDetailHeaderSurvivesRootedStreamRedBlueChannelOrder() {
+    val normal = rawTicketFrame()
+    val swapped = rawTicketFrame()
+    swapped.fill(left = 1, top = 8, right = 47, bottom = 15, color = SWAPPED_RED)
+
+    assertEquals(
+      TicketControlCodeVisualClassifier.RAW_TICKET,
+      TicketControlCodeVisualClassifier.classifyForActivatedTicket(normal.pixels)
+    )
+    assertEquals(
+      TicketControlCodeVisualClassifier.RAW_TICKET,
+      TicketControlCodeVisualClassifier.classifyForActivatedTicket(swapped.pixels)
+    )
+  }
+
+  @Test
+  fun currentRegistrationSliderAcceptsThumbImmediatelyBeforeOrangeTrack() {
+    val frame = rawTicketFrame()
+    frame.fill(left = 11, top = 46, right = 44, bottom = 52, color = YELLOW)
+    frame.fill(left = 4, top = 46, right = 11, bottom = 52, color = DARK)
+
+    assertEquals("3,45,45,53", TicketControlCodeVisualClassifier.registrationSliderBounds(frame.pixels))
+  }
+
+  @Test
+  fun currentRegistrationSliderAcceptsBilinearEdgeColorWithAttachedThumb() {
+    val frame = rawTicketFrame()
+    val blendedOrange = rgb(224, 146, 112)
+    frame.fill(left = 11, top = 46, right = 44, bottom = 52, color = blendedOrange)
+    frame.fill(left = 4, top = 46, right = 11, bottom = 52, color = DARK)
+
+    assertEquals("3,45,45,53", TicketControlCodeVisualClassifier.registrationSliderBounds(frame.pixels))
+  }
+
+  @Test
+  fun currentRegistrationSliderDoesNotWaitForRefreshingQrBody() {
+    val frame = SanitizedFrame()
+    frame.fill(left = 0, top = 0, right = 48, bottom = 6, color = DARK)
+    frame.fill(left = 1, top = 6, right = 47, bottom = 13, color = RED)
+    frame.fill(left = 11, top = 46, right = 44, bottom = 52, color = YELLOW)
+    frame.fill(left = 4, top = 46, right = 11, bottom = 52, color = DARK)
+
+    assertEquals("3,45,45,53", TicketControlCodeVisualClassifier.registrationSliderBounds(frame.pixels))
+  }
+
+  @Test
+  fun wideOrangeDetailButtonWithoutAttachedThumbIsNotARegistrationSlider() {
+    val frame = rawTicketFrame()
+    frame.fill(left = 11, top = 46, right = 44, bottom = 52, color = YELLOW)
+
+    assertEquals("", TicketControlCodeVisualClassifier.registrationSliderBounds(frame.pixels))
+    assertEquals(
+      "slider_thumb_unproved",
+      TicketControlCodeVisualClassifier.registrationSliderDiagnostic(frame.pixels)
+    )
   }
 
   @Test
@@ -477,6 +579,7 @@ class TicketControlCodeVisualClassifierTest {
     val ORANGE = rgb(230, 130, 30)
     val YELLOW = rgb(255, 190, 0)
     val SWAPPED_ORANGE = rgb(30, 130, 230)
+    val SWAPPED_RED = rgb(35, 45, 190)
     val PLACEHOLDER = rgb(99, 99, 99)
     val DARK_DIALOG = rgb(18, 26, 37)
     val DARK_BLUE = rgb(23, 58, 114)

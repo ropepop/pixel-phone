@@ -78,6 +78,45 @@ class TicketH264AnnexBParserTest {
     assertArrayEquals(delta, frames[1].second)
   }
 
+  @Test
+  fun doesNotEmitIdrUntilBothParameterSetsAreAvailable() {
+    val frames = mutableListOf<Pair<Boolean, ByteArray>>()
+    val parser = TicketH264AnnexBParser { payload, keyFrame ->
+      frames += keyFrame to payload
+    }
+
+    parser.push(nal(0x65, 0x80, 0x55) + aud())
+    parser.finish()
+
+    assertTrue(frames.isEmpty())
+  }
+
+  @Test
+  fun doesNotEmitIdrWhenOnlySpsIsAvailable() {
+    val frames = mutableListOf<Pair<Boolean, ByteArray>>()
+    val parser = TicketH264AnnexBParser { payload, keyFrame ->
+      frames += keyFrame to payload
+    }
+
+    parser.push(nal(0x67, 0x11, 0x22) + nal(0x65, 0x80, 0x55) + aud())
+    parser.finish()
+
+    assertTrue(frames.isEmpty())
+  }
+
+  @Test
+  fun doesNotEmitIdrWhenOnlyPpsIsAvailable() {
+    val frames = mutableListOf<Pair<Boolean, ByteArray>>()
+    val parser = TicketH264AnnexBParser { payload, keyFrame ->
+      frames += keyFrame to payload
+    }
+
+    parser.push(nal(0x68, 0x33) + nal(0x65, 0x80, 0x55) + aud())
+    parser.finish()
+
+    assertTrue(frames.isEmpty())
+  }
+
   private fun nal(header: Int, vararg payload: Int): ByteArray {
     return byteArrayOf(0, 0, 0, 1, header.toByte()) + payload.map { it.toByte() }.toByteArray()
   }

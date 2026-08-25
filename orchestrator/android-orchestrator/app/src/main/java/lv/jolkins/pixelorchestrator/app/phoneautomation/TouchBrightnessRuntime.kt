@@ -136,6 +136,10 @@ internal class AndroidTouchBrightnessEventSource(
       rootTouchMonitor.events.collect { event ->
         when (event) {
           is RootTouchEvent.TouchCountChanged -> {
+            bridge.recordRootPhysicalTouchState(
+              active = event.activeTouchCount > 0 && event.snapshot?.isRawTouchActive() == true,
+              observedAtUptimeMillis = event.observedAtUptimeMillis
+            )
             trySend(
               TouchBrightnessEvent.TouchCountChanged(
                 activeTouchCount = event.activeTouchCount,
@@ -146,10 +150,20 @@ internal class AndroidTouchBrightnessEventSource(
           }
 
           is RootTouchEvent.SourceSelected -> {
+            bridge.recordRootPhysicalTouchState(
+              active = false,
+              observedAtUptimeMillis = SystemClock.uptimeMillis(),
+              available = true
+            )
             trySend(TouchBrightnessEvent.TouchSourceSelected(event.device))
           }
 
           is RootTouchEvent.FatalError -> {
+            bridge.recordRootPhysicalTouchState(
+              active = false,
+              observedAtUptimeMillis = SystemClock.uptimeMillis(),
+              available = false
+            )
             trySend(TouchBrightnessEvent.FatalError(event.detail))
           }
         }
@@ -214,6 +228,7 @@ internal class AndroidTouchBrightnessEventSource(
     }
 
     awaitClose {
+      bridge.recordRootPhysicalTouchState(active = false, available = false)
       context.unregisterReceiver(receiver)
       touchJob.cancel()
       powerKeyJob.cancel()
@@ -477,7 +492,10 @@ internal class AndroidTouchBrightnessDeviceController(
 
   private suspend fun readTouchDevices(): List<RootTouchDevice> {
     return runCatching {
-      val result = rootExecutor.run("getevent -lp", timeout = 5.seconds)
+      val result = rootExecutor.runScript(
+        RootInputDeviceCapabilities.PER_NODE_DISCOVERY_COMMAND,
+        timeout = 5.seconds
+      )
       if (result.ok) {
         RootTouchDeviceDiscovery.parseTouchDevices(result.stdout)
       } else {
@@ -488,7 +506,10 @@ internal class AndroidTouchBrightnessDeviceController(
 
   private suspend fun readPowerKeyDevices(): List<RootPowerKeyDevice> {
     return runCatching {
-      val result = rootExecutor.run("getevent -lp", timeout = 5.seconds)
+      val result = rootExecutor.runScript(
+        RootInputDeviceCapabilities.PER_NODE_DISCOVERY_COMMAND,
+        timeout = 5.seconds
+      )
       if (result.ok) {
         RootPowerKeyDeviceDiscovery.parsePowerKeyDevices(result.stdout)
       } else {
@@ -1303,6 +1324,12 @@ internal class TouchBrightnessRuntime(
         activeTouchCount = activeTouchCount,
         selectedDevice = currentSource
       )
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(
+      active = activeTouchCount > 0 && currentTouchSnapshot.isRawTouchActive(),
+      observedAtUptimeMillis = currentTouchSnapshot.lastEventUptimeMillis.takeIf { it > 0L }
+        ?: uptimeClock(),
+      available = currentTouchSnapshot.selectedDevice != null
+    )
 
     if (!interactive) {
       enterSuspendedScreenOff()

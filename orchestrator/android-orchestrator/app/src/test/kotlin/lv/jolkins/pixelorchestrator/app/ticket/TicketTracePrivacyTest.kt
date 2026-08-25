@@ -49,6 +49,11 @@ class TicketTracePrivacyTest {
     assertEquals("wake_recovery_action", TicketTracePrivacy.eventName("wake_recovery_action"))
     assertEquals("fast_public_open_root_proof", TicketTracePrivacy.eventName("fast_public_open_root_proof"))
     assertEquals("root_readiness", TicketTracePrivacy.eventName("root_readiness"))
+    assertEquals(
+      "ticket_slider_start_unknown",
+      TicketTracePrivacy.eventName("ticket_slider_start_unknown")
+    )
+    assertNull(TicketTracePrivacy.eventName("ticket_slider_start_failed"))
     assertNull(TicketTracePrivacy.eventName("viewer_account_42"))
     assertNull(TicketTracePrivacy.eventName("stream_started token=abc"))
   }

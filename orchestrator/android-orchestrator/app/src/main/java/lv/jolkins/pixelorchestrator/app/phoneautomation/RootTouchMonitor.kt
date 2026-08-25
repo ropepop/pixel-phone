@@ -295,7 +295,7 @@ internal class AndroidRootTouchMonitor(
   }
 
   private suspend fun discoverTouchDevices(): List<RootTouchDevice> {
-    val result = runRootCommand("getevent -lp")
+    val result = runRootCommand(RootInputDeviceCapabilities.PER_NODE_DISCOVERY_COMMAND)
     if (result.exitCode != 0) {
       return emptyList()
     }
@@ -334,6 +334,25 @@ internal class AndroidRootTouchMonitor(
     private const val TOUCH_RELEASE_CONFIRMATION_MILLIS = 180L
     private const val TAG = "RootTouchMonitor"
   }
+}
+
+/**
+ * `getevent -lp` without a device asks Android's getevent implementation to watch `/dev/input`
+ * while it enumerates devices. That global watch can be unavailable even though every existing
+ * event node remains readable through root. Query the bounded event-node glob one device at a
+ * time so monitor readiness depends on the hardware nodes themselves, not the global watcher.
+ */
+internal object RootInputDeviceCapabilities {
+  val PER_NODE_DISCOVERY_COMMAND = """
+    discovered=0
+    for device in /dev/input/event*; do
+      [ -c "${'$'}device" ] || continue
+      if getevent -lp "${'$'}device" 2>/dev/null; then
+        discovered=${'$'}((discovered + 1))
+      fi
+    done
+    [ "${'$'}discovered" -gt 0 ]
+  """.trimIndent()
 }
 
 internal object RootTouchDeviceDiscovery {

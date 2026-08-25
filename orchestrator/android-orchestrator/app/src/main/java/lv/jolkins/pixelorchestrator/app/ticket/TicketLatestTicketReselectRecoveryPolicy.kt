@@ -1,10 +1,19 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
 internal object TicketLatestTicketReselectRecoveryPolicy {
+  private val ticketDetailSelectionActions = setOf(
+    "open_fresh_time_ticket_detail_card",
+    "open_upcoming_time_ticket_detail_card",
+    "open_ticket_detail_card"
+  )
+
   private val ticketCardSelectionActions = setOf(
     "open_fresh_time_ticket_card",
     "open_upcoming_time_ticket_card",
     "open_ticket_card",
+    "open_fresh_time_ticket_detail_card",
+    "open_upcoming_time_ticket_detail_card",
+    "open_ticket_detail_card",
     "open_fresh_time_ticket_registration_button",
     "open_upcoming_time_ticket_registration_button",
     "open_ticket_registration_button"
@@ -34,6 +43,51 @@ internal object TicketLatestTicketReselectRecoveryPolicy {
       succeeded -> "succeeded"
       else -> "failed"
     }
+  }
+
+  fun ticketDetailProofAccepted(
+    requireFreshAztecVisualProof: Boolean,
+    requireLatestTicketSelection: Boolean,
+    latestTicketSelectionAction: String,
+    unactivatedRegistrationDetail: Boolean,
+    upcomingPreValidityTicketDetail: Boolean,
+    freshAztecVisualProofed: Boolean
+  ): Boolean {
+    if (
+      requireLatestTicketSelection &&
+      !isTicketDetailSelectionAction(latestTicketSelectionAction)
+    ) {
+      return false
+    }
+    val selectedUnactivatedDetail =
+      requireLatestTicketSelection &&
+        isTicketDetailSelectionAction(latestTicketSelectionAction) &&
+        unactivatedRegistrationDetail
+    val selectedUpcomingPreValidityDetail =
+      requireLatestTicketSelection &&
+        latestTicketSelectionAction == "open_upcoming_time_ticket_detail_card" &&
+        upcomingPreValidityTicketDetail
+    return !requireFreshAztecVisualProof ||
+      selectedUnactivatedDetail ||
+      selectedUpcomingPreValidityDetail ||
+      freshAztecVisualProofed
+  }
+
+  fun isTicketDetailSelectionAction(actionReason: String): Boolean =
+    actionReason in ticketDetailSelectionActions
+
+  fun canAcceptHealedTicketDetail(
+    requireNewTicketRegistration: Boolean,
+    requireTicketListWithRegistrationButton: Boolean,
+    requireFreshAztecVisualProof: Boolean,
+    requireUnactivatedRegistration: Boolean,
+    requireLatestTicketSelection: Boolean
+  ): Boolean {
+    return !requireNewTicketRegistration &&
+      !requireTicketListWithRegistrationButton &&
+      !requireFreshAztecVisualProof &&
+      !requireUnactivatedRegistration &&
+      !requireLatestTicketSelection
   }
 
   fun finalTelemetryEvent(

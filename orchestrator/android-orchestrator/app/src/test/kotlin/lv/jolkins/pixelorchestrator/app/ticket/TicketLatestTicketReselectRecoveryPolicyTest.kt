@@ -75,6 +75,10 @@ class TicketLatestTicketReselectRecoveryPolicyTest {
     )
     assertEquals(
       "ticket_card_selection",
+      TicketLatestTicketReselectRecoveryPolicy.actionCategory("open_upcoming_time_ticket_detail_card")
+    )
+    assertEquals(
+      "ticket_card_selection",
       TicketLatestTicketReselectRecoveryPolicy.actionCategory("open_fresh_time_ticket_registration_button")
     )
     assertEquals(
@@ -108,6 +112,92 @@ class TicketLatestTicketReselectRecoveryPolicyTest {
         state = TicketViviRecoveryState.TICKET_DETAIL,
         actionCategory = "private action text",
         actionOutcome = "private outcome text"
+      )
+    )
+  }
+
+  @Test
+  fun semanticTicketDetailProofRequiresTheMatchingLatestCardSelection() {
+    fun accepted(
+      action: String,
+      unactivated: Boolean = false,
+      upcomingPreValidity: Boolean = false,
+      aztec: Boolean = false,
+      requireLatest: Boolean = true,
+      requireFreshAztec: Boolean = true
+    ): Boolean = TicketLatestTicketReselectRecoveryPolicy.ticketDetailProofAccepted(
+      requireFreshAztecVisualProof = requireFreshAztec,
+      requireLatestTicketSelection = requireLatest,
+      latestTicketSelectionAction = action,
+      unactivatedRegistrationDetail = unactivated,
+      upcomingPreValidityTicketDetail = upcomingPreValidity,
+      freshAztecVisualProofed = aztec
+    )
+
+    assertFalse(
+      accepted(action = "", unactivated = true)
+    )
+    assertTrue(
+      accepted(action = "open_fresh_time_ticket_detail_card", unactivated = true)
+    )
+    assertTrue(
+      accepted(
+        action = "open_upcoming_time_ticket_detail_card",
+        upcomingPreValidity = true
+      )
+    )
+    assertFalse(accepted(action = "open_fresh_time_ticket_detail_card", upcomingPreValidity = true))
+    assertFalse(accepted(action = "open_fresh_time_ticket_registration_button", unactivated = true))
+    assertFalse(accepted(action = "open_upcoming_time_ticket_card", upcomingPreValidity = true))
+    assertFalse(accepted(action = "open_fresh_time_ticket_detail_card"))
+    assertTrue(
+      accepted(action = "open_fresh_time_ticket_detail_card", aztec = true)
+    )
+    assertFalse(accepted(action = "open_fresh_time_ticket_detail_card", unactivated = true, requireLatest = false))
+    assertFalse(accepted(action = "open_upcoming_time_ticket_detail_card", upcomingPreValidity = true, requireLatest = false))
+    assertFalse(accepted(action = "open_ticket_card", requireFreshAztec = false))
+    assertTrue(accepted(action = "", requireLatest = false, requireFreshAztec = false))
+  }
+
+  @Test
+  fun healedControlCodeDetailCannotBypassSpecializedProof() {
+    fun accepted(
+      requireNew: Boolean = false,
+      requireList: Boolean = false,
+      requireAztec: Boolean = false,
+      requireUnactivated: Boolean = false,
+      requireLatest: Boolean = false
+    ): Boolean = TicketLatestTicketReselectRecoveryPolicy.canAcceptHealedTicketDetail(
+      requireNewTicketRegistration = requireNew,
+      requireTicketListWithRegistrationButton = requireList,
+      requireFreshAztecVisualProof = requireAztec,
+      requireUnactivatedRegistration = requireUnactivated,
+      requireLatestTicketSelection = requireLatest
+    )
+
+    assertTrue(accepted())
+    assertFalse(accepted(requireNew = true))
+    assertFalse(accepted(requireList = true))
+    assertFalse(accepted(requireAztec = true))
+    assertFalse(accepted(requireUnactivated = true))
+    assertFalse(accepted(requireLatest = true))
+  }
+
+  @Test
+  fun onlyTicketCardBodyActionsCountAsLatestTicketSelection() {
+    assertTrue(
+      TicketLatestTicketReselectRecoveryPolicy.isTicketDetailSelectionAction(
+        "open_fresh_time_ticket_detail_card"
+      )
+    )
+    assertTrue(
+      TicketLatestTicketReselectRecoveryPolicy.isTicketDetailSelectionAction(
+        "open_upcoming_time_ticket_detail_card"
+      )
+    )
+    assertFalse(
+      TicketLatestTicketReselectRecoveryPolicy.isTicketDetailSelectionAction(
+        "open_upcoming_time_ticket_registration_button"
       )
     )
   }

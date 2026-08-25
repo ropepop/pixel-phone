@@ -70,10 +70,22 @@ sealed interface PhoneAutomationBlackoutOverlayEvent {
   ) : PhoneAutomationBlackoutOverlayEvent
 }
 
+enum class TicketSliderGestureStartResult {
+  ACCEPTED,
+  REJECTED,
+  UNKNOWN
+}
+
 data class PhoneAutomationNonTouchInputEvent(
   val reason: String,
   val observedAtUptimeMillis: Long,
   val suppressedUntilUptimeMillis: Long
+)
+
+data class PhoneAutomationRootPhysicalTouchState(
+  val available: Boolean = false,
+  val active: Boolean = false,
+  val observedAtUptimeMillis: Long = 0L
 )
 
 @Serializable
@@ -219,6 +231,7 @@ object PhoneAutomationServiceBridge {
   private val blackoutOverlaySuppressed = MutableStateFlow(false)
   private val remoteScreenBrightnessState = MutableStateFlow<ScreenBrightnessState?>(null)
   private val nonTouchInputSuppressedUntilUptimeMillis = MutableStateFlow(0L)
+  private val rootPhysicalTouchState = MutableStateFlow(PhoneAutomationRootPhysicalTouchState())
   private val activeNotifications = MutableStateFlow<Map<String, PhoneAutomationObservedNotification>>(emptyMap())
   private val rawNotificationEvents =
     MutableSharedFlow<PhoneAutomationNotificationEvent>(extraBufferCapacity = 64)
@@ -232,6 +245,8 @@ object PhoneAutomationServiceBridge {
   val touchEvents: Flow<PhoneAutomationTouchEvent> = rawTouchEvents.asSharedFlow()
   val blackoutOverlayEvents: Flow<PhoneAutomationBlackoutOverlayEvent> = rawBlackoutOverlayEvents.asSharedFlow()
   val nonTouchInputEvents: Flow<PhoneAutomationNonTouchInputEvent> = rawNonTouchInputEvents.asSharedFlow()
+  val rootPhysicalTouchStates: Flow<PhoneAutomationRootPhysicalTouchState> =
+    rootPhysicalTouchState
   val accessibilityAvailability: Flow<Boolean> = accessibilityService
     .map { it != null }
     .distinctUntilChanged()
@@ -312,6 +327,26 @@ object PhoneAutomationServiceBridge {
   }
 
   fun isTouchInteractionActive(): Boolean = touchInteractionActive.value
+
+  /**
+   * RootTouchMonitor is the physical-input authority. Ticket action clamps consume only this
+   * bounded boolean/timestamp projection so synthetic Accessibility input cannot masquerade as
+   * a person touching the shared phone.
+   */
+  internal fun recordRootPhysicalTouchState(
+    active: Boolean,
+    observedAtUptimeMillis: Long = SystemClock.uptimeMillis(),
+    available: Boolean = true
+  ) {
+    rootPhysicalTouchState.value = PhoneAutomationRootPhysicalTouchState(
+      available = available,
+      active = active,
+      observedAtUptimeMillis = observedAtUptimeMillis
+    )
+  }
+
+  fun currentRootPhysicalTouchState(): PhoneAutomationRootPhysicalTouchState =
+    rootPhysicalTouchState.value
 
   fun recordBlackoutOverlayWakeRequested(
     observedAtUptimeMillis: Long,
@@ -603,11 +638,20 @@ object PhoneAutomationServiceBridge {
     } ?: false
   }
 
-  suspend fun startTicketSliderGesture(startX: Int, startY: Int, timeoutMillis: Long): Boolean {
-    val service = accessibilityService.value ?: return false
-    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
+  suspend fun startTicketSliderGesture(
+    startX: Int,
+    startY: Int,
+    timeoutMillis: Long
+  ): TicketSliderGestureStartResult {
+    val service = accessibilityService.value ?: return TicketSliderGestureStartResult.REJECTED
+    val accepted = withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
       service.startTicketSliderGesture(startX, startY, timeoutMillis)
-    } ?: false
+    }
+    return when (accepted) {
+      true -> TicketSliderGestureStartResult.ACCEPTED
+      false -> TicketSliderGestureStartResult.REJECTED
+      null -> TicketSliderGestureStartResult.UNKNOWN
+    }
   }
 
   suspend fun continueTicketSliderGesture(
@@ -629,10 +673,9 @@ object PhoneAutomationServiceBridge {
     timeoutMillis: Long
   ): Boolean {
     val service = accessibilityService.value ?: return false
-    // A terminal continuation rejected before Android accepts it gets one fresh-stroke retry
-    // in the accessibility service. Keep the outer bridge budget large enough for both bounded
-    // attempts; cancellation and timeout are not replayed.
-    return withTimeoutOrNull(timeoutMillis.terminalGestureCallTimeoutMillis()) {
+    // V3 registration is one held gesture. Every terminal outcome is reconciled visually by the
+    // caller and must never receive an automatic second full-track stroke here.
+    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
       service.endTicketSliderGesture(endX, endY, durationMillis, timeoutMillis)
     } ?: false
   }
@@ -665,10 +708,6 @@ object PhoneAutomationServiceBridge {
 
   private fun Long.accessibilityCallTimeoutMillis(): Long {
     return coerceAtLeast(1L) + ACCESSIBILITY_CALL_GRACE_TIMEOUT_MILLIS
-  }
-
-  private fun Long.terminalGestureCallTimeoutMillis(): Long {
-    return coerceAtLeast(1L) * 2L + ACCESSIBILITY_CALL_GRACE_TIMEOUT_MILLIS
   }
 
   suspend fun awaitNotificationPostedAfter(
@@ -776,6 +815,7 @@ object PhoneAutomationServiceBridge {
     blackoutOverlaySuppressed.value = false
     remoteScreenBrightnessState.value = null
     nonTouchInputSuppressedUntilUptimeMillis.value = 0L
+    rootPhysicalTouchState.value = PhoneAutomationRootPhysicalTouchState()
     activeNotifications.value = emptyMap()
   }
 

@@ -39,11 +39,19 @@ internal object TicketLatestTicketReselectCommandPolicy {
     currentStatus: String,
     currentPhase: String,
     incomingCommandId: String,
-    controlSensitiveWindowActive: Boolean
+    controlSensitiveWindowActive: Boolean,
+    incomingRequireUnactivatedRegistration: Boolean = false,
+    currentFinalUnactivatedProved: Boolean = false
   ): TicketLatestTicketReselectCommandDecision {
     val sameCommand = currentCommandId.isNotBlank() && currentCommandId == incomingCommandId
     if (sameCommand) {
       return when {
+        currentStatus == "succeeded" && currentPhase == "ready" &&
+          incomingRequireUnactivatedRegistration && !currentFinalUnactivatedProved ->
+          TicketLatestTicketReselectCommandDecision(
+            disposition = TicketLatestTicketReselectCommandDisposition.DEFER,
+            reason = "latest_ticket_reselect_unactivated_proof_pending"
+          )
         currentStatus == "succeeded" && currentPhase == "ready" ->
           TicketLatestTicketReselectCommandDecision(
             disposition = TicketLatestTicketReselectCommandDisposition.SUCCEEDED,

@@ -103,6 +103,16 @@ class TicketH264AnnexBParser(
       pendingKeyFrame = false
       return
     }
+    // Never forward an IDR without the decoder configuration it needs. Codec-config output is
+    // normally delivered before the first frame, but a restart or split output can reorder the
+    // observable pieces. Stored SPS/PPS are prepended below; if either is still unavailable,
+    // discard this access unit instead of teaching the browser to cache a fragmentary IDR.
+    if (pendingKeyFrame && (sps == null || pps == null)) {
+      pendingAccessUnit.clear()
+      pendingHasVcl = false
+      pendingKeyFrame = false
+      return
+    }
     val output = ByteArrayOutputStream()
     pendingAccessUnit.forEach { output.write(it) }
     onAccessUnit(output.toByteArray(), pendingKeyFrame)

@@ -19,6 +19,7 @@ public final class TicketCaptureCadenceScheduler {
   private long skippedTicks;
   private long lastLatenessMillis;
   private long lastSkippedTicks;
+  private boolean immediateCapturePending;
 
   public TicketCaptureCadenceScheduler(int initialFps, long nowMillis) {
     if (!isSupportedFps(initialFps)) {
@@ -39,7 +40,7 @@ public final class TicketCaptureCadenceScheduler {
     return Math.max(1L, Math.round(1000.0 / fps));
   }
 
-  public boolean setTargetFps(int fps, long nowMillis) {
+  public synchronized boolean setTargetFps(int fps, long nowMillis) {
     if (!isSupportedFps(fps)) {
       return false;
     }
@@ -54,23 +55,40 @@ public final class TicketCaptureCadenceScheduler {
     return true;
   }
 
-  public int targetFps() {
+  public synchronized int targetFps() {
     return targetFps;
   }
 
-  public long intervalMillis() {
+  public synchronized long intervalMillis() {
     return intervalMillisForFps(targetFps);
   }
 
-  public long waitMillis(long nowMillis) {
+  public synchronized long waitMillis(long nowMillis) {
     return Math.max(0L, nextDeadlineMillis - nowMillis);
+  }
+
+  /**
+   * Makes one capture immediately due without changing the selected cadence.
+   * Repeated requests before that capture are coalesced into the same pending
+   * grant; a request after the grant is consumed schedules the next capture.
+   */
+  public synchronized boolean requestImmediateCapture(long nowMillis) {
+    boolean newlyPending = !immediateCapturePending;
+    immediateCapturePending = true;
+    nextDeadlineMillis = Math.min(nextDeadlineMillis, nowMillis);
+    return newlyPending;
+  }
+
+  public synchronized boolean hasImmediateCapturePending() {
+    return immediateCapturePending;
   }
 
   /**
    * Advances the schedule and grants one capture at or after the current deadline.
    * The returned decision is never a request for more than one capture.
    */
-  public CaptureDecision beginCapture(long nowMillis) {
+  public synchronized CaptureDecision beginCapture(long nowMillis) {
+    boolean immediate = immediateCapturePending;
     long lateness = Math.max(0L, nowMillis - nextDeadlineMillis);
     long expiredTicks = lateness == 0L
       ? 0L
@@ -86,36 +104,39 @@ public final class TicketCaptureCadenceScheduler {
     // ticks but leave the first future deadline intact.
     long intervalsToAdvance = (lateness / intervalMillis()) + 1L;
     nextDeadlineMillis += intervalsToAdvance * intervalMillis();
-    return new CaptureDecision(lateness, expiredTicks);
+    immediateCapturePending = false;
+    return new CaptureDecision(lateness, expiredTicks, immediate);
   }
 
-  public long cadenceChanges() {
+  public synchronized long cadenceChanges() {
     return cadenceChanges;
   }
 
-  public long deadlineMisses() {
+  public synchronized long deadlineMisses() {
     return deadlineMisses;
   }
 
-  public long skippedTicks() {
+  public synchronized long skippedTicks() {
     return skippedTicks;
   }
 
-  public long lastLatenessMillis() {
+  public synchronized long lastLatenessMillis() {
     return lastLatenessMillis;
   }
 
-  public long lastSkippedTicks() {
+  public synchronized long lastSkippedTicks() {
     return lastSkippedTicks;
   }
 
   public static final class CaptureDecision {
     public final long latenessMillis;
     public final long skippedTicks;
+    public final boolean immediate;
 
-    CaptureDecision(long latenessMillis, long skippedTicks) {
+    CaptureDecision(long latenessMillis, long skippedTicks, boolean immediate) {
       this.latenessMillis = latenessMillis;
       this.skippedTicks = skippedTicks;
+      this.immediate = immediate;
     }
   }
 }

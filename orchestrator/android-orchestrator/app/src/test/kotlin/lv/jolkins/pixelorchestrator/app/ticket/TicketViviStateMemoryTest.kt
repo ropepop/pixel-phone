@@ -1,13 +1,11 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 class TicketViviStateMemoryTest {
   @Test
-  fun rootedTicketDetailHierarchyIsAvailableForTheFastHandoff() {
+  fun rootedTicketDetailHierarchyIsNeverRetained() {
     val memory = TicketViviStateMemory { 1_000L }
     val hierarchy = "<hierarchy package=\"lv.jolkins.vivi\" />"
 
@@ -19,14 +17,12 @@ class TicketViviStateMemoryTest {
       hierarchy = hierarchy
     )
 
-    val proof = memory.recentTicketDetailHierarchyWithin(5_000L)
-    assertNotNull(proof)
-    assertEquals(hierarchy, proof?.hierarchy)
-    assertEquals("ticket-1", proof?.ticketId)
+    assertNull(memory.current().hierarchy)
+    assertNull(memory.recentTicketDetailHierarchyWithin(5_000L))
   }
 
   @Test
-  fun laterVisualDetailObservationDoesNotReplaceRootedHierarchyProof() {
+  fun laterVisualDetailObservationCannotReviveHierarchyProof() {
     val memory = TicketViviStateMemory { 1_000L }
     val hierarchy = "<hierarchy package=\"lv.jolkins.vivi\" />"
 
@@ -44,7 +40,8 @@ class TicketViviStateMemoryTest {
       reason = "raw_ticket_visual"
     )
 
-    assertEquals(hierarchy, memory.recentTicketDetailHierarchyWithin(5_000L)?.hierarchy)
+    assertNull(memory.current().hierarchy)
+    assertNull(memory.recentTicketDetailHierarchyWithin(5_000L))
   }
 
   @Test

@@ -1,5 +1,9 @@
 package lv.jolkins.pixelorchestrator.app.ticket;
 
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+
 /**
  * Classifies the fixed-size, sanitized visual probe produced by the rooted ticket capture helper.
  *
@@ -38,6 +42,29 @@ public final class TicketControlCodeVisualClassifier {
   private static final int RESULT_CHIP_MIN_LONG_RUN_ROWS = 2;
   private static final int RESULT_CHIP_DARK_LUMINANCE = 100;
   private static final int RESULT_CHIP_LIGHT_LUMINANCE = 145;
+  private static final byte[] VISUAL_SIGNATURE_SALT = new byte[32];
+  private static final String VISUAL_SIGNATURE_EPOCH;
+
+  static {
+    new SecureRandom().nextBytes(VISUAL_SIGNATURE_SALT);
+    VISUAL_SIGNATURE_EPOCH = hexPrefix(sha256(VISUAL_SIGNATURE_SALT), 6);
+  }
+
+  private static final class Bounds {
+    final int left;
+    final int top;
+    final int right;
+    final int bottom;
+
+    Bounds(int left, int top, int right, int bottom) {
+      this.left = left;
+      this.top = top;
+      this.right = right;
+      this.bottom = bottom;
+    }
+
+    String wire() { return left + "," + top + "," + right + "," + bottom; }
+  }
 
   private TicketControlCodeVisualClassifier() {}
 
@@ -55,6 +82,145 @@ public final class TicketControlCodeVisualClassifier {
       return RAW_TICKET;
     }
     return UNKNOWN;
+  }
+
+  /**
+   * Returns a phone-local, one-way signature of the bounded ticket code graphic.
+   *
+   * <p>The current ViVi design replaces the central graphic after a control-code submit instead
+   * of adding the older result strip. The signature contains only heavily quantized luminance
+   * samples from that graphic. It is used transiently to prove a stable visual transition and is
+   * never a screenshot, OCR output, ticket identifier, or reversible pixel payload.</p>
+   */
+  public static String ticketCodeVisualSignature(int[] pixels) {
+    if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT ||
+        !frameHasTicketDetailBase(pixels) || frameHasControlCodeInputPopup(pixels)) {
+      return "";
+    }
+    int globalLuminance = 0;
+    for (int y = 14; y < 34; y++) {
+      for (int x = 8; x < 40; x++) {
+        globalLuminance += luminance(pixelAt(pixels, x, y));
+      }
+    }
+    int globalAverage = globalLuminance / (32 * 20);
+    MessageDigest digest = sha256Digest();
+    if (digest == null) return "";
+    digest.update(VISUAL_SIGNATURE_SALT);
+    // Twenty coarse, relative-luminance blocks ignore isolated rooted-frame noise and global
+    // brightness changes while retaining the redesigned code graphic's spatial structure.
+    for (int top = 14; top < 34; top += 4) {
+      for (int left = 8; left < 40; left += 8) {
+        int blockLuminance = 0;
+        for (int y = top; y < top + 4; y++) {
+          for (int x = left; x < left + 8; x++) {
+            blockLuminance += luminance(pixelAt(pixels, x, y));
+          }
+        }
+        int delta = blockLuminance / 32 - globalAverage;
+        int bucket = delta < -48 ? 0 : delta < -16 ? 1 : delta <= 16 ? 2 : delta <= 48 ? 3 : 4;
+        digest.update((byte) bucket);
+      }
+    }
+    return hexPrefix(digest.digest(), 12);
+  }
+
+  /**
+   * Returns a phone-local identity for the static portions of a ticket detail.
+   *
+   * <p>ViVi rotates the large ticket-code graphic while the same unactivated detail remains
+   * open. Registration identity therefore samples only the bounded route header and lower
+   * route/date metadata bands, excluding that rotating graphic, the slider, and the control-code
+   * result area. The digest is salted for this helper process and contains no OCR output or
+   * reversible pixels.</p>
+   */
+  public static String ticketDetailStaticVisualSignature(int[] pixels, int width, int height) {
+    if (pixels == null || width < 48 || height < 72 || pixels.length != width * height) {
+      return "";
+    }
+    MessageDigest digest = sha256Digest();
+    if (digest == null) return "";
+    digest.update(VISUAL_SIGNATURE_SALT);
+    digest.update((byte) 0x54);
+    digest.update((byte) 0x44);
+    updateStaticDetailSignatureRegion(
+      digest,
+      pixels,
+      width,
+      height,
+      width / 24,
+      0,
+      width - width / 24,
+      height * 10 / 72
+    );
+    updateStaticDetailSignatureRegion(
+      digest,
+      pixels,
+      width,
+      height,
+      width / 12,
+      height * 35 / 72,
+      width - width / 12,
+      height * 42 / 72
+    );
+    return hexPrefix(digest.digest(), 12);
+  }
+
+  private static void updateStaticDetailSignatureRegion(
+    MessageDigest digest,
+    int[] pixels,
+    int width,
+    int height,
+    int left,
+    int top,
+    int right,
+    int bottom
+  ) {
+    int blockWidth = Math.max(2, width / 48);
+    int blockHeight = Math.max(2, height / 72);
+    int boundedRight = Math.min(width, Math.max(left, right));
+    int boundedBottom = Math.min(height, Math.max(top, bottom));
+    for (int y = Math.max(0, top); y < boundedBottom; y += blockHeight) {
+      for (int x = Math.max(0, left); x < boundedRight; x += blockWidth) {
+        int luminanceSum = 0;
+        int samples = 0;
+        for (int sampleY = y; sampleY < Math.min(boundedBottom, y + blockHeight); sampleY++) {
+          for (int sampleX = x; sampleX < Math.min(boundedRight, x + blockWidth); sampleX++) {
+            luminanceSum += luminance(pixels[sampleY * width + sampleX]);
+            samples += 1;
+          }
+        }
+        int average = samples == 0 ? 0 : luminanceSum / samples;
+        digest.update((byte) (average / 16));
+      }
+    }
+  }
+
+  /** Identifies the in-memory salt generation so a helper restart always fails closed. */
+  public static String ticketCodeVisualSignatureEpoch() {
+    return VISUAL_SIGNATURE_EPOCH;
+  }
+
+  private static MessageDigest sha256Digest() {
+    try {
+      return MessageDigest.getInstance("SHA-256");
+    } catch (NoSuchAlgorithmException impossible) {
+      return null;
+    }
+  }
+
+  private static byte[] sha256(byte[] value) {
+    MessageDigest digest = sha256Digest();
+    return digest == null ? new byte[0] : digest.digest(value);
+  }
+
+  private static String hexPrefix(byte[] value, int bytes) {
+    if (value.length < bytes) return "";
+    StringBuilder output = new StringBuilder(bytes * 2);
+    for (int index = 0; index < bytes; index++) {
+      output.append(String.format("%02x", value[index] & 0xff));
+    }
+    return output.toString();
   }
 
   /**
@@ -85,12 +251,46 @@ public final class TicketControlCodeVisualClassifier {
     return UNKNOWN;
   }
 
+  /** Returns the detected bright close glyph inside the generated-result strip. */
+  public static String generatedResultCloseBounds(int[] pixels) {
+    if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT ||
+        classifyForCleanup(pixels) != GENERATED) return "";
+    int chipTop = findGeneratedControlCodeResultChipTop(pixels);
+    if (chipTop < 0) return "";
+    int bestLeft = SAMPLE_WIDTH;
+    int bestTop = SAMPLE_HEIGHT;
+    int bestRight = -1;
+    int bestBottom = -1;
+    int count = 0;
+    // Inspect only the right edge of the exact detected strip. Sampling the
+    // whole lower ticket body would mix the X with the Aztec/background and
+    // turn an ambiguous frame into an unsafe oversized tap target.
+    for (int y = chipTop; y < chipTop + RESULT_CHIP_HEIGHT; y++) {
+      for (int x = SAMPLE_WIDTH - 14; x < SAMPLE_WIDTH - 7; x++) {
+        if (luminance(pixelAt(pixels, x, y)) >= RESULT_CHIP_LIGHT_LUMINANCE) {
+          bestLeft = Math.min(bestLeft, x);
+          bestTop = Math.min(bestTop, y);
+          bestRight = Math.max(bestRight, x + 1);
+          bestBottom = Math.max(bestBottom, y + 1);
+          count += 1;
+        }
+      }
+    }
+    if (count < 2 || count > 20 || bestRight <= bestLeft || bestBottom <= bestTop ||
+        bestRight - bestLeft > 6 || bestBottom - bestTop > RESULT_CHIP_HEIGHT) return "";
+    int left = Math.max(SAMPLE_WIDTH - 14, bestLeft - 2);
+    int top = Math.max(chipTop, bestTop - 2);
+    int right = Math.min(SAMPLE_WIDTH - 7, bestRight + 2);
+    int bottom = Math.min(chipTop + RESULT_CHIP_HEIGHT, bestBottom + 2);
+    return left + "," + top + "," + right + "," + bottom;
+  }
+
   /**
-   * Proves the normal activated ticket detail after hierarchy has already proved the activated
-   * ViVi state. The ordinary classifier intentionally gives a dark generated-result strip
+   * Proves the normal activated ticket detail from the fresh rooted visual frame. The ordinary
+   * classifier intentionally gives a dark generated-result strip
    * precedence over the Aztec graphic; the activated ticket has its own dark status strip, so
-   * reusing that precedence would reject a real activated detail. The hierarchy gate remains
-   * mandatory in the caller, and this method still requires the fresh Aztec/detail visual.
+   * reusing that precedence would reject a real activated detail. This method still requires the
+   * fresh ticket header and Aztec/detail visual.
    */
   public static String classifyForActivatedTicket(int[] pixels) {
     if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT) {
@@ -174,13 +374,13 @@ public final class TicketControlCodeVisualClassifier {
    * Returns the privacy-safe probe rectangle of the registration slider, or an empty string.
    *
    * <p>This deliberately reports only four coordinates from the already down-sampled rooted
-   * probe. It does not export the probe pixels. The hierarchy supplies the semantic registration
-   * anchor; this method supplies the actual wide orange track and its left-hand dark thumb so the
+   * probe. It does not export the probe pixels. The ticket-detail base supplies the visual
+   * context; this method supplies the actual wide orange track and its left-hand dark thumb so the
    * caller can reject a narrow text node or a ticket-list registration button.</p>
    */
   public static String registrationSliderBounds(int[] pixels) {
     if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT ||
-        !frameHasTicketDetailBase(pixels)) {
+        !frameHasTicketDetailHeader(pixels)) {
       return "";
     }
     int bestLeft = -1;
@@ -234,31 +434,75 @@ public final class TicketControlCodeVisualClassifier {
       return "";
     }
 
-    int leftZoneEnd = Math.min(bestRight, bestLeft + Math.max(5, (bestRight - bestLeft) / 4));
+    // The current ViVi slider draws its round dark thumb over the rounded start of the orange
+    // track. At probe resolution the first orange pixel can therefore sit immediately to the
+    // right of the thumb, unlike the previous layout where orange remained visible behind it.
+    // Inspect a bounded attached zone on both sides of that first orange pixel and include the
+    // proven thumb in the returned drag geometry.
+    int bandWidth = bestRight - bestLeft;
+    int leftZoneStart = Math.max(0, bestLeft - Math.max(8, bandWidth / 3));
+    int leftZoneEnd = Math.min(bestRight, bestLeft + Math.max(5, bandWidth / 5));
     int darkThumbPixels = 0;
+    int thumbLeft = SAMPLE_WIDTH;
+    int thumbTop = SAMPLE_HEIGHT;
+    int thumbRight = -1;
+    int thumbBottom = -1;
     for (int y = bestTop; y < bestBottom; y++) {
-      for (int x = bestLeft; x < leftZoneEnd; x++) {
-        if (luminance(pixelAt(pixels, x, y)) <= 120 &&
+      for (int x = leftZoneStart; x < leftZoneEnd; x++) {
+        // Require the charcoal thumb core, not the medium-gray ticket body outside the track.
+        if (luminance(pixelAt(pixels, x, y)) <= 90 &&
             !isRegistrationOrange(pixelAt(pixels, x, y))) {
           darkThumbPixels += 1;
+          thumbLeft = Math.min(thumbLeft, x);
+          thumbTop = Math.min(thumbTop, y);
+          thumbRight = Math.max(thumbRight, x + 1);
+          thumbBottom = Math.max(thumbBottom, y + 1);
         }
       }
     }
-    if (darkThumbPixels < 3) {
+    if (darkThumbPixels < 3 || thumbRight - thumbLeft < 2 || thumbBottom - thumbTop < 2) {
       return "";
     }
-    int left = Math.max(0, bestLeft - 1);
+    int left = Math.max(0, Math.min(bestLeft, thumbLeft) - 1);
     int top = Math.max(0, bestTop - 1);
     int right = Math.min(SAMPLE_WIDTH, bestRight + 1);
     int bottom = Math.min(SAMPLE_HEIGHT, bestBottom + 1);
     return left + "," + top + "," + right + "," + bottom;
   }
 
+  /**
+   * Returns a content-free local diagnostic for an unrecognized registration slider.
+   *
+   * <p>The capture helper writes this only to its phone-local diagnostic stream. It contains no
+   * pixels, text, dates or coordinates and is not part of the public Ticket action projection.</p>
+   */
+  public static String registrationSliderDiagnostic(int[] pixels) {
+    if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT) return "invalid_probe";
+    if (!frameHasTicketDetailHeader(pixels)) return "detail_header_missing";
+    if (!registrationSliderBounds(pixels).isEmpty()) return "slider_present";
+    int qualifyingRows = 0;
+    int widestOrangeRow = 0;
+    for (int y = 38; y <= 55; y++) {
+      int orangePixels = 0;
+      for (int x = 2; x < SAMPLE_WIDTH - 2; x++) {
+        if (isRegistrationOrange(pixelAt(pixels, x, y))) orangePixels += 1;
+      }
+      widestOrangeRow = Math.max(widestOrangeRow, orangePixels);
+      if (orangePixels >= 20) qualifyingRows += 1;
+    }
+    if (widestOrangeRow < 20) return "slider_orange_missing";
+    if (qualifyingRows < 3) return "slider_band_shape_unproved";
+    return "slider_thumb_unproved";
+  }
+
   private static boolean isRegistrationOrange(int pixel) {
     int red = (pixel >> 16) & 0xff;
     int green = (pixel >> 8) & 0xff;
     int blue = pixel & 0xff;
-    return red >= 180 && green >= 100 && green <= 235 && blue <= 100 && red - green >= 25;
+    // Bilinear reduction of the current rounded ViVi track mixes a small amount of the white
+    // card into the orange edge. Match the already-strict action classifier's accepted range;
+    // the wide-band and attached dark-thumb proof remain mandatory.
+    return red >= 175 && green >= 95 && green <= 240 && blue <= 120 && red - green >= 22;
   }
 
   /**
@@ -289,6 +533,84 @@ public final class TicketControlCodeVisualClassifier {
       return CONTROL_POPUP_KEYBOARD_READY;
     }
     return UNKNOWN;
+  }
+
+  /** Returns the actually detected popup input area; no device coordinate is assumed. */
+  public static String submitInputBounds(int[] pixels) {
+    String state = classifySubmitLayout(pixels);
+    if (!state.equals(CONTROL_POPUP_STATIC_READY) && !state.equals(CONTROL_POPUP_VALUE_READY)) {
+      return "";
+    }
+    Bounds dialog = detectSubmitDialogBounds(pixels);
+    Bounds button = detectSubmitButtonBounds(pixels);
+    if (dialog == null || button == null) return "";
+    int width = dialog.right - dialog.left;
+    int height = dialog.bottom - dialog.top;
+    int left = dialog.left + Math.max(3, width / 5);
+    int right = dialog.right - Math.max(3, width / 5);
+    int top = dialog.top + Math.max(2, height / 6);
+    int bottom = Math.min(button.top - 1, top + Math.max(4, height / 3));
+    if (right - left < 8 || bottom - top < 3) return "";
+    return new Bounds(left, top, right, bottom).wire();
+  }
+
+  /** Returns the detected colored submit button rather than a remembered sample point. */
+  public static String submitButtonBounds(int[] pixels) {
+    String state = classifySubmitLayout(pixels);
+    if (!state.equals(CONTROL_POPUP_STATIC_READY) && !state.equals(CONTROL_POPUP_VALUE_READY)) {
+      return "";
+    }
+    Bounds bounds = detectSubmitButtonBounds(pixels);
+    return bounds == null ? "" : bounds.wire();
+  }
+
+  private static Bounds detectSubmitDialogBounds(int[] pixels) {
+    boolean darkTheme = submitFrameHasDarkReadyControlCodePopup(pixels);
+    int left = SUBMIT_SAMPLE_WIDTH;
+    int top = SUBMIT_SAMPLE_HEIGHT;
+    int right = -1;
+    int bottom = -1;
+    int count = 0;
+    for (int y = 20; y < 105; y++) {
+      for (int x = 4; x < SUBMIT_SAMPLE_WIDTH - 4; x++) {
+        int value = luminance(submitPixelAt(pixels, x, y));
+        boolean belongs = darkTheme ? value <= 85 : value >= 125;
+        if (!belongs) continue;
+        left = Math.min(left, x);
+        top = Math.min(top, y);
+        right = Math.max(right, x + 1);
+        bottom = Math.max(bottom, y + 1);
+        count += 1;
+      }
+    }
+    if (count < 300 || right - left < 30 || bottom - top < 16) return null;
+    return new Bounds(left, top, right, bottom);
+  }
+
+  private static Bounds detectSubmitButtonBounds(int[] pixels) {
+    int left = SUBMIT_SAMPLE_WIDTH;
+    int top = SUBMIT_SAMPLE_HEIGHT;
+    int right = -1;
+    int bottom = -1;
+    int count = 0;
+    for (int y = 20; y < 105; y++) {
+      for (int x = 4; x < SUBMIT_SAMPLE_WIDTH - 4; x++) {
+        int pixel = submitPixelAt(pixels, x, y);
+        int red = (pixel >> 16) & 0xff;
+        int green = (pixel >> 8) & 0xff;
+        int blue = pixel & 0xff;
+        boolean orange = red >= 175 && green >= 85 && green <= 220 && blue <= 110 && red - green >= 25;
+        boolean blueButton = blue >= 80 && blue - red >= 35 && blue - green >= 15;
+        if (!orange && !blueButton) continue;
+        left = Math.min(left, x);
+        top = Math.min(top, y);
+        right = Math.max(right, x + 1);
+        bottom = Math.max(bottom, y + 1);
+        count += 1;
+      }
+    }
+    if (count < 20 || right - left < 10 || bottom - top < 3) return null;
+    return new Bounds(left, top, right, bottom);
   }
 
   /**
@@ -744,22 +1066,8 @@ public final class TicketControlCodeVisualClassifier {
   private static boolean frameHasTicketDetailHeader(int[] pixels) {
     VisualStats label = visualStats(pixels, 2, 2, 19, 7);
     VisualStats topBand = visualStats(pixels, 0, 0, SAMPLE_WIDTH, 10);
-    int currentRedSamples = 0;
-    int currentRedPixels = 0;
     int legacyRedSamples = 0;
     int legacyRedPixels = 0;
-    for (int y = 0; y < 10; y++) {
-      for (int x = 1; x < SAMPLE_WIDTH - 1; x++) {
-        int pixel = pixelAt(pixels, x, y);
-        int red = (pixel >> 16) & 0xff;
-        int green = (pixel >> 8) & 0xff;
-        int blue = pixel & 0xff;
-        if (red >= 135 && red - green >= 25 && red - blue >= 35 && green <= 110 && blue <= 115) {
-          currentRedPixels += 1;
-        }
-        currentRedSamples += 1;
-      }
-    }
     for (int y = 8; y < 15; y++) {
       for (int x = 1; x < SAMPLE_WIDTH - 1; x++) {
         int pixel = pixelAt(pixels, x, y);
@@ -772,7 +1080,6 @@ public final class TicketControlCodeVisualClassifier {
         legacyRedSamples += 1;
       }
     }
-    double currentRedRatio = currentRedSamples == 0 ? 0.0 : currentRedPixels / (double) currentRedSamples;
     double legacyRedRatio = legacyRedSamples == 0 ? 0.0 : legacyRedPixels / (double) legacyRedSamples;
     boolean labelPillVisible = label.mean >= 150.0 &&
       label.lightRatio >= 0.48 &&
@@ -781,12 +1088,33 @@ public final class TicketControlCodeVisualClassifier {
     boolean ticketHeaderShape = topBand.lightRatio >= 0.10 &&
       topBand.darkRatio >= 0.10 &&
       legacyRedRatio >= 0.24;
-    // Current ViVi renders the orange ticket header immediately after the stream's top crop;
-    // the old probe expected that band eight rows lower and required a light label pill. Keep
-    // that legacy form, but accept the current red header when the shared ticket code graphic
-    // is present. Popup detection runs first, so this cannot authorize a dialog frame.
-    boolean currentTicketHeaderShape = currentRedRatio >= 0.24;
+    // Current ViVi renders a dark app bar followed by a wide colored ticket band. The rooted
+    // bitmap and encoder surface can expose opposite red/blue channel order, so prove the band's
+    // bounded chroma and width rather than one hue. The separate Aztec/detail gate remains
+    // mandatory, and popup detection runs first.
+    boolean currentTicketHeaderShape = frameHasCurrentTicketHeaderBand(pixels);
     return (labelPillVisible && ticketHeaderShape) || currentTicketHeaderShape;
+  }
+
+  private static boolean frameHasCurrentTicketHeaderBand(int[] pixels) {
+    int qualifyingRows = 0;
+    int widestRow = 0;
+    for (int y = 0; y < 16; y++) {
+      int colored = 0;
+      for (int x = 1; x < SAMPLE_WIDTH - 1; x++) {
+        int pixel = pixelAt(pixels, x, y);
+        int red = (pixel >> 16) & 0xff;
+        int green = (pixel >> 8) & 0xff;
+        int blue = pixel & 0xff;
+        int maximum = Math.max(red, Math.max(green, blue));
+        int minimum = Math.min(red, Math.min(green, blue));
+        boolean redOrBlueDominant = red - green >= 22 || blue - green >= 22;
+        if (maximum >= 130 && maximum - minimum >= 40 && redOrBlueDominant) colored += 1;
+      }
+      widestRow = Math.max(widestRow, colored);
+      if (colored >= 24) qualifyingRows += 1;
+    }
+    return qualifyingRows >= 3 && widestRow >= 32;
   }
 
   private static VisualStats visualStats(int[] pixels, int left, int top, int right, int bottom) {

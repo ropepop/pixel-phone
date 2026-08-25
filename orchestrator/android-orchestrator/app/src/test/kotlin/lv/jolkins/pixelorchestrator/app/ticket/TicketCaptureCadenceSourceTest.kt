@@ -13,6 +13,7 @@ class TicketCaptureCadenceSourceTest {
   private val helper by lazy { source("TicketRootHardwareH264CaptureMain.java") }
   private val service by lazy { source("TicketStreamService.kt") }
   private val scheduler by lazy { source("TicketCaptureCadenceScheduler.java") }
+  private val outputLiveness by lazy { source("TicketEncoderOutputLiveness.java") }
 
   @Test
   fun configDefinesOnlyTheThreeAdaptiveTiersAndKeepsTheSdrPipeline() {
@@ -36,6 +37,9 @@ class TicketCaptureCadenceSourceTest {
     assertTrue(helper.contains("new TicketCaptureCadenceScheduler"))
     assertTrue(helper.contains("cadenceScheduler.beginCapture(started)"))
     assertTrue(helper.contains("cadenceScheduler.waitMillis(started)"))
+    assertTrue(helper.contains("requestImmediateSyncFrame(syncFrameRequested, cadenceScheduler, frameWaitLock)"))
+    assertTrue(helper.contains("cadenceScheduler.requestImmediateCapture(SystemClock.elapsedRealtime())"))
+    assertTrue(helper.contains("if (!cadenceScheduler.hasImmediateCapturePending())"))
     assertTrue(helper.contains("MOTION_THUMBNAIL_SIZE"))
     assertTrue(helper.contains("MOTION_SAMPLE_INTERVAL_MILLIS = 1_000L"))
     assertTrue(helper.contains("MOTION_SAMPLE_MAX_DURATION_MILLIS"))
@@ -46,8 +50,52 @@ class TicketCaptureCadenceSourceTest {
     assertTrue(helper.contains("motion_disabled="))
     assertTrue(helper.contains("Math.abs(currentLuma - previousLuma) > 8"))
     assertTrue(helper.contains("TicketMotionCadenceController"))
+    assertTrue(helper.contains("if (visualProbeRequest.ticketAction)"))
+    assertTrue(helper.contains("visualProbeRequest.untilMillis.set(0L)"))
     assertFalse(helper.contains("for (int catchUp"))
     assertFalse(helper.contains("while (.*catch"))
+  }
+
+  @Test
+  fun helperWaitsForMediaOutputWhenTheFirstDrainOnlyReturnsCodecConfiguration() {
+    assertTrue(helper.contains("TicketEncoderDrainProgress drainProgress"))
+    assertTrue(helper.contains("if (drainProgress.encodedFrameOutputs == 0 && sent == 0)"))
+    assertTrue(helper.contains("TicketEncoderDrainProgress.fromDequeuedOutput("))
+    assertTrue(helper.contains("emitted.codecConfig,"))
+    assertTrue(helper.contains("emitted.keyFrame"))
+    assertTrue(helper.contains("TicketH264EncoderOutputAssembler"))
+    assertTrue(helper.contains("MediaCodec.BUFFER_FLAG_PARTIAL_FRAME"))
+    assertTrue(helper.contains("if (eos && data.length == 0)"))
+    assertTrue(helper.contains("outputAssembler.reset()"))
+    assertFalse(helper.contains("int drained = drainEncoder"))
+  }
+
+  @Test
+  fun helperUsesOneCoalescedImmediateSyncRecoveryForAStaticOutputDrought() {
+    assertTrue(helper.contains("TicketEncoderOutputLiveness outputLiveness"))
+    assertTrue(helper.contains("!cadenceTransitionCapture && !cadenceDecision.immediate && !explicitSyncFrame"))
+    assertTrue(helper.contains("scheduledCadenceDrain,"))
+    assertTrue(helper.contains("requestImmediateSyncFrame(syncFrameRequested, cadenceScheduler, frameWaitLock)"))
+    assertTrue(helper.contains("ENCODER_LIVENESS state=sync_requested"))
+    assertTrue(outputLiveness.contains("STATIC_EMPTY_DRAIN_THRESHOLD = 2"))
+    assertTrue(outputLiveness.contains("targetFps != TicketCaptureCadenceScheduler.STATIC_FPS"))
+    assertTrue(outputLiveness.contains("if (recoveryArmed)"))
+    assertTrue(outputLiveness.contains("if (encodedFrameOutputs > 0)"))
+    assertTrue(outputLiveness.contains("if (madeCodecProgress && !completeMediaOverdue)"))
+    assertTrue(outputLiveness.contains("MIN_STATIC_EVIDENCE_INTERVAL_MILLIS"))
+    assertTrue(outputLiveness.contains("MAX_PROGRESS_WITHOUT_MEDIA_MILLIS"))
+    assertTrue(engine.contains("line.startsWith(\"ENCODER_LIVENESS \")"))
+    assertTrue(engine.contains("fields[\"state\"] == \"sync_requested\""))
+    assertTrue(engine.contains("cleanLine.startsWith(\"ENCODER_LIVENESS \") || cleanLine.startsWith(\"CONTROL_CODE_VISUAL \")"))
+    assertTrue(engine.contains("encoderLivenessRecoveryCount = encoderLivenessRecoveryCountSnapshot"))
+    assertTrue(engine.contains("lastEncoderLivenessRecoveryAgoMillis = lastEncoderLivenessRecoveryAgoMillisSnapshot"))
+    assertTrue(engine.contains("synchronized(encoderLivenessRecoveryLock)"))
+    assertTrue(engine.contains("sourceGeneration != captureGeneration.get()"))
+    assertTrue(engine.contains("resetEncoderLivenessRecoveryMetrics()"))
+    assertTrue(engine.contains("encoderLivenessRecoveryCount = 0L"))
+    assertTrue(engine.contains("lastEncoderLivenessRecoveryAtMillis = 0L"))
+    assertTrue(config.contains("val encoderLivenessRecoveryCount: Long = 0L"))
+    assertTrue(config.contains("val lastEncoderLivenessRecoveryAgoMillis: Long? = null"))
   }
 
   @Test
