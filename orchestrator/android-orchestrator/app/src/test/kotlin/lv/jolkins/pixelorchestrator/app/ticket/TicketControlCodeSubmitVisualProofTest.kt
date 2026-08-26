@@ -15,6 +15,17 @@ class TicketControlCodeSubmitVisualProofTest {
   }
 
   @Test
+  fun lateValueAfterFourTransientFramesStillRequiresTwoFreshAgreements() {
+    val proof = TicketControlCodeSubmitVisualProof()
+
+    repeat(4) { index ->
+      assertFalse(proof.observe(100L + index, TicketControlCodeVisualClassifier.UNKNOWN))
+    }
+    assertFalse(proof.observe(104L, TicketControlCodeVisualClassifier.CONTROL_POPUP_VALUE_READY))
+    assertTrue(proof.observe(105L, TicketControlCodeVisualClassifier.CONTROL_POPUP_VALUE_READY))
+  }
+
+  @Test
   fun inconclusiveOrOrdinaryPopupSampleResetsReadiness() {
     val proof = TicketControlCodeSubmitVisualProof()
 

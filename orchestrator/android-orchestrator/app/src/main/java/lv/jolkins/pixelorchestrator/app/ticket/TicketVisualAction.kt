@@ -294,7 +294,17 @@ internal fun parseTicketVisualActionRequest(payload: JsonObject): TicketVisualAc
   val policyRevision = payload.string("policyRevision").trim()
   val switchExpiresAt = payload.string("switchExpiresAt").trim()
   if (actionId.isBlank() || actionId.length > 128) return null
-  if (target.activatesTicket && attemptId != actionId) return null
+  if (target.activatesTicket && !ticketVisualActivationAttemptMatchesPayload(
+      actionId = actionId,
+      target = target,
+      attemptId = attemptId,
+      retryOrdinal = payload["retryOrdinal"]?.jsonPrimitive?.intOrNull ?: 0,
+      parentActionId = payload.string("parentActionId").trim(),
+      rootActionId = payload.string("rootActionId").trim(),
+      retryProofStreamEpoch = payload.string("retryProofStreamEpoch").trim(),
+      retryProofFrameSequence = payload.string("retryProofFrameSequence").trim()
+    )
+  ) return null
   if (target == TicketVisualActionTarget.REGISTER_CURRENT && expectedRevision.isBlank()) return null
   val switchesView = target in setOf(
     TicketVisualActionTarget.SHOW_RECENT_ACTIVATED,
@@ -314,6 +324,34 @@ internal fun parseTicketVisualActionRequest(payload: JsonObject): TicketVisualAc
     policyRevision = policyRevision,
     switchExpiresAt = switchExpiresAt
   )
+}
+
+/**
+ * The ordinary activation identity remains exact. The only exception is the deterministic
+ * Spacetime child admitted after a completed stroke freshly proved no visual transition. The
+ * child keeps the original admitted attempt but must carry its exact parent/root identity and a
+ * positive parent proof watermark; it receives no general prefix or arbitrary retry authority.
+ */
+internal fun ticketVisualActivationAttemptMatchesPayload(
+  actionId: String,
+  target: TicketVisualActionTarget,
+  attemptId: String,
+  retryOrdinal: Int,
+  parentActionId: String,
+  rootActionId: String,
+  retryProofStreamEpoch: String,
+  retryProofFrameSequence: String
+): Boolean {
+  if (attemptId == actionId) return true
+  fun positiveOrdinal(value: String): Boolean =
+    value.isNotBlank() && value.all(Char::isDigit) && value.any { it != '0' }
+  return target == TicketVisualActionTarget.REGISTER_CURRENT &&
+    retryOrdinal == 1 &&
+    parentActionId == attemptId &&
+    rootActionId == attemptId &&
+    actionId == "$parentActionId-retry-1" &&
+    positiveOrdinal(retryProofStreamEpoch) &&
+    positiveOrdinal(retryProofFrameSequence)
 }
 
 private fun JsonObject.string(key: String): String =
@@ -544,6 +582,17 @@ internal data class TicketRegistrationProofGateResult(
   val failureReason: String?
 )
 
+/** Converts only the exact scheduled proof alias into the action revision that consumes it. */
+internal fun ticketRegistrationProofRevisionForRegisterCurrent(
+  proofRevision: String,
+  expectedRevision: String
+): String? = expectedRevision.takeIf {
+  it.isNotBlank() && (
+    proofRevision == it ||
+      !it.startsWith("schedule:") && proofRevision == "schedule:$it"
+  )
+}
+
 /**
  * A geometry refresh for the same exact visual-action revision must retain the already-proved
  * phone-local ticket identity. A geometry-only update must never erase the identity that
@@ -572,10 +621,10 @@ internal fun ticketVisualProvenTicketAnchor(
 }
 
 /**
- * Binds register_current to the exact proof named by the browser command. The retained proof is
- * identity only: the gesture geometry and freshness come from the new agreeing detail
- * observation, and the executor binds a new positive frame watermark before any drag. The
- * durable reducer separately rejects an expired or replaced action revision.
+ * Binds register_current to the exact proof named by the browser command or that proof's exact
+ * scheduled alias. The retained proof is identity only: the gesture geometry and freshness come
+ * from the new agreeing detail observation, and the executor binds a new positive frame watermark
+ * before any drag. The durable reducer separately rejects an expired or replaced action revision.
  */
 internal fun ticketRegistrationProofForCurrentVisualAction(
   proof: TicketRegistrationProof?,
@@ -591,11 +640,14 @@ internal fun ticketRegistrationProofForCurrentVisualAction(
   if (request.target != TicketVisualActionTarget.REGISTER_CURRENT || proof == null) {
     return genericFailure
   }
+  val normalizedRevision = ticketRegistrationProofRevisionForRegisterCurrent(
+    proof.interactionRevision,
+    request.expectedInteractionRevision
+  ) ?: return genericFailure
   val candidate = proof.takeIf {
     observation.state == TicketVisualPhoneState.UNACTIVATED_DETAIL &&
       observation.sliderBounds != null &&
       it.status == "unactivated_ready" &&
-      it.interactionRevision == request.expectedInteractionRevision &&
       it.ticketAnchor.isNotBlank() &&
       it.streamEpoch > 0L &&
       it.frameSequence > 0L &&
@@ -608,7 +660,10 @@ internal fun ticketRegistrationProofForCurrentVisualAction(
       failureReason = "ticket_action_detail_identity_conflict"
     )
   }
-  return TicketRegistrationProofGateResult(proof = candidate, failureReason = null)
+  return TicketRegistrationProofGateResult(
+    proof = candidate.copy(interactionRevision = normalizedRevision),
+    failureReason = null
+  )
 }
 
 /**

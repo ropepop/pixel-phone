@@ -646,6 +646,74 @@ class TicketActionPanelDarkLeaseTest {
   }
 
   @Test
+  fun finalConvergenceTailWaitsOnlyTheRemainderSinceTheLatestMutation() = runTest {
+    val helper = SuccessfulLaunchRootExecutor()
+    val lease = TicketActionPanelDarkLease(
+      actionId = "action-overlapped-final-tail",
+      scope = backgroundScope,
+      clampRootExecutor = helper,
+      verifyRootExecutor = ZeroRootExecutor(),
+      physicalTouchState = { readyNoTouch(testScheduler.currentTime + 55_000L) },
+      onSnapshotChanged = {},
+      ownerProcessId = 4321,
+      uptimeClock = { testScheduler.currentTime + 55_000L },
+      helperToken = "overlapped-final-tail-token"
+    )
+
+    assertTrue(lease.acquire())
+    lease.markMutationMayHaveDispatched()
+    advanceTimeBy(2_000L)
+    runCurrent()
+
+    val release = async {
+      lease.releaseAfterFinalConvergence("terminal_complete")
+    }
+    runCurrent()
+    assertFalse(release.isCompleted)
+    assertTrue(lease.snapshot().active)
+
+    advanceTimeBy(499L)
+    runCurrent()
+    assertFalse(release.isCompleted)
+    assertTrue(lease.snapshot().active)
+
+    advanceTimeBy(1L)
+    runCurrent()
+    val finalization = release.await()
+    assertTrue(finalization.safe)
+    assertTrue(finalization.freshZeroProven)
+    assertTrue(finalization.exactHelperStopProven)
+    assertTrue(helper.completed)
+  }
+
+  @Test
+  fun completedVisualProofCanFullyOverlapTheFinalConvergenceWindow() = runTest {
+    val helper = SuccessfulLaunchRootExecutor()
+    val lease = TicketActionPanelDarkLease(
+      actionId = "action-fully-overlapped-final-tail",
+      scope = backgroundScope,
+      clampRootExecutor = helper,
+      verifyRootExecutor = ZeroRootExecutor(),
+      physicalTouchState = { readyNoTouch(testScheduler.currentTime + 57_000L) },
+      onSnapshotChanged = {},
+      ownerProcessId = 4321,
+      uptimeClock = { testScheduler.currentTime + 57_000L },
+      helperToken = "fully-overlapped-final-tail-token"
+    )
+
+    assertTrue(lease.acquire())
+    lease.markMutationMayHaveDispatched()
+    advanceTimeBy(TicketActionPanelDarkLease.PANEL_DARK_FINAL_CONVERGENCE_MILLIS)
+    runCurrent()
+
+    val finalization = lease.releaseAfterFinalConvergence("terminal_complete")
+    assertTrue(finalization.safe)
+    assertTrue(finalization.freshZeroProven)
+    assertTrue(finalization.exactHelperStopProven)
+    assertTrue(helper.completed)
+  }
+
+  @Test
   fun physicalTouchStillPreemptsTheFinalConvergenceTail() = runTest {
     val helper = SuccessfulLaunchRootExecutor()
     var touch = readyNoTouch(testScheduler.currentTime + 60_000L)

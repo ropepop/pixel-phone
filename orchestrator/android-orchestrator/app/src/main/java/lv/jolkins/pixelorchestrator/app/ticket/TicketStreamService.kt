@@ -479,7 +479,6 @@ class TicketStreamService : Service() {
   private var postRemoteTapForegroundCheckJob: Job? = null
   private var controlExitCleanupJob: Job? = null
   @Volatile private var activeControlCodeKeyboardClamp: RequestScopedKeyboardClampLease? = null
-  @Volatile private var activeControlCodeRawVisualSignature: String = ""
   @Volatile private var activeControlCodeGeneratedVisualSignature: String = ""
   @Volatile private var activeControlCodeVisualSignatureEpoch: String = ""
   @Volatile private var activeControlCodeRawDetailAnchor: String = ""
@@ -2095,6 +2094,14 @@ class TicketStreamService : Service() {
             checkpoint.activationRevision,
             checkpointRecovery = true
           )
+        TicketActivationCheckpointStage.NO_TRANSITION_PROVEN ->
+          return ticketVisualActionTerminal(
+            request,
+            false,
+            "needs_attention",
+            "ticket_action_gesture_completed_no_transition",
+            observation
+          )
         TicketActivationCheckpointStage.ACTIVATION_DISPATCHING,
         TicketActivationCheckpointStage.NEEDS_ATTENTION -> {
           checkpoint.let(ticketActivationCheckpointStore::recordNeedsAttention)
@@ -2557,25 +2564,29 @@ class TicketStreamService : Service() {
       ?: return ticketVisualActionTerminal(request, false, "failed", "ticket_action_slider_unproved", observation)
     val exactRegistrationProof = if (request.target == TicketVisualActionTarget.REGISTER_CURRENT) {
       val registrationProofGate = ticketRegistrationProofForCurrentVisualAction(
-        proof = currentTicketRegistrationProof?.takeIf { it == boundRegistrationProof },
+        proof = currentTicketRegistrationProof,
         request = request,
         observation = observation,
         currentStreamEpoch = streamEpoch,
         currentFrameSequence = frameSequence
       )
-      registrationProofGate.proof ?: return ticketVisualActionTerminal(
-        request,
-        false,
-        "failed",
-        registrationProofGate.failureReason ?: "ticket_action_interaction_revision_unproved",
-        observation
-      )
+      registrationProofGate.proof?.takeIf { it == boundRegistrationProof }
+        ?: return ticketVisualActionTerminal(
+          request,
+          false,
+          "failed",
+          registrationProofGate.failureReason ?: "ticket_action_interaction_revision_unproved",
+          observation
+        )
     } else {
       null
     }
     val provenObservation = exactRegistrationProof?.let { proof ->
       observation.copy(currentAnchor = proof.ticketAnchor)
     } ?: observation
+    val provenDetailAnchor = exactRegistrationProof?.detailAnchor.orEmpty()
+      .ifBlank { preparedRegistrationProof?.detailAnchor.orEmpty() }
+      .ifBlank { observation.currentAnchor }
     val revision = exactRegistrationProof?.interactionRevision ?: command.revision
     val deviceBounds = ticketVisualProbeBoundsToDevice(slider)
     if (deviceBounds.width < 220 || deviceBounds.height < 20) {
@@ -2620,9 +2631,7 @@ class TicketStreamService : Service() {
         phoneDisplayHeight = resources.displayMetrics.heightPixels,
         provedAtUptimeMillis = SystemClock.elapsedRealtime(),
         ticketAnchor = provenObservation.currentAnchor,
-        detailAnchor = exactRegistrationProof?.detailAnchor.orEmpty()
-          .ifBlank { preparedRegistrationProof?.detailAnchor.orEmpty() }
-          .ifBlank { provenObservation.currentAnchor },
+        detailAnchor = provenDetailAnchor,
         sliderLeft = deviceBounds.left,
         sliderTop = deviceBounds.top,
         sliderRight = deviceBounds.right,
@@ -2774,11 +2783,23 @@ class TicketStreamService : Service() {
     val activated = activationObservation?.takeIf {
       it.state == TicketVisualPhoneState.ACTIVATED_DETAIL
     } ?: run {
-        ticketActivationCheckpointStore.recordNeedsAttention(dispatching)
         val reason = ticketVisualPostGestureFailureReason(
           postGestureObservation,
-          provenObservation.currentAnchor
+          provenDetailAnchor
         )
+        if (reason == "ticket_action_gesture_completed_no_transition") {
+          if (ticketActivationCheckpointStore.recordNoTransitionProven(dispatching) == null) {
+            return ticketVisualActionTerminal(
+              request,
+              false,
+              "needs_attention",
+              "ticket_action_no_transition_checkpoint_unproved",
+              postGestureObservation
+            )
+          }
+        } else {
+          ticketActivationCheckpointStore.recordNeedsAttention(dispatching)
+        }
         return ticketVisualActionTerminal(
           request,
           false,
@@ -2842,9 +2863,30 @@ class TicketStreamService : Service() {
       if (provenAnchor.isNotBlank()) {
         rememberTicketVisualActivatedAnchor(requireNotNull(reconciled))
       }
-      if (!alreadyActivationProven) {
-        recordTicketActivationProven(checkpoint, activationRevision)
+      if (!alreadyActivationProven && recordTicketActivationProven(checkpoint, activationRevision) == null) {
+        val failed = ticketVisualActionTerminal(
+          request = request,
+          ok = false,
+          status = "needs_attention",
+          reason = "ticket_action_activation_proven_checkpoint_unproved",
+          observation = reconciled
+        ).copy(
+          interactionRevision = interactionRevision,
+          activationRevision = activationRevision,
+          activationAttemptId = request.attemptId
+        )
+        persistTicketVisualTerminalSnapshot(request, failed, reconciled)
+        return failed
       }
+      val succeeded = ticketVisualActivationSuccess(
+        request = request,
+        observation = requireNotNull(reconciled),
+        interactionRevision = interactionRevision,
+        activationRevision = activationRevision,
+        updateActivatedAnchor = false
+      )
+      persistTicketVisualTerminalSnapshot(request, succeeded, reconciled)
+      return succeeded
     } else if (!alreadyActivationProven) {
       ticketActivationCheckpointStore.recordNeedsAttention(checkpoint)
     }
@@ -9106,7 +9148,6 @@ class TicketStreamService : Service() {
     lastControlCodeSurfaceState = null
     lastControlCodeSurfaceSeenAtMillis = 0L
     lastControlExitDirtySurfaceState = null
-    activeControlCodeRawVisualSignature = ""
     activeControlCodeGeneratedVisualSignature = ""
     activeControlCodeVisualSignatureEpoch = ""
     activeControlCodeRawDetailAnchor = ""
@@ -9810,7 +9851,6 @@ class TicketStreamService : Service() {
     lastControlCodeRequestId = cleanRequestId
     lastControlCodeRequestStatus = "queued"
     lastControlCodeRequestReason = null
-    activeControlCodeRawVisualSignature = ""
     activeControlCodeGeneratedVisualSignature = ""
     activeControlCodeVisualSignatureEpoch = ""
     activeControlCodeRawDetailAnchor = ""
@@ -11107,23 +11147,14 @@ class TicketStreamService : Service() {
       recordInputGateDecision(allowed = false, reason = "control_code_button_bounds_unproved")
       return null
     }
-    val preSubmitVisualAnchor = awaitStableControlCodeRawVisualSignature(
-      "control_code_before_popup_signature"
-    ) ?: run {
-      recordInputGateDecision(allowed = false, reason = "control_code_baseline_visual_unproved")
-      recordTicketEvent("control_code_request_fast_fail", "reason=baseline_visual_unproved")
-      return null
-    }
-    activeControlCodeRawVisualSignature = preSubmitVisualAnchor.signature
     activeControlCodeGeneratedVisualSignature = ""
-    activeControlCodeVisualSignatureEpoch = preSubmitVisualAnchor.epoch
+    activeControlCodeVisualSignatureEpoch = ""
     activeControlCodeRawDetailAnchor = visualDetail.currentAnchor
     activeControlCodeRawDetailState = visualDetail.state
     activeControlCodeVisualResultMode = TicketControlCodeVisualResultMode.NONE
     activeControlCodeVisualSignatureExpiresAtMillis = SystemClock.elapsedRealtime() +
       CONTROL_CODE_VISUAL_SIGNATURE_TTL_MILLIS
     if (!persistControlCodeSignatureCleanupRequired(true)) {
-      activeControlCodeRawVisualSignature = ""
       activeControlCodeGeneratedVisualSignature = ""
       activeControlCodeVisualSignatureEpoch = ""
       activeControlCodeRawDetailAnchor = ""
@@ -11183,39 +11214,6 @@ class TicketStreamService : Service() {
     return null
   }
 
-  private suspend fun awaitStableControlCodeRawVisualSignature(
-    reason: String
-  ): TicketControlCodeVisualSignatureAnchor? {
-    val proof = TicketControlCodeVisualSignatureProof(requiredSamples = 3)
-    repeat(CONTROL_CODE_FAST_INTERACTION_RETRY_COUNT + 3) { attempt ->
-      val started = SystemClock.elapsedRealtime()
-      val probeId = rootHardwareH264CaptureEngine.requestControlCodeRequestVisualProbe(
-        "${reason}_${attempt + 1}"
-      ) ?: return@repeat
-      val current = waitForFreshControlCodeVisualProbe(
-        started,
-        probeId,
-        CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS
-      )
-      // The high-resolution action observation already proved ticket detail. Normalize only a
-      // nonblank signature here because an activated ticket's status strip can resemble the old
-      // generated-result marker in the compact compatibility classifier.
-      val stable = proof.observe(
-        probeId = current?.probeId ?: 0L,
-        result = if (current?.visualSignature.isNullOrBlank()) {
-          TicketControlCodeVisualClassifier.UNKNOWN
-        } else {
-          TicketControlCodeVisualClassifier.RAW_TICKET
-        },
-        visualSignature = current?.visualSignature.orEmpty(),
-        visualSignatureEpoch = current?.visualSignatureEpoch.orEmpty()
-      )
-      if (stable != null) return stable
-      delay(CONTROL_CODE_FAST_POLL_MILLIS)
-    }
-    return null
-  }
-
   private fun scheduleControlCodeVisualSignatureExpiry() {
     val expectedExpiry = activeControlCodeVisualSignatureExpiresAtMillis
     if (!controlCodeSignatureCleanupRequired || expectedExpiry <= 0L) return
@@ -11226,7 +11224,6 @@ class TicketStreamService : Service() {
         activeControlCodeVisualSignatureExpiresAtMillis == expectedExpiry &&
         SystemClock.elapsedRealtime() >= expectedExpiry
       ) {
-        activeControlCodeRawVisualSignature = ""
         activeControlCodeGeneratedVisualSignature = ""
         activeControlCodeVisualSignatureEpoch = ""
         activeControlCodeRawDetailAnchor = ""
@@ -14488,7 +14485,10 @@ class TicketStreamService : Service() {
     private const val CONTROL_CODE_BROWSER_MARKER_PROBE_WAIT_MILLIS = 1_800L
     private const val CONTROL_CODE_GENERATED_RESULT_MARKER_DELAY_MILLIS = 200L
     private const val CONTROL_CODE_SUBMIT_VISUAL_REQUIRED_SAMPLES = 2
-    private const val CONTROL_CODE_SUBMIT_VISUAL_MAX_SAMPLES = 4
+    // Focus/caret animation can outlive four rooted probe frames even though the field settles
+    // moments later. Extra samples are observation-only: value still needs two agreeing frames,
+    // and retyping remains gated by two freshly proved static-blank frames.
+    private const val CONTROL_CODE_SUBMIT_VISUAL_MAX_SAMPLES = 8
     private const val CONTROL_CODE_SUBMIT_VISUAL_PROBE_WAIT_MILLIS = 350L
     private const val CONTROL_CODE_SUBMIT_VISUAL_SAMPLE_GAP_MILLIS = 250L
     private const val CONTROL_CODE_VALUE_RENDER_RECHECK_SETTLE_MILLIS = 350L

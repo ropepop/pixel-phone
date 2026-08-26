@@ -11,6 +11,7 @@ import android.content.SharedPreferences
 internal enum class TicketActivationCheckpointStage(val wireName: String) {
   FRESH_TICKET_PROVEN("fresh_ticket_proven"),
   ACTIVATION_DISPATCHING("activation_dispatching"),
+  NO_TRANSITION_PROVEN("no_transition_proven"),
   ACTIVATION_PROVEN("activation_proven"),
   ACTIVATION_COMMITTED("activation_committed"),
   NEEDS_ATTENTION("needs_attention");
@@ -68,6 +69,11 @@ internal fun ticketActivationRecoveryAction(
       TicketActivationRecoveryScreen.UNUSED,
       TicketActivationRecoveryScreen.AMBIGUOUS -> TicketActivationRecoveryAction.NEEDS_ATTENTION
     }
+    // This stage is written only after Android reported a completed stroke and two fresh frames
+    // proved the exact same unactivated detail. Spacetime may admit a distinct child command, but
+    // a restarted Pixel must never turn this parent checkpoint into local replay authority.
+    TicketActivationCheckpointStage.NO_TRANSITION_PROVEN ->
+      TicketActivationRecoveryAction.NEEDS_ATTENTION
     TicketActivationCheckpointStage.ACTIVATION_PROVEN -> when (screen) {
       TicketActivationRecoveryScreen.ACTIVATED -> TicketActivationRecoveryAction.COMMIT_PROVEN_RESULT
       TicketActivationRecoveryScreen.UNUSED,
@@ -139,6 +145,10 @@ internal class TicketActivationCheckpointStore internal constructor(
         stage = TicketActivationCheckpointStage.ACTIVATION_PROVEN
       )
     )
+  }
+
+  fun recordNoTransitionProven(checkpoint: TicketActivationCheckpoint): TicketActivationCheckpoint? {
+    return save(checkpoint.copy(stage = TicketActivationCheckpointStage.NO_TRANSITION_PROVEN))
   }
 
   fun recordActivationCommitted(checkpoint: TicketActivationCheckpoint): TicketActivationCheckpoint? {

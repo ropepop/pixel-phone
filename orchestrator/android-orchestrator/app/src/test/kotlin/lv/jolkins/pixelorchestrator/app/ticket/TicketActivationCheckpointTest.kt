@@ -55,6 +55,18 @@ class TicketActivationCheckpointTest {
   }
 
   @Test
+  fun provenNoTransitionNeverBecomesLocalReplayAuthority() {
+    val checkpoint = checkpoint(TicketActivationCheckpointStage.NO_TRANSITION_PROVEN)
+
+    TicketActivationRecoveryScreen.entries.forEach { screen ->
+      assertEquals(
+        TicketActivationRecoveryAction.NEEDS_ATTENTION,
+        ticketActivationRecoveryAction(checkpoint, screen)
+      )
+    }
+  }
+
+  @Test
   fun provenResultCommitsWithoutASecondGesture() {
     val checkpoint = checkpoint(
       stage = TicketActivationCheckpointStage.ACTIVATION_PROVEN,
@@ -94,7 +106,9 @@ class TicketActivationCheckpointTest {
     val store = TicketActivationCheckpointStore(backend)
     val fresh = requireNotNull(store.recordFreshTicketProven("command", "revision", "attempt"))
     val dispatching = requireNotNull(store.recordActivationDispatching(fresh))
-    val proven = requireNotNull(store.recordActivationProven(dispatching, "activation"))
+    val noTransition = requireNotNull(store.recordNoTransitionProven(dispatching))
+    assertEquals(TicketActivationCheckpointStage.NO_TRANSITION_PROVEN, noTransition.stage)
+    val proven = requireNotNull(store.recordActivationProven(noTransition, "activation"))
     assertEquals(proven, store.loadFor("command", "revision", "attempt"))
     assertNull(store.loadFor("other-command", "revision", "attempt"))
     assertFalse(store.clearIfMatches("command", "other-attempt"))

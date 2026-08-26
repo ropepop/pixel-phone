@@ -39,6 +39,28 @@ class TicketVisualActionTest {
   }
 
   @Test
+  fun acceptsOnlyTheExactSpacetimeNoTransitionRetryChild() {
+    val parent = "register-parent"
+    val child = "$parent-retry-1"
+    val valid = """{"version":3,"actionId":"$child","target":"register_current","attemptId":"$parent","expectedInteractionRevision":"revision-7","parentActionId":"$parent","rootActionId":"$parent","retryOrdinal":1,"retryProofStreamEpoch":"41","retryProofFrameSequence":"52"}"""
+    val parsed = parse(valid)
+
+    assertEquals(child, parsed?.actionId)
+    assertEquals(parent, parsed?.attemptId)
+    assertEquals(TicketVisualActionTarget.REGISTER_CURRENT, parsed?.target)
+
+    listOf(
+      valid.replace("\"retryOrdinal\":1", "\"retryOrdinal\":2"),
+      valid.replace("\"parentActionId\":\"$parent\"", "\"parentActionId\":\"other\""),
+      valid.replace("\"rootActionId\":\"$parent\"", "\"rootActionId\":\"other\""),
+      valid.replace("\"actionId\":\"$child\"", "\"actionId\":\"$parent-arbitrary\""),
+      valid.replace("\"retryProofStreamEpoch\":\"41\"", "\"retryProofStreamEpoch\":\"0\""),
+      valid.replace("\"retryProofFrameSequence\":\"52\"", "\"retryProofFrameSequence\":\"missing\""),
+      valid.replace("\"target\":\"register_current\"", "\"target\":\"open_latest_and_register\"")
+    ).forEach { rejected -> assertNull(parse(rejected)) }
+  }
+
+  @Test
   fun switchRequiresSpacetimeAuthorityAndOnlyVisualReadinessOnThePhone() {
     val ready = TicketVisualSwitchAnchors("activated", "unused")
     assertTrue(ready.visuallyReady)
@@ -686,6 +708,46 @@ class TicketVisualActionTest {
     )
     assertEquals(proof, admitted.proof)
     assertNull(admitted.failureReason)
+
+    val scheduledProof = proof.copy(interactionRevision = "schedule:revision")
+    val admittedScheduledProof = ticketRegistrationProofForCurrentVisualAction(
+      scheduledProof,
+      request,
+      currentDetail,
+      currentStreamEpoch = 7,
+      currentFrameSequence = 12
+    )
+    assertEquals(proof, admittedScheduledProof.proof)
+    assertNull(admittedScheduledProof.failureReason)
+    assertNull(
+      ticketRegistrationProofRevisionForRegisterCurrent(
+        proofRevision = "schedule:schedule:revision",
+        expectedRevision = "schedule:revision"
+      )
+    )
+
+    listOf(
+      "schedule:different",
+      "legacy:revision",
+      "schedule:schedule:revision",
+      "schedule:revision ",
+      "revision-suffix",
+      ""
+    ).forEach { rejectedRevision ->
+      val rejected = ticketRegistrationProofForCurrentVisualAction(
+        proof.copy(interactionRevision = rejectedRevision),
+        request,
+        currentDetail,
+        currentStreamEpoch = 7,
+        currentFrameSequence = 12
+      )
+      assertNull(rejectedRevision, rejected.proof)
+      assertEquals(
+        rejectedRevision,
+        "ticket_action_interaction_revision_unproved",
+        rejected.failureReason
+      )
+    }
 
     val changedIdentity = ticketRegistrationProofForCurrentVisualAction(
       proof,

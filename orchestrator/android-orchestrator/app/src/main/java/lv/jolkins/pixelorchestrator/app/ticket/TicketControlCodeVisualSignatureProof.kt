@@ -1,10 +1,5 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
-internal data class TicketControlCodeVisualSignatureAnchor(
-  val signature: String,
-  val epoch: String
-)
-
 internal enum class TicketControlCodeVisualResultMode {
   NONE,
   GENERATED_WITH_CLOSE
@@ -127,54 +122,3 @@ internal fun ticketControlCodeCleanupRequiresVisualReopen(
 ): Boolean = cleanupRequired &&
   resultMode == TicketControlCodeVisualResultMode.NONE &&
   !ticketControlCodeDetailAnchorIsValid(rawDetailAnchor)
-
-/** Requires independent, consecutive visual probes to agree on one same-epoch signature. */
-internal class TicketControlCodeVisualSignatureProof(
-  private val rejectedSignature: String = "",
-  private val expectedSignature: String = "",
-  private val expectedEpoch: String = "",
-  private val requiredSamples: Int = 2
-) {
-  init {
-    require(requiredSamples > 0)
-  }
-
-  private var lastProbeId: Long = 0L
-  private var candidateSignature: String = ""
-  private var candidateEpoch: String = ""
-  private var consecutiveSamples: Int = 0
-
-  fun observe(
-    probeId: Long,
-    result: String,
-    visualSignature: String,
-    visualSignatureEpoch: String
-  ): TicketControlCodeVisualSignatureAnchor? {
-    if (probeId <= lastProbeId) return null
-    lastProbeId = probeId
-    val acceptable = result == TicketControlCodeVisualClassifier.RAW_TICKET &&
-      visualSignature.matches(Regex("[0-9a-f]{24}")) &&
-      visualSignatureEpoch.matches(Regex("[0-9a-f]{12}")) &&
-      visualSignature != rejectedSignature &&
-      (expectedSignature.isBlank() || visualSignature == expectedSignature) &&
-      (expectedEpoch.isBlank() || visualSignatureEpoch == expectedEpoch)
-    if (!acceptable) {
-      candidateSignature = ""
-      candidateEpoch = ""
-      consecutiveSamples = 0
-      return null
-    }
-    if (candidateSignature == visualSignature && candidateEpoch == visualSignatureEpoch) {
-      consecutiveSamples += 1
-    } else {
-      candidateSignature = visualSignature
-      candidateEpoch = visualSignatureEpoch
-      consecutiveSamples = 1
-    }
-    return if (consecutiveSamples >= requiredSamples) {
-      TicketControlCodeVisualSignatureAnchor(candidateSignature, candidateEpoch)
-    } else {
-      null
-    }
-  }
-}

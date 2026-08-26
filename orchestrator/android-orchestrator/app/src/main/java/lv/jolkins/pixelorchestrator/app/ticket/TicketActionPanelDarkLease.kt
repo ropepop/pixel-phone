@@ -124,6 +124,7 @@ internal class TicketActionPanelDarkLease(
   @Volatile private var verifyJob: Job? = null
   @Volatile private var helperStopProven = false
   @Volatile private var finalization: TicketActionPanelDarkLeaseFinalization? = null
+  @Volatile private var lastMutationMayHaveDispatchedAtUptimeMillis: Long? = null
   @Volatile private var state = TicketActionPanelDarkLeaseSnapshot(ownerActionId = actionId)
 
   fun snapshot(): TicketActionPanelDarkLeaseSnapshot = state
@@ -369,6 +370,7 @@ internal class TicketActionPanelDarkLease(
   }
 
   fun markMutationMayHaveDispatched() {
+    lastMutationMayHaveDispatchedAtUptimeMillis = uptimeClock()
     updateState { it.copy(mutationMayHaveDispatched = true) }
   }
 
@@ -385,7 +387,14 @@ internal class TicketActionPanelDarkLease(
   }
 
   private suspend fun awaitFinalConvergenceTail(): Boolean {
-    var remainingMillis = PANEL_DARK_FINAL_CONVERGENCE_MILLIS
+    val releaseStartedAtMillis = uptimeClock()
+    // Visual convergence runs while the helper is still active, so count it toward the
+    // safety window instead of starting a second full tail after proof has completed.
+    val convergenceStartedAtMillis =
+      lastMutationMayHaveDispatchedAtUptimeMillis ?: releaseStartedAtMillis
+    val elapsedMillis = (releaseStartedAtMillis - convergenceStartedAtMillis).coerceAtLeast(0L)
+    var remainingMillis = (PANEL_DARK_FINAL_CONVERGENCE_MILLIS - elapsedMillis)
+      .coerceAtLeast(0L)
     while (remainingMillis > 0L) {
       if (!beforeMutationAllowed()) return false
       val stepMillis = minOf(PHYSICAL_TOUCH_POLL_MILLIS, remainingMillis)
