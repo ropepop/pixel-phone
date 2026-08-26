@@ -69,6 +69,8 @@ TIMINGS_TSV="${REPORT_DIR}/phase-timings.tsv"
 SATIKSME_SCHEMA_PUBLISH_LOG="${REPORT_DIR}/satiksme-schema-publish.log"
 ROOTED_FRESHNESS_PRE_REPORT="${REPORT_DIR}/rooted-freshness.pre.txt"
 ROOTED_FRESHNESS_POST_REPORT="${REPORT_DIR}/rooted-freshness.post.txt"
+TICKET_FRESHNESS_PRE_REPORT="${REPORT_DIR}/ticket-freshness.pre.txt"
+TICKET_FRESHNESS_POST_REPORT="${REPORT_DIR}/ticket-freshness.post.txt"
 
 RUNTIME_BUNDLE_DIR=""
 RUNTIME_MANIFEST_PATH=""
@@ -109,6 +111,9 @@ RUN_STATUS="failed"
 PREFLIGHT_ROOTED_FRESHNESS="unknown"
 FINAL_ROOTED_FRESHNESS="unknown"
 FINAL_ROOTED_FRESHNESS_REPORT=""
+PREFLIGHT_TICKET_FRESHNESS="unknown"
+FINAL_TICKET_FRESHNESS="unknown"
+FINAL_TICKET_FRESHNESS_REPORT=""
 LIVE_DNS_RUNTIME_CONVERGED=0
 PLATFORM_MUTATION_PERFORMED=0
 ROOTED_CONVERGENCE_REQUIRED=0
@@ -129,7 +134,7 @@ Options:
   --transport MODE            transport to use (adb|ssh|auto)
   --ssh-host IP               Tailscale or SSH host/IP
   --ssh-port PORT             SSH port (default: 2222)
-  --scope full|orchestrator|platform|dns|train_bot|satiksme_bot|site_notifier|subscription_bot
+  --scope full|orchestrator|platform|dns|ticket_screen|train_bot|satiksme_bot|site_notifier|subscription_bot
                               deployment scope (default: full)
   --profile fast|standard|full
                               fast defaults to orchestrator-only scope and reuses unchanged work;
@@ -436,7 +441,7 @@ if [[ -n "${MIRROR_ACTION}" ]]; then
 fi
 
 case "${SCOPE}" in
-  full|orchestrator|platform|dns|train_bot|satiksme_bot|site_notifier|subscription_bot) ;;
+  full|orchestrator|platform|dns|ticket_screen|train_bot|satiksme_bot|site_notifier|subscription_bot) ;;
   *)
     echo "Unsupported --scope: ${SCOPE}" >&2
     exit 2
@@ -566,6 +571,10 @@ scope_includes_platform() {
 
 scope_is_dns_only() {
   [[ "${SCOPE}" == "dns" ]]
+}
+
+scope_is_ticket_screen_only() {
+  [[ "${SCOPE}" == "ticket_screen" ]]
 }
 
 scope_requires_runtime_bundle() {
@@ -967,6 +976,99 @@ post_deploy_rooted_freshness() {
       exit 1
       ;;
   esac
+}
+
+run_ticket_freshness_check() {
+  local output_path="$1"
+  local freshness_output=""
+  local freshness_rc=0
+  local -a cmd=("${RUNTIME_FRESHNESS_SCRIPT}")
+  local line=""
+
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] && cmd+=("${line}")
+  done < <(runtime_freshness_args)
+  cmd+=(--scope ticket_screen)
+  freshness_output="$("${cmd[@]}" 2>&1)" || freshness_rc=$?
+  printf '%s\n' "${freshness_output}" > "${output_path}"
+  return "${freshness_rc}"
+}
+
+reconcile_ticket_runtime_assets() {
+  local pre_rc=0
+  local post_rc=0
+  local retry=0
+  local force_redeploy=0
+
+  run_ticket_freshness_check "${TICKET_FRESHNESS_PRE_REPORT}" || pre_rc=$?
+  case "${pre_rc}" in
+    0)
+      PREFLIGHT_TICKET_FRESHNESS="fresh"
+      ;;
+    3)
+      PREFLIGHT_TICKET_FRESHNESS="stale"
+      ;;
+    *)
+      PREFLIGHT_TICKET_FRESHNESS="unknown"
+      FINAL_TICKET_FRESHNESS="unknown"
+      FINAL_TICKET_FRESHNESS_REPORT="${TICKET_FRESHNESS_PRE_REPORT}"
+      record_validation "ticket_runtime_assets" "fail"
+      echo "Unable to verify Ticket runtime asset freshness; see ${TICKET_FRESHNESS_PRE_REPORT}" >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ "${MODE}" == "validate-only" ]]; then
+    FINAL_TICKET_FRESHNESS="${PREFLIGHT_TICKET_FRESHNESS}"
+    FINAL_TICKET_FRESHNESS_REPORT="${TICKET_FRESHNESS_PRE_REPORT}"
+    if (( pre_rc != 0 )); then
+      record_validation "ticket_runtime_assets" "fail"
+      echo "Ticket runtime assets are stale; see ${TICKET_FRESHNESS_PRE_REPORT}" >&2
+      exit 1
+    fi
+    record_validation "ticket_runtime_assets" "pass"
+    return 0
+  fi
+
+  if scope_is_ticket_screen_only; then
+    force_redeploy=1
+  fi
+  if (( force_redeploy == 1 || pre_rc == 3 )); then
+    if (( pre_rc == 3 )); then
+      log "Ticket runtime assets are stale; synchronizing them from the verified orchestrator APK"
+    else
+      log "Redeploying the Ticket screen and synchronizing its bundled runtime assets"
+    fi
+    record_action "redeploy_component_ticket_screen"
+    run_deploy --action redeploy_component --component ticket_screen
+
+    post_rc=0
+    run_ticket_freshness_check "${TICKET_FRESHNESS_POST_REPORT}" || post_rc=$?
+    while (( retry < 5 && post_rc == 3 )); do
+      sleep 0.2
+      retry=$((retry + 1))
+      post_rc=0
+      run_ticket_freshness_check "${TICKET_FRESHNESS_POST_REPORT}" || post_rc=$?
+    done
+    FINAL_TICKET_FRESHNESS_REPORT="${TICKET_FRESHNESS_POST_REPORT}"
+    if (( post_rc != 0 )); then
+      if (( post_rc == 3 )); then
+        FINAL_TICKET_FRESHNESS="stale"
+      else
+        FINAL_TICKET_FRESHNESS="unknown"
+      fi
+      record_validation "ticket_runtime_assets" "fail"
+      echo "Ticket runtime assets did not converge after redeploy; see ${TICKET_FRESHNESS_POST_REPORT}" >&2
+      exit 1
+    fi
+    FINAL_TICKET_FRESHNESS="fresh"
+    record_validation "ticket_runtime_assets" "synced"
+    return 0
+  fi
+
+  FINAL_TICKET_FRESHNESS="fresh"
+  FINAL_TICKET_FRESHNESS_REPORT="${TICKET_FRESHNESS_PRE_REPORT}"
+  record_validation "ticket_runtime_assets" "pass"
 }
 
 compute_platform_bootstrap_need() {
@@ -1507,6 +1609,7 @@ write_summary_json() {
   export SUMMARY_BOOTSTRAP_NEEDED="${BOOTSTRAP_NEEDED}"
   export SUMMARY_ROOTED_STALE="${ROOTED_STALE}"
   export SUMMARY_PREFLIGHT_ROOTED_FRESHNESS="${PREFLIGHT_ROOTED_FRESHNESS}"
+  export SUMMARY_PREFLIGHT_TICKET_FRESHNESS="${PREFLIGHT_TICKET_FRESHNESS}"
   export SUMMARY_CONFIG_CHANGED="${CONFIG_CHANGED}"
   export SUMMARY_DDNS_TOKEN_CHANGED="${DDNS_TOKEN_CHANGED}"
   export SUMMARY_PLATFORM_ARTIFACTS_CHANGED="${PLATFORM_ARTIFACTS_CHANGED}"
@@ -1517,6 +1620,8 @@ write_summary_json() {
   export SUMMARY_REMOTE_RECOVERY_TRIGGERED="${REMOTE_RECOVERY_TRIGGERED}"
   export SUMMARY_FINAL_ROOTED_FRESHNESS="${FINAL_ROOTED_FRESHNESS}"
   export SUMMARY_FINAL_ROOTED_FRESHNESS_REPORT="${FINAL_ROOTED_FRESHNESS_REPORT}"
+  export SUMMARY_FINAL_TICKET_FRESHNESS="${FINAL_TICKET_FRESHNESS}"
+  export SUMMARY_FINAL_TICKET_FRESHNESS_REPORT="${FINAL_TICKET_FRESHNESS_REPORT}"
   export SUMMARY_LIVE_DNS_RUNTIME_CONVERGED="${LIVE_DNS_RUNTIME_CONVERGED}"
   export SUMMARY_ACTIONS="${actions_joined}"
   export SUMMARY_VALIDATIONS="${validations_joined}"
@@ -1584,6 +1689,7 @@ payload = {
     "subscriptionBotReleaseDir": os.environ.get("SUMMARY_SUBSCRIPTION_RELEASE_DIR") or None,
     "preflight": {
         "rootedFreshness": os.environ.get("SUMMARY_PREFLIGHT_ROOTED_FRESHNESS") or "unknown",
+        "ticketRuntimeFreshness": os.environ.get("SUMMARY_PREFLIGHT_TICKET_FRESHNESS") or "unknown",
         "rootfsSource": os.environ.get("SUMMARY_ROOTFS_SOURCE") or None,
     },
     "decisions": {
@@ -1599,8 +1705,10 @@ payload = {
     },
     "finalState": {
         "rootedFreshness": os.environ.get("SUMMARY_FINAL_ROOTED_FRESHNESS") or "unknown",
+        "ticketRuntimeFreshness": os.environ.get("SUMMARY_FINAL_TICKET_FRESHNESS") or "unknown",
         "liveDnsRuntimeConverged": os.environ.get("SUMMARY_LIVE_DNS_RUNTIME_CONVERGED") == "1",
         "rootedFreshnessReport": os.environ.get("SUMMARY_FINAL_ROOTED_FRESHNESS_REPORT") or None,
+        "ticketRuntimeFreshnessReport": os.environ.get("SUMMARY_FINAL_TICKET_FRESHNESS_REPORT") or None,
     },
     "actionsExecuted": split_field("SUMMARY_ACTIONS"),
     "validations": validations,
@@ -1745,6 +1853,11 @@ main() {
   fi
 
   emit_plan
+
+  # Reconcile APK-backed Ticket helpers before any other component invocation can consume the
+  # one-time APK installation. A stale helper must be refreshed by the same direct deploy call
+  # that installs the verified APK, otherwise the direct deploy guard correctly fails closed.
+  reconcile_ticket_runtime_assets
 
   if [[ "${MODE}" != "validate-only" ]]; then
     if scope_includes_platform && (( BOOTSTRAP_NEEDED == 1 )); then

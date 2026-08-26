@@ -65,22 +65,4 @@ class TicketSpacetimeCommandExpiryTest {
     )
   }
 
-  @Test
-  fun missingCommandNeedsTwoSuccessfulConfirmations() {
-    val confirmation = TicketSpacetimeMissingCommandConfirmation()
-
-    assertFalse(confirmation.observe("command-a", dispatchable = false))
-    assertTrue(confirmation.observe("command-a", dispatchable = false))
-  }
-
-  @Test
-  fun presentCommandOrDifferentIdRestartsMissingConfirmation() {
-    val confirmation = TicketSpacetimeMissingCommandConfirmation()
-
-    assertFalse(confirmation.observe("command-a", dispatchable = false))
-    assertFalse(confirmation.observe("command-a", dispatchable = true))
-    assertFalse(confirmation.observe("command-a", dispatchable = false))
-    assertFalse(confirmation.observe("command-b", dispatchable = false))
-    assertTrue(confirmation.observe("command-b", dispatchable = false))
-  }
 }

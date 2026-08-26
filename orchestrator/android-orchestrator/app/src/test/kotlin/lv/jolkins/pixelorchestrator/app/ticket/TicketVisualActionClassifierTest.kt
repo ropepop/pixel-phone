@@ -558,12 +558,16 @@ class TicketVisualActionClassifierTest {
   fun rotatingTicketCodeDoesNotReplaceTheStaticDetailIdentity() {
     val original = unactivatedDetailFrame()
     drawDetailClose(original)
-    val originalAnchor = TicketVisualActionClassifier.classify(original).currentAnchor
+    val originalSignature = TicketControlCodeVisualClassifier.ticketDetailStaticVisualSignature(
+      original,
+      TicketVisualActionClassifier.SAMPLE_WIDTH,
+      TicketVisualActionClassifier.SAMPLE_HEIGHT
+    )
     val rotatedCode = original.copyOf()
     fill(
       rotatedCode,
       32,
-      56,
+      20,
       160,
       136,
       RED,
@@ -579,10 +583,20 @@ class TicketVisualActionClassifierTest {
       DARK,
       TicketVisualActionClassifier.SAMPLE_WIDTH
     )
+    val rotatedSignature = TicketControlCodeVisualClassifier.ticketDetailStaticVisualSignature(
+      rotatedCode,
+      TicketVisualActionClassifier.SAMPLE_WIDTH,
+      TicketVisualActionClassifier.SAMPLE_HEIGHT
+    )
+    val changedMetadataSignature = TicketControlCodeVisualClassifier.ticketDetailStaticVisualSignature(
+      changedMetadata,
+      TicketVisualActionClassifier.SAMPLE_WIDTH,
+      TicketVisualActionClassifier.SAMPLE_HEIGHT
+    )
 
-    assertTrue(originalAnchor.matches(Regex("d_[0-9a-f]{28}")))
-    assertEquals(originalAnchor, TicketVisualActionClassifier.classify(rotatedCode).currentAnchor)
-    assertFalse(originalAnchor == TicketVisualActionClassifier.classify(changedMetadata).currentAnchor)
+    assertTrue(originalSignature.matches(Regex("[0-9a-f]{24}")))
+    assertEquals(originalSignature, rotatedSignature)
+    assertFalse(originalSignature == changedMetadataSignature)
   }
 
   @Test

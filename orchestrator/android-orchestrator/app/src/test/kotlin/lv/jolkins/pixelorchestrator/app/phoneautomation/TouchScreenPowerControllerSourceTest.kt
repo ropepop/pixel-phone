@@ -8,9 +8,21 @@ import java.nio.file.Path
 
 class TouchScreenPowerControllerSourceTest {
   @Test
+  fun heldWakeLockRefreshesOnlyNearItsDeadline() {
+    assertTrue(touchScreenWakeHoldNeedsRefresh(false, 1_000L, 0L, 60_000L))
+    assertFalse(touchScreenWakeHoldNeedsRefresh(true, 1_000L, 600_000L, 60_000L))
+    assertFalse(touchScreenWakeHoldNeedsRefresh(true, 539_999L, 600_000L, 60_000L))
+    assertTrue(touchScreenWakeHoldNeedsRefresh(true, 540_000L, 600_000L, 60_000L))
+    assertTrue(touchScreenWakeHoldNeedsRefresh(true, 600_001L, 600_000L, 60_000L))
+  }
+
+  @Test
   fun touchBrightnessHoldUsesDimNonWakingWakeLockToAvoidPanelBrightnessSpikes() {
     val source = touchScreenPowerControllerSource()
-    val holdBody = source.substringBetween("  @Suppress(\"DEPRECATION\")\n  override fun holdScreen(reason: String) {", "  override fun releaseHold(reason: String)")
+    val holdBody = source.substringBetween(
+      "  override fun holdScreen(reason: String) {",
+      "  override fun releaseHold(reason: String)"
+    )
 
     assertTrue(
       "touch-brightness hold should keep Android interactive with the least-bright display wake lock",
@@ -23,6 +35,10 @@ class TouchScreenPowerControllerSourceTest {
     assertFalse(
       "panel-sleep hold refresh must not ACQUIRE_CAUSES_WAKEUP because refreshes re-trigger display brightness ramps",
       holdBody.contains("PowerManager.ACQUIRE_CAUSES_WAKEUP")
+    )
+    assertTrue(
+      "routine non-touch events must not reacquire an already-held wake lock",
+      holdBody.contains("touchScreenWakeHoldNeedsRefresh")
     )
   }
 

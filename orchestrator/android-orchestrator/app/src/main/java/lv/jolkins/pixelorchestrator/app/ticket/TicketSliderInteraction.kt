@@ -2,89 +2,6 @@ package lv.jolkins.pixelorchestrator.app.ticket
 
 import java.nio.charset.StandardCharsets
 import java.util.UUID
-import kotlin.math.roundToInt
-
-/**
- * Current-only interaction state read from SpacetimeDB. Pointer history never
- * enters this object; the latest browser sample replaces the previous one.
- */
-internal data class TicketSpacetimeInteractionSnapshot(
-  val status: String,
-  val interactionRevision: String,
-  val activationRevision: String,
-  val activationAt: String,
-  val scheduledResetAt: String,
-  val resetRequestId: String,
-  val streamEpoch: Long,
-  val frameSequence: Long,
-  val phoneDisplayWidth: Int,
-  val phoneDisplayHeight: Int,
-  val sliderLeft: Int,
-  val sliderTop: Int,
-  val sliderRight: Int,
-  val sliderBottom: Int,
-  val ownerPublicId: String,
-  val controlId: String,
-  val leasePhase: String,
-  val leaseExpiresAt: String,
-  val latestInputSequence: String,
-  val latestInputPhase: String,
-  val latestProgress: Int,
-  val lastAppliedSequence: String,
-  val lastAppliedProgress: Int,
-  val reason: String,
-  val updatedAt: String,
-  val expiresAt: String
-) {
-  val hasSliderBounds: Boolean
-    get() = sliderRight > sliderLeft && sliderBottom > sliderTop
-}
-
-internal data class TicketSliderApplicationResult(
-  val ok: Boolean,
-  val reason: String,
-  val status: String,
-  val lastAppliedSequence: String,
-  val lastAppliedProgress: Int,
-  val leasePhase: String,
-  val leaseExpiresAt: String,
-  val ownerPublicId: String,
-  val controlId: String,
-  val activationRevision: String = "",
-  val activationAt: String = "",
-  val scheduledResetAt: String = "",
-  val activationAttemptId: String = ""
-)
-
-internal fun sliderApplied(
-  ok: Boolean,
-  reason: String,
-  status: String,
-  sequence: Long,
-  progress: Int,
-  leasePhase: String,
-  leaseExpiresAt: String = "",
-  ownerPublicId: String = "",
-  controlId: String = "",
-  activationRevision: String = "",
-  activationAt: String = "",
-  scheduledResetAt: String = "",
-  activationAttemptId: String = ""
-) = TicketSliderApplicationResult(
-  ok = ok,
-  reason = reason,
-  status = status,
-  lastAppliedSequence = sequence.toString(),
-  lastAppliedProgress = progress,
-  leasePhase = leasePhase,
-  leaseExpiresAt = leaseExpiresAt,
-  ownerPublicId = ownerPublicId,
-  controlId = controlId,
-  activationRevision = activationRevision,
-  activationAt = activationAt,
-  scheduledResetAt = scheduledResetAt,
-  activationAttemptId = activationAttemptId
-)
 
 internal data class TicketRegistrationProof(
   val status: String,
@@ -130,15 +47,6 @@ internal fun ticketSliderGestureContract(
     endX = endX,
     durationMillis = durationMillis.coerceAtLeast(1L)
   )
-}
-
-/** Maps any retained progress input through the exact same endpoints as the one-shot stroke. */
-internal fun ticketSliderTargetX(bounds: TicketViviGraphicBounds, progress: Int): Int {
-  val contract = ticketSliderGestureContract(bounds)
-  return (
-    contract.startX +
-      ((contract.endX - contract.startX) * progress.coerceIn(0, 10_000) / 10_000f).roundToInt()
-    ).coerceIn(contract.startX, contract.endX)
 }
 
 /**
@@ -225,14 +133,6 @@ internal fun TicketRegistrationProof.toGraphicBounds(): TicketViviGraphicBounds 
     right = sliderRight,
     bottom = sliderBottom
   )
-}
-
-internal fun instantSliderActivationRevision(commandId: String, interactionRevision: String): String {
-  val identity = "${commandId.trim()}|${interactionRevision.trim()}"
-  val uuid = UUID.nameUUIDFromBytes(identity.toByteArray(StandardCharsets.UTF_8))
-    .toString()
-    .replace("-", "")
-  return "activation_button_$uuid"
 }
 
 /**

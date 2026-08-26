@@ -54,7 +54,7 @@ internal class AndroidPanelSleepBrightnessShieldController(
       val preparation = prepare()
       if (!preparation.success) return preparation
     }
-    return withContext(Dispatchers.Main.immediate) {
+    val applicationShield = withContext(Dispatchers.Main.immediate) {
       if (sharedShieldView != null) {
         return@withContext PhoneAutomationActionResult(true, "Panel-sleep brightness shield already shown")
       }
@@ -89,17 +89,40 @@ internal class AndroidPanelSleepBrightnessShieldController(
         PhoneAutomationActionResult(false, "Could not show panel-sleep brightness shield: ${error.message ?: error::class.java.simpleName}")
       }
     }
+    if (!applicationShield.success) return applicationShield
+    val accessibilityShieldShown =
+      PhoneAutomationServiceBridge.setPanelSleepBrightnessShieldVisible(true)
+    return if (accessibilityShieldShown) {
+      PhoneAutomationActionResult(true, "Panel-sleep brightness shields shown")
+    } else {
+      PhoneAutomationActionResult(
+        false,
+        "Could not show the panel-sleep accessibility brightness shield"
+      )
+    }
   }
 
-  override suspend fun hide(): PhoneAutomationActionResult = withContext(Dispatchers.Main.immediate) {
-    val view = sharedShieldView
-      ?: return@withContext PhoneAutomationActionResult(true, "Panel-sleep brightness shield already hidden")
-    runCatching {
-      windowManager.removeViewImmediate(view)
-      sharedShieldView = null
-      PhoneAutomationActionResult(true, "Panel-sleep brightness shield hidden")
-    }.getOrElse { error ->
-      PhoneAutomationActionResult(false, "Could not hide panel-sleep brightness shield: ${error.message ?: error::class.java.simpleName}")
+  override suspend fun hide(): PhoneAutomationActionResult {
+    val accessibilityShieldHidden =
+      PhoneAutomationServiceBridge.setPanelSleepBrightnessShieldVisible(false)
+    val applicationShield = withContext(Dispatchers.Main.immediate) {
+      val view = sharedShieldView
+        ?: return@withContext PhoneAutomationActionResult(true, "Panel-sleep brightness shield already hidden")
+      runCatching {
+        windowManager.removeViewImmediate(view)
+        sharedShieldView = null
+        PhoneAutomationActionResult(true, "Panel-sleep brightness shield hidden")
+      }.getOrElse { error ->
+        PhoneAutomationActionResult(false, "Could not hide panel-sleep brightness shield: ${error.message ?: error::class.java.simpleName}")
+      }
+    }
+    return when {
+      !applicationShield.success -> applicationShield
+      !accessibilityShieldHidden -> PhoneAutomationActionResult(
+        false,
+        "Could not hide the panel-sleep accessibility brightness shield"
+      )
+      else -> PhoneAutomationActionResult(true, "Panel-sleep brightness shields hidden")
     }
   }
 

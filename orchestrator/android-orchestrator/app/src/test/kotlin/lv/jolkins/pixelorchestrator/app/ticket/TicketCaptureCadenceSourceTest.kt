@@ -138,8 +138,8 @@ class TicketCaptureCadenceSourceTest {
     assertTrue(service.contains("requestSteadyHardwareCadenceBeforeStop(\"session_stop:\$reason\")"))
     assertTrue(service.contains("requestCadence(activeFps, reason)"))
     assertTrue(service.contains("requestCadence(steadyFps, reason)"))
-    assertTrue(service.contains("startControlCodeRequestBurst(reason)"))
-    assertTrue(service.contains("stopControlCodeRequestBurst(reason)"))
+    assertTrue(service.contains("rootHardwareH264CaptureEngine.startControlCodeRequestBurst("))
+    assertTrue(service.contains("rootHardwareH264CaptureEngine.stopControlCodeRequestBurst("))
     assertTrue(service.contains("FRAME_ENVELOPE_VERSION = \"tsf2\""))
   }
 

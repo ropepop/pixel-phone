@@ -31,6 +31,49 @@ class TicketControlCodeVisualClassifierTest {
   }
 
   @Test
+  fun liveGeneratedResultXSurvivesOnlyTheHighResolutionCleanupProbe() {
+    val compact = rawTicketFrame().also {
+      it.fill(left = 7, top = 27, right = 41, bottom = 31, color = RESULT_DARK)
+    }
+    val high = upscaleForSubmitProbe(compact)
+    // Sanitized live v324 aggregate: the result X is only three retained 96x144 samples and
+    // disappears entirely from the ordinary 48x72 point sample.
+    high[76, 57] = LIGHT
+    high[78, 57] = LIGHT
+    high[77, 58] = LIGHT
+
+    assertEquals(
+      TicketControlCodeVisualClassifier.GENERATED,
+      TicketControlCodeVisualClassifier.classifyForCleanupHighResolution(high.pixels)
+    )
+    assertEquals(
+      "36,27,41,31",
+      TicketControlCodeVisualClassifier.generatedResultCloseBoundsHighResolution(high.pixels)
+    )
+    assertTrue(
+      TicketControlCodeVisualClassifier.ticketCodeVisualSignatureHighResolution(high.pixels)
+        .matches(Regex("[0-9a-f]{24}"))
+    )
+  }
+
+  @Test
+  fun highResolutionResultStripWithoutAProvedXHasNoCloseTarget() {
+    val compact = rawTicketFrame().also {
+      it.fill(left = 7, top = 27, right = 41, bottom = 31, color = RESULT_DARK)
+    }
+    val high = upscaleForSubmitProbe(compact)
+
+    assertEquals(
+      TicketControlCodeVisualClassifier.GENERATED,
+      TicketControlCodeVisualClassifier.classifyForCleanupHighResolution(high.pixels)
+    )
+    assertEquals(
+      "",
+      TicketControlCodeVisualClassifier.generatedResultCloseBoundsHighResolution(high.pixels)
+    )
+  }
+
+  @Test
   fun ambiguousBrightGeneratedStripDoesNotYieldCloseGeometry() {
     val frame = rawTicketFrame()
     frame.fill(left = 7, top = 36, right = 41, bottom = 41, color = RESULT_DARK)
@@ -161,6 +204,10 @@ class TicketControlCodeVisualClassifierTest {
     )
     assertTrue(TicketControlCodeVisualClassifier.submitInputBounds(submitFrame.pixels).isNotBlank())
     assertTrue(TicketControlCodeVisualClassifier.submitButtonBounds(submitFrame.pixels).isNotBlank())
+    assertEquals(
+      "28,64,68,72",
+      TicketControlCodeVisualClassifier.submitInputBounds(submitFrame.pixels)
+    )
   }
 
   @Test
@@ -272,6 +319,34 @@ class TicketControlCodeVisualClassifierTest {
     // only the two sampled stroke positions and luminances, never the entered value or image.
     entered[46, 68] = LIVE_DIGIT_STROKE_60
     entered[48, 67] = LIVE_DIGIT_STROKE_75
+
+    assertEquals(
+      TicketControlCodeVisualClassifier.CONTROL_POPUP_VALUE_READY,
+      TicketControlCodeVisualClassifier.classifySubmitLayout(entered.pixels)
+    )
+  }
+
+  @Test
+  fun liveLatvianPlaceholderAggregateCannotImpersonateEnteredDigits() {
+    val placeholder = blankSubmitFrame()
+    // Sanitized aggregate from the live v323 rooted submit probe: no text or pixels are retained,
+    // only the ten dark sample locations and the 25-column first-to-last extent that caused the
+    // old false VALUE_READY result.
+    listOf(34, 36, 38, 40, 45, 48, 51, 54, 57, 59).forEachIndexed { index, x ->
+      placeholder[x, 66 + index % 2] = LIVE_DIGIT_STROKE_60
+    }
+
+    assertEquals(
+      TicketControlCodeVisualClassifier.CONTROL_POPUP_STATIC_READY,
+      TicketControlCodeVisualClassifier.classifySubmitLayout(placeholder.pixels)
+    )
+  }
+
+  @Test
+  fun longestBoundedDigitAggregateRemainsEligible() {
+    val entered = blankSubmitFrame()
+    entered[34, 67] = LIVE_DIGIT_STROKE_60
+    entered[54, 68] = LIVE_DIGIT_STROKE_75
 
     assertEquals(
       TicketControlCodeVisualClassifier.CONTROL_POPUP_VALUE_READY,
@@ -394,11 +469,78 @@ class TicketControlCodeVisualClassifierTest {
   }
 
   @Test
-  fun registeredDetailWithAztecAndSliderIsASeparateCleanupProof() {
+  fun legacyRegisteredDetailWithAztecAndWideStatusBandIsASeparateCleanupProof() {
     val frame = rawTicketFrame()
     frame.fill(left = 4, top = 43, right = 44, bottom = 47, color = YELLOW)
 
     assertEquals(TicketControlCodeVisualClassifier.RAW_TICKET, classifyForCleanup(frame))
+  }
+
+  @Test
+  fun currentPaleActivatedStatusWithCompactCheckIsCleanupProofInBothChannelOrders() {
+    val normal = currentTicketFrame().also { addCurrentActivatedStatus(it, YELLOW) }
+    val swapped = currentTicketFrame(headerColor = SWAPPED_RED).also {
+      addCurrentActivatedStatus(it, SWAPPED_ORANGE)
+    }
+
+    assertEquals(TicketControlCodeVisualClassifier.RAW_TICKET, classifyForCleanup(normal))
+    assertEquals(TicketControlCodeVisualClassifier.RAW_TICKET, classifyForCleanup(swapped))
+    assertEquals(
+      TicketControlCodeVisualClassifier.RAW_TICKET,
+      TicketControlCodeVisualClassifier.classifyForCleanupHighResolution(
+        upscaleForSubmitProbe(normal).pixels
+      )
+    )
+  }
+
+  @Test
+  fun compactCheckWithoutThePaleActivatedStripFailsClosed() {
+    val frame = currentTicketFrame()
+    addCurrentActivatedCheck(frame, YELLOW)
+
+    assertEquals(TicketControlCodeVisualClassifier.UNKNOWN, classifyForCleanup(frame))
+  }
+
+  @Test
+  fun generatedResultStillWinsOverTheCurrentActivatedStatus() {
+    val frame = currentTicketFrame().also { addCurrentActivatedStatus(it, YELLOW) }
+    frame.fill(left = 7, top = 27, right = 41, bottom = 31, color = RESULT_DARK)
+    frame[24, 28] = LIGHT
+    frame[25, 28] = LIGHT
+    frame[36, 29] = LIGHT
+    frame[37, 29] = LIGHT
+
+    assertEquals(TicketControlCodeVisualClassifier.GENERATED, classifyForCleanup(frame))
+  }
+
+  @Test
+  fun popupOverTheCurrentActivatedStatusStillFailsClosed() {
+    val lightPopup = currentTicketFrame().also { addCurrentActivatedStatus(it, YELLOW) }
+    lightPopup.fill(left = 8, top = 30, right = 40, bottom = 45, color = LIGHT)
+    lightPopup.fill(left = 13, top = 39, right = 36, bottom = 40, color = DARK)
+    lightPopup.fill(left = 31, top = 39, right = 42, bottom = 44, color = ORANGE)
+
+    val darkPopup = currentTicketFrame().also { addCurrentActivatedStatus(it, YELLOW) }
+    darkPopup.fill(left = 4, top = 26, right = 44, bottom = 43, color = DARK_DIALOG)
+    darkPopup.fill(left = 6, top = 35, right = 43, bottom = 38, color = DARK_BLUE)
+
+    assertEquals(TicketControlCodeVisualClassifier.UNKNOWN, classifyForCleanup(lightPopup))
+    assertEquals(TicketControlCodeVisualClassifier.UNKNOWN, classifyForCleanup(darkPopup))
+  }
+
+  @Test
+  fun ticketListWithACompactStatusCheckNeverBecomesRawDetail() {
+    val frame = SanitizedFrame()
+    frame.fill(left = 0, top = 0, right = 48, bottom = 10, color = DARK)
+    frame.fill(left = 1, top = 10, right = 47, bottom = 15, color = RED)
+    frame.fill(left = 4, top = 31, right = 44, bottom = 36, color = YELLOW)
+    frame.fill(left = 4, top = 43, right = 44, bottom = 50, color = PALE_STATUS)
+    addCurrentActivatedCheck(frame, YELLOW)
+
+    assertEquals(
+      TicketControlCodeVisualClassifier.TICKET_LIST_WITH_REGISTRATION_BUTTON,
+      classifyForCleanup(frame)
+    )
   }
 
   @Test
@@ -517,6 +659,36 @@ class TicketControlCodeVisualClassifierTest {
     return frame
   }
 
+  private fun currentTicketFrame(headerColor: Int = RED): SanitizedFrame {
+    val frame = SanitizedFrame()
+    frame.fill(left = 0, top = 0, right = 48, bottom = 7, color = DARK)
+    frame.fill(left = 1, top = 6, right = 47, bottom = 13, color = headerColor)
+    for (y in 14 until 34) {
+      for (x in 8 until 40) {
+        frame[x, y] = if ((x + y) % 2 == 0) DARK else LIGHT
+      }
+    }
+    for (y in 36 until 40) {
+      for (x in 7 until 41) {
+        frame[x, y] = if (x % 5 == 0) DARK else LIGHT
+      }
+    }
+    return frame
+  }
+
+  private fun addCurrentActivatedStatus(frame: SanitizedFrame, checkColor: Int) {
+    frame.fill(left = 4, top = 42, right = 44, bottom = 50, color = PALE_STATUS)
+    addCurrentActivatedCheck(frame, checkColor)
+  }
+
+  private fun addCurrentActivatedCheck(frame: SanitizedFrame, color: Int) {
+    frame.fill(left = 40, top = 42, right = 43, bottom = 43, color = color)
+    frame.fill(left = 38, top = 43, right = 45, bottom = 44, color = color)
+    frame.fill(left = 37, top = 44, right = 45, bottom = 48, color = color)
+    frame.fill(left = 38, top = 48, right = 45, bottom = 49, color = color)
+    frame.fill(left = 40, top = 49, right = 43, bottom = 50, color = color)
+  }
+
   private fun blankSubmitFrame(): SubmitFrame {
     val frame = SubmitFrame()
     frame.fill(left = 16, top = 60, right = 80, bottom = 90, color = LIGHT)
@@ -533,6 +705,17 @@ class TicketControlCodeVisualClassifierTest {
     // Current ViVi uses a dark sheet with a dimmed blue action from x=11..84 / y=70..74.
     frame.fill(left = 11, top = 70, right = 85, bottom = 75, color = DARK_BLUE)
     return frame
+  }
+
+  private fun upscaleForSubmitProbe(frame: SanitizedFrame): SubmitFrame {
+    val high = SubmitFrame()
+    for (y in 0 until TicketControlCodeVisualClassifier.SAMPLE_HEIGHT) {
+      for (x in 0 until TicketControlCodeVisualClassifier.SAMPLE_WIDTH) {
+        val color = frame.pixels[y * TicketControlCodeVisualClassifier.SAMPLE_WIDTH + x]
+        high.fill(x * 2, y * 2, x * 2 + 2, y * 2 + 2, color)
+      }
+    }
+    return high
   }
 
   private class SanitizedFrame {
@@ -578,6 +761,7 @@ class TicketControlCodeVisualClassifierTest {
     val MID = rgb(112, 112, 112)
     val ORANGE = rgb(230, 130, 30)
     val YELLOW = rgb(255, 190, 0)
+    val PALE_STATUS = rgb(226, 246, 245)
     val SWAPPED_ORANGE = rgb(30, 130, 230)
     val SWAPPED_RED = rgb(35, 45, 190)
     val PLACEHOLDER = rgb(99, 99, 99)

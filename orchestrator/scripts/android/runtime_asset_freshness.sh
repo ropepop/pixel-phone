@@ -104,6 +104,8 @@ append_template_group_specs() {
   local label_prefix="$3"
   local local_path rel
 
+  [[ -d "${local_root}" ]] || return 0
+
   while IFS= read -r local_path; do
     [[ -n "${local_path}" ]] || continue
     rel="${local_path#${local_root}/}"

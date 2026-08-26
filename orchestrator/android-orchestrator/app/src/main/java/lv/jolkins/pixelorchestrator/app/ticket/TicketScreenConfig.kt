@@ -297,7 +297,14 @@ data class TicketActionPanelDarkLeaseHealth(
   val failure: String = "",
   val failures: Long = 0L,
   val physicalTouchPreempted: Boolean = false,
-  val releaseReason: String = "idle"
+  val releaseReason: String = "idle",
+  val launchExitCode: Int? = null,
+  val launchDurationMillis: Long? = null,
+  val lastVerifierClassification: String = "not_run",
+  val lastVerifierExitCode: Int? = null,
+  val lastVerifierDurationMillis: Long? = null,
+  val helperStage: String = "not_observed",
+  val helperExitCode: Int? = null
 )
 
 @Serializable

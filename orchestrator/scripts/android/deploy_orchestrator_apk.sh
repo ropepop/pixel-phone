@@ -1057,8 +1057,8 @@ verify_runtime_assets_pre_action() {
         printf '%s\n' "${output}" >&2
         return 1
       fi
-      if runtime_scope_requires_current_apk "${scope}" && (( SKIP_BUILD == 1 )); then
-        echo "Runtime asset precheck stale (scope=${scope}) and --skip-build prevents APK-backed repair." >&2
+      if runtime_scope_requires_current_apk "${scope}" && (( SKIP_BUILD == 1 && APK_INSTALLED_THIS_RUN == 0 )); then
+        echo "Runtime asset precheck stale (scope=${scope}) and --skip-build did not install the APK required for repair." >&2
         printf '%s\n' "${output}" >&2
         return 1
       fi

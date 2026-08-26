@@ -213,10 +213,8 @@ class TicketSliderGestureContractTest {
 
     assertEquals(85, contract.startX)
     assertEquals(951, contract.endX)
+    assertEquals(800L, contract.durationMillis)
     assertEquals(contract.startX - bounds.left, bounds.right - contract.endX)
-    assertEquals(85, ticketSliderTargetX(bounds, -1))
-    assertEquals(518, ticketSliderTargetX(bounds, 5_000))
-    assertEquals(951, ticketSliderTargetX(bounds, 10_001))
   }
 
   @Test

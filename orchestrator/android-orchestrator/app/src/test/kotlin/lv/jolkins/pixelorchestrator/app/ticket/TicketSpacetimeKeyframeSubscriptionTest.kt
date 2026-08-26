@@ -637,6 +637,73 @@ class TicketSpacetimeKeyframeSubscriptionTest {
   }
 
   @Test
+  fun v3PriorityConsumerIsNotBlockedByAWaitingKeyframeCommand() = runBlocking {
+    val server = MockWebServer()
+    val socket = CompletableDeferred<WebSocket>()
+    val keyframeStarted = CompletableDeferred<Unit>()
+    val releaseKeyframe = CompletableDeferred<Unit>()
+    val v3Delivered = CompletableDeferred<Unit>()
+    val serverListener = object : WebSocketListener() {
+      override fun onOpen(webSocket: WebSocket, response: Response) {
+        webSocket.send(
+          """{"IdentityToken":{"identity":"identity-fixture","token":"server-token-fixture","connection_id":"connection-fixture"}}"""
+        )
+      }
+
+      override fun onMessage(webSocket: WebSocket, text: String) {
+        if (!socket.isCompleted) socket.complete(webSocket)
+        webSocket.send(initialSubscription(commandRow(
+          ticketId = "vivi-default",
+          backendId = "pixel",
+          commandType = "keyframe",
+          status = "pending",
+          expiresAt = "2099-01-01T00:00:00Z",
+          id = "keyframe-fixture"
+        )))
+      }
+    }
+    server.enqueue(
+      MockResponse()
+        .setHeader("Sec-WebSocket-Protocol", "v1.json.spacetimedb")
+        .withWebSocketUpgrade(serverListener)
+    )
+    server.start()
+    val subscription = TicketSpacetimeKeyframeSubscription(
+      scope = this,
+      config = testConfig(server),
+      json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
+      onKeyframeCommand = { command ->
+        if (command.commandType == "keyframe") {
+          keyframeStarted.complete(Unit)
+          releaseKeyframe.await()
+        } else if (command.commandType == "ticket_action_v3") {
+          v3Delivered.complete(Unit)
+        }
+      },
+      reconnectDelayMillis = 5_000L
+    )
+
+    try {
+      subscription.start()
+      withTimeout(5_000L) { keyframeStarted.await() }
+      withTimeout(5_000L) { socket.await() }.send(transactionUpdate(commandRow(
+        ticketId = "vivi-default",
+        backendId = "pixel",
+        commandType = "ticket_action_v3",
+        status = "pending",
+        expiresAt = "2099-01-01T00:00:00Z",
+        id = "v3-fixture"
+      )))
+      withTimeout(1_000L) { v3Delivered.await() }
+      assertFalse(releaseKeyframe.isCompleted)
+    } finally {
+      releaseKeyframe.complete(Unit)
+      subscription.stop()
+      server.shutdown()
+    }
+  }
+
+  @Test
   fun websocketNegotiatesAuthenticatedUncompressedSubscriptionAndPushesProductionArrayKeyframe() = runBlocking {
     val server = MockWebServer()
     val subscribeMessage = CompletableDeferred<String>()
@@ -739,9 +806,10 @@ class TicketSpacetimeKeyframeSubscriptionTest {
     backendId: String,
     commandType: String,
     status: String,
-    expiresAt: String
+    expiresAt: String,
+    id: String = "trace_fixture"
   ): String {
-    return """{"id":"trace_fixture","ticketId":"$ticketId","backendId":"$backendId","commandType":"$commandType","status":"$status","revision":"revision-fixture","reason":"viewer_join","payloadJson":"{}","createdAt":"2026-08-23T00:00:00Z","updatedAt":"2026-08-23T00:00:00Z","expiresAt":"$expiresAt"}"""
+    return """{"id":"$id","ticketId":"$ticketId","backendId":"$backendId","commandType":"$commandType","status":"$status","revision":"revision-fixture","reason":"viewer_join","payloadJson":"{}","createdAt":"2026-08-23T00:00:00Z","updatedAt":"2026-08-23T00:00:00Z","expiresAt":"$expiresAt"}"""
   }
 
   private fun commandArrayRow(

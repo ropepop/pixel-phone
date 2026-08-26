@@ -11,13 +11,13 @@ import org.junit.Test
 
 class TicketSpacetimeDesiredRefreshStateTest {
   @Test
-  fun inactiveStreamBootstrapsBeforeReset() {
+  fun inactiveStreamBootstrapsBeforeVisualAction() {
     val ordered = prioritizePendingCommandsForStreamState(
-      listOf(command("reset_ticket_registration"), command("keyframe"), command("start"), command("recover_stream")),
+      listOf(command("ticket_action_v3"), command("keyframe"), command("start"), command("recover_stream")),
       streamActive = false
     )
     assertEquals(
-      listOf("start", "recover_stream", "reset_ticket_registration", "keyframe"),
+      listOf("start", "recover_stream", "ticket_action_v3", "keyframe"),
       ordered.map { it.commandType }
     )
   }
@@ -25,11 +25,11 @@ class TicketSpacetimeDesiredRefreshStateTest {
   @Test
   fun activeStreamPreservesControlFirstServerOrder() {
     val ordered = prioritizePendingCommandsForStreamState(
-      listOf(command("reset_ticket_registration"), command("slider_control_start"), command("recover_stream"), command("start")),
+      listOf(command("ticket_action_v3"), command("generate_control_code"), command("recover_stream"), command("start")),
       streamActive = true
     )
     assertEquals(
-      listOf("reset_ticket_registration", "slider_control_start", "recover_stream", "start"),
+      listOf("ticket_action_v3", "generate_control_code", "recover_stream", "start"),
       ordered.map { it.commandType }
     )
   }

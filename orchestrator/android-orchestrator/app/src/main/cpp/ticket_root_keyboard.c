@@ -2,36 +2,26 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/input.h>
-#include <linux/uinput.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
 #include <sys/prctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
-#define REGISTRATION_TIMEOUT_MS 1500
-#define REGISTRATION_POLL_MS 10
 #define POPUP_SETTLE_MS 250
 #define FOCUS_SETTLE_MS 300
-#define IME_HIDE_SETTLE_MS 60
 #define VALUE_SETTLE_MS 100
-#define KEYBOARD_LEASE_MS 6000
 #define HELPER_DEADLINE_MS 2700
 #define TAP_POLL_MS 10
-#define DIGIT_EVENT_GAP_MS 20
+#define KEY_EVENT_DELAY_MS "20"
 #define CLEAR_KEY_COUNT 8
 #define MAX_DIGITS 8
-#define MAX_EVENTS ((1 + CLEAR_KEY_COUNT + MAX_DIGITS) * 4)
-
-static int keyboard_fd = -1;
-static bool keyboard_created = false;
+#define MAX_KEY_EVENT_ARGS (5 + CLEAR_KEY_COUNT + MAX_DIGITS + 1)
 
 enum tap_result {
   TAP_RESULT_OK,
@@ -85,46 +75,6 @@ static void secure_zero(void *value, size_t size) {
   }
 }
 
-static void destroy_keyboard(void) {
-  if (keyboard_fd >= 0) {
-    if (keyboard_created) {
-      ioctl(keyboard_fd, UI_DEV_DESTROY);
-    }
-    close(keyboard_fd);
-    keyboard_fd = -1;
-    keyboard_created = false;
-  }
-}
-
-static void handle_signal(int signal_number) {
-  destroy_keyboard();
-  _exit(128 + signal_number);
-}
-
-static bool handoff_keyboard_lease(void) {
-  pid_t child = fork();
-  if (child < 0) {
-    return false;
-  }
-  if (child == 0) {
-    setsid();
-    prctl(PR_SET_NAME, "ticket-kbd-lease", 0, 0, 0);
-    signal(SIGHUP, SIG_IGN);
-    signal(SIGINT, SIG_IGN);
-    close(STDIN_FILENO);
-    close(STDOUT_FILENO);
-    close(STDERR_FILENO);
-    sleep_millis(KEYBOARD_LEASE_MS);
-    destroy_keyboard();
-    _exit(0);
-  }
-  int parent_fd = keyboard_fd;
-  keyboard_fd = -1;
-  keyboard_created = false;
-  close(parent_fd);
-  return true;
-}
-
 static bool parse_coordinate(const char *value, int *coordinate) {
   char *end = NULL;
   errno = 0;
@@ -163,118 +113,21 @@ static int read_digits(char digits[MAX_DIGITS + 1]) {
   return result;
 }
 
-static bool configure_key(int key_code) {
-  return ioctl(keyboard_fd, UI_SET_KEYBIT, key_code) == 0;
-}
-
-static const int digit_key_codes[] = {
-  KEY_0, KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9,
-};
-
-static bool create_keyboard(char device_name[UINPUT_MAX_NAME_SIZE]) {
-  keyboard_fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
-  if (keyboard_fd < 0) {
-    return false;
-  }
-  if (ioctl(keyboard_fd, UI_SET_EVBIT, EV_KEY) != 0) {
-    return false;
-  }
-  for (size_t index = 0; index < sizeof(digit_key_codes) / sizeof(digit_key_codes[0]); index++) {
-    if (!configure_key(digit_key_codes[index])) {
-      return false;
-    }
-  }
-  if (!configure_key(KEY_BACKSPACE) || !configure_key(KEY_END)) {
-    return false;
-  }
-
-  struct uinput_setup setup;
-  memset(&setup, 0, sizeof(setup));
-  snprintf(device_name, UINPUT_MAX_NAME_SIZE, "Ticket Root Keyboard %d", getpid());
-  snprintf(setup.name, UINPUT_MAX_NAME_SIZE, "%s", device_name);
-  setup.id.bustype = BUS_USB;
-  setup.id.vendor = 0x18d1;
-  setup.id.product = 0x57c8;
-  setup.id.version = 1;
-  if (ioctl(keyboard_fd, UI_DEV_SETUP, &setup) != 0 || ioctl(keyboard_fd, UI_DEV_CREATE) != 0) {
-    return false;
-  }
-  keyboard_created = true;
-  return true;
-}
-
-static bool keyboard_registered(const char *device_name, long long helper_deadline_millis) {
-  char contents[16384];
-  long long registration_deadline_millis = monotonic_millis() + REGISTRATION_TIMEOUT_MS;
-  while (
-    monotonic_millis() < registration_deadline_millis &&
-    monotonic_millis() < helper_deadline_millis
-  ) {
-    int fd = open("/proc/bus/input/devices", O_RDONLY | O_CLOEXEC);
-    if (fd >= 0) {
-      ssize_t size = read(fd, contents, sizeof(contents) - 1);
-      close(fd);
-      if (size > 0) {
-        contents[size] = '\0';
-        if (strstr(contents, device_name) != NULL) {
-          return true;
-        }
-      }
-    }
-    if (!sleep_before_deadline(REGISTRATION_POLL_MS, helper_deadline_millis)) {
-      break;
-    }
-  }
-  return false;
-}
-
 static enum tap_result run_input_tap(int x, int y, long long helper_deadline_millis) {
   char x_value[16];
   char y_value[16];
   snprintf(x_value, sizeof(x_value), "%d", x);
   snprintf(y_value, sizeof(y_value), "%d", y);
+  pid_t parent_pid = getpid();
   pid_t child = fork();
   if (child < 0) {
     return TAP_RESULT_FAILED;
   }
   if (child == 0) {
+    if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 || getppid() != parent_pid) {
+      _exit(126);
+    }
     execl("/system/bin/input", "input", "tap", x_value, y_value, (char *)NULL);
-    _exit(127);
-  }
-  int status = 0;
-  while (true) {
-    pid_t waited = waitpid(child, &status, WNOHANG);
-    if (waited == child) {
-      return WIFEXITED(status) && WEXITSTATUS(status) == 0
-        ? TAP_RESULT_OK
-        : TAP_RESULT_FAILED;
-    }
-    if (waited < 0 && errno != EINTR) {
-      return TAP_RESULT_FAILED;
-    }
-    long long now = monotonic_millis();
-    if (now < 0 || now >= helper_deadline_millis) {
-      kill(child, SIGKILL);
-      while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
-      }
-      return TAP_RESULT_TIMEOUT;
-    }
-    if (!sleep_before_deadline(TAP_POLL_MS, helper_deadline_millis)) {
-      kill(child, SIGKILL);
-      while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
-      }
-      return TAP_RESULT_TIMEOUT;
-    }
-  }
-}
-
-static enum tap_result hide_soft_keyboard(long long helper_deadline_millis) {
-  pid_t child = fork();
-  if (child < 0) {
-    return TAP_RESULT_FAILED;
-  }
-  if (child == 0) {
-    execl("/system/bin/input", "input", "keyevent", "4", (char *)NULL);
     _exit(127);
   }
   int status = 0;
@@ -311,6 +164,7 @@ static enum ime_visibility_result read_soft_keyboard_visibility(long long helper
   if (pipe(output_pipe) != 0) {
     return IME_VISIBILITY_FAILED;
   }
+  pid_t parent_pid = getpid();
   pid_t child = fork();
   if (child < 0) {
     close(output_pipe[0]);
@@ -318,6 +172,9 @@ static enum ime_visibility_result read_soft_keyboard_visibility(long long helper
     return IME_VISIBILITY_FAILED;
   }
   if (child == 0) {
+    if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 || getppid() != parent_pid) {
+      _exit(126);
+    }
     close(output_pipe[0]);
     if (dup2(output_pipe[1], STDOUT_FILENO) < 0) {
       _exit(127);
@@ -433,72 +290,84 @@ static enum ime_visibility_result read_soft_keyboard_visibility(long long helper
     : IME_VISIBILITY_HIDDEN;
 }
 
-static void append_event(struct input_event events[MAX_EVENTS], int *count, int type, int code, int value) {
-  struct input_event *event = &events[*count];
-  memset(event, 0, sizeof(*event));
-  event->type = (__u16)type;
-  event->code = (__u16)code;
-  event->value = value;
-  (*count)++;
-}
+static const char *digit_key_names[] = {
+  "KEYCODE_0", "KEYCODE_1", "KEYCODE_2", "KEYCODE_3", "KEYCODE_4",
+  "KEYCODE_5", "KEYCODE_6", "KEYCODE_7", "KEYCODE_8", "KEYCODE_9",
+};
 
-static void append_key(struct input_event events[MAX_EVENTS], int *count, int key_code) {
-  append_event(events, count, EV_KEY, key_code, 1);
-  append_event(events, count, EV_SYN, SYN_REPORT, 0);
-  append_event(events, count, EV_KEY, key_code, 0);
-  append_event(events, count, EV_SYN, SYN_REPORT, 0);
-}
-
-static bool write_events(const struct input_event *events, int count) {
-  const unsigned char *cursor = (const unsigned char *)events;
-  size_t remaining = (size_t)count * sizeof(struct input_event);
-  while (remaining > 0) {
-    ssize_t written = write(keyboard_fd, cursor, remaining);
-    if (written < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      return false;
-    }
-    cursor += written;
-    remaining -= (size_t)written;
-  }
-  return true;
-}
-
-static int digit_key_code(char digit) {
-  return digit_key_codes[digit - '0'];
-}
-
-static bool inject_value(const char *digits, int digit_count) {
-  struct input_event events[MAX_EVENTS];
-  int event_count = 0;
-  bool success = true;
-  append_key(events, &event_count, KEY_END);
-  success = write_events(events, event_count);
-  event_count = 0;
+/*
+ * Android's own input command injects through InputManager's built-in virtual keyboard. Unlike a
+ * temporary Linux virtual input device, it does not add or remove an InputDevice and therefore cannot
+ * trigger the display-configuration transition that briefly hands brightness back to ViVi.
+ */
+static enum tap_result inject_value(
+  const char *digits,
+  int digit_count,
+  long long helper_deadline_millis
+) {
+  char *arguments[MAX_KEY_EVENT_ARGS];
+  int argument_count = 0;
+  arguments[argument_count++] = "input";
+  arguments[argument_count++] = "keyevent";
+  arguments[argument_count++] = "--delay";
+  arguments[argument_count++] = KEY_EVENT_DELAY_MS;
+  arguments[argument_count++] = "KEYCODE_MOVE_END";
   for (int index = 0; index < CLEAR_KEY_COUNT; index++) {
-    append_key(events, &event_count, KEY_BACKSPACE);
+    arguments[argument_count++] = "KEYCODE_DEL";
   }
-  if (success) {
-    success = write_events(events, event_count);
-  }
-  event_count = 0;
   for (int index = 0; index < digit_count; index++) {
-    append_key(events, &event_count, digit_key_code(digits[index]));
-    if (success) {
-      success = write_events(events, event_count);
+    arguments[argument_count++] = (char *)digit_key_names[digits[index] - '0'];
+  }
+  arguments[argument_count] = NULL;
+
+  pid_t parent_pid = getpid();
+  pid_t child = fork();
+  if (child < 0) {
+    return TAP_RESULT_FAILED;
+  }
+  if (child == 0) {
+    if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 || getppid() != parent_pid) {
+      _exit(126);
     }
-    event_count = 0;
-    if (success && index + 1 < digit_count) {
-      sleep_millis(DIGIT_EVENT_GAP_MS);
+    execv("/system/bin/input", arguments);
+    _exit(127);
+  }
+  int status = 0;
+  while (true) {
+    pid_t waited = waitpid(child, &status, WNOHANG);
+    if (waited == child) {
+      return WIFEXITED(status) && WEXITSTATUS(status) == 0
+        ? TAP_RESULT_OK
+        : TAP_RESULT_FAILED;
+    }
+    if (waited < 0 && errno != EINTR) {
+      return TAP_RESULT_FAILED;
+    }
+    long long now = monotonic_millis();
+    if (now < 0 || now >= helper_deadline_millis) {
+      kill(child, SIGKILL);
+      while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
+      }
+      return TAP_RESULT_TIMEOUT;
+    }
+    if (!sleep_before_deadline(TAP_POLL_MS, helper_deadline_millis)) {
+      kill(child, SIGKILL);
+      while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
+      }
+      return TAP_RESULT_TIMEOUT;
     }
   }
-  secure_zero(events, sizeof(events));
-  return success;
 }
 
 int main(int argc, char **argv) {
+  pid_t launching_parent_pid = getppid();
+  if (
+    launching_parent_pid <= 1 ||
+    prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 ||
+    getppid() != launching_parent_pid
+  ) {
+    return 55;
+  }
   long long started_millis = monotonic_millis();
   if (started_millis < 0) {
     return 54;
@@ -540,21 +409,6 @@ int main(int argc, char **argv) {
     return 41;
   }
 
-  signal(SIGTERM, handle_signal);
-  signal(SIGINT, handle_signal);
-  signal(SIGHUP, handle_signal);
-  atexit(destroy_keyboard);
-
-  char device_name[UINPUT_MAX_NAME_SIZE];
-  memset(device_name, 0, sizeof(device_name));
-  if (!create_keyboard(device_name)) {
-    secure_zero(digits, sizeof(digits));
-    return 42;
-  }
-  if (!keyboard_registered(device_name, helper_deadline_millis)) {
-    secure_zero(digits, sizeof(digits));
-    return monotonic_millis() >= helper_deadline_millis ? 54 : 50;
-  }
   if (open_x >= 0) {
     enum tap_result open_result = run_input_tap(open_x, open_y, helper_deadline_millis);
     if (open_result == TAP_RESULT_TIMEOUT) {
@@ -593,30 +447,21 @@ int main(int argc, char **argv) {
     return 46;
   }
   if (ime_visibility == IME_VISIBILITY_VISIBLE) {
-    enum tap_result keyboard_hide_result = hide_soft_keyboard(helper_deadline_millis);
-    if (keyboard_hide_result == TAP_RESULT_TIMEOUT) {
-      secure_zero(digits, sizeof(digits));
-      return 54;
-    }
-    if (keyboard_hide_result != TAP_RESULT_OK) {
-      secure_zero(digits, sizeof(digits));
-      return 46;
-    }
-    if (!sleep_before_deadline(IME_HIDE_SETTLE_MS, helper_deadline_millis)) {
-      secure_zero(digits, sizeof(digits));
-      return 54;
-    }
+    secure_zero(digits, sizeof(digits));
+    return 47;
   }
-  if (!inject_value(digits, digit_count)) {
+  enum tap_result inject_result = inject_value(digits, digit_count, helper_deadline_millis);
+  if (inject_result == TAP_RESULT_TIMEOUT) {
+    secure_zero(digits, sizeof(digits));
+    return 54;
+  }
+  if (inject_result != TAP_RESULT_OK) {
     secure_zero(digits, sizeof(digits));
     return 51;
   }
   secure_zero(digits, sizeof(digits));
   if (!sleep_before_deadline(VALUE_SETTLE_MS, helper_deadline_millis)) {
     return 54;
-  }
-  if (!handoff_keyboard_lease()) {
-    return 53;
   }
   return 0;
 }

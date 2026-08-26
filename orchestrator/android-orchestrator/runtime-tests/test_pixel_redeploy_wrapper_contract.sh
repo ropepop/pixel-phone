@@ -92,6 +92,11 @@ if ! rg -Fq 'runtime_freshness_args' "${SOURCE_SCRIPT}"; then
   exit 1
 fi
 
+if ! rg -Fq 'full|orchestrator|platform|dns|ticket_screen|train_bot' "${SOURCE_SCRIPT}"; then
+  echo "FAIL: pixel_redeploy.sh does not expose the ticket_screen scope" >&2
+  exit 1
+fi
+
 if ! rg -Fq 'add_optional_arg cmd --component-release-dir "${DNS_RELEASE_DIR}"' "${SOURCE_SCRIPT}"; then
   echo "FAIL: pixel_redeploy.sh missing bootstrap-time dns release staging contract" >&2
   exit 1
@@ -169,9 +174,49 @@ if [[ "${action}" == "redeploy_component" && "${component}" == "train_bot" ]]; t
 EOF_JSON
 fi
 
+if [[ "${action}" == "redeploy_component" && "${component}" == "ticket_screen" &&
+  "${FAKE_TICKET_REDEPLOY_STAYS_STALE:-0}" != "1" ]]; then
+  printf 'fresh\n' > "${FAKE_STATE_DIR}/${FAKE_LOG_PREFIX}-ticket-freshness-state"
+fi
+
 printf 'Action result source: artifact\n'
 EOF_DEPLOY
 chmod +x "${ORCHESTRATOR_FIXTURE}/scripts/android/deploy_orchestrator_apk.sh"
+
+cat > "${ORCHESTRATOR_FIXTURE}/scripts/android/runtime_asset_freshness.sh" <<'EOF_FRESHNESS'
+#!/usr/bin/env bash
+set -euo pipefail
+
+scope=""
+while (( $# > 0 )); do
+  case "$1" in
+    --scope)
+      shift
+      scope="${1:-}"
+      ;;
+  esac
+  shift || true
+done
+
+printf '%s\n' "${scope}" >> "${FAKE_STATE_DIR}/${FAKE_LOG_PREFIX}-freshness-invocations.log"
+if [[ "${scope}" != "ticket_screen" ]]; then
+  printf 'FRESH scope=%s\n' "${scope}"
+  exit 0
+fi
+
+state="${FAKE_TICKET_FRESHNESS_INITIAL:-fresh}"
+state_file="${FAKE_STATE_DIR}/${FAKE_LOG_PREFIX}-ticket-freshness-state"
+if [[ -f "${state_file}" ]]; then
+  state="$(sed -n '1p' "${state_file}")"
+fi
+if [[ "${state}" == "stale" ]]; then
+  printf 'MISMATCH ticket-root-keyboard\n'
+  printf 'STALE scope=ticket_screen\n'
+  exit 3
+fi
+printf 'FRESH scope=ticket_screen\n'
+EOF_FRESHNESS
+chmod +x "${ORCHESTRATOR_FIXTURE}/scripts/android/runtime_asset_freshness.sh"
 
 cat > "${WORKSPACE_FIXTURE}/workloads/train-bot/scripts/pixel/redeploy_release.sh" <<EOF_TRAIN
 #!/usr/bin/env bash
@@ -267,6 +312,21 @@ run_wrapper() {
   "${ORCHESTRATOR_FIXTURE}/scripts/android/pixel_redeploy.sh" \
   --device fake-device \
   --scope train_bot \
+  --mode auto \
+  "$@"
+}
+
+run_ticket_wrapper() {
+  local log_prefix="$1"
+  local scope="$2"
+  shift 2
+  PATH="${BIN_DIR}:${PATH}" \
+  FAKE_STATE_DIR="${STATE_DIR}" \
+  FAKE_LOG_PREFIX="${log_prefix}" \
+  PIXEL_RUN_ID="test-run-id" \
+  "${ORCHESTRATOR_FIXTURE}/scripts/android/pixel_redeploy.sh" \
+  --device fake-device \
+  --scope "${scope}" \
   --mode auto \
   "$@"
 }
@@ -368,6 +428,99 @@ for invocation in "${fast_invocations[@]}"; do
     exit 1
   fi
 done
+
+rm -f "${STATE_DIR}/ticket-stale-deploy-invocations.log" \
+  "${STATE_DIR}/ticket-stale-freshness-invocations.log" \
+  "${STATE_DIR}/ticket-stale-ticket-freshness-state"
+ticket_stale_log="${TMP_ROOT}/ticket-stale.log"
+if ! FAKE_TICKET_FRESHNESS_INITIAL=stale \
+  run_ticket_wrapper ticket-stale orchestrator >"${ticket_stale_log}" 2>&1; then
+  echo "FAIL: orchestrator scope should synchronize stale Ticket runtime assets" >&2
+  cat "${ticket_stale_log}" >&2
+  exit 1
+fi
+read_lines_into_array "${STATE_DIR}/ticket-stale-deploy-invocations.log" ticket_stale_invocations
+if [[ "${#ticket_stale_invocations[@]}" != "2" ]]; then
+  echo "FAIL: stale Ticket runtime assets should cause one targeted redeploy and one health check" >&2
+  printf '%s\n' "${ticket_stale_invocations[@]}" >&2
+  exit 1
+fi
+if [[ "${ticket_stale_invocations[0]}" != *"--install-apk"* ||
+  "${ticket_stale_invocations[0]}" != *"--action redeploy_component --component ticket_screen"* ||
+  "${ticket_stale_invocations[0]}" == *"--component-release-dir"* ]]; then
+  echo "FAIL: stale Ticket repair must install the APK and run a release-free ticket_screen redeploy" >&2
+  printf '%s\n' "${ticket_stale_invocations[@]}" >&2
+  exit 1
+fi
+if [[ "${ticket_stale_invocations[1]}" != *"--action health"* ]]; then
+  echo "FAIL: Ticket runtime repair should be followed by the orchestrator health check" >&2
+  printf '%s\n' "${ticket_stale_invocations[@]}" >&2
+  exit 1
+fi
+if [[ "$(wc -l < "${STATE_DIR}/ticket-stale-freshness-invocations.log" | tr -d ' ')" != "2" ]]; then
+  echo "FAIL: stale Ticket repair should run one pre-check and one successful post-check" >&2
+  cat "${STATE_DIR}/ticket-stale-freshness-invocations.log" >&2
+  exit 1
+fi
+python3 - "${WORKSPACE_FIXTURE}/output/pixel/redeploy/test-run-id/summary.json" <<'PY_TICKET_SUMMARY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+assert payload["preflight"]["ticketRuntimeFreshness"] == "stale", payload
+assert payload["finalState"]["ticketRuntimeFreshness"] == "fresh", payload
+assert payload["validations"]["ticket_runtime_assets"] == "synced", payload
+assert "redeploy_component_ticket_screen" in payload["actionsExecuted"], payload
+PY_TICKET_SUMMARY
+
+rm -f "${STATE_DIR}/ticket-fresh-deploy-invocations.log" \
+  "${STATE_DIR}/ticket-fresh-freshness-invocations.log" \
+  "${STATE_DIR}/ticket-fresh-ticket-freshness-state"
+ticket_fresh_log="${TMP_ROOT}/ticket-fresh.log"
+if ! FAKE_TICKET_FRESHNESS_INITIAL=fresh \
+  run_ticket_wrapper ticket-fresh orchestrator >"${ticket_fresh_log}" 2>&1; then
+  echo "FAIL: orchestrator scope should accept already-fresh Ticket runtime assets" >&2
+  cat "${ticket_fresh_log}" >&2
+  exit 1
+fi
+if rg -q -- '--component ticket_screen' "${STATE_DIR}/ticket-fresh-deploy-invocations.log"; then
+  echo "FAIL: fresh Ticket runtime assets should not trigger an unnecessary Ticket redeploy" >&2
+  cat "${STATE_DIR}/ticket-fresh-deploy-invocations.log" >&2
+  exit 1
+fi
+
+rm -f "${STATE_DIR}/ticket-explicit-deploy-invocations.log" \
+  "${STATE_DIR}/ticket-explicit-freshness-invocations.log" \
+  "${STATE_DIR}/ticket-explicit-ticket-freshness-state"
+ticket_explicit_log="${TMP_ROOT}/ticket-explicit.log"
+if ! FAKE_TICKET_FRESHNESS_INITIAL=fresh \
+  run_ticket_wrapper ticket-explicit ticket_screen >"${ticket_explicit_log}" 2>&1; then
+  echo "FAIL: explicit ticket_screen scope should redeploy and validate" >&2
+  cat "${ticket_explicit_log}" >&2
+  exit 1
+fi
+if ! rg -q -- '--action redeploy_component --component ticket_screen' "${STATE_DIR}/ticket-explicit-deploy-invocations.log"; then
+  echo "FAIL: explicit ticket_screen scope did not run the targeted redeploy" >&2
+  cat "${STATE_DIR}/ticket-explicit-deploy-invocations.log" >&2
+  exit 1
+fi
+
+rm -f "${STATE_DIR}/ticket-stuck-deploy-invocations.log" \
+  "${STATE_DIR}/ticket-stuck-freshness-invocations.log" \
+  "${STATE_DIR}/ticket-stuck-ticket-freshness-state"
+ticket_stuck_log="${TMP_ROOT}/ticket-stuck.log"
+if FAKE_TICKET_FRESHNESS_INITIAL=stale FAKE_TICKET_REDEPLOY_STAYS_STALE=1 \
+  run_ticket_wrapper ticket-stuck orchestrator >"${ticket_stuck_log}" 2>&1; then
+  echo "FAIL: orchestrator scope must fail when Ticket runtime assets stay stale" >&2
+  cat "${ticket_stuck_log}" >&2
+  exit 1
+fi
+if ! rg -q 'did not converge after redeploy' "${ticket_stuck_log}"; then
+  echo "FAIL: stale-after-redeploy failure did not identify Ticket runtime convergence" >&2
+  cat "${ticket_stuck_log}" >&2
+  exit 1
+fi
 
 echo "PASS: pixel redeploy wrapper installs a fresh APK once and fast profile reuses a current APK"
 

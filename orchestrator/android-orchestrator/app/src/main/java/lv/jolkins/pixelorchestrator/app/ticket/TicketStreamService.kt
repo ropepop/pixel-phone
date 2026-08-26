@@ -28,6 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -48,7 +49,7 @@ import lv.jolkins.pixelorchestrator.app.MainActivity
 import lv.jolkins.pixelorchestrator.app.SupervisorService
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationPreferencesStore
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationServiceBridge
-import lv.jolkins.pixelorchestrator.app.phoneautomation.TicketSliderGestureStartResult
+import lv.jolkins.pixelorchestrator.app.phoneautomation.TicketSliderGestureDispatchResult
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationVisibleNode
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhonePortraitLock
 import lv.jolkins.pixelorchestrator.app.phoneautomation.ScreenBrightnessControl
@@ -182,9 +183,7 @@ class TicketStreamService : Service() {
     val input: TicketViviPageAction,
     val submit: TicketViviPageAction,
     val inputSource: String,
-    val submitSource: String,
-    val preSubmitDetailAnchor: String = "",
-    val preSubmitDetailState: TicketVisualPhoneState = TicketVisualPhoneState.UNKNOWN
+    val submitSource: String
   )
 
   private data class FastControlCodeDelivery(
@@ -208,193 +207,134 @@ class TicketStreamService : Service() {
     val fallbackState: TicketViviRecoveryState? = null
   )
 
-  private data class ActiveTicketSliderGesture(
-    val activationCommandId: String = "",
-    val interactionRevision: String,
-    val controlId: String,
-    val activationAttemptId: String = "",
-    val bounds: TicketViviGraphicBounds,
-    var lastAppliedSequence: Long = 0L,
-    var lastAppliedProgress: Int = 0,
-    var completing: Boolean = false
-  )
-
-  private data class PendingTicketSliderApplication(
-    val interactionRevision: String,
-    val controlId: String,
-    val application: TicketSliderApplicationResult
-  )
-
   /**
-   * Owns the request-lifetime IME suppression without making request admission
-   * wait for the root command to report readiness. The critical field tap is
-   * gated on this lease before it can reach ViVi, so the IME is disabled before
-   * focus is requested rather than being hidden after it has already appeared.
+   * Owns request-lifetime soft-keyboard suppression without disabling an IME or registering a
+   * hardware keyboard. The critical field tap is gated on the Accessibility controller's verified
+   * hidden mode, so control-code entry cannot trigger an Android display-configuration change.
    */
   private class RequestScopedKeyboardClampLease(
     private val requestId: String,
-    private val rootExecutor: TicketRootCommandWorker,
-    private val scope: CoroutineScope,
+    private val expectedPackageName: String,
     private val commandTimeoutMillis: Long,
     private val onPhase: (String) -> Unit,
     private val onEvent: (String, String) -> Unit
   ) {
     private val releaseMutex = Mutex()
-    @Volatile private var acquireJob: Job? = null
-    @Volatile private var previousState: TicketControlCodeKeyboardClamp.PreviousState? = null
+    @Volatile private var suppressionMayBeOwned: Boolean = false
     @Volatile private var acquired: Boolean = false
     @Volatile private var released: Boolean = false
-    private val restoreStarted = AtomicBoolean(false)
 
-    fun startAsync() {
-      synchronized(this) {
-        if (acquireJob != null) {
-          return
-        }
-        onPhase("keyboard_clamp_requested")
-        acquireJob = scope.launch(start = CoroutineStart.DEFAULT) {
-          val result = runCatching {
-            rootExecutor.runScript(
-              TicketControlCodeKeyboardClamp.buildAcquireScript(),
-              commandTimeoutMillis.milliseconds
-            )
-          }.getOrElse { error ->
-            onEvent(
-              "keyboard_clamp_apply_failed",
-              "request=$requestId error=${error::class.java.simpleName}"
-            )
-            return@launch
-          }
-          if (!result.ok) {
-            onEvent(
-              "keyboard_clamp_apply_failed",
-              "request=$requestId exit_code=${result.exitCode} duration_ms=${result.durationMs}"
-            )
-            return@launch
-          }
-          val previous = runCatching {
-            TicketControlCodeKeyboardClamp.parseAcquiredState(result.stdout)
-          }.getOrElse { error ->
-            onEvent(
-              "keyboard_clamp_apply_failed",
-              "request=$requestId invalid_acquire_output=${error::class.java.simpleName}"
-            )
-            return@launch
-          }
-          val restoreAfterLateAcquire = synchronized(this) {
-            if (released) {
-              true
-            } else {
-              previousState = previous
-              acquired = true
-              false
-            }
-          }
-          if (restoreAfterLateAcquire) {
-            onEvent(
-              "keyboard_clamp_late_apply_reverted",
-              "request=$requestId"
-            )
-            restoreState(previous, "late_acquire_after_release")
-            return@launch
-          }
-          onPhase("keyboard_clamp_applied")
-          onEvent(
-            "keyboard_clamp_applied",
-            "request=$requestId previous_hard_keyboard=${previous.hardKeyboardSetting ?: "absent"} " +
-              "previous_enabled_imes=${previous.enabledInputMethods ?: "absent"} " +
-              "previous_default_ime=${previous.defaultInputMethod ?: "absent"} " +
-              "duration_ms=${result.durationMs}"
-          )
-        }
+    suspend fun acquire(): Boolean = releaseMutex.withLock {
+      if (released) {
+        return false
       }
+      if (acquired) {
+        return PhoneAutomationServiceBridge.isViviControlCodeKeyboardModeSuppressed(
+          expectedPackageName
+        )
+      }
+      val startedAtMillis = SystemClock.elapsedRealtime()
+      onPhase("keyboard_clamp_requested")
+      val applied = runCatching {
+        val connected = PhoneAutomationServiceBridge.awaitAccessibilityConnection(
+          commandTimeoutMillis
+        )
+        if (!connected) {
+          false
+        } else {
+          // From this call boundary onward, a failed Boolean may still mean HIDDEN was applied but
+          // its inline rollback could not be proved. Finalization must therefore verify restore.
+          suppressionMayBeOwned = true
+          PhoneAutomationServiceBridge.suppressViviControlCodeKeyboardMode(expectedPackageName)
+        }
+      }.getOrElse { error ->
+        onEvent(
+          "keyboard_clamp_apply_failed",
+          "request=$requestId error=${error::class.java.simpleName}"
+        )
+        false
+      }
+      if (!applied) {
+        onEvent(
+          "keyboard_clamp_apply_failed",
+          "request=$requestId authority=accessibility_soft_keyboard unavailable=true"
+        )
+        return false
+      }
+      acquired = true
+      onPhase("keyboard_clamp_applied")
+      onEvent(
+        "keyboard_clamp_applied",
+        "request=$requestId authority=accessibility_soft_keyboard " +
+          "duration_ms=${SystemClock.elapsedRealtime() - startedAtMillis}"
+      )
+      true
     }
 
-    /** Waits only at the last safe point before the field can be touched. */
+    /** Revalidates the exact owned mode at the last safe point before the field can be touched. */
     suspend fun awaitApplied(): Boolean {
-      val job = synchronized(this) { acquireJob } ?: return false
-      withTimeoutOrNull(commandTimeoutMillis) {
-        runCatching { job.join() }
-      }
-      val ready = acquired
+      val ready = !released && acquired && runCatching {
+        PhoneAutomationServiceBridge.isViviControlCodeKeyboardModeSuppressed(expectedPackageName)
+      }.getOrDefault(false)
       if (!ready) {
         onEvent(
           "keyboard_clamp_gate_failed",
-          "request=$requestId acquire_did_not_complete"
+          "request=$requestId owned_hidden_mode_not_confirmed"
         )
       }
       return ready
     }
 
-    private suspend fun restoreState(
-      state: TicketControlCodeKeyboardClamp.PreviousState,
-      reason: String
-    ) {
-      if (!restoreStarted.compareAndSet(false, true)) {
-        return
+    private suspend fun restoreMode(reason: String): Boolean {
+      var restored = false
+      var lastError = ""
+      for (attempt in 0 until 2) {
+        restored = runCatching {
+          PhoneAutomationServiceBridge.restoreViviControlCodeKeyboardMode(expectedPackageName)
+        }.getOrElse { error ->
+          lastError = error::class.java.simpleName
+          false
+        }
+        if (restored) {
+          break
+        }
+        if (attempt == 0) {
+          delay(40L)
+        }
       }
-      val result = runCatching {
-        rootExecutor.runScript(
-          TicketControlCodeKeyboardClamp.buildRestoreScript(state),
-          commandTimeoutMillis.milliseconds
-        )
-      }.getOrElse { error ->
+      if (!restored) {
         onPhase("keyboard_clamp_restore_failed")
         onEvent(
           "keyboard_clamp_restore_failed",
-          "request=$requestId reason=$reason error=${error::class.java.simpleName}"
-        )
-        return
-      }
-      if (!result.ok) {
-        onPhase("keyboard_clamp_restore_failed")
-        onEvent(
-          "keyboard_clamp_restore_failed",
-          "request=$requestId reason=$reason exit_code=${result.exitCode} duration_ms=${result.durationMs}"
+          "request=$requestId reason=$reason authority=accessibility_soft_keyboard " +
+            "error=${lastError.ifBlank { "unavailable" }}"
         )
       } else {
         onEvent(
           "keyboard_clamp_restored",
-          "request=$requestId reason=$reason " +
-            "previous_hard_keyboard=${state.hardKeyboardSetting ?: "absent"} " +
-            "previous_enabled_imes=${state.enabledInputMethods ?: "absent"} " +
-            "previous_default_ime=${state.defaultInputMethod ?: "absent"} " +
-            "duration_ms=${result.durationMs}"
+          "request=$requestId reason=$reason authority=accessibility_soft_keyboard"
         )
       }
+      return restored
     }
 
-    suspend fun release(reason: String) {
-      releaseMutex.withLock {
-        synchronized(this) {
-          if (released) {
-            return
-          }
-          // Mark this before waiting so a late asynchronous acquire knows it
-          // must restore itself instead of leaving the IME disabled.
-          released = true
-        }
-        acquireJob?.let { job ->
-          withTimeoutOrNull(commandTimeoutMillis) {
-            runCatching { job.join() }
-          }
-        }
-        if (acquired) {
-          val state = previousState
-          if (state == null) {
-            onPhase("keyboard_clamp_restore_failed")
-            onEvent(
-              "keyboard_clamp_restore_failed",
-              "request=$requestId reason=$reason previous_state_unavailable"
-            )
-          } else {
-            restoreState(state, reason)
-          }
-        } else {
-          onEvent("keyboard_clamp_release_noop", "request=$requestId reason=$reason")
-        }
+    suspend fun release(reason: String): Boolean = releaseMutex.withLock {
+      if (released) {
+        return true
+      }
+      val restored = if (acquired || suppressionMayBeOwned) {
+        restoreMode(reason)
+      } else {
+        onEvent("keyboard_clamp_release_noop", "request=$requestId reason=$reason")
+        true
+      }
+      if (restored) {
+        suppressionMayBeOwned = false
+        acquired = false
+        released = true
         onPhase("keyboard_clamp_released")
       }
+      restored
     }
   }
 
@@ -463,7 +403,10 @@ class TicketStreamService : Service() {
   private val inputRootExecutor = TicketRootCommandWorker()
   private val controlSurfaceCloseRootExecutor = SuRootExecutor()
   private val recoveryInputRootExecutor = SuRootExecutor()
-  private val ticketActionPanelDarkRootExecutor = SuRootExecutor()
+  // Keep the dedicated root transport alive for the full service lifetime. Magisk tears down
+  // descendants of a short-lived app-owned `su -c` session even after nohup/setsid, which can
+  // remove the exact panel-dark helper between launch acknowledgement and readiness proof.
+  private val ticketActionPanelDarkRootExecutor = TicketRootCommandWorker()
   private val ticketActionPanelDarkVerifyRootExecutor = TicketRootCommandWorker()
   private val wakeRootExecutor = TicketRootCommandWorker()
   private val foregroundRootExecutor = TicketRootCommandWorker()
@@ -493,18 +436,13 @@ class TicketStreamService : Service() {
   private val sessionMutex = Mutex()
 
   private val controlCodePhoneMutationLane = ControlCodePhoneMutationLane()
-  private val ticketSliderStateLock = Any()
-  @Volatile private var activeTicketSliderGesture: ActiveTicketSliderGesture? = null
-  @Volatile private var pendingTicketSliderApplication: PendingTicketSliderApplication? = null
   @Volatile private var lastTicketRegistrationProof: TicketRegistrationProof? = null
   @Volatile private var currentTicketRegistrationProof: TicketRegistrationProof? = null
-  @Volatile private var lastUnactivatedProofRefreshAttemptAtMillis: Long = 0L
-  @Volatile private var ticketSliderBurstActive: Boolean = false
   @Volatile private var ticketVisualActionCaptureLeaseActive: Boolean = false
+  @Volatile private var ticketActionV3CleanupCheckpointRecoveryActive: Boolean = false
   @Volatile private var ticketActionPanelDarkLeaseSnapshot = TicketActionPanelDarkLeaseSnapshot()
   private val ticketActionPanelDarkLeaseFailures = AtomicLong(0L)
   @Volatile private var activeTicketActionPanelDarkLease: TicketActionPanelDarkLease? = null
-  private val instantSliderApplicationResults = linkedMapOf<String, TicketSliderApplicationResult>()
   private val controlCodeBrowserCaptureLock = Object()
   private val running = AtomicBoolean(false)
   private val pendingRootHardwareH264KeyFrame = TicketPendingKeyFrameRequest()
@@ -680,33 +618,14 @@ class TicketStreamService : Service() {
   @Volatile private var lastControlCodeCommandOwner: String? = null
   @Volatile private var lastControlCodeCommandApp: String? = null
   @Volatile private var lastControlCodeCommandFlow: String? = null
-  @Volatile private var latestTicketReselectStatus: String = "idle"
-  @Volatile private var latestTicketReselectReason: String = ""
-  @Volatile private var latestTicketReselectCommandId: String = ""
-  @Volatile private var latestTicketReselectPhase: String = "idle"
-  @Volatile private var latestTicketReselectStartedAtMillis: Long = 0L
-  @Volatile private var latestTicketReselectTicketDetailAtMillis: Long = 0L
-  @Volatile private var latestTicketReselectCompletedAtMillis: Long = 0L
-  @Volatile private var latestTicketReselectFreshFrameAtMillis: Long = 0L
-  @Volatile private var latestTicketReselectProofSource: String = ""
-  @Volatile private var latestTicketReselectProofHoldUntilMillis: Long = 0L
-  @Volatile private var latestTicketReselectLastProofNudgeAtMillis: Long = 0L
-  @Volatile private var latestTicketReselectRequireUnactivatedRegistration: Boolean = false
-  @Volatile private var latestTicketReselectInteractionRevision: String = ""
-  // The recovery result already contains a fresh rooted hierarchy/slider proof. Keep that
-  // proof for the short stream-settle window instead of invalidating a successful reset merely
-  // because no later accessibility event refreshed the memory snapshot.
-  @Volatile private var latestTicketReselectFinalUnactivatedProved: Boolean = false
-  private val latestTicketReselectStateLock = Any()
-  private var latestTicketReselectLastDeferredKey: String = ""
-  @Volatile private var latestTicketReselectGeneration: Long = 0L
-  private var latestTicketReselectRecoveryJob: Job? = null
-  private var latestTicketReselectSettleJob: Job? = null
-  private var latestTicketReselectProofIdleStopJob: Job? = null
   private val ticketActionV3Lock = Any()
   @Volatile private var ticketActionV3Snapshot = TicketVisualActionSnapshot()
   @Volatile private var ticketActionV3Generation: Long = 0L
+  /** Advances before every mutating V3 action so read-only visual proofs cannot cross a mutation. */
+  @Volatile private var ticketActionV3MutationGeneration: Long = 0L
   private var ticketActionV3Job: Job? = null
+  @Volatile private var deferredTicketVisualTerminalActionId: String = ""
+  @Volatile private var deferredTicketVisualTerminalObservation: TicketVisualActionObservation? = null
   @Volatile private var ticketVisualSwitchAnchors = TicketVisualSwitchAnchors()
   @Volatile private var ticketVisualSwitchAnchorsLoaded = false
   @Volatile private var pendingControlCodeBrowserCaptureRequestId: String? = null
@@ -894,12 +813,6 @@ class TicketStreamService : Service() {
     ticketBrightnessGuardActive = false
     clientDisconnectStopJob?.cancel()
     clientDisconnectStopJob = null
-    latestTicketReselectRecoveryJob?.cancel()
-    latestTicketReselectRecoveryJob = null
-    latestTicketReselectSettleJob?.cancel()
-    latestTicketReselectSettleJob = null
-    latestTicketReselectProofIdleStopJob?.cancel()
-    latestTicketReselectProofIdleStopJob = null
     ticketSpacetimeWorker?.stop()
     ticketSpacetimeWorker = null
     rootH264BlankProbeJob?.cancel()
@@ -934,14 +847,22 @@ class TicketStreamService : Service() {
       recordTicketEvent("ticket_service_destroy_join_timeout", "secure_capture_admission_fenced=true")
     }
     activeControlCodeKeyboardClamp?.let { clamp ->
-      runCatching {
+      val keyboardClampReleased = runCatching {
         runBlocking {
           withContext(NonCancellable) {
             clamp.release("service_destroyed")
           }
         }
+      }.getOrDefault(false)
+      if (keyboardClampReleased) {
+        activeControlCodeKeyboardClamp = null
+      } else {
+        preserveControlCodeCleanupCheckpoint("service_destroy_keyboard_restore_unproved")
+        recordTicketEvent(
+          "keyboard_clamp_restore_failed",
+          "reason=service_destroyed durable_cleanup_checkpoint_retained=true"
+        )
       }
-      activeControlCodeKeyboardClamp = null
     }
     activeTicketActionPanelDarkLease?.let { lease ->
       runCatching {
@@ -983,6 +904,7 @@ class TicketStreamService : Service() {
     releaseTicketScreenAwake()
     stopLocalServer()
     inputRootExecutor.close()
+    ticketActionPanelDarkRootExecutor.close()
     ticketActionPanelDarkVerifyRootExecutor.close()
     wakeRootExecutor.close()
     foregroundRootExecutor.close()
@@ -1449,60 +1371,6 @@ class TicketStreamService : Service() {
             )
           handleTicketVisualActionV3(command, request)
         }
-        "force_ticket_reselect" -> {
-          val activationExpiryReset = payload?.stringValue("flow") == "activation_expiry_reset"
-          forceLatestTicketReselect(
-            reason = reason.ifBlank { "admin_force_latest_ticket_reselect" },
-            commandId = command.id,
-            requireUnactivatedRegistration = activationExpiryReset,
-            interactionRevision = command.revision.takeIf { activationExpiryReset }.orEmpty(),
-            activationAttemptId = payload?.stringValue("activationAttemptId").orEmpty()
-          )
-        }
-        "reset_ticket_registration" -> {
-          val activationAttemptId = payload?.stringValue("activationAttemptId").orEmpty()
-          val activateAfterReset = payload?.booleanValue("activateAfterReset") == true
-          val checkpointRecovery = if (activateAfterReset) {
-            recoverTicketActivationCheckpointForReset(
-              commandId = command.id,
-              interactionRevision = command.revision,
-              activationAttemptId = activationAttemptId
-            )
-          } else {
-            null
-          }
-          checkpointRecovery ?: forceLatestTicketReselect(
-            reason = reason.ifBlank { "ticket_reset_registration" },
-            commandId = command.id,
-            requireUnactivatedRegistration = true,
-            interactionRevision = command.revision,
-            activateAfterReset = activateAfterReset,
-            activationControlId = payload?.stringValue("correlationId").orEmpty(),
-            activationAttemptId = activationAttemptId
-          )
-        }
-        "slider_control_start" -> {
-          val instantActivation = payload?.booleanValue("instantActivation") == true
-          if (instantActivation) {
-            handleInstantTicketSliderActivation(
-              commandId = command.id,
-              interactionRevision = payload?.stringValue("interactionRevision").orEmpty(),
-              controlId = payload?.stringValue("controlId").orEmpty(),
-              inputSequence = payload?.longValue("initialInputSequence") ?: 0L,
-              inputPhase = payload?.stringValue("initialInputPhase").orEmpty(),
-              initialProgress = payload?.longValue("initialProgress")?.toInt() ?: 0,
-              activationAttemptId = payload?.stringValue("activationAttemptId").orEmpty()
-            )
-          } else {
-            startTicketSliderInteraction(
-              interactionRevision = payload?.stringValue("interactionRevision").orEmpty(),
-              controlId = payload?.stringValue("controlId").orEmpty(),
-              initialProgress = payload?.longValue("initialProgress")?.toInt() ?: 0,
-              activationAttemptId = payload?.stringValue("activationAttemptId").orEmpty(),
-              activationCommandId = command.id
-            )
-          }
-        }
         "generate_control_code" -> {
           serviceScope.launch(start = CoroutineStart.UNDISPATCHED) {
             handleGenerateControlCode(
@@ -1600,7 +1468,16 @@ class TicketStreamService : Service() {
           ticketActionV3 = ticketActionV3Snapshot
         )
       }
-      if (ticketActionV3Job?.isActive == true) {
+      val cleanupCheckpointRecoveryProof =
+        request.target == TicketVisualActionTarget.PROVE_CURRENT &&
+          controlCodeSignatureCleanupRequired
+      val priorJob = ticketActionV3Job?.takeIf { it.isActive }
+      val priorWasReadOnlyProof = priorJob != null &&
+        ticketActionV3Snapshot.target == TicketVisualActionTarget.PROVE_CURRENT.wireName &&
+        !ticketActionV3CleanupCheckpointRecoveryActive
+      val explicitActionSupersedesProof = priorWasReadOnlyProof &&
+        request.target != TicketVisualActionTarget.PROVE_CURRENT
+      if (priorJob != null && !explicitActionSupersedesProof) {
         val busy = TicketVisualActionSnapshot(
           actionId = request.actionId,
           target = request.target.wireName,
@@ -1618,6 +1495,12 @@ class TicketStreamService : Service() {
       }
       ticketActionV3Generation += 1L
       val generation = ticketActionV3Generation
+      if (request.target != TicketVisualActionTarget.PROVE_CURRENT ||
+        cleanupCheckpointRecoveryProof
+      ) {
+        ticketActionV3MutationGeneration += 1L
+      }
+      ticketActionV3CleanupCheckpointRecoveryActive = cleanupCheckpointRecoveryProof
       ticketActionV3Snapshot = TicketVisualActionSnapshot(
         actionId = request.actionId,
         target = request.target.wireName,
@@ -1626,9 +1509,24 @@ class TicketStreamService : Service() {
         reason = "ticket_action_v3_admitted"
       )
       ticketActionV3Job = serviceScope.launch {
+        if (explicitActionSupersedesProof) {
+          priorJob?.cancel()
+          priorJob?.join()
+        }
         val terminal = runCatching {
-          controlCodePhoneMutationLane.withOwnership {
-            runTicketVisualActionV3(command, request, generation)
+          if (request.target == TicketVisualActionTarget.PROVE_CURRENT &&
+            !cleanupCheckpointRecoveryProof
+          ) {
+            runReadOnlyTicketVisualProofV3(command, request, generation)
+          } else {
+            controlCodePhoneMutationLane.withOwnership {
+              runTicketVisualActionV3(
+                command,
+                request,
+                generation,
+                readOnlyCleanupCheckpointRecovery = cleanupCheckpointRecoveryProof
+              )
+            }
           }
         }.getOrElse {
           ticketVisualActionTerminal(
@@ -1643,6 +1541,7 @@ class TicketStreamService : Service() {
             ticketActionV3Snapshot.actionId == request.actionId
           ) {
             ticketActionV3Snapshot = terminal
+            ticketActionV3CleanupCheckpointRecoveryActive = false
           }
         }
         broadcastStatus()
@@ -1657,12 +1556,149 @@ class TicketStreamService : Service() {
     }
   }
 
+  /**
+   * `prove_current` observes the rooted capture only. Its ordinary caller deliberately does not
+   * acquire the phone mutation lane, launch ViVi, write brightness, or take the panel-dark lease.
+   * A retained cleanup checkpoint may wrap this same no-input proof in the lane and panel lease so
+   * the durable fence can be cleared only after a safe final tail. The action and physical-touch
+   * generations fence both fresh observations and the final encoded watermark.
+   */
+  private suspend fun runReadOnlyTicketVisualProofV3(
+    command: TicketSpacetimeCommand,
+    request: TicketVisualActionRequest,
+    generation: Long,
+    requireFreshRawDetail: Boolean = false
+  ): TicketVisualActionSnapshot {
+    val mutationGeneration = ticketActionV3MutationGeneration
+    val initialTouch = PhoneAutomationServiceBridge.currentRootPhysicalTouchState()
+    if (initialTouch.active) {
+      return ticketVisualActionTerminal(
+        request,
+        false,
+        "failed",
+        "ticket_action_current_physical_touch_active"
+      )
+    }
+    if (!streamActive || !rootHardwareH264CaptureEngine.snapshot().active) {
+      return ticketVisualActionTerminal(
+        request,
+        false,
+        "failed",
+        "ticket_action_current_stream_unavailable"
+      )
+    }
+    updateTicketVisualActionPhase(request, "read_only_capture")
+    rootHardwareH264CaptureEngine.startControlCodeRequestBurst("ticket_action_v3_read_only_proof")
+    return try {
+      val rawDetailProofEpoch = streamEpoch
+      val rawDetailProofRestartCount = rootHardwareH264CaptureEngine.snapshot().restartCount
+      if (requireFreshRawDetail && !verifyFreshTicketDetailVisualProof(
+          reason = "control_code_cleanup_checkpoint_recovery",
+          probeWaitMillis = CONTROL_CODE_CLEAN_SURFACE_PROBE_WAIT_MILLIS
+        )
+      ) {
+        recordTicketEvent(
+          "control_code_cleanup_checkpoint_visual_recovery_rejected",
+          "dimension=raw_ticket_unproved"
+        )
+        return ticketVisualActionTerminal(
+          request,
+          false,
+          "needs_attention",
+          "control_code_cleanup_pending_requires_visual_reopen"
+        )
+      }
+      val current = awaitStableTicketVisualActionObservation(
+        reason = "ticket_action_v3_prove_current",
+        timeoutMillis = TICKET_ACTION_V3_VISUAL_TIMEOUT_MILLIS,
+        allowUnknown = !requireFreshRawDetail,
+        currentOnly = true
+      ) ?: return ticketVisualActionTerminal(
+        request,
+        false,
+        "failed",
+        "ticket_action_visual_unproved"
+      )
+      if (requireFreshRawDetail) {
+        val captureGenerationChanged = streamEpoch != rawDetailProofEpoch ||
+          rootHardwareH264CaptureEngine.snapshot().restartCount != rawDetailProofRestartCount
+        val mismatch = if (captureGenerationChanged) {
+          "capture_generation_changed"
+        } else {
+          ticketControlCodeFreshRawDetailMismatch(current)
+        }
+        if (mismatch != null) {
+          recordTicketEvent(
+            "control_code_cleanup_checkpoint_visual_recovery_rejected",
+            "dimension=$mismatch view=${current.state.wireName}"
+          )
+          return ticketVisualActionTerminal(
+            request,
+            false,
+            "needs_attention",
+            "control_code_cleanup_pending_requires_visual_reopen",
+            current
+          )
+        }
+      }
+      val finalTouch = PhoneAutomationServiceBridge.currentRootPhysicalTouchState()
+      if (ticketActionV3Generation != generation ||
+        ticketActionV3MutationGeneration != mutationGeneration ||
+        finalTouch.active ||
+        (finalTouch.available && initialTouch.available &&
+          finalTouch.observedAtUptimeMillis != initialTouch.observedAtUptimeMillis)
+      ) {
+        return ticketVisualActionTerminal(
+          request,
+          false,
+          "failed",
+          "ticket_action_current_proof_fence_changed",
+          current
+        )
+      }
+      updateTicketVisualActionPhase(request, "binding_read_only_watermark")
+      proveCurrentTicketVisualAction(command, request, current).let { result ->
+        val watermarkTouch = PhoneAutomationServiceBridge.currentRootPhysicalTouchState()
+        val touchFenceCurrent = !watermarkTouch.active &&
+          (!watermarkTouch.available || !initialTouch.available ||
+            watermarkTouch.observedAtUptimeMillis == initialTouch.observedAtUptimeMillis)
+        if (ticketActionV3MutationGeneration == mutationGeneration && touchFenceCurrent) {
+          result
+        } else {
+          ticketVisualActionTerminal(
+            request,
+            false,
+            "failed",
+            "ticket_action_current_proof_fence_changed",
+            current
+          )
+        }
+      }
+    } finally {
+      if (ticketActionV3Generation == generation && !controlCodeRequestActive()) {
+        rootHardwareH264CaptureEngine.stopControlCodeRequestBurst(
+          "ticket_action_v3_read_only_proof_released"
+        )
+      }
+    }
+  }
+
   private suspend fun runTicketVisualActionV3(
     command: TicketSpacetimeCommand,
     request: TicketVisualActionRequest,
-    generation: Long
+    generation: Long,
+    readOnlyCleanupCheckpointRecovery: Boolean = false
   ): TicketVisualActionSnapshot {
+    val recoveringControlCodeCheckpointAtStart = controlCodeSignatureCleanupRequired
+    val readOnlyCleanupCheckpointPendingInsideLane =
+      readOnlyCleanupCheckpointRecovery &&
+        request.target == TicketVisualActionTarget.PROVE_CURRENT &&
+        recoveringControlCodeCheckpointAtStart
     ticketVisualActionCaptureLeaseActive = true
+    synchronized(ticketActionV3Lock) {
+      deferredTicketVisualTerminalActionId = ""
+      deferredTicketVisualTerminalObservation = null
+    }
     val panelLease = TicketActionPanelDarkLease(
       actionId = request.actionId,
       scope = serviceScope,
@@ -1686,13 +1722,36 @@ class TicketStreamService : Service() {
       reason = "ticket:ticket_action_panel_dark:${request.actionId.takeLast(24)}",
       durationMillis = TICKET_ACTION_V3_PANEL_DARK_LEASE_MILLIS
     )
-    return try {
-      if (!panelLease.acquire()) {
+    var leaseAcquired = false
+    var provisional = TicketVisualActionSnapshot(
+      actionId = request.actionId,
+      target = request.target.wireName,
+      status = "failed",
+      phase = "failed",
+      reason = "ticket_action_failed",
+      terminal = true,
+      ok = false
+    )
+    var finalization: TicketActionPanelDarkLeaseFinalization? = null
+    try {
+      leaseAcquired = panelLease.acquire()
+      provisional = if (!leaseAcquired) {
         ticketVisualActionTerminal(
           request,
           ok = false,
           status = "failed",
-          reason = panelLease.snapshot().failure.ifBlank { "ticket_action_panel_dark_unavailable" }
+          // The detailed clamp failure remains available in privacy-safe Pixel health. Publish the
+          // existing allowlisted pre-dispatch reason so Spacetime never collapses this terminal.
+          reason = "ticket_action_failed"
+        )
+      } else if (readOnlyCleanupCheckpointRecovery &&
+        request.target == TicketVisualActionTarget.PROVE_CURRENT
+      ) {
+        runReadOnlyTicketVisualProofV3(
+          command,
+          request,
+          generation,
+          requireFreshRawDetail = readOnlyCleanupCheckpointPendingInsideLane
         )
       } else {
         val result = runTicketVisualActionV3WithCaptureLease(
@@ -1758,7 +1817,11 @@ class TicketStreamService : Service() {
       }
     } finally {
       withContext(NonCancellable) {
-        panelLease.release("ticket_action_terminal")
+        finalization = if (leaseAcquired) {
+          panelLease.releaseAfterFinalConvergence("ticket_action_terminal")
+        } else {
+          panelLease.release("ticket_action_acquire_failed")
+        }
         if (activeTicketActionPanelDarkLease === panelLease) {
           activeTicketActionPanelDarkLease = null
         }
@@ -1766,11 +1829,156 @@ class TicketStreamService : Service() {
           "ticket:ticket_action_panel_dark:${request.actionId.takeLast(24)}:released"
         )
         ticketVisualActionCaptureLeaseActive = false
-        if (!controlCodeRequestActive() && !ticketSliderBurstActive) {
+        if (!controlCodeRequestActive()) {
           rootHardwareH264CaptureEngine.stopControlCodeRequestBurst("ticket_action_v3_capture_lease_released")
         }
       }
     }
+    val completedLease = finalization
+    val successfulProofCurrent = if (!provisional.ok) {
+      true
+    } else {
+      synchronized(encoderLock) {
+        val keyFrame = latestKeyFrame
+        ticketVisualSuccessProofCurrentAfterPanelFinalization(
+          proofActionId = provisional.actionId,
+          expectedActionId = request.actionId,
+          proofGeneration = generation,
+          currentGeneration = ticketActionV3Generation,
+          proofStreamEpoch = provisional.streamEpoch,
+          proofFrameSequence = provisional.frameSequence,
+          currentStreamEpoch = streamEpoch,
+          currentFrameSequence = frameSequence,
+          latestKeyFrameEpoch = keyFrame?.epoch ?: 0L,
+          latestKeyFrameSequence = keyFrame?.sequence ?: 0L
+        )
+      }
+    }
+    val cleanupRecoveryTailCurrent = !readOnlyCleanupCheckpointPendingInsideLane ||
+      (!controlCodeRequestActive() &&
+        pendingControlCodeBrowserCaptureRequestId == null &&
+        activeControlCodeKeyboardClamp == null &&
+        activeTicketActionPanelDarkLease == null)
+    val recoveredControlCodeSurface = recoveringControlCodeCheckpointAtStart && provisional.ok &&
+      when (request.target) {
+        TicketVisualActionTarget.OPEN_LATEST_UNACTIVATED ->
+          provisional.currentView == TicketVisualActionView.LATEST_UNACTIVATED
+        TicketVisualActionTarget.PROVE_CURRENT -> readOnlyCleanupCheckpointRecovery &&
+          provisional.currentView in setOf(
+            TicketVisualActionView.ACTIVATED_CURRENT,
+            TicketVisualActionView.LATEST_UNACTIVATED
+          )
+        else -> false
+      }
+    val recoveredControlCodeCleanupCommitted = if (!recoveredControlCodeSurface) {
+      true
+    } else if (successfulProofCurrent && cleanupRecoveryTailCurrent &&
+      ticketControlCodeCleanupMayCommitAfterPanelFinalization(
+        phoneSurfaceCleaned = true,
+        finalization = completedLease
+      )
+    ) {
+      commitControlCodeCleanStateAfterPanelFinalization("ticket_action_visual_reopen")
+    } else {
+      false
+    }
+    if (recoveredControlCodeSurface && !recoveredControlCodeCleanupCommitted) {
+      preserveControlCodeCleanupCheckpoint("ticket_action_visual_reopen_finalization_unproved")
+    }
+    val terminal = when {
+      leaseAcquired && completedLease?.safe != true -> {
+        val leaseState = completedLease?.snapshot ?: panelLease.snapshot()
+        provisional.copy(
+          status = if (leaseState.mutationMayHaveDispatched) "needs_attention" else "failed",
+          phase = if (leaseState.mutationMayHaveDispatched) "needs_attention" else "failed",
+          reason = ticketActionPanelDarkFinalizationFailureReason(request, leaseState),
+          switchAvailable = false,
+          switchExpiresAt = "",
+          sliderRegion = null,
+          completedAt = Instant.now().toString(),
+          terminal = true,
+          ok = false
+        )
+      }
+      provisional.ok && !successfulProofCurrent -> {
+        val currentWatermark = synchronized(encoderLock) { streamEpoch to frameSequence }
+        provisional.copy(
+          status = "needs_attention",
+          phase = "needs_attention",
+          currentView = TicketVisualActionView.UNKNOWN,
+          switchAvailable = false,
+          switchExpiresAt = "",
+          streamEpoch = currentWatermark.first,
+          frameSequence = currentWatermark.second,
+          reason = "ticket_action_visual_unproved",
+          sliderRegion = null,
+          completedAt = Instant.now().toString(),
+          terminal = true,
+          ok = false
+        )
+      }
+      provisional.ok && !recoveredControlCodeCleanupCommitted -> {
+        val currentWatermark = synchronized(encoderLock) { streamEpoch to frameSequence }
+        provisional.copy(
+          status = "needs_attention",
+          phase = "needs_attention",
+          currentView = TicketVisualActionView.UNKNOWN,
+          switchAvailable = false,
+          switchExpiresAt = "",
+          streamEpoch = currentWatermark.first,
+          frameSequence = currentWatermark.second,
+          reason = "ticket_action_visual_unproved",
+          sliderRegion = null,
+          completedAt = Instant.now().toString(),
+          terminal = true,
+          ok = false
+        )
+      }
+      else -> provisional
+    }
+    val deferredObservation = synchronized(ticketActionV3Lock) {
+      deferredTicketVisualTerminalObservation.takeIf {
+        deferredTicketVisualTerminalActionId == request.actionId
+      }.also {
+        deferredTicketVisualTerminalActionId = ""
+        deferredTicketVisualTerminalObservation = null
+      }
+    }
+    if (terminal.ok || terminal != provisional) {
+      val terminalObservation = deferredObservation.takeIf {
+        terminal.ok && successfulProofCurrent
+      }
+      if (!persistTicketVisualTerminalSnapshot(request, terminal, terminalObservation)) {
+        recordTicketEvent(
+          "ticket_action_terminal_journal_unproved",
+          "action=${request.actionId.takeLast(24)} status=${terminal.status}"
+        )
+        return terminal.copy(
+          status = "needs_attention",
+          phase = "needs_attention",
+          reason = "ticket_action_terminal_journal_unproved",
+          switchAvailable = false,
+          switchExpiresAt = "",
+          sliderRegion = null,
+          ok = false
+        )
+      }
+    }
+    if (terminal.ok && recoveredControlCodeSurface && recoveredControlCodeCleanupCommitted) {
+      publishControlCodeReadyAfterPanelFinalization(lastControlCodeRequestId.orEmpty())
+    }
+    return terminal
+  }
+
+  private fun ticketActionPanelDarkFinalizationFailureReason(
+    request: TicketVisualActionRequest,
+    snapshot: TicketActionPanelDarkLeaseSnapshot
+  ): String = when {
+    !snapshot.mutationMayHaveDispatched -> "ticket_action_failed"
+    request.target.activatesTicket -> "ticket_action_activation_dispatch_uncertain"
+    request.target != TicketVisualActionTarget.PROVE_CURRENT ->
+      "ticket_action_navigation_dispatch_uncertain"
+    else -> "ticket_action_v3_failed"
   }
 
   private suspend fun runTicketVisualActionV3WithCaptureLease(
@@ -1802,35 +2010,12 @@ class TicketStreamService : Service() {
       return ticketVisualActionTerminal(request, false, "failed", "ticket_action_v3_superseded")
     }
     updateTicketVisualActionPhase(request, "starting_visual_stream")
-    if (request.target == TicketVisualActionTarget.PROVE_CURRENT) {
-      if (!streamActive || !rootHardwareH264CaptureEngine.snapshot().active) {
-        return ticketVisualActionTerminal(
-          request,
-          false,
-          "failed",
-          "ticket_action_current_stream_unavailable"
-        )
-      }
-      rootHardwareH264CaptureEngine.startControlCodeRequestBurst("ticket_action_v3_capture_lease")
-      val current = awaitStableTicketVisualActionObservation(
-        reason = "ticket_action_v3_prove_current",
-        timeoutMillis = TICKET_ACTION_V3_VISUAL_TIMEOUT_MILLIS,
-        allowUnknown = true,
-        currentOnly = true
-      ) ?: return ticketVisualActionTerminal(
-        request,
-        false,
-        "failed",
-        "ticket_action_visual_unproved"
-      )
-      return proveCurrentTicketVisualAction(command, request, current)
-    }
     if (!panelLease.beforeMutationAllowed()) {
       return ticketVisualActionTerminal(
         request,
         false,
         "failed",
-        "ticket_action_panel_dark_unavailable"
+        "ticket_action_failed"
       )
     }
     if (!streamActive) {
@@ -1844,10 +2029,45 @@ class TicketStreamService : Service() {
         )
       }
     }
-    panelLease.markMutationMayHaveDispatched()
-    launchViviForWake("ticket_action_v3:${request.target.wireName}")
+    // Avoid restarting an already-focused Flutter activity immediately before visual proof. A
+    // redundant MAIN launch can create an onActivityRestartAttempt/window-generation transition
+    // that overlaps later input even though ViVi never visibly left the detail page.
+    val viviAlreadyFocused = viviFocusedForFastPublicOpen("ticket_action_v3_prelaunch")
+    if (!viviAlreadyFocused) {
+      // The focus lookup can suspend while the physical-touch monitor remains live. Re-check at
+      // the exact launch boundary so a touch that arrived during it can never be followed by input.
+      if (!panelLease.beforeMutationAllowed()) {
+        return ticketVisualActionTerminal(
+          request,
+          false,
+          "failed",
+          "ticket_action_failed"
+        )
+      }
+      panelLease.markMutationMayHaveDispatched()
+      launchViviForWake("ticket_action_v3:${request.target.wireName}")
+    } else {
+      recordTicketEvent(
+        "ticket_action_v3_vivi_launch_skipped",
+        "target=${request.target.wireName} reason=already_focused"
+      )
+    }
     ensureRootHardwareH264CaptureIfPossible()
     rootHardwareH264CaptureEngine.startControlCodeRequestBurst("ticket_action_v3_capture_lease")
+    if (request.target.activatesTicket) {
+      updateTicketVisualActionPhase(request, "preparing_registration_input")
+      if (!PhoneAutomationServiceBridge.awaitAccessibilityConnection(
+          TICKET_SLIDER_ACCESSIBILITY_RECONNECT_TIMEOUT_MILLIS
+        )
+      ) {
+        return ticketVisualActionTerminal(
+          request,
+          false,
+          "failed",
+          "ticket_action_accessibility_unavailable"
+        )
+      }
+    }
     val captureRecoveryBudget = TicketVisualCaptureRecoveryBudget()
     var observation = awaitStableTicketVisualActionObservation(
       "ticket_action_v3_initial",
@@ -2116,14 +2336,19 @@ class TicketStreamService : Service() {
       return ticketVisualActionTerminal(request, false, "failed", "ticket_action_target_not_reached", observation)
     }
     val exactRegistrationProof = if (request.target == TicketVisualActionTarget.REGISTER_CURRENT) {
-      ticketRegistrationProofForCurrentVisualAction(
+      val registrationProofGate = ticketRegistrationProofForCurrentVisualAction(
         proof = currentTicketRegistrationProof,
         request = request,
         observation = observation,
         currentStreamEpoch = streamEpoch,
         currentFrameSequence = frameSequence
-      ) ?: return ticketVisualActionTerminal(
-        request, false, "failed", "ticket_action_interaction_revision_unproved", observation
+      )
+      registrationProofGate.proof ?: return ticketVisualActionTerminal(
+        request,
+        false,
+        "failed",
+        registrationProofGate.failureReason ?: "ticket_action_interaction_revision_unproved",
+        observation
       )
     } else {
       null
@@ -2224,7 +2449,7 @@ class TicketStreamService : Service() {
             request,
             false,
             "needs_attention",
-            "control_code_cleanup_visual_reopen_unproved",
+            "ticket_action_visual_unproved",
             observation
           )
         }
@@ -2331,16 +2556,20 @@ class TicketStreamService : Service() {
     val slider = observation.sliderBounds
       ?: return ticketVisualActionTerminal(request, false, "failed", "ticket_action_slider_unproved", observation)
     val exactRegistrationProof = if (request.target == TicketVisualActionTarget.REGISTER_CURRENT) {
-      val proof = ticketRegistrationProofForCurrentVisualAction(
+      val registrationProofGate = ticketRegistrationProofForCurrentVisualAction(
         proof = currentTicketRegistrationProof?.takeIf { it == boundRegistrationProof },
         request = request,
         observation = observation,
         currentStreamEpoch = streamEpoch,
         currentFrameSequence = frameSequence
-      ) ?: return ticketVisualActionTerminal(
-        request, false, "failed", "ticket_action_interaction_revision_unproved", observation
       )
-      proof
+      registrationProofGate.proof ?: return ticketVisualActionTerminal(
+        request,
+        false,
+        "failed",
+        registrationProofGate.failureReason ?: "ticket_action_interaction_revision_unproved",
+        observation
+      )
     } else {
       null
     }
@@ -2351,6 +2580,18 @@ class TicketStreamService : Service() {
     val deviceBounds = ticketVisualProbeBoundsToDevice(slider)
     if (deviceBounds.width < 220 || deviceBounds.height < 20) {
       return ticketVisualActionTerminal(request, false, "failed", "ticket_action_slider_geometry_invalid", observation)
+    }
+    // Accessibility must be ready before the final frame/geometry proof is bound. If it drops
+    // after the earlier bounded readiness wait, fail before dispatch rather than waiting here and
+    // letting the visual proof age underneath a reconnect.
+    if (!PhoneAutomationServiceBridge.isAccessibilityServiceConnected()) {
+      return ticketVisualActionTerminal(
+        request,
+        false,
+        "failed",
+        "ticket_action_accessibility_unavailable",
+        observation
+      )
     }
     val preparedWatermark = preparedRegistrationProof?.let {
       it.streamEpoch to it.frameSequence
@@ -2423,9 +2664,6 @@ class TicketStreamService : Service() {
         "ticket_action_activation_checkpoint_unproved",
         observation
       )
-    if (!PhoneAutomationServiceBridge.awaitAccessibilityConnection(TICKET_SLIDER_ACCESSIBILITY_RECONNECT_TIMEOUT_MILLIS)) {
-      return ticketVisualActionTerminal(request, false, "failed", "ticket_action_accessibility_unavailable", observation)
-    }
     if (!synchronized(encoderLock) {
         ticketVisualActionWatermarkCurrentLocked(registrationWatermark)
       }
@@ -2459,96 +2697,94 @@ class TicketStreamService : Service() {
     val contract = ticketSliderGestureContract(deviceBounds)
     val y = (deviceBounds.top + deviceBounds.bottom) / 2
     panelLease.markMutationMayHaveDispatched()
-    when (PhoneAutomationServiceBridge.startTicketSliderGesture(contract.startX, y, TICKET_SLIDER_GESTURE_TIMEOUT_MILLIS)) {
-      TicketSliderGestureStartResult.UNKNOWN -> {
-        return reconcileTicketRegistrationAfterUncertainDispatch(
-          command = command,
-          request = request,
-          checkpoint = dispatching,
-          interactionRevision = revision,
-          provenAnchor = provenObservation.currentAnchor,
-          reasonPrefix = "ticket_action_gesture_start_uncertain"
-        )
-      }
-      TicketSliderGestureStartResult.REJECTED -> {
-        ticketActivationCheckpointStore.recordNeedsAttention(dispatching)
-        return ticketVisualActionTerminal(request, false, "needs_attention", "ticket_action_gesture_start_rejected", observation)
-      }
-      TicketSliderGestureStartResult.ACCEPTED -> Unit
-    }
-    if (!panelLease.beforeMutationAllowed()) {
+    val gestureResult = PhoneAutomationServiceBridge.performTicketSliderFullStroke(
+      expectedPackageName = TicketScreenConfig.VIVI_PACKAGE,
+      startX = contract.startX,
+      startY = y,
+      endX = contract.endX,
+      endY = y,
+      durationMillis = contract.durationMillis,
+      timeoutMillis = TICKET_SLIDER_GESTURE_TIMEOUT_MILLIS
+    )
+    // A root-confirmed finger can preempt while Android owns the uninterrupted 800 ms stroke.
+    // Reconcile the resulting screen once; never dispatch a completion segment or another stroke.
+    val postGestureLeaseReady = panelLease.beforeMutationAllowed()
+    val postGestureLease = panelLease.snapshot()
+    if (!postGestureLeaseReady || postGestureLease.physicalTouchPreempted) {
       return reconcileTicketRegistrationAfterUncertainDispatch(
         command = command,
         request = request,
         checkpoint = dispatching,
         interactionRevision = revision,
         provenAnchor = provenObservation.currentAnchor,
-        reasonPrefix = if (panelLease.snapshot().physicalTouchPreempted) {
+        reasonPrefix = if (postGestureLease.physicalTouchPreempted) {
           "ticket_action_physical_touch_preempted_after_dispatch"
         } else {
           "ticket_action_panel_dark_preempted_after_dispatch"
         }
       )
     }
-    val ended = PhoneAutomationServiceBridge.endTicketSliderGesture(
-      contract.endX,
-      y,
-      contract.durationMillis,
-      TICKET_SLIDER_GESTURE_TIMEOUT_MILLIS
-    )
-    // This is a read-only safety boundary. If a real finger arrived while Android owned either
-    // half of the held stroke, stop here and prove the resulting screen; never finish or replay
-    // another stroke on the user's behalf.
-    panelLease.beforeMutationAllowed()
-    if (panelLease.snapshot().physicalTouchPreempted) {
-      return reconcileTicketRegistrationAfterUncertainDispatch(
-        command = command,
-        request = request,
-        checkpoint = dispatching,
-        interactionRevision = revision,
-        provenAnchor = provenObservation.currentAnchor
-      )
+    when (gestureResult) {
+      TicketSliderGestureDispatchResult.UNKNOWN -> {
+        return reconcileTicketRegistrationAfterUncertainDispatch(
+          command = command,
+          request = request,
+          checkpoint = dispatching,
+          interactionRevision = revision,
+          provenAnchor = provenObservation.currentAnchor,
+          reasonPrefix = "ticket_action_gesture_completion_uncertain"
+        )
+      }
+      TicketSliderGestureDispatchResult.REJECTED -> {
+        ticketActivationCheckpointStore.recordNeedsAttention(dispatching)
+        return ticketVisualActionTerminal(
+          request,
+          false,
+          "needs_attention",
+          "ticket_action_gesture_rejected",
+          observation
+        )
+      }
+      TicketSliderGestureDispatchResult.COMPLETED -> Unit
     }
-    if (!ended) {
+    val postGestureObservation = awaitStableTicketVisualActionObservation(
+      "ticket_action_v3_activation_result",
+      TICKET_ACTION_V3_ACTIVATION_PROOF_TIMEOUT_MILLIS
+    )
+    val activationObservation = ticketVisualActivationObservationAfterCompletedGesture(
+      postGestureObservation,
+      provenObservation.currentAnchor
+    )
+    val postProofLeaseReady = panelLease.beforeMutationAllowed()
+    val postProofLease = panelLease.snapshot()
+    if (!postProofLeaseReady || postProofLease.physicalTouchPreempted) {
       return reconcileTicketRegistrationAfterUncertainDispatch(
         command = command,
         request = request,
         checkpoint = dispatching,
         interactionRevision = revision,
         provenAnchor = provenObservation.currentAnchor,
-        reasonPrefix = "ticket_action_gesture_completion_uncertain"
-      )
-    }
-    val activationObservation = awaitStableTicketVisualActionObservation(
-      "ticket_action_v3_activation_result",
-      TICKET_ACTION_V3_ACTIVATION_PROOF_TIMEOUT_MILLIS
-    )?.let { visual ->
-        if (provenObservation.currentAnchor.isNotBlank()) {
-          visual.copy(currentAnchor = provenObservation.currentAnchor)
+        reasonPrefix = if (postProofLease.physicalTouchPreempted) {
+          "ticket_action_physical_touch_preempted_after_dispatch"
         } else {
-          visual
+          "ticket_action_panel_dark_preempted_after_dispatch"
         }
-      }
-    panelLease.beforeMutationAllowed()
-    if (panelLease.snapshot().physicalTouchPreempted) {
-      return reconcileTicketRegistrationAfterUncertainDispatch(
-        command = command,
-        request = request,
-        checkpoint = dispatching,
-        interactionRevision = revision,
-        provenAnchor = provenObservation.currentAnchor
       )
     }
-    val activated = activationObservation
-      ?.takeIf { it.state == TicketVisualPhoneState.ACTIVATED_DETAIL }
-      ?: run {
+    val activated = activationObservation?.takeIf {
+      it.state == TicketVisualPhoneState.ACTIVATED_DETAIL
+    } ?: run {
         ticketActivationCheckpointStore.recordNeedsAttention(dispatching)
+        val reason = ticketVisualPostGestureFailureReason(
+          postGestureObservation,
+          provenObservation.currentAnchor
+        )
         return ticketVisualActionTerminal(
           request,
           false,
           "needs_attention",
-          "ticket_action_activation_visual_unproved",
-          activationObservation
+          reason,
+          postGestureObservation
         )
       }
     val activationRevision = ticketActivationRevision(command.id, revision, request.attemptId)
@@ -2665,7 +2901,6 @@ class TicketStreamService : Service() {
     ).let { value ->
       if (checkpointVisualMatches) value else value.copy(switchAvailable = false, switchExpiresAt = "")
     }
-    persistTicketVisualTerminalSnapshot(request, snapshot, publishedObservation)
     return snapshot
   }
 
@@ -2993,6 +3228,16 @@ class TicketStreamService : Service() {
       terminal = true,
       ok = terminalOk
     )
+    val deferSuccessfulMutationTerminal = snapshot.ok &&
+      (request.target != TicketVisualActionTarget.PROVE_CURRENT ||
+        ticketVisualActionCaptureLeaseActive)
+    if (deferSuccessfulMutationTerminal) {
+      synchronized(ticketActionV3Lock) {
+        deferredTicketVisualTerminalActionId = request.actionId
+        deferredTicketVisualTerminalObservation = observation
+      }
+      return snapshot
+    }
     if (persistTicketVisualTerminalSnapshot(request, snapshot, observation)) return snapshot
     recordTicketEvent(
       "ticket_action_terminal_journal_unproved",
@@ -3158,100 +3403,13 @@ class TicketStreamService : Service() {
       .commit()
   }
 
-  internal fun ticketSpacetimeSliderActive(): Boolean {
-    return activeTicketSliderGesture != null
-  }
-
-  internal fun ticketSpacetimeSliderApplicationPending(): Boolean {
-    return synchronized(ticketSliderStateLock) {
-      pendingTicketSliderApplication != null
-    }
-  }
-
-  internal fun takeTicketRegistrationProof(): TicketRegistrationProof? {
-    val proof = lastTicketRegistrationProof
-    lastTicketRegistrationProof = null
-    return proof
-  }
-
-  /**
-   * Returns the durable terminal reset proof without consuming it. The Spacetime worker may need
-   * more than one publish attempt when the interaction row or network is briefly unavailable.
-   * Exact revision binding prevents an older successful reset from completing a newer command.
-   */
-  internal fun ticketRegistrationProofForRevision(
-    interactionRevision: String
-  ): TicketRegistrationProof? {
-    val cleanRevision = interactionRevision.trim()
-    if (cleanRevision.isBlank()) return null
-    return currentTicketRegistrationProof?.takeIf { it.interactionRevision == cleanRevision }
-  }
-
-  /**
-   * Re-proves the currently displayed unused ticket after the encoder has moved to a new
-   * stream epoch.  The browser deliberately rejects a proof from an older epoch, so the only
-   * safe recovery is to inspect the live ViVi surface again and bind fresh geometry to the
-   * current epoch/frame.  This method never reuses old geometry and never sends pixels off-phone.
-   */
-  internal suspend fun refreshUnactivatedTicketRegistrationProofForCurrentStream(
-    interactionRevision: String
-  ): Boolean {
-    val cleanRevision = interactionRevision.trim()
-    if (cleanRevision.isBlank()) return false
-    val nowMillis = SystemClock.elapsedRealtime()
-    if (nowMillis - lastUnactivatedProofRefreshAttemptAtMillis < 1_500L) return false
-    lastUnactivatedProofRefreshAttemptAtMillis = nowMillis
-    if (
-      !streamActive ||
-      activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264 ||
-      !hardwareCaptureVerified ||
-      streamEpoch <= 0L ||
-      frameSequence <= 0L
-    ) {
-      return false
-    }
-    val observation = observeTicketDetailForWakeWithRoot(
-      reason = "stream_epoch_slider_proof_refresh",
-      wakeStartedAtMillis = nowMillis,
-      budgetMillis = 5_000L,
-      maxRecoveryActions = 0,
-      extendBudgetAfterRecoveryAction = false,
-      requireUnactivatedRegistration = true
-    )
-    val bounds = observation.finalSliderBounds ?: return false
-    val proofEpoch = streamEpoch
-    val proofSequence = frameSequence
-    if (proofEpoch <= 0L || proofSequence <= 0L) return false
-    rememberTicketRegistrationProof(
-      TicketRegistrationProof(
-        status = "unactivated_ready",
-        reason = "unactivated_registration_proved",
-        interactionRevision = cleanRevision,
-        streamEpoch = proofEpoch,
-        frameSequence = proofSequence,
-        phoneDisplayWidth = resources.displayMetrics.widthPixels,
-        phoneDisplayHeight = resources.displayMetrics.heightPixels,
-        provedAtUptimeMillis = SystemClock.elapsedRealtime(),
-        sliderLeft = bounds.left,
-        sliderTop = bounds.top,
-        sliderRight = bounds.right,
-        sliderBottom = bounds.bottom
-      )
-    )
-    recordTicketEvent(
-      "ticket_slider_proof_refreshed",
-      "reason=stream_epoch_changed epoch=$proofEpoch sequence=$proofSequence"
-    )
-    return true
-  }
-
-  internal fun ticketStreamEpoch(): Long = streamEpoch
-
-  internal fun ticketFrameSequence(): Long = frameSequence
-
   private fun rememberTicketRegistrationProof(proof: TicketRegistrationProof) {
-    currentTicketRegistrationProof = proof
-    lastTicketRegistrationProof = proof
+    val retained = ticketRegistrationProofPreservingExactIdentity(
+      currentTicketRegistrationProof,
+      proof
+    )
+    currentTicketRegistrationProof = retained
+    lastTicketRegistrationProof = retained
   }
 
   private fun bindTicketRegistrationProofToCurrentWatermark(
@@ -3332,822 +3490,6 @@ class TicketStreamService : Service() {
     return ticketActivationCheckpointStore.clearIfMatches(commandId, activationAttemptId)
   }
 
-  private suspend fun recoverTicketActivationCheckpointForReset(
-    commandId: String,
-    interactionRevision: String,
-    activationAttemptId: String
-  ): TicketSpacetimeCommandResult? {
-    val checkpoint = ticketActivationCheckpoint(commandId, interactionRevision, activationAttemptId) ?: return null
-    if (checkpoint.stage == TicketActivationCheckpointStage.ACTIVATION_COMMITTED) {
-      return TicketSpacetimeCommandResult(
-        ok = true,
-        reason = "ticket_activation_checkpoint_committed",
-        streamState = ticketSpacetimeStreamState()
-      )
-    }
-    if (checkpoint.stage == TicketActivationCheckpointStage.ACTIVATION_PROVEN) {
-      return TicketSpacetimeCommandResult(
-        ok = true,
-        reason = "ticket_activation_checkpoint_proven",
-        streamState = ticketSpacetimeStreamState()
-      )
-    }
-    if (checkpoint.stage == TicketActivationCheckpointStage.NEEDS_ATTENTION) {
-      return TicketSpacetimeCommandResult(
-        ok = false,
-        reason = "ticket_activation_needs_attention",
-        streamState = ticketSpacetimeStreamState()
-      )
-    }
-    if (checkpoint.stage != TicketActivationCheckpointStage.ACTIVATION_DISPATCHING) return null
-    if (ticketSpacetimeSliderActive()) return null
-    val observation = observeRootViviStateForWake(
-      reason = "ticket_activation_checkpoint_recovery",
-      timeoutMillis = TICKET_WAKE_FAST_POST_LAUNCH_TIMEOUT_MILLIS
-    )
-    val hierarchy = observation.hierarchy.orEmpty()
-    val screen = if (
-      observation.state == TicketViviRecoveryState.TICKET_DETAIL &&
-      TicketViviPageEnforcer.isActivatedTicketDetail(hierarchy)
-    ) {
-      TicketActivationRecoveryScreen.ACTIVATED
-    } else {
-      TicketActivationRecoveryScreen.AMBIGUOUS
-    }
-    return when (ticketActivationRecoveryAction(checkpoint, screen)) {
-      TicketActivationRecoveryAction.COMMIT_PROVEN_RESULT -> {
-        val activationRevision = checkpoint.activationRevision.ifBlank {
-          ticketActivationRevision(commandId, interactionRevision, activationAttemptId)
-        }
-        recordTicketActivationProven(checkpoint, activationRevision)
-        TicketSpacetimeCommandResult(
-          ok = true,
-          reason = "ticket_activation_checkpoint_proven",
-          streamState = ticketSpacetimeStreamState()
-        )
-      }
-      TicketActivationRecoveryAction.NEEDS_ATTENTION -> {
-        ticketActivationCheckpointStore.recordNeedsAttention(checkpoint)
-        TicketSpacetimeCommandResult(
-          ok = false,
-          reason = "ticket_activation_needs_attention",
-          streamState = ticketSpacetimeStreamState()
-        )
-      }
-      else -> null
-    }
-  }
-
-  private suspend fun handleInstantTicketSliderActivation(
-    commandId: String,
-    interactionRevision: String,
-    controlId: String,
-    inputSequence: Long,
-    inputPhase: String,
-    initialProgress: Int,
-    activationAttemptId: String = ""
-  ): TicketSpacetimeCommandResult {
-    synchronized(ticketSliderStateLock) {
-      instantSliderApplicationResults[commandId]?.let { cached ->
-        return TicketSpacetimeCommandResult(
-          ok = cached.ok,
-          reason = cached.reason,
-          streamState = ticketSpacetimeStreamState(),
-          sliderApplication = cached
-        )
-      }
-    }
-    val cleanRevision = interactionRevision.trim()
-    val cleanControlId = controlId.trim()
-    val cleanAttemptId = activationAttemptId.trim().ifBlank { cleanControlId }
-    if (
-      cleanRevision.isBlank() || cleanControlId.isBlank() || inputSequence <= 0L ||
-      inputPhase != "up" || initialProgress < TICKET_SLIDER_COMPLETION_PROGRESS
-    ) {
-      return TicketSpacetimeCommandResult(false, "instant_slider_input_invalid", ticketSpacetimeStreamState())
-    }
-    val deterministicActivationRevision = ticketActivationRevision(commandId, cleanRevision, cleanAttemptId)
-
-    val currentObservation = observeRootViviStateForWake(
-      reason = "ticket_slider_instant_replay",
-      timeoutMillis = TICKET_WAKE_FAST_POST_LAUNCH_TIMEOUT_MILLIS
-    )
-    val currentHierarchy = currentObservation.hierarchy.orEmpty()
-    val screen = when {
-      currentObservation.state == TicketViviRecoveryState.TICKET_DETAIL &&
-      TicketViviPageEnforcer.isActivatedTicketDetail(currentHierarchy) -> TicketActivationRecoveryScreen.ACTIVATED
-      currentObservation.state == TicketViviRecoveryState.TICKET_DETAIL &&
-        TicketViviPageEnforcer.isUnactivatedRegistrationDetail(currentHierarchy) -> TicketActivationRecoveryScreen.UNUSED
-      else -> TicketActivationRecoveryScreen.AMBIGUOUS
-    }
-    val checkpoint = ticketActivationCheckpoint(commandId, cleanRevision, cleanAttemptId)
-    val recoveryAction = ticketActivationRecoveryAction(checkpoint, screen)
-    when (recoveryAction) {
-      TicketActivationRecoveryAction.NEEDS_ATTENTION -> {
-        checkpoint?.let { ticketActivationCheckpointStore.recordNeedsAttention(it) }
-        return TicketSpacetimeCommandResult(false, "ticket_activation_needs_attention", ticketSpacetimeStreamState())
-      }
-      TicketActivationRecoveryAction.ACKNOWLEDGE_ONLY,
-      TicketActivationRecoveryAction.COMMIT_PROVEN_RESULT -> {
-        if (recoveryAction == TicketActivationRecoveryAction.COMMIT_PROVEN_RESULT &&
-          screen != TicketActivationRecoveryScreen.ACTIVATED
-        ) {
-          checkpoint?.let { ticketActivationCheckpointStore.recordNeedsAttention(it) }
-          return TicketSpacetimeCommandResult(false, "ticket_activation_needs_attention", ticketSpacetimeStreamState())
-        }
-        val activationRevision = checkpoint?.activationRevision.orEmpty().ifBlank { deterministicActivationRevision }
-        val provenCheckpoint = checkpoint ?: recordTicketActivationFreshProof(commandId, cleanRevision, cleanAttemptId)
-          ?: return TicketSpacetimeCommandResult(
-            false,
-            "ticket_activation_checkpoint_unproved",
-            ticketSpacetimeStreamState()
-          )
-        if (provenCheckpoint.stage != TicketActivationCheckpointStage.ACTIVATION_COMMITTED) {
-          if (recordTicketActivationProven(provenCheckpoint, activationRevision) == null) {
-            return TicketSpacetimeCommandResult(
-              false,
-              "ticket_activation_checkpoint_unproved",
-              ticketSpacetimeStreamState()
-            )
-          }
-        }
-        val application = sliderApplied(
-          ok = true,
-          reason = "activated_aztec_reproved",
-          status = "activated",
-          sequence = inputSequence,
-          progress = 10_000,
-          leasePhase = "none",
-          activationRevision = activationRevision,
-          activationAt = java.time.Instant.now().toString(),
-          activationAttemptId = cleanAttemptId
-        )
-        synchronized(ticketSliderStateLock) {
-          while (instantSliderApplicationResults.size >= MAX_INSTANT_SLIDER_RESULTS) {
-            instantSliderApplicationResults.remove(instantSliderApplicationResults.keys.first())
-          }
-          instantSliderApplicationResults[commandId] = application
-        }
-        return TicketSpacetimeCommandResult(
-          ok = true,
-          reason = "activated_aztec_reproved",
-          streamState = ticketSpacetimeStreamState(),
-          sliderApplication = application
-        )
-      }
-      TicketActivationRecoveryAction.RESUME_ACTIVATION,
-      TicketActivationRecoveryAction.NONE -> Unit
-    }
-    if (screen != TicketActivationRecoveryScreen.UNUSED) {
-      checkpoint?.let { ticketActivationCheckpointStore.recordNeedsAttention(it) }
-      return TicketSpacetimeCommandResult(false, "ticket_activation_screen_ambiguous", ticketSpacetimeStreamState())
-    }
-    checkpoint ?: recordTicketActivationFreshProof(commandId, cleanRevision, cleanAttemptId)
-    // Both menu activation paths use one full-track accessibility gesture. The server payload
-    // still records the terminal input, but the phone starts at the thumb and releases once at
-    // the usable right edge; it never chases an already-complete progress value first.
-    val started = startTicketSliderInteraction(
-      interactionRevision = cleanRevision,
-      controlId = cleanControlId,
-      initialProgress = 0,
-      activationAttemptId = cleanAttemptId,
-      activationCommandId = commandId,
-      prevalidatedUnactivatedHierarchy = currentHierarchy
-    )
-    if (!started.ok) {
-      return started
-    }
-    val application = applyTicketSliderInteraction(
-      TicketSpacetimeInteractionSnapshot(
-        status = "control_active",
-        interactionRevision = cleanRevision,
-        activationRevision = "",
-        activationAt = "",
-        scheduledResetAt = "",
-        resetRequestId = "",
-        streamEpoch = streamEpoch,
-        frameSequence = frameSequence,
-        phoneDisplayWidth = resources.displayMetrics.widthPixels,
-        phoneDisplayHeight = resources.displayMetrics.heightPixels,
-        sliderLeft = currentTicketRegistrationProof?.sliderLeft ?: 0,
-        sliderTop = currentTicketRegistrationProof?.sliderTop ?: 0,
-        sliderRight = currentTicketRegistrationProof?.sliderRight ?: 0,
-        sliderBottom = currentTicketRegistrationProof?.sliderBottom ?: 0,
-        ownerPublicId = cleanControlId,
-        controlId = cleanControlId,
-        leasePhase = "active",
-        leaseExpiresAt = "",
-        latestInputSequence = inputSequence.toString(),
-        latestInputPhase = inputPhase,
-        latestProgress = initialProgress,
-        lastAppliedSequence = "0",
-        lastAppliedProgress = 0,
-        reason = "slider_button_activation_queued",
-        updatedAt = "",
-        expiresAt = ""
-      )
-    )?.copy(
-      activationRevision = deterministicActivationRevision,
-      activationAttemptId = cleanAttemptId
-    )
-      ?: return TicketSpacetimeCommandResult(false, "instant_slider_application_missing", ticketSpacetimeStreamState())
-    synchronized(ticketSliderStateLock) {
-      while (instantSliderApplicationResults.size >= MAX_INSTANT_SLIDER_RESULTS) {
-        instantSliderApplicationResults.remove(instantSliderApplicationResults.keys.first())
-      }
-      instantSliderApplicationResults[commandId] = application
-    }
-    return TicketSpacetimeCommandResult(
-      ok = application.ok,
-      reason = application.reason,
-      streamState = ticketSpacetimeStreamState(),
-      sliderApplication = application
-    )
-  }
-
-  private suspend fun startTicketSliderInteraction(
-    interactionRevision: String,
-    controlId: String,
-    initialProgress: Int,
-    activationAttemptId: String = "",
-    activationCommandId: String = "",
-    prevalidatedUnactivatedHierarchy: String = ""
-  ): TicketSpacetimeCommandResult {
-    val cleanRevision = interactionRevision.trim()
-    val cleanControlId = controlId.trim()
-    val cleanAttemptId = activationAttemptId.trim().ifBlank { cleanControlId }
-    val cleanCommandId = activationCommandId.trim()
-    if (cleanRevision.isBlank() || cleanControlId.isBlank()) {
-      return TicketSpacetimeCommandResult(false, "slider_identity_missing", ticketSpacetimeStreamState())
-    }
-    activeTicketSliderGesture?.let { active ->
-      if (
-        active.interactionRevision == cleanRevision &&
-        active.controlId == cleanControlId
-      ) {
-        // The worker may defer the command acknowledgement until the first durable
-        // interaction publication. Replaying the still-pending command must not try to
-        // start a second Android stroke or clear the valid lease as a false failure.
-        return TicketSpacetimeCommandResult(true, "slider_stroke_already_started", ticketSpacetimeStreamState())
-      }
-      return TicketSpacetimeCommandResult(false, "slider_already_active", ticketSpacetimeStreamState())
-    }
-    beginTicketSliderCaptureBurst("ticket_slider_claim_received")
-    val startedAtMillis = SystemClock.elapsedRealtime()
-    val reusedProof = currentTicketRegistrationProof?.takeIf { proof ->
-      proof.status == "unactivated_ready" &&
-        proof.interactionRevision == cleanRevision &&
-        proof.hasSliderBounds &&
-        proof.streamEpoch == streamEpoch &&
-        proof.provedAtUptimeMillis > 0L &&
-        SystemClock.elapsedRealtime() - proof.provedAtUptimeMillis in
-          0L..TICKET_SLIDER_TRANSIENT_PROOF_MAX_AGE_MILLIS
-    }
-    val callerProvedHierarchy = prevalidatedUnactivatedHierarchy.trim().takeIf { hierarchy ->
-      TicketViviPageEnforcer.isUnactivatedRegistrationDetail(hierarchy)
-    }
-    val observation = if (callerProvedHierarchy == null) {
-      observeAccessibilityViviState("ticket_slider_start")
-    } else {
-      null
-    }
-    val hierarchy = callerProvedHierarchy ?: observation?.hierarchy.orEmpty()
-    val observationState = observation?.state ?: TicketViviRecoveryState.TICKET_DETAIL
-    val hierarchyUnavailable = hierarchy.isBlank()
-    val conflictingObservation = !hierarchyUnavailable && (
-      observationState != TicketViviRecoveryState.TICKET_DETAIL ||
-        !TicketViviPageEnforcer.isUnactivatedRegistrationDetail(hierarchy)
-      )
-    // A fresh, exact-revision proof is authoritative for this reset generation. The
-    // accessibility tree can briefly expose the outgoing Flutter frame while the rooted
-    // capture/proof already shows the new registration screen. Do not reject that transient
-    // mismatch; the proof is still bound to the same stream epoch, frame, revision, and age.
-    val trustedCachedProof = reusedProof != null && (hierarchyUnavailable || conflictingObservation)
-    if ((!trustedCachedProof && conflictingObservation) || (hierarchyUnavailable && reusedProof == null)) {
-      recordTicketEvent("ticket_slider_start_rejected", "reason=unactivated_detail_unproved state=${observationState.name}")
-      return TicketSpacetimeCommandResult(false, "unactivated_detail_unproved", ticketSpacetimeStreamState())
-    }
-    val semanticBounds = hierarchy.takeIf { it.isNotBlank() }
-      ?.let(TicketViviPageEnforcer::ticketRegistrationSliderBoundsForHierarchy)
-    if (semanticBounds == null && reusedProof == null) {
-      recordTicketEvent("ticket_slider_start_rejected", "reason=slider_semantic_anchor_unproved")
-      return TicketSpacetimeCommandResult(false, "slider_semantic_anchor_unproved", ticketSpacetimeStreamState())
-    }
-    val reusedGestureBounds = if (reusedProof != null && semanticBounds != null) {
-      ticketSliderGestureBoundsAfterVisualProof(
-        hierarchyBounds = semanticBounds,
-        visualBounds = reusedProof.toGraphicBounds(),
-        displayWidth = resources.displayMetrics.widthPixels.coerceAtLeast(1),
-        displayHeight = resources.displayMetrics.heightPixels.coerceAtLeast(1)
-      )
-    } else {
-      null
-    }
-    val bounds = if (trustedCachedProof) {
-      reusedProof.toGraphicBounds()
-    } else if (reusedGestureBounds != null) {
-      reusedGestureBounds
-    } else {
-      val requiredSemanticBounds = semanticBounds ?: reusedProof?.toGraphicBounds()
-        ?: return TicketSpacetimeCommandResult(false, "slider_semantic_anchor_unproved", ticketSpacetimeStreamState())
-      detectFreshTicketRegistrationSliderBounds(
-        hierarchyBounds = requiredSemanticBounds,
-        reason = "ticket_slider_start_visual"
-      )
-    }
-    if (bounds == null) {
-      recordTicketEvent("ticket_slider_start_rejected", "reason=slider_visual_unproved")
-      return TicketSpacetimeCommandResult(false, "slider_visual_unproved", ticketSpacetimeStreamState())
-    }
-    // Rooted UiAutomator proof can briefly suppress Android accessibility services while it
-    // owns the hierarchy connection. Do not turn that normal handoff into a failed admitted
-    // activation: wait only for the already-enabled service to reconnect, then dispatch the
-    // same single physical stroke. This does not retry a gesture because no stroke exists yet.
-    val accessibilityReady = PhoneAutomationServiceBridge.awaitAccessibilityConnection(
-      TICKET_SLIDER_ACCESSIBILITY_RECONNECT_TIMEOUT_MILLIS
-    )
-    if (!accessibilityReady) {
-      PhoneAutomationServiceBridge.logTicketSliderDiagnostic(
-        "start_result accessibility_ready=false"
-      )
-      recordTicketEvent(
-        "ticket_slider_start_rejected",
-        "reason=accessibility_service_unavailable_after_proof"
-      )
-      return TicketSpacetimeCommandResult(
-        false,
-        "accessibility_service_unavailable_after_proof",
-        ticketSpacetimeStreamState()
-      )
-    }
-    val gestureContract = ticketSliderGestureContract(bounds)
-    val startX = gestureContract.startX.coerceIn(bounds.left, (bounds.right - 1).coerceAtLeast(bounds.left))
-    val startY = ((bounds.top + bounds.bottom) / 2)
-    PhoneAutomationServiceBridge.logTicketSliderDiagnostic(
-      "start_geometry bounds=${bounds.left},${bounds.top},${bounds.right},${bounds.bottom} semantic=${semanticBounds?.let { "${it.left},${it.top},${it.right},${it.bottom}" } ?: "none"} start=$startX,$startY end=${gestureContract.endX} duration_ms=${gestureContract.durationMillis} display=${resources.displayMetrics.widthPixels}x${resources.displayMetrics.heightPixels} reused=${reusedProof != null} trusted_cached=$trustedCachedProof"
-    )
-    val dispatchingCheckpoint = if (cleanCommandId.isNotBlank() && cleanAttemptId.isNotBlank()) {
-      val checkpoint = ticketActivationCheckpoint(cleanCommandId, cleanRevision, cleanAttemptId)
-        ?: recordTicketActivationFreshProof(cleanCommandId, cleanRevision, cleanAttemptId)
-        ?: return TicketSpacetimeCommandResult(
-          false,
-          "ticket_activation_checkpoint_unproved",
-          ticketSpacetimeStreamState()
-        )
-      recordTicketActivationDispatching(checkpoint)
-        ?: return TicketSpacetimeCommandResult(
-          false,
-          "ticket_activation_dispatch_checkpoint_unproved",
-          ticketSpacetimeStreamState()
-        )
-    } else {
-      null
-    }
-    val startResult = PhoneAutomationServiceBridge.startTicketSliderGesture(
-      startX = startX,
-      startY = startY,
-      timeoutMillis = TICKET_SLIDER_GESTURE_TIMEOUT_MILLIS
-    )
-    if (startResult == TicketSliderGestureStartResult.UNKNOWN) {
-      dispatchingCheckpoint?.let { checkpoint ->
-        ticketActivationCheckpointStore.recordNeedsAttention(checkpoint)
-      }
-      PhoneAutomationServiceBridge.logTicketSliderDiagnostic("start_result accepted=unknown")
-      recordTicketEvent("ticket_slider_start_unknown", "reason=accessibility_gesture_start_unknown")
-      return TicketSpacetimeCommandResult(
-        false,
-        "accessibility_gesture_start_unknown",
-        ticketSpacetimeStreamState()
-      )
-    }
-    if (startResult == TicketSliderGestureStartResult.REJECTED) {
-      dispatchingCheckpoint?.let { checkpoint ->
-        recordTicketActivationFreshProof(
-          checkpoint.commandId,
-          checkpoint.interactionRevision,
-          checkpoint.activationAttemptId
-        )
-      }
-      PhoneAutomationServiceBridge.logTicketSliderDiagnostic("start_result accepted=false")
-      recordTicketEvent("ticket_slider_start_failed", "reason=accessibility_gesture_start_failed")
-      return TicketSpacetimeCommandResult(false, "accessibility_gesture_start_failed", ticketSpacetimeStreamState())
-    }
-    PhoneAutomationServiceBridge.logTicketSliderDiagnostic("start_result accepted=true")
-    beginTicketSliderCaptureBurst("ticket_slider_stroke_started")
-    synchronized(ticketSliderStateLock) {
-      activeTicketSliderGesture = ActiveTicketSliderGesture(
-        activationCommandId = cleanCommandId,
-        interactionRevision = cleanRevision,
-        controlId = cleanControlId,
-        activationAttemptId = cleanAttemptId,
-        bounds = bounds,
-        lastAppliedProgress = 0
-      )
-    }
-    val chaseProgress = initialProgress.coerceIn(0, 10_000)
-    if (chaseProgress > 0) {
-      val chaseX = ticketSliderTargetX(bounds, chaseProgress)
-      val chased = PhoneAutomationServiceBridge.continueTicketSliderGesture(
-        endX = chaseX,
-        endY = startY,
-        durationMillis = sliderSegmentDurationMillis(0, chaseProgress),
-        timeoutMillis = TICKET_SLIDER_GESTURE_TIMEOUT_MILLIS
-      )
-      if (chased) {
-        synchronized(ticketSliderStateLock) {
-          activeTicketSliderGesture?.lastAppliedProgress = chaseProgress
-        }
-      } else {
-        endTicketSliderCaptureBurst("ticket_slider_initial_chase_failed")
-        activeTicketSliderGesture = null
-        recordTicketEvent("ticket_slider_start_failed", "reason=accessibility_gesture_chase_failed")
-        return TicketSpacetimeCommandResult(false, "accessibility_gesture_chase_failed", ticketSpacetimeStreamState())
-      }
-    }
-    rememberTicketRegistrationProof(
-      TicketRegistrationProof(
-      status = "unactivated_ready",
-      reason = "unactivated_registration_proved",
-      interactionRevision = cleanRevision,
-      streamEpoch = streamEpoch,
-        frameSequence = frameSequence,
-        phoneDisplayWidth = resources.displayMetrics.widthPixels,
-        phoneDisplayHeight = resources.displayMetrics.heightPixels,
-        provedAtUptimeMillis = SystemClock.elapsedRealtime(),
-      sliderLeft = bounds.left,
-      sliderTop = bounds.top,
-      sliderRight = bounds.right,
-      sliderBottom = bounds.bottom
-      )
-    )
-    recordTicketEvent(
-      "ticket_slider_stroke_started",
-      "duration_ms=${(SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)} reused_proof=${reusedProof != null} bounds=${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}"
-    )
-    return TicketSpacetimeCommandResult(true, "slider_stroke_started", ticketSpacetimeStreamState())
-  }
-
-  internal suspend fun applyTicketSliderInteraction(
-    interaction: TicketSpacetimeInteractionSnapshot
-  ): TicketSliderApplicationResult? {
-    val active = activeTicketSliderGesture ?: return null
-    if (
-      active.interactionRevision != interaction.interactionRevision ||
-      active.controlId != interaction.controlId
-    ) {
-      return null
-    }
-    val sequence = interaction.latestInputSequence.toLongOrNull() ?: return null
-    if (sequence <= active.lastAppliedSequence) return null
-    val progress = interaction.latestProgress.coerceIn(0, 10_000)
-    val phase = interaction.latestInputPhase
-    val sliderY = (active.bounds.top + active.bounds.bottom) / 2
-    val targetX = ticketSliderTargetX(active.bounds, progress)
-    val usableRight = ticketSliderGestureContract(active.bounds).endX
-
-    PhoneAutomationServiceBridge.logTicketSliderDiagnostic(
-      "input sequence=$sequence phase=$phase progress=$progress target=$targetX,$sliderY usable_right=$usableRight bounds=${active.bounds.left},${active.bounds.top},${active.bounds.right},${active.bounds.bottom} previous_progress=${active.lastAppliedProgress}"
-    )
-
-    if (progress >= TICKET_SLIDER_COMPLETION_PROGRESS && phase != "cancel") {
-      return completeTicketSliderInteraction(active, sequence, progress, sliderY)
-    }
-    if (phase == "heartbeat") {
-      active.lastAppliedSequence = sequence
-      return sliderApplied(true, "slider_heartbeat_applied", "control_active", sequence, progress, "active", interaction.leaseExpiresAt, interaction.ownerPublicId, interaction.controlId)
-    }
-    val duration = sliderSegmentDurationMillis(active.lastAppliedProgress, progress)
-    val moved = if (phase == "up" || phase == "cancel") {
-      PhoneAutomationServiceBridge.endTicketSliderGesture(
-        endX = targetX,
-        endY = sliderY,
-        durationMillis = duration,
-        timeoutMillis = TICKET_SLIDER_GESTURE_TIMEOUT_MILLIS
-      )
-    } else {
-      PhoneAutomationServiceBridge.continueTicketSliderGesture(
-        endX = targetX,
-        endY = sliderY,
-        durationMillis = duration,
-        timeoutMillis = TICKET_SLIDER_GESTURE_TIMEOUT_MILLIS
-      )
-    }
-    active.lastAppliedSequence = sequence
-    active.lastAppliedProgress = progress
-    if (!moved) {
-      activeTicketSliderGesture = null
-      endTicketSliderCaptureBurst("ticket_slider_stroke_failed")
-      recordTicketEvent("ticket_slider_stroke_failed", "reason=accessibility_gesture_dispatch_failed")
-      return sliderApplied(
-        false,
-        "accessibility_gesture_dispatch_failed",
-        "unactivated_ready",
-        sequence,
-        progress,
-        "cooldown",
-        interaction.leaseExpiresAt,
-        interaction.ownerPublicId,
-        interaction.controlId,
-        activationAttemptId = active.activationAttemptId
-      )
-    }
-    if (phase == "up" || phase == "cancel") {
-      currentTicketRegistrationProof = null
-      activeTicketSliderGesture = null
-      endTicketSliderCaptureBurst("ticket_slider_stroke_ended")
-      recordTicketEvent("ticket_slider_stroke_ended", "phase=$phase progress=$progress")
-      return sliderApplied(
-        true,
-        if (phase == "cancel") "slider_cancelled" else "slider_released_below_completion",
-        "unactivated_ready",
-        sequence,
-        progress,
-        "cooldown",
-        interaction.leaseExpiresAt,
-        activationAttemptId = active.activationAttemptId
-      )
-    }
-    return sliderApplied(true, "slider_input_applied", "control_active", sequence, progress, interaction.leasePhase, interaction.leaseExpiresAt, interaction.ownerPublicId, interaction.controlId)
-  }
-
-  internal suspend fun ticketSliderApplicationForPublication(
-    interaction: TicketSpacetimeInteractionSnapshot
-  ): TicketSliderApplicationResult? {
-    synchronized(ticketSliderStateLock) {
-      pendingTicketSliderApplication?.let { pending ->
-        if (
-          pending.interactionRevision == interaction.interactionRevision &&
-          pending.controlId == interaction.controlId
-        ) {
-          return pending.application
-        }
-      }
-    }
-    val application = applyTicketSliderInteraction(interaction) ?: return null
-    synchronized(ticketSliderStateLock) {
-      pendingTicketSliderApplication = PendingTicketSliderApplication(
-        interactionRevision = interaction.interactionRevision,
-        controlId = interaction.controlId,
-        application = application
-      )
-    }
-    return application
-  }
-
-  internal fun markTicketSliderApplicationPublished(
-    interactionRevision: String,
-    controlId: String,
-    lastAppliedSequence: String
-  ) {
-    synchronized(ticketSliderStateLock) {
-      val pending = pendingTicketSliderApplication ?: return
-      if (
-        pending.interactionRevision == interactionRevision &&
-        pending.controlId == controlId &&
-        pending.application.lastAppliedSequence == lastAppliedSequence
-      ) {
-        pendingTicketSliderApplication = null
-      }
-    }
-  }
-
-  private suspend fun completeTicketSliderInteraction(
-    active: ActiveTicketSliderGesture,
-    sequence: Long,
-    progress: Int,
-    sliderY: Int
-  ): TicketSliderApplicationResult {
-    if (active.completing) return nullResultForSlider(active, sequence, progress)
-    active.completing = true
-    currentTicketRegistrationProof = null
-    val gestureContract = ticketSliderGestureContract(active.bounds)
-    recordTicketEvent("ticket_slider_completion_started", "progress=$progress")
-    PhoneAutomationServiceBridge.logTicketSliderDiagnostic(
-      "completion_start sequence=$sequence progress=$progress from_progress=${active.lastAppliedProgress} bounds=${active.bounds.left},${active.bounds.top},${active.bounds.right},${active.bounds.bottom} terminal_end=${gestureContract.endX},$sliderY duration_ms=${gestureContract.durationMillis} timeout_ms=$TICKET_SLIDER_GESTURE_TIMEOUT_MILLIS"
-    )
-    val ended = PhoneAutomationServiceBridge.endTicketSliderGesture(
-      endX = gestureContract.endX,
-      endY = sliderY,
-      durationMillis = gestureContract.durationMillis,
-      timeoutMillis = TICKET_SLIDER_GESTURE_TIMEOUT_MILLIS
-    )
-    active.lastAppliedSequence = sequence
-    active.lastAppliedProgress = progress
-    PhoneAutomationServiceBridge.logTicketSliderDiagnostic("completion_terminal_callback completed=$ended")
-    if (!ended) {
-      recordTicketEvent(
-        "ticket_slider_completion_callback_unproved",
-        "reason=terminal_gesture_not_completed"
-      )
-    }
-    val activated = awaitActivatedTicketProof()
-    PhoneAutomationServiceBridge.logTicketSliderDiagnostic("completion_proof activated=$activated")
-    activeTicketSliderGesture = null
-    endTicketSliderCaptureBurst(
-      if (ended || activated) {
-        "ticket_slider_completion_finished"
-      } else {
-        "ticket_slider_completion_gesture_failed"
-      }
-    )
-    if (!activated) {
-      if (!ended) {
-        // A failed terminal stroke must release the browser's lease identity. Keeping the old
-        // owner/control id with a cooldown that has no expiry makes the visible oval permanently
-        // locked and prevents a retry, even though activation could not be proved.
-        if (active.activationCommandId.isNotBlank()) {
-          recordTicketActivationFreshProof(
-            commandId = active.activationCommandId,
-            interactionRevision = active.interactionRevision,
-            activationAttemptId = active.activationAttemptId
-          )
-        }
-        return sliderApplied(
-          false,
-          "slider_completion_gesture_failed",
-          "unactivated_ready",
-          sequence,
-          progress,
-          "none",
-          activationAttemptId = active.activationAttemptId
-        )
-      }
-      recordTicketEvent("ticket_slider_activation_failed", "reason=activated_detail_unproved")
-      if (active.activationCommandId.isNotBlank()) {
-        ticketActivationCheckpoint(
-          commandId = active.activationCommandId,
-          interactionRevision = active.interactionRevision,
-          activationAttemptId = active.activationAttemptId
-        )?.let { ticketActivationCheckpointStore.recordNeedsAttention(it) }
-      }
-      return sliderApplied(
-        false,
-        "activated_detail_unproved",
-        "needs_attention",
-        sequence,
-        progress,
-        "cooldown",
-        activationAttemptId = active.activationAttemptId
-      )
-    }
-    val activationRevision = if (active.activationCommandId.isNotBlank()) {
-      ticketActivationRevision(
-        commandId = active.activationCommandId,
-        interactionRevision = active.interactionRevision,
-        activationAttemptId = active.activationAttemptId
-      )
-    } else {
-      ticketActivationRevision(
-        commandId = active.controlId,
-        interactionRevision = active.interactionRevision,
-        activationAttemptId = active.activationAttemptId
-      )
-    }
-    if (active.activationCommandId.isNotBlank()) {
-      val checkpoint = ticketActivationCheckpoint(
-        commandId = active.activationCommandId,
-        interactionRevision = active.interactionRevision,
-        activationAttemptId = active.activationAttemptId
-      ) ?: recordTicketActivationFreshProof(
-        commandId = active.activationCommandId,
-        interactionRevision = active.interactionRevision,
-        activationAttemptId = active.activationAttemptId
-      )
-      if (checkpoint == null || recordTicketActivationProven(checkpoint, activationRevision) == null) {
-        return sliderApplied(
-          false,
-          "ticket_activation_checkpoint_unproved",
-          "needs_attention",
-          sequence,
-          progress,
-          "cooldown",
-          activationAttemptId = active.activationAttemptId
-        )
-      }
-    }
-    recordTicketEvent("ticket_slider_activation_proved", "activation_revision=$activationRevision")
-    requestKeyFrame("ticket_slider_activation_proved")
-    return sliderApplied(
-      true,
-      "activated_aztec_proved",
-      "activated",
-      sequence,
-      progress,
-      "none",
-      activationRevision = activationRevision,
-      activationAt = java.time.Instant.now().toString(),
-      activationAttemptId = active.activationAttemptId
-    )
-  }
-
-  private fun nullResultForSlider(
-    active: ActiveTicketSliderGesture,
-    sequence: Long,
-    progress: Int
-  ): TicketSliderApplicationResult {
-    return sliderApplied(true, "slider_completion_in_progress", "completing", sequence, progress, "active", controlId = active.controlId)
-  }
-
-  private fun sliderSegmentDurationMillis(previousProgress: Int, progress: Int): Long {
-    val distance = kotlin.math.abs(progress - previousProgress)
-    return (32L + (distance / 10000f * 68f).roundToInt()).coerceIn(32L, 100L)
-  }
-
-  private fun beginTicketSliderCaptureBurst(reason: String) {
-    if (controlCodeRequestActive()) return
-    val started = rootHardwareH264CaptureEngine.startControlCodeRequestBurst(reason)
-    ticketSliderBurstActive = true
-    recordTicketEvent("ticket_slider_capture_burst_started", "reason=$reason started=$started")
-  }
-
-  private fun endTicketSliderCaptureBurst(reason: String) {
-    if (!ticketSliderBurstActive) return
-    ticketSliderBurstActive = false
-    if (controlCodeRequestActive()) return
-    rootHardwareH264CaptureEngine.stopControlCodeRequestBurst(reason)
-    recordTicketEvent("ticket_slider_capture_burst_stopped", "reason=$reason")
-  }
-
-  private suspend fun awaitActivatedTicketProof(): Boolean {
-    val deadline = SystemClock.elapsedRealtime() + TICKET_SLIDER_ACTIVATED_PROOF_TIMEOUT_MILLIS
-    while (SystemClock.elapsedRealtime() < deadline) {
-      val observation = observeRootViviStateForWake(
-        reason = "ticket_slider_activated_proof",
-        timeoutMillis = minOf(TICKET_ACTIVATED_HIERARCHY_PROOF_TIMEOUT_MILLIS, (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1L))
-      )
-      val hierarchy = observation.hierarchy.orEmpty()
-      val hierarchyActivated =
-        observation.state == TicketViviRecoveryState.TICKET_DETAIL &&
-        TicketViviPageEnforcer.isActivatedTicketDetail(hierarchy)
-      PhoneAutomationServiceBridge.logTicketSliderDiagnostic(
-        "activated_proof_hierarchy state=${observation.state.name} hierarchy_present=${hierarchy.isNotBlank()} activated=$hierarchyActivated"
-      )
-      if (hierarchyActivated) {
-        val hierarchyProofEpoch = streamEpoch
-        val hierarchyProofFrameSequence = frameSequence
-        val visualProofed = verifyFreshTicketDetailVisualProof("ticket_slider_activated_visual")
-        PhoneAutomationServiceBridge.logTicketSliderDiagnostic("activated_proof_visual result=$visualProofed")
-        if (visualProofed) {
-          return true
-        }
-        // The fixed-size activated classifier is deliberately conservative and can return
-        // UNKNOWN for ViVi layout/color revisions. It must never turn a blank or conflicting
-        // hierarchy into success. Once a fresh rooted hierarchy has explicitly proved the
-        // activated detail, a newer rooted H.264 frame in the same epoch is the bounded fallback
-        // proving that the browser stream has advanced past that observation.
-        val rootedFrameProofed = verifyFreshRootedFrameAfterActivatedHierarchy(
-            expectedEpoch = hierarchyProofEpoch,
-            afterFrameSequence = hierarchyProofFrameSequence
-          )
-        PhoneAutomationServiceBridge.logTicketSliderDiagnostic("activated_proof_rooted_frame result=$rootedFrameProofed")
-        if (rootedFrameProofed) {
-          return true
-        }
-      }
-      delay(TICKET_SLIDER_PROOF_POLL_MILLIS)
-    }
-    PhoneAutomationServiceBridge.logTicketSliderDiagnostic("activated_proof_result activated=false reason=deadline")
-    return false
-  }
-
-  private suspend fun verifyFreshRootedFrameAfterActivatedHierarchy(
-    expectedEpoch: Long,
-    afterFrameSequence: Long
-  ): Boolean {
-    if (
-      !streamActive ||
-      activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264 ||
-      !hardwareCaptureVerified ||
-      !rootHardwareH264CaptureEngine.snapshot().active
-    ) {
-      return false
-    }
-    requestKeyFrame("ticket_slider_activated_hierarchy_fallback")
-    val deadlineMillis = SystemClock.elapsedRealtime() + TICKET_ACTIVATED_ROOTED_FRAME_FALLBACK_TIMEOUT_MILLIS
-    while (SystemClock.elapsedRealtime() < deadlineMillis) {
-      val nowMillis = SystemClock.elapsedRealtime()
-      val freshFrameAgeMillis = ageMillis(lastFrameSentAtMillis, nowMillis)
-      if (
-        streamActive &&
-        streamEpoch == expectedEpoch &&
-        activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264 &&
-        hardwareCaptureVerified &&
-        rootHardwareH264CaptureEngine.snapshot(nowMillis).active &&
-        frameSequence > afterFrameSequence &&
-        freshFrameAgeMillis != null &&
-        freshFrameAgeMillis <= TICKET_ACTIVATED_ROOTED_FRAME_MAX_AGE_MILLIS
-      ) {
-        recordTicketEvent(
-          "ticket_slider_activated_rooted_frame_proved",
-          "epoch=$expectedEpoch after_sequence=$afterFrameSequence frame_sequence=$frameSequence frame_age_ms=$freshFrameAgeMillis"
-        )
-        return true
-      }
-      delay(TICKET_SLIDER_PROOF_POLL_MILLIS)
-    }
-    return false
-  }
-
   internal suspend fun handleTicketSpacetimeDesiredActive(reason: String): TicketSpacetimeCommandResult {
     val cleanReason = reason.ifBlank { "spacetime_desired_active" }
     if (controlCodeRequestActive()) {
@@ -4219,9 +3561,9 @@ class TicketStreamService : Service() {
       put("desiredRecoveryStage", spacetimeDesiredRecoveryStage)
       put("lastDesiredRecoveryResult", lastSpacetimeDesiredRecoveryResult)
       put("controlCodeStatus", lastControlCodeRequestStatus)
-      put("latestTicketReselectStatus", latestTicketReselectStatus)
-      put("latestTicketReselectPhase", latestTicketReselectPhase)
-      put("latestTicketReselectProofSource", latestTicketReselectProofSource)
+      put("latestTicketReselectStatus", "retired")
+      put("latestTicketReselectPhase", "ticket_action_v3_only")
+      put("latestTicketReselectProofSource", "visual_action")
     }.toString()
   }
 
@@ -4420,1065 +3762,6 @@ class TicketStreamService : Service() {
     broadcastStatus()
     result
     }
-  }
-
-  private fun forceLatestTicketReselect(
-    reason: String,
-    commandId: String,
-    requireUnactivatedRegistration: Boolean = false,
-    interactionRevision: String = "",
-    activateAfterReset: Boolean = false,
-    activationControlId: String = "",
-    activationAttemptId: String = ""
-  ): TicketSpacetimeCommandResult {
-    val cleanReason = reason.ifBlank { "admin_force_latest_ticket_reselect" }
-    val cleanCommandId = commandId.ifBlank { "unknown" }
-    val decision = synchronized(latestTicketReselectStateLock) {
-      TicketLatestTicketReselectCommandPolicy.decide(
-        currentCommandId = latestTicketReselectCommandId,
-        currentStatus = latestTicketReselectStatus,
-        currentPhase = latestTicketReselectPhase,
-        incomingCommandId = cleanCommandId,
-        controlSensitiveWindowActive = controlSensitiveWindowActive(),
-        incomingRequireUnactivatedRegistration = requireUnactivatedRegistration,
-        currentFinalUnactivatedProved = latestTicketReselectFinalUnactivatedProved
-      )
-    }
-    when (decision.disposition) {
-      TicketLatestTicketReselectCommandDisposition.SUCCEEDED -> {
-        return TicketSpacetimeCommandResult(
-          ok = true,
-          reason = latestTicketReselectReason.ifBlank { decision.reason },
-          streamState = ticketSpacetimeStreamState()
-        )
-      }
-      TicketLatestTicketReselectCommandDisposition.FAILED -> {
-        return TicketSpacetimeCommandResult(
-          ok = false,
-          reason = latestTicketReselectReason.ifBlank { decision.reason },
-          streamState = ticketSpacetimeStreamState()
-        )
-      }
-      TicketLatestTicketReselectCommandDisposition.DEFER -> {
-        recordLatestTicketReselectDeferred(decision.reason, cleanCommandId)
-        return TicketSpacetimeCommandResult(
-          ok = true,
-          reason = decision.reason,
-          streamState = ticketSpacetimeStreamState(),
-          terminal = false
-        )
-      }
-      TicketLatestTicketReselectCommandDisposition.START -> Unit
-    }
-    markLatestTicketReselectStarted(
-      reason = cleanReason,
-      commandId = cleanCommandId,
-      requireUnactivatedRegistration = requireUnactivatedRegistration,
-      interactionRevision = interactionRevision
-    )
-    recordTicketEvent("latest_ticket_reselect_command_received", "reason=$cleanReason command=$cleanCommandId")
-    viviStateMemory.clear("root", "force_ticket_reselect:$cleanCommandId")
-    recordTicketEvent(
-      "latest_ticket_reselect_memory_cleared",
-      "command=$cleanCommandId stale_memory_bypass=true"
-    )
-    recordTicketEvent("latest_ticket_reselect_requested", "reason=$cleanReason command=$cleanCommandId")
-    scheduleLatestTicketReselectRecovery(
-      cleanReason,
-      cleanCommandId,
-      requireUnactivatedRegistration,
-      interactionRevision,
-      activateAfterReset,
-      activationControlId,
-      activationAttemptId
-    )
-    if (streamActive) {
-      requestKeyFrame("latest_ticket_reselect_requested")
-    }
-    return TicketSpacetimeCommandResult(
-      ok = true,
-      reason = "latest_ticket_reselect_in_progress",
-      streamState = ticketSpacetimeStreamState(),
-      terminal = false
-    )
-  }
-
-  internal fun yieldLatestTicketReselectForImmediateControl(controlCommandId: String): Boolean {
-    val jobsToCancel = synchronized(latestTicketReselectStateLock) {
-      if (latestTicketReselectStatus != "pending" || latestTicketReselectCommandId.isBlank()) {
-        return false
-      }
-      val jobs = listOfNotNull(
-        latestTicketReselectRecoveryJob,
-        latestTicketReselectSettleJob,
-        latestTicketReselectProofIdleStopJob
-      )
-      latestTicketReselectGeneration += 1L
-      latestTicketReselectRecoveryJob = null
-      latestTicketReselectSettleJob = null
-      latestTicketReselectProofIdleStopJob = null
-      latestTicketReselectStatus = "yielded"
-      latestTicketReselectReason = "latest_ticket_reselect_yielded_for_control_code"
-      latestTicketReselectPhase = "control_code_yielded"
-      latestTicketReselectTicketDetailAtMillis = 0L
-      latestTicketReselectCompletedAtMillis = 0L
-      latestTicketReselectFreshFrameAtMillis = 0L
-      latestTicketReselectProofSource = ""
-      latestTicketReselectProofHoldUntilMillis = 0L
-      latestTicketReselectLastProofNudgeAtMillis = 0L
-      latestTicketReselectRequireUnactivatedRegistration = false
-      latestTicketReselectInteractionRevision = ""
-      latestTicketReselectFinalUnactivatedProved = false
-      latestTicketReselectLastDeferredKey = ""
-      jobs
-    }
-    jobsToCancel.forEach { it.cancel() }
-    recordTicketEvent(
-      "latest_ticket_reselect_yielded_for_control_code",
-      "command=${latestTicketReselectCommandId.takeLast(12)} control=${controlCommandId.takeLast(12)}"
-    )
-    broadcastStatus()
-    return true
-  }
-
-  internal fun ticketSpacetimeActiveLatestTicketReselectCommandId(): String? {
-    return synchronized(latestTicketReselectStateLock) {
-      latestTicketReselectCommandId.takeIf {
-        it.isNotBlank() &&
-          (latestTicketReselectStatus == "pending" || latestTicketReselectStatus == "yielded")
-      }
-    }
-  }
-
-  internal fun resetLatestTicketReselectIfCommandAbsent(
-    commandId: String
-  ): TicketLatestTicketReselectAbsentState? {
-    val resetState = synchronized(latestTicketReselectStateLock) {
-      if (
-        latestTicketReselectCommandId != commandId ||
-        (latestTicketReselectStatus != "pending" && latestTicketReselectStatus != "yielded")
-      ) {
-        return null
-      }
-      val state = TicketLatestTicketReselectAbsentState(
-        interactionRevision = latestTicketReselectInteractionRevision,
-        requireUnactivatedRegistration = latestTicketReselectRequireUnactivatedRegistration
-      )
-      val jobs = listOfNotNull(
-        latestTicketReselectRecoveryJob,
-        latestTicketReselectSettleJob,
-        latestTicketReselectProofIdleStopJob
-      )
-      latestTicketReselectGeneration += 1L
-      latestTicketReselectRecoveryJob = null
-      latestTicketReselectSettleJob = null
-      latestTicketReselectProofIdleStopJob = null
-      latestTicketReselectStatus = "idle"
-      latestTicketReselectReason = "latest_ticket_reselect_command_no_longer_pending"
-      latestTicketReselectCommandId = ""
-      latestTicketReselectPhase = "command_absent"
-      latestTicketReselectStartedAtMillis = 0L
-      latestTicketReselectTicketDetailAtMillis = 0L
-      latestTicketReselectCompletedAtMillis = 0L
-      latestTicketReselectFreshFrameAtMillis = 0L
-      latestTicketReselectProofSource = ""
-      latestTicketReselectProofHoldUntilMillis = 0L
-      latestTicketReselectLastProofNudgeAtMillis = 0L
-      latestTicketReselectRequireUnactivatedRegistration = false
-      latestTicketReselectInteractionRevision = ""
-      latestTicketReselectFinalUnactivatedProved = false
-      latestTicketReselectLastDeferredKey = ""
-      state to jobs
-    }
-    val (state, jobsToCancel) = resetState
-    jobsToCancel.forEach { it.cancel() }
-    recordTicketEvent(
-      "latest_ticket_reselect_command_no_longer_pending",
-      "command=${commandId.takeLast(12)}"
-    )
-    broadcastStatus()
-    return state
-  }
-
-  private fun recordLatestTicketReselectDeferred(reason: String, commandId: String) {
-    val key = "$commandId|$reason"
-    val shouldRecord = synchronized(latestTicketReselectStateLock) {
-      if (latestTicketReselectLastDeferredKey == key) {
-        false
-      } else {
-        latestTicketReselectLastDeferredKey = key
-        true
-      }
-    }
-    if (shouldRecord) {
-      recordTicketEvent(
-        "latest_ticket_reselect_deferred",
-        "reason=$reason command=$commandId state=$ticketSessionState"
-      )
-    }
-  }
-
-  private fun markLatestTicketReselectStarted(
-    reason: String,
-    commandId: String,
-    requireUnactivatedRegistration: Boolean,
-    interactionRevision: String
-  ) {
-    synchronized(latestTicketReselectStateLock) {
-      latestTicketReselectRecoveryJob?.cancel()
-      latestTicketReselectRecoveryJob = null
-      latestTicketReselectSettleJob?.cancel()
-      latestTicketReselectSettleJob = null
-      latestTicketReselectProofIdleStopJob?.cancel()
-      latestTicketReselectProofIdleStopJob = null
-      val nowMillis = SystemClock.elapsedRealtime()
-      latestTicketReselectStatus = "pending"
-      latestTicketReselectReason = reason
-      latestTicketReselectCommandId = commandId
-      latestTicketReselectPhase = "ticket_reselect_requested"
-      latestTicketReselectStartedAtMillis = nowMillis
-      latestTicketReselectTicketDetailAtMillis = 0L
-      latestTicketReselectCompletedAtMillis = 0L
-      latestTicketReselectFreshFrameAtMillis = 0L
-      latestTicketReselectProofSource = ""
-      latestTicketReselectProofHoldUntilMillis = 0L
-      latestTicketReselectLastProofNudgeAtMillis = 0L
-      latestTicketReselectRequireUnactivatedRegistration = requireUnactivatedRegistration
-      latestTicketReselectInteractionRevision = interactionRevision.trim()
-      latestTicketReselectFinalUnactivatedProved = false
-      latestTicketReselectLastDeferredKey = ""
-      latestTicketReselectGeneration += 1L
-    }
-    broadcastStatus()
-  }
-
-  private fun scheduleLatestTicketReselectRecovery(
-    reason: String,
-    commandId: String,
-    requireUnactivatedRegistration: Boolean,
-    interactionRevision: String,
-    activateAfterReset: Boolean,
-    activationControlId: String,
-    activationAttemptId: String
-  ) {
-    val recoveryJob = synchronized(latestTicketReselectStateLock) {
-      latestTicketReselectRecoveryJob?.cancel()
-      val generation = latestTicketReselectGeneration
-      val job = serviceScope.launch(start = CoroutineStart.LAZY) {
-        try {
-          controlCodePhoneMutationLane.withOwnership {
-            if (latestTicketReselectGenerationIsCurrent(generation, commandId)) {
-              runLatestTicketReselectRecovery(
-                reason = reason,
-                commandId = commandId,
-                generation = generation,
-                requireUnactivatedRegistration = requireUnactivatedRegistration,
-                interactionRevision = interactionRevision,
-                activateAfterReset = activateAfterReset,
-                activationControlId = activationControlId,
-                activationAttemptId = activationAttemptId
-              )
-            }
-          }
-        } catch (cancelled: CancellationException) {
-          throw cancelled
-        } catch (_: Throwable) {
-          markLatestTicketReselectFailed(
-            reason = "latest_ticket_reselect_exception",
-            generation = generation,
-            commandId = commandId
-          )
-        } finally {
-          val completingJob = coroutineContext[Job]
-          synchronized(latestTicketReselectStateLock) {
-            if (latestTicketReselectRecoveryJob === completingJob) {
-              latestTicketReselectRecoveryJob = null
-            }
-          }
-        }
-      }
-      latestTicketReselectRecoveryJob = job
-      job
-    }
-    recoveryJob.start()
-  }
-
-  private suspend fun runLatestTicketReselectRecovery(
-    reason: String,
-    commandId: String,
-    generation: Long,
-    requireUnactivatedRegistration: Boolean,
-    interactionRevision: String,
-    activateAfterReset: Boolean,
-    activationControlId: String,
-    activationAttemptId: String
-  ) {
-    val recoveryStartedAtMillis = SystemClock.elapsedRealtime()
-    val recoveryReason = "latest_ticket_reselect:${commandId.takeLast(12)}"
-    val activationCheckpoint = if (activateAfterReset) {
-      ticketActivationCheckpoint(commandId, interactionRevision, activationAttemptId)
-    } else {
-      null
-    }
-    if (streamActive) {
-      updateTicketSessionState(TICKET_SESSION_STARTING, "latest_ticket_reselect_recovery_started")
-    }
-    val quickExistingUnactivatedProof = if (requireUnactivatedRegistration) {
-      // When the ticket is already on the registration screen, use the live
-      // accessibility hierarchy for the semantic check and keep rooted H.264
-      // as the visual proof. This avoids spending the reset command budget on
-      // a slow uiautomator window dump.
-      val existing = observeAccessibilityViviState("ticket_registration_existing:$reason")
-      val existingHierarchy = existing.hierarchy.orEmpty()
-      val existingSemanticBounds = TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(existingHierarchy)
-      val existingVisualBounds = if (
-        existing.state == TicketViviRecoveryState.TICKET_DETAIL &&
-        existingSemanticBounds != null &&
-        TicketViviPageEnforcer.isUnactivatedRegistrationDetail(existingHierarchy)
-      ) {
-        detectFreshTicketRegistrationSliderBounds(
-          hierarchyBounds = existingSemanticBounds,
-          reason = "ticket_registration_existing_visual"
-        )
-      } else {
-        null
-      }
-      if (existingVisualBounds != null) {
-        TicketAutopilotResult(
-          success = true,
-          state = existing.state,
-          step = "existing_unactivated_registration_reproved",
-          finalHierarchy = existingHierarchy,
-          finalSliderBounds = existingVisualBounds
-        )
-      } else {
-        null
-      }
-    } else {
-      null
-    }
-    val result = quickExistingUnactivatedProof ?: run {
-      if (activationCheckpoint?.stage == TicketActivationCheckpointStage.FRESH_TICKET_PROVEN) {
-        // The fresh screen was already proven before the process stopped. If it is no longer
-        // provable, stop safely; reopening another ticket would turn one admitted action into a
-        // second physical mutation.
-        return@run TicketAutopilotResult(
-          success = false,
-          state = TicketViviRecoveryState.UNKNOWN_VIVI,
-          step = "activation_checkpoint_screen_unproved"
-        )
-      }
-      if (requireUnactivatedRegistration) {
-        val inAppResult = runInAppUnactivatedRegistrationReset(
-          reason = recoveryReason,
-          commandId = commandId
-        )
-        if (inAppResult.success) {
-          return@run inAppResult
-        }
-        // The last in-app tap can succeed just as its bounded action loop expires. Re-observe
-        // the resulting screen through the normal rooted recovery lane before deciding failure;
-        // this is also the proof that owns a requested reset-and-activate continuation.
-        recordTicketEvent(
-          "latest_ticket_reselect_in_app_reset_reobserve_started",
-          "state=${inAppResult.state.name} step=${inAppResult.step} command=$commandId"
-        )
-      } else {
-        recordTicketEvent("latest_ticket_reselect_vivi_opening", "reason=$reason command=$commandId")
-        recordViviHardReset("recovery:$reason")
-        wakeRootExecutor.run("am force-stop ${TicketScreenConfig.VIVI_PACKAGE}", 1_500.milliseconds)
-        delay(LATEST_TICKET_RESELECT_RELAUNCH_DELAY_MILLIS)
-        launchViviForWake(recoveryReason)
-        recordTicketEvent("latest_ticket_reselect_vivi_opened", "reason=$reason command=$commandId")
-      }
-      val observationStartedAtMillis = SystemClock.elapsedRealtime()
-      observeTicketDetailForWakeWithRoot(
-        reason = recoveryReason,
-        wakeStartedAtMillis = observationStartedAtMillis,
-        budgetMillis = LATEST_TICKET_RESELECT_RECOVERY_BUDGET_MILLIS,
-        maxRecoveryActions = LATEST_TICKET_RESELECT_MAX_RECOVERY_ACTIONS,
-        recoveryActionRepeatCooldownMillis = LATEST_TICKET_RESELECT_REPEAT_ACTION_COOLDOWN_MILLIS,
-        ticketCardSelectionGraceMillis = if (requireUnactivatedRegistration) {
-          LATEST_TICKET_RESELECT_IN_APP_ACTION_GRACE_MILLIS
-        } else {
-          LATEST_TICKET_RESELECT_TICKET_CARD_ACTION_GRACE_MILLIS
-        },
-        requireNewTicketRegistration = requireUnactivatedRegistration,
-        requireUnactivatedRegistration = requireUnactivatedRegistration,
-        requireFreshAztecVisualProof = !requireUnactivatedRegistration,
-        requireLatestTicketSelection = !requireUnactivatedRegistration
-      )
-    }
-    markWakeReadyIfNeeded(recoveryStartedAtMillis, result)
-    recordLatestTicketReselectRecoveryTelemetry(result)
-    recordTicketEvent(
-      "latest_ticket_reselect_recovery_result",
-      "${result.state}:${result.step}:success=${result.success} reason=$reason"
-    )
-    val acceptedResult = synchronized(latestTicketReselectStateLock) {
-      if (latestTicketReselectGeneration != generation || latestTicketReselectCommandId != commandId) {
-        false
-      } else {
-        if (result.success) {
-          recordTicketEvent(
-            "latest_ticket_reselect_ticket_detail_observed",
-            "state=${result.state.name} step=${result.step} command=$commandId"
-          )
-          if (requireUnactivatedRegistration) {
-            val sliderBounds = result.finalSliderBounds
-            if (sliderBounds == null) {
-              latestTicketReselectPhase = "unactivated_slider_bounds_failed"
-              false
-            } else {
-              latestTicketReselectFinalUnactivatedProved = true
-              rememberTicketRegistrationProof(
-                TicketRegistrationProof(
-                status = "unactivated_ready",
-                reason = "unactivated_registration_proved",
-                interactionRevision = interactionRevision.ifBlank { "reset_${SystemClock.elapsedRealtime()}" },
-                streamEpoch = streamEpoch,
-                frameSequence = frameSequence,
-                phoneDisplayWidth = resources.displayMetrics.widthPixels,
-                phoneDisplayHeight = resources.displayMetrics.heightPixels,
-                provedAtUptimeMillis = SystemClock.elapsedRealtime(),
-                sliderLeft = sliderBounds.left,
-                sliderTop = sliderBounds.top,
-                sliderRight = sliderBounds.right,
-                sliderBottom = sliderBounds.bottom
-                )
-              )
-              if (activateAfterReset && activationAttemptId.isNotBlank()) {
-                recordTicketActivationFreshProof(
-                  commandId = commandId,
-                  interactionRevision = interactionRevision.ifBlank { commandId },
-                  activationAttemptId = activationAttemptId
-                )
-              }
-              markLatestTicketReselectTicketDetailObserved(result)
-              beginLatestTicketReselectStreamProof(reason, commandId)
-              beginTicketSliderCaptureBurst("unused_ticket_reset_ready")
-              true
-            }
-          } else {
-            markLatestTicketReselectTicketDetailObserved(result)
-            beginLatestTicketReselectStreamProof(reason, commandId)
-            true
-          }
-        } else {
-          recordTicketEvent(
-            "latest_ticket_reselect_failed",
-            "state=${result.state.name} step=${result.step} command=$commandId"
-          )
-          latestTicketReselectPhase = "ticket_detail_failed"
-        }
-        true
-      }
-    }
-    if (!acceptedResult) {
-      markLatestTicketReselectFailed(
-        reason = "unactivated_slider_bounds_failed",
-        generation = generation,
-        commandId = commandId
-      )
-      return
-    }
-    // The in-app action can exhaust its own step budget just before the recovery observer records
-    // the final rooted unactivated slider proof. Bind all terminal behavior to that final proof,
-    // not solely to the first action's success bit. The flag is command-generation scoped and is
-    // reset at admission, so an older reset cannot satisfy this command.
-    val finalUnactivatedReady = synchronized(latestTicketReselectStateLock) {
-      latestTicketReselectGeneration == generation &&
-        latestTicketReselectCommandId == commandId &&
-        latestTicketReselectFinalUnactivatedProved
-    }
-    val terminalTicketReady = result.success ||
-      (requireUnactivatedRegistration && finalUnactivatedReady)
-    if (!terminalTicketReady) {
-      markLatestTicketReselectFailed(
-        reason = "unactivated_registration_unproved",
-        generation = generation,
-        commandId = commandId
-      )
-      return
-    }
-    if (requireUnactivatedRegistration && activateAfterReset) {
-      val activated = activateTicketImmediatelyAfterReset(
-        commandId = commandId,
-        interactionRevision = interactionRevision,
-        controlId = activationControlId.ifBlank { commandId.takeLast(64) },
-        activationAttemptId = activationAttemptId
-      )
-      if (activated == null || !activated.ok || activated.status != "activated") {
-        markLatestTicketReselectFailed(
-          reason = activated?.reason ?: "reset_activation_failed",
-          generation = generation,
-          commandId = commandId
-        )
-        return
-      }
-      // Completion consumes currentTicketRegistrationProof before it proves the activated
-      // hierarchy. Rebind the exact-revision registration geometry retained in the last-proof
-      // slot to the fresh activated frame so the worker can publish the terminal result and ack
-      // this same reset command. Never borrow geometry from another interaction revision.
-      val cleanInteractionRevision = interactionRevision.trim()
-      val activationProofBase = currentTicketRegistrationProof?.takeIf {
-        it.interactionRevision == cleanInteractionRevision
-      }
-        ?: lastTicketRegistrationProof?.takeIf {
-          it.interactionRevision == cleanInteractionRevision
-        }
-      if (activationProofBase != null) {
-        rememberTicketRegistrationProof(
-          activationProofBase.copy(
-            status = "activated",
-            reason = activated.reason,
-            activationRevision = activated.activationRevision,
-            activationAt = activated.activationAt,
-            activationAttemptId = activated.activationAttemptId,
-            streamEpoch = streamEpoch,
-            frameSequence = frameSequence
-          )
-        )
-      }
-      // The reset proof has already been consumed and the same serialized command now
-      // owns an activated ticket. Final stream freshness must therefore validate the
-      // current ticket detail, rather than requiring the superseded unactivated screen.
-      synchronized(latestTicketReselectStateLock) {
-        if (latestTicketReselectGeneration == generation && latestTicketReselectCommandId == commandId) {
-          latestTicketReselectRequireUnactivatedRegistration = false
-          latestTicketReselectInteractionRevision = ""
-        }
-      }
-      recordTicketEvent(
-        "latest_ticket_reselect_activation_finished",
-        "success=true duration_ms=${(SystemClock.elapsedRealtime() - recoveryStartedAtMillis).coerceAtLeast(0L)}"
-      )
-    }
-    if (terminalTicketReady) {
-      if (streamActive) {
-        updateTicketSessionState(TICKET_SESSION_LIVE, "latest_ticket_reselect_ticket_detail_ready")
-        cacheForegroundViolation(null)
-        startForegroundGuard()
-        if (requireUnactivatedRegistration) {
-          requestKeyFrame("latest_ticket_reselect_ticket_detail_ready")
-        } else if (ticketSpacetimeBackgroundStreamAlreadyHealthy()) {
-          requestKeyFrame("latest_ticket_reselect_ticket_detail_ready")
-        } else {
-          restartActiveStreamEngine("latest_ticket_reselect")
-          requestKeyFrame("latest_ticket_reselect_ticket_detail_ready")
-        }
-      } else {
-        startTicketSession()
-      }
-      scheduleLatestTicketReselectSettle(
-        successReason = "latest_ticket_reselect_succeeded",
-        failureReason = "latest_ticket_reselect_stream_unstable",
-        generation = generation,
-        commandId = commandId
-      )
-    } else {
-      if (streamActive) {
-        updateTicketSessionState(TICKET_SESSION_NEEDS_ATTENTION, "latest_ticket_reselect_${result.state.name.lowercase()}")
-      }
-      scheduleLatestTicketReselectSettle(
-        successReason = "latest_ticket_reselect_succeeded_after_recovery",
-        failureReason = "latest_ticket_reselect_failed",
-        generation = generation,
-        commandId = commandId
-      )
-    }
-    broadcastStatus()
-  }
-
-  private suspend fun activateTicketImmediatelyAfterReset(
-    commandId: String,
-    interactionRevision: String,
-    controlId: String,
-    activationAttemptId: String
-  ): TicketSliderApplicationResult? {
-    val cleanRevision = interactionRevision.trim()
-    val cleanControlId = controlId.trim()
-    if (cleanRevision.isBlank() || cleanControlId.isBlank()) return null
-    val started = startTicketSliderInteraction(
-      interactionRevision = cleanRevision,
-      controlId = cleanControlId,
-      initialProgress = 0,
-      activationAttemptId = activationAttemptId,
-      activationCommandId = commandId
-    )
-    if (!started.ok) return null
-    return applyTicketSliderInteraction(
-      TicketSpacetimeInteractionSnapshot(
-        status = "control_active",
-        interactionRevision = cleanRevision,
-        activationRevision = "",
-        activationAt = "",
-        scheduledResetAt = "",
-        resetRequestId = cleanControlId,
-        streamEpoch = streamEpoch,
-        frameSequence = frameSequence,
-        phoneDisplayWidth = resources.displayMetrics.widthPixels,
-        phoneDisplayHeight = resources.displayMetrics.heightPixels,
-        sliderLeft = currentTicketRegistrationProof?.sliderLeft ?: 0,
-        sliderTop = currentTicketRegistrationProof?.sliderTop ?: 0,
-        sliderRight = currentTicketRegistrationProof?.sliderRight ?: 0,
-        sliderBottom = currentTicketRegistrationProof?.sliderBottom ?: 0,
-        ownerPublicId = cleanControlId,
-        controlId = cleanControlId,
-        leasePhase = "active",
-        leaseExpiresAt = "",
-        latestInputSequence = "1",
-        latestInputPhase = "up",
-        latestProgress = 10_000,
-        lastAppliedSequence = "0",
-        lastAppliedProgress = 0,
-        reason = "browser_reset_and_activate",
-        updatedAt = "",
-        expiresAt = ""
-      )
-    )?.copy(activationAttemptId = activationAttemptId.ifBlank { cleanControlId })
-  }
-
-
-  private suspend fun runInAppUnactivatedRegistrationReset(
-    reason: String,
-    commandId: String
-  ): TicketAutopilotResult {
-    recordTicketEvent(
-      "latest_ticket_reselect_in_app_reset_started",
-      "reason=$reason command=$commandId"
-    )
-    val startedAtMillis = SystemClock.elapsedRealtime()
-    val deadlineMillis = startedAtMillis + LATEST_TICKET_RESELECT_IN_APP_RESET_BUDGET_MILLIS
-    var lastState = TicketViviRecoveryState.UNKNOWN_VIVI
-    var lastStep = "in_app_reset_unobserved"
-    var closedActivatedDetail = false
-    var pressedNewRideButton = false
-    var lastActionKey = ""
-    var lastActionAtMillis = 0L
-    while (SystemClock.elapsedRealtime() < deadlineMillis) {
-      val remainingMillis = (deadlineMillis - SystemClock.elapsedRealtime()).coerceAtLeast(1L)
-      val observation = observeRootViviStateForWake(
-        reason = "in_app_reset:$reason",
-        timeoutMillis = minOf(TICKET_WAKE_FAST_POST_LAUNCH_TIMEOUT_MILLIS, remainingMillis)
-      )
-      val hierarchy = observation.hierarchy.orEmpty()
-      lastState = observation.state
-      if (hierarchy.isBlank()) {
-        lastStep = "in_app_reset_hierarchy_unavailable"
-        delay(TICKET_SLIDER_PROOF_POLL_MILLIS)
-        continue
-      }
-      if (
-        observation.state == TicketViviRecoveryState.TICKET_DETAIL &&
-        TicketViviPageEnforcer.isUnactivatedRegistrationDetail(hierarchy)
-      ) {
-        val semanticBounds = TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(hierarchy)
-        val sliderBounds = semanticBounds?.let {
-          detectFreshTicketRegistrationSliderBounds(
-            hierarchyBounds = it,
-            reason = "in_app_reset_slider:$reason"
-          )
-        }
-        if (sliderBounds != null) {
-          recordTicketEvent(
-            "latest_ticket_reselect_in_app_reset_ready",
-            "closed=$closedActivatedDetail yellow=$pressedNewRideButton"
-          )
-          return TicketAutopilotResult(
-            success = true,
-            state = observation.state,
-            step = "in_app_reset_unactivated_registration_ready",
-            finalActionCategory = if (pressedNewRideButton) "ticket_card_selection" else "none",
-            finalActionOutcome = if (pressedNewRideButton) "succeeded" else "not_attempted",
-            finalHierarchy = hierarchy,
-            finalSliderBounds = sliderBounds
-          )
-        }
-        lastStep = "in_app_reset_slider_unproved"
-        delay(TICKET_SLIDER_PROOF_POLL_MILLIS)
-        continue
-      }
-      val action = when {
-        observation.state == TicketViviRecoveryState.TICKET_DETAIL ->
-          TicketViviPageEnforcer.ticketDetailReturnToListActionForHierarchy(hierarchy)
-        observation.state == TicketViviRecoveryState.TICKET_LIST_WITH_CARD ->
-          TicketViviPageEnforcer.bestTicketCardActionForHierarchy(hierarchy)
-        else -> TicketViviPageEnforcer.recoveryActionForHierarchy(hierarchy)
-      }
-      if (action == null) {
-        lastStep = "in_app_reset_no_action_${observation.state.name.lowercase()}"
-        delay(TICKET_SLIDER_PROOF_POLL_MILLIS)
-        continue
-      }
-      val actionKey = "${observation.state.name}:${action.reason}:${action.x}:${action.y}"
-      val nowMillis = SystemClock.elapsedRealtime()
-      if (
-        actionKey == lastActionKey &&
-        nowMillis - lastActionAtMillis < LATEST_TICKET_RESELECT_IN_APP_ACTION_COOLDOWN_MILLIS
-      ) {
-        lastStep = "in_app_reset_action_cooling"
-        delay(TICKET_SLIDER_PROOF_POLL_MILLIS)
-        continue
-      }
-      val tapped = attemptWakeRecoveryActionForRootWake(
-        state = observation.state,
-        hierarchy = hierarchy,
-        action = action,
-        reason = reason,
-        timeoutMillis = minOf(TICKET_WAKE_RECOVERY_INPUT_TIMEOUT_MILLIS, remainingMillis),
-        zeroTailPanelClamp = true
-      )
-      lastActionKey = actionKey
-      lastActionAtMillis = SystemClock.elapsedRealtime()
-      if (action.reason == "return_to_ticket_list_for_registration") {
-        closedActivatedDetail = closedActivatedDetail || tapped
-      }
-      if (TicketLatestTicketReselectRecoveryPolicy.actionCategory(action.reason) == "ticket_card_selection") {
-        pressedNewRideButton = pressedNewRideButton || tapped
-      }
-      lastStep = "in_app_reset_${action.reason}_${if (tapped) "ok" else "failed"}"
-      delay(LATEST_TICKET_RESELECT_IN_APP_ACTION_SETTLE_MILLIS)
-    }
-    recordTicketEvent(
-      "latest_ticket_reselect_in_app_reset_failed",
-      "state=${lastState.name} step=$lastStep closed=$closedActivatedDetail yellow=$pressedNewRideButton"
-    )
-    return TicketAutopilotResult(
-      success = false,
-      state = lastState,
-      step = lastStep,
-      finalActionCategory = if (pressedNewRideButton) "ticket_card_selection" else "other_recovery",
-      finalActionOutcome = "failed"
-    )
-  }
-
-  private fun recordLatestTicketReselectRecoveryTelemetry(result: TicketAutopilotResult) {
-    recordTicketEvent(
-      TicketLatestTicketReselectRecoveryPolicy.finalTelemetryEvent(
-        state = result.state,
-        actionCategory = result.finalActionCategory,
-        actionOutcome = result.finalActionOutcome
-      ),
-      "success=${result.success}"
-    )
-  }
-
-  private fun latestTicketReselectGenerationIsCurrent(generation: Long, commandId: String): Boolean {
-    return synchronized(latestTicketReselectStateLock) {
-      latestTicketReselectGeneration == generation && latestTicketReselectCommandId == commandId
-    }
-  }
-
-  private fun markLatestTicketReselectFailed(
-    reason: String,
-    generation: Long,
-    commandId: String
-  ) {
-    val transitioned = mutateLatestTicketReselectIfCurrent(
-      stateLock = latestTicketReselectStateLock,
-      currentGeneration = { latestTicketReselectGeneration },
-      currentCommandId = { latestTicketReselectCommandId },
-      expectedGeneration = generation,
-      expectedCommandId = commandId
-    ) {
-      val nowMillis = SystemClock.elapsedRealtime()
-      latestTicketReselectStatus = "failed"
-      latestTicketReselectReason = reason
-      latestTicketReselectCompletedAtMillis = nowMillis
-      latestTicketReselectPhase = if (latestTicketReselectTicketDetailAtMillis > 0L) "stream_proof_failed" else "failed"
-      latestTicketReselectFreshFrameAtMillis = 0L
-      latestTicketReselectProofHoldUntilMillis = 0L
-    }
-    if (!transitioned) {
-      return
-    }
-    recordTicketEvent("latest_ticket_reselect_failed", "command=$commandId")
-    recordTicketEvent(
-      "latest_ticket_reselect_finished",
-      "status=failed reason=$reason command=$commandId"
-    )
-    broadcastStatus()
-    scheduleLatestTicketReselectProofIdleStop(
-      reason = "latest_ticket_reselect_finished:$reason",
-      generation = generation,
-      commandId = commandId
-    )
-  }
-
-  private fun scheduleLatestTicketReselectSettle(
-    successReason: String,
-    failureReason: String,
-    generation: Long,
-    commandId: String
-  ) {
-    val settleJob = synchronized(latestTicketReselectStateLock) {
-      if (latestTicketReselectGeneration != generation || latestTicketReselectCommandId != commandId) {
-        null
-      } else {
-        latestTicketReselectSettleJob?.cancel()
-        val job = serviceScope.launch(start = CoroutineStart.LAZY) {
-          try {
-            val deadlineMillis = SystemClock.elapsedRealtime() + LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS
-            while (
-              latestTicketReselectGenerationIsCurrent(generation, commandId) &&
-              SystemClock.elapsedRealtime() < deadlineMillis
-            ) {
-              val completed = synchronized(latestTicketReselectStateLock) {
-                if (latestTicketReselectGeneration == generation && latestTicketReselectCommandId == commandId) {
-                  completeLatestTicketReselectIfFresh(successReason, generation, commandId)
-                } else {
-                  false
-                }
-              }
-              if (completed) {
-                return@launch
-              }
-              delay(CONTROL_CODE_RECOVERY_QUEUE_POLL_MILLIS)
-            }
-            val shouldFailCurrentCommand = synchronized(latestTicketReselectStateLock) {
-              if (latestTicketReselectGeneration != generation || latestTicketReselectCommandId != commandId) {
-                false
-              } else if (completeLatestTicketReselectIfFresh(successReason, generation, commandId)) {
-                false
-              } else {
-                true
-              }
-            }
-            if (shouldFailCurrentCommand) {
-              markLatestTicketReselectFailed(
-                reason = failureReason,
-                generation = generation,
-                commandId = commandId
-              )
-            }
-          } finally {
-            val completingJob = coroutineContext[Job]
-            synchronized(latestTicketReselectStateLock) {
-              if (latestTicketReselectSettleJob === completingJob) {
-                latestTicketReselectSettleJob = null
-              }
-            }
-          }
-        }
-        latestTicketReselectSettleJob = job
-        job
-      }
-    }
-    settleJob?.start()
-  }
-
-  private fun completeLatestTicketReselectIfFresh(reason: String, generation: Long, commandId: String): Boolean {
-    if (!latestTicketReselectGenerationIsCurrent(generation, commandId)) {
-      return false
-    }
-    val nowMillis = SystemClock.elapsedRealtime()
-    if (!latestTicketReselectRecent(nowMillis)) {
-      return false
-    }
-    if (!noteLatestTicketReselectFreshStreamReady(nowMillis)) {
-      nudgeLatestTicketReselectStreamProof(nowMillis)
-      return false
-    }
-    latestTicketReselectStatus = "succeeded"
-    latestTicketReselectReason = reason
-    latestTicketReselectPhase = "ready"
-    latestTicketReselectCompletedAtMillis = nowMillis
-    latestTicketReselectProofHoldUntilMillis = 0L
-    recordTicketEvent(reason, "fresh_frame_ready=true")
-    broadcastStatus()
-    scheduleLatestTicketReselectProofIdleStop(
-      reason = "latest_ticket_reselect_succeeded",
-      generation = generation,
-      commandId = commandId
-    )
-    return true
-  }
-
-  private fun latestTicketReselectActive(nowMillis: Long): Boolean {
-    val startedAtMillis = latestTicketReselectStartedAtMillis
-    if (startedAtMillis <= 0L) {
-      return false
-    }
-    val ageMillis = nowMillis - startedAtMillis
-    return latestTicketReselectStatus == "pending" &&
-      ageMillis in 0..LATEST_TICKET_RESELECT_ACTIVE_WINDOW_MILLIS
-  }
-
-  private fun latestTicketReselectRecent(nowMillis: Long): Boolean {
-    val startedAtMillis = latestTicketReselectStartedAtMillis
-    return startedAtMillis > 0L &&
-      nowMillis - startedAtMillis in 0..LATEST_TICKET_RESELECT_ACTIVE_WINDOW_MILLIS
-  }
-
-  private fun markLatestTicketReselectFreshIfReady(nowMillis: Long = SystemClock.elapsedRealtime()): Boolean {
-    if (latestTicketReselectFreshFrameAtMillis > 0L) {
-      return true
-    }
-    if (!latestTicketReselectRecent(nowMillis) || latestTicketReselectStatus != "succeeded") {
-      return false
-    }
-    return noteLatestTicketReselectFreshStreamReady(nowMillis)
-  }
-
-  private fun noteLatestTicketReselectFreshStreamReady(nowMillis: Long = SystemClock.elapsedRealtime()): Boolean {
-    if (
-      !streamActive ||
-      activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264 ||
-      !hardwareCaptureVerified ||
-      ticketSessionState != TICKET_SESSION_LIVE
-    ) {
-      return false
-    }
-    val frameAgeMillis = ageMillis(lastFrameSentAtMillis, nowMillis) ?: return false
-    if (frameAgeMillis > LIVE_FRAME_MAX_AGE_MILLIS) {
-      return false
-    }
-    val current = viviStateMemory.current()
-    val currentAgeMillis = ageMillis(current.observedAtMillis, nowMillis)
-    if (latestTicketReselectRequireUnactivatedRegistration) {
-      val currentIsFresh = currentAgeMillis != null &&
-        currentAgeMillis <= CONTROL_CODE_RESELECT_FRESH_TICKET_MAX_AGE_MILLIS
-      val currentHierarchy = current.hierarchy.orEmpty()
-      // A fresh conflicting observation must still win. When there is no fresh conflicting
-      // event, the recovery's own fresh hierarchy + rooted slider proof is authoritative for
-      // this serialized reset operation. Accessibility can briefly publish a fresh detail
-      // state with an empty hierarchy while the window is being replaced; that is unavailable
-      // evidence, rather than a conflicting ticket, and must not invalidate rooted proof.
-      val currentHasConflictingFreshObservation = currentIsFresh && (
-        current.state != TicketViviRecoveryState.TICKET_DETAIL ||
-          (currentHierarchy.isNotBlank() &&
-            !TicketViviPageEnforcer.isUnactivatedRegistrationDetail(currentHierarchy))
-        )
-      if (currentHasConflictingFreshObservation) {
-        return false
-      }
-      if (!latestTicketReselectFinalUnactivatedProved &&
-        (!currentIsFresh || current.state != TicketViviRecoveryState.TICKET_DETAIL ||
-          !TicketViviPageEnforcer.isUnactivatedRegistrationDetail(currentHierarchy))
-      ) {
-        return false
-      }
-    } else {
-      if (
-        current.state != TicketViviRecoveryState.TICKET_DETAIL ||
-        currentAgeMillis == null ||
-        currentAgeMillis > CONTROL_CODE_RESELECT_FRESH_TICKET_MAX_AGE_MILLIS
-      ) {
-        return false
-      }
-    }
-    if (latestTicketReselectFreshFrameAtMillis == 0L) {
-      latestTicketReselectFreshFrameAtMillis = nowMillis
-      latestTicketReselectProofSource = if (videoClients.isEmpty()) "self_proof_root_hardware_h264" else "viewer_root_hardware_h264"
-      latestTicketReselectPhase = "stream_proof_ready"
-      recordTicketEvent(
-        "latest_ticket_reselect_fresh_stream_ready",
-        "frame_age_ms=$frameAgeMillis ticket_age_ms=$currentAgeMillis proof=${latestTicketReselectProofSource}"
-      )
-    }
-    return true
-  }
-
-  private fun markLatestTicketReselectTicketDetailObserved(result: TicketAutopilotResult) {
-    latestTicketReselectPhase = "ticket_detail_observed"
-    latestTicketReselectTicketDetailAtMillis = SystemClock.elapsedRealtime()
-    recordTicketEvent(
-      "latest_ticket_reselect_ticket_detail_ready",
-      "state=${result.state.name} step=${result.step} command=$latestTicketReselectCommandId"
-    )
-  }
-
-  private fun beginLatestTicketReselectStreamProof(reason: String, commandId: String) {
-    val nowMillis = SystemClock.elapsedRealtime()
-    latestTicketReselectPhase = "stream_proof_pending"
-    latestTicketReselectProofSource = ""
-    latestTicketReselectProofHoldUntilMillis = nowMillis + LATEST_TICKET_RESELECT_PROOF_HOLD_MILLIS
-    latestTicketReselectLastProofNudgeAtMillis = 0L
-    recordTicketEvent(
-      "latest_ticket_reselect_stream_proof_started",
-      "reason=$reason command=$commandId clients=${videoClients.size} hold_ms=$LATEST_TICKET_RESELECT_PROOF_HOLD_MILLIS"
-    )
-  }
-
-  private fun latestTicketReselectProofHoldActive(nowMillis: Long = SystemClock.elapsedRealtime()): Boolean {
-    return latestTicketReselectStatus == "pending" &&
-      latestTicketReselectProofHoldUntilMillis > nowMillis &&
-      latestTicketReselectTicketDetailAtMillis > 0L
-  }
-
-  private fun streamCaptureNeededForLatestTicketReselectProof(nowMillis: Long = SystemClock.elapsedRealtime()): Boolean {
-    return videoClients.isEmpty() && latestTicketReselectProofHoldActive(nowMillis)
-  }
-
-  private fun nudgeLatestTicketReselectStreamProof(nowMillis: Long) {
-    if (!latestTicketReselectProofHoldActive(nowMillis)) {
-      return
-    }
-    if (nowMillis - latestTicketReselectLastProofNudgeAtMillis < LATEST_TICKET_RESELECT_PROOF_NUDGE_MILLIS) {
-      return
-    }
-    latestTicketReselectLastProofNudgeAtMillis = nowMillis
-    if (!streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264) {
-      recordTicketEvent("latest_ticket_reselect_stream_proof_waiting", "stream_inactive")
-      return
-    }
-    val frameAgeMillis = ageMillis(lastFrameSentAtMillis, nowMillis)
-    if (
-      hardwareCaptureVerified &&
-      frameAgeMillis != null &&
-      frameAgeMillis > STREAM_STALE_ENGINE_RESTART_MILLIS
-    ) {
-      restartActiveStreamEngine("latest_ticket_reselect_self_proof_stale")
-      return
-    }
-    if (hardwareCaptureVerified) {
-      ensureRootHardwareH264CaptureIfPossible()
-      requestKeyFrame("latest_ticket_reselect_self_proof")
-    }
-  }
-
-  private fun scheduleLatestTicketReselectProofIdleStop(
-    reason: String,
-    generation: Long,
-    commandId: String
-  ) {
-    if (totalClientCount() > 0 || !streamActive) {
-      return
-    }
-    val idleStopJob = synchronized(latestTicketReselectStateLock) {
-      if (latestTicketReselectGeneration != generation || latestTicketReselectCommandId != commandId) {
-        null
-      } else {
-        latestTicketReselectProofIdleStopJob?.cancel()
-        val job = serviceScope.launch(start = CoroutineStart.LAZY) {
-          try {
-            delay(LATEST_TICKET_RESELECT_PROOF_IDLE_STOP_GRACE_MILLIS)
-            val runningJob = coroutineContext[Job]
-            sessionMutex.withLock {
-              val currentProofJob = synchronized(latestTicketReselectStateLock) {
-                latestTicketReselectProofIdleStopJob === runningJob &&
-                  latestTicketReselectGeneration == generation &&
-                  latestTicketReselectCommandId == commandId
-              }
-              if (currentProofJob && totalClientCount() == 0 && streamActive) {
-                noteClientDetachedLocked(reason)
-              }
-            }
-          } finally {
-            val completingJob = coroutineContext[Job]
-            synchronized(latestTicketReselectStateLock) {
-              if (latestTicketReselectProofIdleStopJob === completingJob) {
-                latestTicketReselectProofIdleStopJob = null
-              }
-            }
-          }
-        }
-        latestTicketReselectProofIdleStopJob = job
-        job
-      }
-    }
-    idleStopJob?.start()
   }
 
   private fun boundedStartupTraceCorrelationId(value: String): String {
@@ -7278,8 +5561,7 @@ class TicketStreamService : Service() {
    * whole preparation budget waiting for visual proof that can never arrive.
    */
   private fun streamCaptureNeededForControlCodeRequest(): Boolean {
-    return streamCaptureNeededForLatestTicketReselectProof() ||
-      streamStartAdmission.claimCount() > 0L ||
+    return streamStartAdmission.claimCount() > 0L ||
       ticketVisualActionCaptureLeaseActive ||
       controlCodeRequestActive()
   }
@@ -7462,7 +5744,7 @@ class TicketStreamService : Service() {
     if (
       !streamActive ||
       activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264 ||
-      (videoClients.isEmpty() && !streamCaptureNeededForLatestTicketReselectProof())
+      (videoClients.isEmpty() && !streamCaptureNeededForControlCodeRequest())
     ) {
       return
     }
@@ -7481,9 +5763,9 @@ class TicketStreamService : Service() {
   }
 
   private fun streamWatchdogShouldRun(): Boolean {
-    return streamActive &&
+      return streamActive &&
       activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264 &&
-      (videoClients.isNotEmpty() || streamCaptureNeededForLatestTicketReselectProof()) &&
+      (videoClients.isNotEmpty() || streamCaptureNeededForControlCodeRequest()) &&
       ticketSessionState != TICKET_SESSION_NEEDS_ATTENTION &&
       lastRootH264BlankProbeResult != "secure_capture_blocked"
   }
@@ -8121,7 +6403,7 @@ class TicketStreamService : Service() {
     if (
       !streamActive ||
       activeCaptureMode == CAPTURE_MODE_IDLE ||
-      (videoClients.isEmpty() && !streamCaptureNeededForLatestTicketReselectProof(nowMillis))
+      (videoClients.isEmpty() && !streamCaptureNeededForControlCodeRequest())
     ) {
       return false
     }
@@ -8626,17 +6908,9 @@ class TicketStreamService : Service() {
         lastDuplicateAgoMillis = ageMillis(lastDuplicateControlCodeResultAtMillis, nowMillis)
       ),
       latestTicketReselect = TicketLatestTicketReselectHealth(
-        status = latestTicketReselectStatus,
-        active = latestTicketReselectActive(nowMillis),
-        reason = latestTicketReselectReason,
-        commandId = latestTicketReselectCommandId.takeLast(24),
-        phase = latestTicketReselectPhase,
-        ticketDetailAgoMillis = ageMillis(latestTicketReselectTicketDetailAtMillis, nowMillis),
-        proofSource = latestTicketReselectProofSource,
-        proofHoldRemainingMillis = (latestTicketReselectProofHoldUntilMillis - nowMillis).coerceAtLeast(0L),
-        startedAgoMillis = ageMillis(latestTicketReselectStartedAtMillis, nowMillis),
-        completedAgoMillis = ageMillis(latestTicketReselectCompletedAtMillis, nowMillis),
-        freshFrameAgoMillis = ageMillis(latestTicketReselectFreshFrameAtMillis, nowMillis)
+        status = "retired",
+        active = false,
+        reason = "ticket_action_v3_only"
       ),
       rigasSatiksmeBatch = TicketRigasSatiksmeBatchHealth(
         batchId = lastRigasSatiksmeBatchId,
@@ -8674,7 +6948,14 @@ class TicketStreamService : Service() {
           failure = lease.failure,
           failures = ticketActionPanelDarkLeaseFailures.get(),
           physicalTouchPreempted = lease.physicalTouchPreempted,
-          releaseReason = lease.releaseReason
+          releaseReason = lease.releaseReason,
+          launchExitCode = lease.launchExitCode,
+          launchDurationMillis = lease.launchDurationMillis,
+          lastVerifierClassification = lease.lastVerifierClassification,
+          lastVerifierExitCode = lease.lastVerifierExitCode,
+          lastVerifierDurationMillis = lease.lastVerifierDurationMillis,
+          helperStage = lease.helperStage,
+          helperExitCode = lease.helperExitCode
         )
       },
       visibleFrame = TicketVisibleFrameHealth(
@@ -8940,6 +7221,7 @@ class TicketStreamService : Service() {
     reason: String,
     timeoutMillis: Long = TICKET_WAKE_LAUNCH_TIMEOUT_MILLIS
   ) {
+    if (!beginControlCodePanelDarkMutation("vivi_launch:$reason")) return
     recordTicketEvent("wake_launch_vivi_root", reason)
     val boundedTimeoutMillis = timeoutMillis.coerceAtLeast(1L)
     val startedAtMillis = SystemClock.elapsedRealtime()
@@ -9679,7 +7961,8 @@ class TicketStreamService : Service() {
    */
   private suspend fun verifyFreshTicketDetailVisualProof(
     reason: String,
-    timeoutMillis: Long = TICKET_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS
+    timeoutMillis: Long = TICKET_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS,
+    probeWaitMillis: Long = CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS
   ): Boolean {
     val startedAtMillis = SystemClock.elapsedRealtime()
     val deadlineMillis = startedAtMillis + timeoutMillis.coerceAtLeast(1L)
@@ -9704,7 +7987,7 @@ class TicketStreamService : Service() {
       val visualProbe = waitForFreshControlCodeVisualProbe(
         visualProbeStartedAtMillis = probeStartedAtMillis,
         expectedProbeId = probeId,
-        timeoutMillis = minOf(CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS, remainingMillis)
+        timeoutMillis = minOf(probeWaitMillis.coerceAtLeast(1L), remainingMillis)
       )
       lastResult = visualProbe?.result ?: TicketControlCodeVisualClassifier.UNKNOWN
       if (proof.observe(lastResult)) {
@@ -10156,35 +8439,6 @@ class TicketStreamService : Service() {
       if (success) "recovery_succeeded" else "recovery_failed",
       "$reason mode=$mode"
     )
-    if (reason.startsWith("admin_force_latest_ticket_reselect")) {
-      val reselectToken = synchronized(latestTicketReselectStateLock) {
-        if (latestTicketReselectStatus == "pending" && latestTicketReselectReason == reason) {
-          latestTicketReselectGeneration to latestTicketReselectCommandId
-        } else {
-          null
-        }
-      }
-      if (reselectToken != null) {
-        scheduleLatestTicketReselectSettle(
-          successReason = if (success) {
-            "latest_ticket_reselect_succeeded"
-          } else {
-            "latest_ticket_reselect_succeeded_after_recovery"
-          },
-          failureReason = if (success) {
-            "latest_ticket_reselect_stream_unstable"
-          } else {
-            "latest_ticket_reselect_failed"
-          },
-          generation = reselectToken.first,
-          commandId = reselectToken.second
-        )
-        recordTicketEvent(
-          if (success) "latest_ticket_reselect_ticket_detail_ready" else "latest_ticket_reselect_waiting_for_recovery",
-          "$reason mode=$mode"
-        )
-      }
-    }
     if (streamActive) {
       val currentViviState = viviStateMemory.current().state
       updateTicketSessionState(
@@ -10479,7 +8733,6 @@ class TicketStreamService : Service() {
     return controlCodeModeActive ||
       controlCodeRequestActive() ||
       ticketActionV3Job?.isActive == true ||
-      activeTicketSliderGesture != null ||
       now < controlCodeTransitionGraceUntilMillis ||
       ticketSessionState == TICKET_SESSION_CONTROL_EXIT
   }
@@ -10596,9 +8849,122 @@ class TicketStreamService : Service() {
     controlExitCleanupJob?.cancel()
     controlExitCleanupJob = serviceScope.launch {
       controlCodePhoneMutationLane.withOwnership {
-        runControlExitCleanup(reason)
+        runScheduledControlExitCleanupWithPanelDarkLease(reason)
       }
     }
+  }
+
+  /**
+   * A browser-close cleanup is still a phone action. It therefore owns the same panel-dark lease
+   * and phone lane as an admitted request, and it does not clear the durable cleanup fence until
+   * the cleaned surface, convergence tail, fresh zero, and exact helper shutdown are all proven.
+   */
+  private suspend fun runScheduledControlExitCleanupWithPanelDarkLease(reason: String): Boolean {
+    val ownerSuffix = SystemClock.elapsedRealtime().toString()
+    val panelLease = TicketActionPanelDarkLease(
+      actionId = "control_code:cleanup:$ownerSuffix",
+      scope = serviceScope,
+      clampRootExecutor = ticketActionPanelDarkRootExecutor,
+      verifyRootExecutor = ticketActionPanelDarkVerifyRootExecutor,
+      physicalTouchState = PhoneAutomationServiceBridge::currentRootPhysicalTouchState,
+      ownerProcessId = android.os.Process.myPid(),
+      onSnapshotChanged = { snapshot ->
+        val prior = ticketActionPanelDarkLeaseSnapshot
+        if (snapshot.failure.isNotBlank() &&
+          (prior.ownerActionId != snapshot.ownerActionId || prior.failure.isBlank())
+        ) {
+          ticketActionPanelDarkLeaseFailures.incrementAndGet()
+        }
+        ticketActionPanelDarkLeaseSnapshot = snapshot
+        broadcastStatus()
+      }
+    )
+    activeTicketActionPanelDarkLease = panelLease
+    PhoneAutomationServiceBridge.markNonTouchInput(
+      reason = "ticket:control_code_cleanup_panel_dark:$ownerSuffix",
+      durationMillis = TICKET_ACTION_V3_PANEL_DARK_LEASE_MILLIS
+    )
+    var leaseAcquired = false
+    var phoneSurfaceCleaned = false
+    var cleanupFailure: Throwable? = null
+    var finalization: TicketActionPanelDarkLeaseFinalization? = null
+    try {
+      leaseAcquired = panelLease.acquire()
+      if (leaseAcquired) {
+        phoneSurfaceCleaned = runControlExitCleanup(reason)
+      } else {
+        recordTicketEvent(
+          "control_exit_cleanup_panel_dark_acquire_failed",
+          "reason=$reason lease=${panelLease.snapshot().failure}"
+        )
+      }
+    } catch (error: Throwable) {
+      cleanupFailure = error
+      recordTicketEvent(
+        "control_exit_cleanup_panel_exception",
+        "reason=$reason error=${safeErrorDetail(error)}"
+      )
+    } finally {
+      withContext(NonCancellable) {
+        finalization = if (leaseAcquired) {
+          panelLease.releaseAfterFinalConvergence("control_exit_cleanup_terminal")
+        } else {
+          panelLease.release("control_exit_cleanup_acquire_failed")
+        }
+        if (activeTicketActionPanelDarkLease === panelLease) {
+          activeTicketActionPanelDarkLease = null
+        }
+        PhoneAutomationServiceBridge.clearNonTouchInputTailForBrowserCriticalAction(
+          "ticket:control_code_cleanup_panel_dark:$ownerSuffix:released"
+        )
+      }
+    }
+
+    val cleanupMayCommit = ticketControlCodeCleanupMayCommitAfterPanelFinalization(
+      phoneSurfaceCleaned,
+      finalization
+    )
+    if (cleanupMayCommit &&
+      commitControlCodeCleanStateAfterPanelFinalization("scheduled:$reason")
+    ) {
+      publishControlCodeReadyAfterPanelFinalization(lastControlCodeRequestId.orEmpty())
+      recordTicketEvent("control_exit_cleanup_panel_finalized", "reason=$reason")
+      broadcastStatus()
+      return true
+    }
+
+    preserveControlCodeCleanupCheckpoint("scheduled:$reason")
+    val leaseState = finalization?.snapshot ?: panelLease.snapshot()
+    val failureReason = ticketScheduledControlCleanupFailureReason(
+      leaseAcquired = leaseAcquired,
+      finalizationSafe = finalization?.safe,
+      mutationMayHaveDispatched = leaseState.mutationMayHaveDispatched
+    )
+    updateTicketSessionState(TICKET_SESSION_NEEDS_ATTENTION, failureReason)
+    recordInputGateDecision(false, failureReason)
+    markControlCodeFastNotReady("blocked", failureReason)
+    if (leaseState.mutationMayHaveDispatched) {
+      lastControlCodeRequestStatus = "failed"
+      lastControlCodeRequestReason = "control_code_cleanup_attention_needed"
+      lastControlCodeRequestCompletedAtMillis = SystemClock.elapsedRealtime()
+      lastControlCodeRequestId.orEmpty().takeIf(String::isNotBlank)?.let { requestId ->
+        sendControlCodeCleanup(
+          requestId,
+          false,
+          "control_code_cleanup_attention_needed",
+          startedAtMillis = 0L
+        )
+      }
+    }
+    recordTicketEvent(
+      "control_exit_cleanup_panel_finalization_failed",
+      "reason=$reason failure=$failureReason cleaned=$phoneSurfaceCleaned exception=${cleanupFailure != null}"
+    )
+    broadcastStatus()
+    cleanupFailure?.let { error ->
+      if (error is CancellationException) throw error
+    }
+    return false
   }
 
   private suspend fun runControlExitCleanup(reason: String): Boolean {
@@ -10657,15 +9023,83 @@ class TicketStreamService : Service() {
     closeAction: String,
     startedAtMillis: Long,
     verificationResult: String,
-    freshFrameRequested: Boolean,
-    finalViviState: TicketViviRecoveryState = TicketViviRecoveryState.TICKET_DETAIL
+    freshFrameRequested: Boolean
   ): Boolean {
+    // Every production cleanup now owns an action panel-dark lease (the admitted request, the V3
+    // visual-reopen action, or the scheduled cleanup wrapper). Keep the private identity/checkpoint
+    // intact until that lease proves its final tail and exact shutdown.
+    val deferReadyPublication = activeTicketActionPanelDarkLease != null
     val finalDetectedState = if (detectedState == "UNKNOWN" || detectedState == "CONTROL_SURFACE_LIKELY") {
       controlCodeSurfaceMemoryState() ?: lastControlExitDirtySurfaceState ?: detectedState
     } else {
       detectedState
     }
     val finalCloseAction = closeAction
+    recordTicketEvent("control_code_soft_check_ok", verificationResult.lowercase())
+    val cleanupStartedAtMillis = startedAtMillis
+    val freshFrameVerified = if (freshFrameRequested) {
+      waitForFreshStreamFrameAfterCleanup(reason, cleanupStartedAtMillis)
+    } else {
+      true
+    }
+    if (!deferReadyPublication) {
+      // A legacy/background observer may discover that the phone already looks clean, but it has
+      // no action-scoped final panel proof. Keep the durable fence closed and require the admitted
+      // visual-reopen path instead of clearing private identity on that weaker observation.
+      preserveControlCodeCleanupCheckpoint("cleanup_without_panel_finalization:$reason")
+      updateTicketSessionState(
+        TICKET_SESSION_NEEDS_ATTENTION,
+        "control_code_cleanup_panel_finalization_required"
+      )
+      recordControlExitCleanup(
+        reason,
+        finalDetectedState,
+        finalCloseAction,
+        startedAtMillis,
+        "${verificationResult}_panel_finalization_missing",
+        false,
+        freshFrameRequested,
+        freshFrameVerified
+      )
+      broadcastStatus()
+      return false
+    }
+    if (!freshFrameVerified) {
+      recordTicketEvent("post_cleanup_stream_stale", reason)
+      restartActiveStreamEngine("post_cleanup_stale_$reason")
+    } else {
+      recordTicketEvent(
+        "control_code_ready_publication_deferred",
+        "reason=$reason waiting_for_panel_dark_finalization"
+      )
+    }
+    recordControlExitCleanup(
+      reason,
+      finalDetectedState,
+      finalCloseAction,
+      startedAtMillis,
+      if (deferReadyPublication) "${verificationResult}_panel_finalization_pending" else verificationResult,
+      freshFrameVerified && !deferReadyPublication,
+      freshFrameRequested,
+      freshFrameVerified
+    )
+    broadcastStatus()
+    return freshFrameVerified
+  }
+
+  private fun commitControlCodeCleanStateAfterPanelFinalization(
+    reason: String,
+    finalViviState: TicketViviRecoveryState = TicketViviRecoveryState.TICKET_DETAIL
+  ): Boolean {
+    // Prove the durable fence clear before discarding the private in-memory identity. If this write
+    // fails, the old pending checkpoint and signatures still fence the next control request.
+    if (!persistControlCodeSignatureCleanupRequired(false)) {
+      recordTicketEvent(
+        "control_code_cleanup_checkpoint_clear_unproved",
+        "reason=$reason"
+      )
+      return false
+    }
     controlCodeModeActive = false
     controlCodeModeEnteredAtMillis = 0L
     controlCodePopupReadyUntilMillis = 0L
@@ -10679,7 +9113,6 @@ class TicketStreamService : Service() {
     activeControlCodeRawDetailState = TicketVisualPhoneState.UNKNOWN
     activeControlCodeVisualResultMode = TicketControlCodeVisualResultMode.NONE
     activeControlCodeVisualSignatureExpiresAtMillis = 0L
-    persistControlCodeSignatureCleanupRequired(false)
     viviStateMemory.record(
       state = finalViviState,
       ticketId = null,
@@ -10688,42 +9121,22 @@ class TicketStreamService : Service() {
     )
     recordInputGateDecision(allowed = true, reason = "control_exit_popup_closed")
     recordTicketEvent("control_exit_popup_closed", reason)
+    return true
+  }
+
+  private fun publishControlCodeReadyAfterPanelFinalization(requestId: String) {
     if (streamActive) {
       updateTicketSessionState(TICKET_SESSION_LIVE, "control_exit_popup_closed")
       startForegroundGuard()
     }
-    recordTicketEvent("control_code_soft_check_ok", verificationResult.lowercase())
-    val cleanupStartedAtMillis = startedAtMillis
-    val freshFrameVerified = if (freshFrameRequested) {
-      waitForFreshStreamFrameAfterCleanup(reason, cleanupStartedAtMillis)
-    } else {
-      true
-    }
-    if (!freshFrameVerified) {
-      recordTicketEvent("post_cleanup_stream_stale", reason)
-      restartActiveStreamEngine("post_cleanup_stale_$reason")
-    } else {
-      sendTicketStateEvent(
-        ticketState = TICKET_PIXEL_STATE_RAW_TICKET,
-        reason = "return_to_raw_complete",
-        requestId = lastControlCodeRequestId.orEmpty(),
-        eventStreamEpoch = streamEpoch,
-        eventFrameSequence = frameSequence,
-        minFrameSequence = frameSequence
-      )
-    }
-    recordControlExitCleanup(
-      reason,
-      finalDetectedState,
-      finalCloseAction,
-      startedAtMillis,
-      verificationResult,
-      freshFrameVerified,
-      freshFrameRequested,
-      freshFrameVerified
+    sendTicketStateEvent(
+      ticketState = TICKET_PIXEL_STATE_RAW_TICKET,
+      reason = "return_to_raw_complete",
+      requestId = requestId,
+      eventStreamEpoch = streamEpoch,
+      eventFrameSequence = frameSequence,
+      minFrameSequence = frameSequence
     )
-    broadcastStatus()
-    return freshFrameVerified
   }
 
   private suspend fun waitForFreshStreamFrameAfterCleanup(reason: String, cleanupStartedAtMillis: Long): Boolean {
@@ -11371,6 +9784,25 @@ class TicketStreamService : Service() {
       )
       return
     }
+    if (activeControlCodeKeyboardClamp != null) {
+      recordRejectedControlCodeCommand(
+        cleanRequestId,
+        requestedOwner,
+        requestedApp,
+        requestedFlow,
+        "control_code_keyboard_cleanup_pending"
+      )
+      sendControlCodeResult(
+        cleanRequestId,
+        false,
+        "control_code_keyboard_cleanup_pending",
+        "",
+        0L,
+        emptyMap(),
+        cleanupPending = true
+      )
+      return
+    }
 
     // Publish ownership before any session-start command can race this request.
     // The Spacetime desired-start lane will then coalesce onto the same phone
@@ -11410,6 +9842,17 @@ class TicketStreamService : Service() {
           controlCodeRequestDuplicateActiveOrCompleted(cleanRequestId)
         ) return@withOwnership
 
+        var panelDarkLeaseAcquired = false
+        var resultSent = false
+        var generatedResultDelivered = false
+        var deferredCleanupOk: Boolean? = null
+        var deferredPhoneSurfaceCleaned = false
+        var deferredCleanupReason = ""
+        var reason = "control_code_request_session_unavailable"
+        var value = ""
+        var dirtyHierarchy = ""
+        try {
+
         val panelOwnerId = "control_code:${cleanRequestId.takeLast(24)}"
         panelDarkLease = TicketActionPanelDarkLease(
           actionId = panelOwnerId,
@@ -11433,11 +9876,13 @@ class TicketStreamService : Service() {
           reason = "ticket:control_code_panel_dark:${cleanRequestId.takeLast(24)}",
           durationMillis = TICKET_ACTION_V3_PANEL_DARK_LEASE_MILLIS
         )
-        val acquiredPanelDarkLease = panelDarkLease?.acquire() == true
-        if (!acquiredPanelDarkLease) {
-          val failureReason = panelDarkLease?.snapshot()?.failure
-            ?.ifBlank { "control_code_panel_dark_unavailable" }
-            ?: "control_code_panel_dark_unavailable"
+        panelDarkLeaseAcquired = panelDarkLease?.acquire() == true
+        if (!panelDarkLeaseAcquired) {
+          val failureReason = "control_code_panel_dark_unavailable"
+          recordTicketEvent(
+            "control_code_panel_dark_acquire_failed",
+            "lease=${panelDarkLease?.snapshot()?.failure.orEmpty()}"
+          )
           lastControlCodeRequestStatus = "failed"
           lastControlCodeRequestReason = failureReason
           lastControlCodeRequestCompletedAtMillis = SystemClock.elapsedRealtime()
@@ -11455,17 +9900,16 @@ class TicketStreamService : Service() {
 
         keyboardClampLease = RequestScopedKeyboardClampLease(
           requestId = cleanRequestId,
-          rootExecutor = inputRootExecutor,
-          scope = serviceScope,
+          expectedPackageName = TicketScreenConfig.VIVI_PACKAGE,
           commandTimeoutMillis = CONTROL_CODE_KEYBOARD_CLAMP_COMMAND_TIMEOUT_MILLIS,
           onPhase = { phase -> markControlCodeRequestPhase(phases, phase, startedAtMillis) },
           onEvent = ::recordTicketEvent
         ).also { lease ->
-          // The action-wide raw-panel lease is already confirmed before keyboard suppression can
-          // change display settings. Root typing reasserts suppression before digit entry.
-          lease.startAsync()
+          // The action-wide raw-panel lease is already confirmed before soft-keyboard suppression.
+          // The final field-tap gate validates the already-owned hidden mode immediately before entry.
           activeControlCodeKeyboardClamp = lease
         }
+        val keyboardClampAcquired = keyboardClampLease?.acquire() == true
         lastControlCodeRequestId = cleanRequestId
         lastControlCodeRequestStatus = "running"
         lastControlCodeRequestReason = null
@@ -11476,11 +9920,10 @@ class TicketStreamService : Service() {
         val fastStateAcceptedAtAdmission = controlCodeFastStateRevisionAccepted(cleanFastRevision)
         markControlCodeFastNotReady("cleanup", "control_code_request")
         recordTicketEvent("control_code_request_running", "request=$cleanRequestId")
-        var reason = "control_code_request_session_unavailable"
-        var value = ""
-        var resultSent = false
-        var dirtyHierarchy = ""
         try {
+          if (!keyboardClampAcquired) {
+            reason = "control_code_keyboard_clamp_unavailable"
+          } else {
           val preflight = ensureControlCodeRequestPreflight(
             requestedFastRevision = cleanFastRevision,
             fastStateAcceptedAtAdmission = fastStateAcceptedAtAdmission,
@@ -11505,9 +9948,8 @@ class TicketStreamService : Service() {
             dirtyHierarchy = delivery.generatedHierarchy
             if (delivery.ok) {
               val duration = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
-              lastControlCodeRequestStatus = "succeeded"
-              lastControlCodeRequestReason = "generated"
-              lastControlCodeRequestCompletedAtMillis = SystemClock.elapsedRealtime()
+              lastControlCodeRequestStatus = "running"
+              lastControlCodeRequestReason = "generated_cleanup_pending"
               beginControlCodeBrowserCaptureWait(cleanRequestId)
               recordControlCodeTimingSummary(
                 stage = "result_ready",
@@ -11531,6 +9973,7 @@ class TicketStreamService : Service() {
                 phases = phases
               )
               resultSent = true
+              generatedResultDelivered = true
               val capture = waitForControlCodeBrowserCapture(cleanRequestId, phases, startedAtMillis)
               clearControlCodeBrowserCaptureWait(cleanRequestId)
               val cleanupReason = if (capture.ok) "browser_capture_confirmed" else capture.reason
@@ -11542,26 +9985,12 @@ class TicketStreamService : Service() {
               )
               val requestSucceeded = capture.ok && cleaned
               markControlCodeRequestPhase(phases, "cleanup_finished", startedAtMillis)
-              sendControlCodeCleanup(
-                cleanRequestId,
-                requestSucceeded,
-                when {
-                  !capture.ok -> "browser_capture_failed_${capture.reason}"
-                  cleaned -> "return_to_raw_complete"
-                  else -> "control_code_cleanup_attention_needed"
-                },
-                startedAtMillis
-              )
-              if (requestSucceeded) {
-                markControlCodeFastReady("cleanup:$cleanupReason")
-              } else {
-                lastControlCodeRequestStatus = "failed"
-                lastControlCodeRequestReason = if (!capture.ok) {
-                  "browser_capture_failed_${capture.reason}"
-                } else {
-                  "control_code_cleanup_attention_needed"
-                }
-                markControlCodeFastNotReady("blocked", lastControlCodeRequestReason.orEmpty())
+              deferredPhoneSurfaceCleaned = cleaned
+              deferredCleanupOk = requestSucceeded
+              deferredCleanupReason = when {
+                !capture.ok -> "browser_capture_failed_${capture.reason}"
+                cleaned -> "return_to_raw_complete"
+                else -> "control_code_cleanup_attention_needed"
               }
             } else if (delivery.cleanupRequired) {
               sendControlCodeResult(
@@ -11571,16 +10000,17 @@ class TicketStreamService : Service() {
               val cleaned = returnControlCodeSurfaceToRawTicket(
                 dirtyHierarchy, "control_code_request_failed_return_raw", phases, startedAtMillis
               )
-              sendControlCodeCleanup(
-                cleanRequestId, cleaned,
-                if (cleaned) "ticket_detail" else "control_code_cleanup_attention_needed",
-                startedAtMillis
-              )
-              if (cleaned) markControlCodeFastReady("failed_delivery_cleanup")
-              else markControlCodeFastNotReady("blocked", "control_code_cleanup_attention_needed")
+              deferredPhoneSurfaceCleaned = cleaned
+              deferredCleanupOk = cleaned
+              deferredCleanupReason = if (cleaned) {
+                "ticket_detail"
+              } else {
+                "control_code_cleanup_attention_needed"
+              }
             }
           } else {
             reason = inputGateReason.ifBlank { reason }
+          }
           }
         } catch (cancelled: CancellationException) {
           throw cancelled
@@ -11601,16 +10031,13 @@ class TicketStreamService : Service() {
               startedAtMillis
             )
           }.getOrDefault(false)
-          sendControlCodeCleanup(
-            cleanRequestId, cleaned,
-            if (cleaned) "ticket_detail" else "control_code_cleanup_attention_needed",
-            startedAtMillis
-          )
-          if (cleaned) markControlCodeFastReady("exception_cleanup")
-          else markControlCodeFastNotReady("blocked", "control_code_cleanup_attention_needed")
-        }
-        if (!resultSent) {
-          sendControlCodeResult(cleanRequestId, false, reason, value, startedAtMillis, phases, false)
+          deferredPhoneSurfaceCleaned = cleaned
+          deferredCleanupOk = cleaned
+          deferredCleanupReason = if (cleaned) {
+            "ticket_detail"
+          } else {
+            "control_code_cleanup_attention_needed"
+          }
         }
         lastControlCodeRequestDurationMillis = (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
         lastControlCodeRequestPhases = phases.toMap()
@@ -11621,25 +10048,131 @@ class TicketStreamService : Service() {
           databaseSubmissionEpochMillis = databaseSubmissionEpochMillis,
           totalDurationMillis = lastControlCodeRequestDurationMillis
         )
+        } finally {
+          var keyboardClampReleased = true
+          val panelFinalization = withContext(NonCancellable) {
+            keyboardClampReleased = keyboardClampLease?.release(
+              "control_code_request_finally"
+            ) ?: true
+            if (keyboardClampReleased && activeControlCodeKeyboardClamp === keyboardClampLease) {
+              activeControlCodeKeyboardClamp = null
+            }
+            val completed = if (panelDarkLeaseAcquired) {
+              panelDarkLease?.releaseAfterFinalConvergence("control_code_terminal")
+            } else {
+              panelDarkLease?.release("control_code_acquire_failed")
+            }
+            if (activeTicketActionPanelDarkLease === panelDarkLease) {
+              activeTicketActionPanelDarkLease = null
+            }
+            PhoneAutomationServiceBridge.clearNonTouchInputTailForBrowserCriticalAction(
+              "ticket:control_code_panel_dark:${cleanRequestId.takeLast(24)}:released"
+            )
+            completed
+          }
+          if (panelDarkLeaseAcquired) {
+            val leaseState = panelFinalization?.snapshot ?: panelDarkLease?.snapshot()
+              ?: TicketActionPanelDarkLeaseSnapshot()
+            if (panelFinalization?.safe == true && keyboardClampReleased) {
+              val localCleanupCommitted = if (
+                ticketControlCodeCleanupMayCommitAfterPanelFinalization(
+                  deferredPhoneSurfaceCleaned,
+                  panelFinalization
+                )
+              ) {
+                commitControlCodeCleanStateAfterPanelFinalization(
+                  "control_code_request:$deferredCleanupReason"
+                )
+              } else {
+                false
+              }
+              if (leaseState.mutationMayHaveDispatched && !localCleanupCommitted) {
+                preserveControlCodeCleanupCheckpoint(
+                  "control_code_request_checkpoint_clear_unproved:$deferredCleanupReason"
+                )
+              }
+              if (!resultSent) {
+                val cleanupPending = leaseState.mutationMayHaveDispatched && !localCleanupCommitted
+                sendControlCodeResult(
+                  cleanRequestId, false, reason, value, startedAtMillis, phases,
+                  cleanupPending = cleanupPending
+                )
+                resultSent = true
+              }
+              deferredCleanupOk?.let { cleanupOk ->
+                if (cleanupOk && localCleanupCommitted) {
+                  publishControlCodeReadyAfterPanelFinalization(cleanRequestId)
+                  sendControlCodeCleanup(
+                    cleanRequestId, true, deferredCleanupReason, startedAtMillis
+                  )
+                  markControlCodeFastReady("cleanup:$deferredCleanupReason")
+                  if (generatedResultDelivered) {
+                    lastControlCodeRequestStatus = "succeeded"
+                    lastControlCodeRequestReason = "generated"
+                    lastControlCodeRequestCompletedAtMillis = SystemClock.elapsedRealtime()
+                  }
+                } else {
+                  val cleanupFailureReason = if (
+                    deferredPhoneSurfaceCleaned && !localCleanupCommitted
+                  ) {
+                    "control_code_cleanup_checkpoint_clear_unproved"
+                  } else {
+                    deferredCleanupReason
+                  }
+                  lastControlCodeRequestStatus = "failed"
+                  lastControlCodeRequestReason = cleanupFailureReason
+                  lastControlCodeRequestCompletedAtMillis = SystemClock.elapsedRealtime()
+                  sendControlCodeCleanup(
+                    cleanRequestId, false, cleanupFailureReason, startedAtMillis
+                  )
+                  markControlCodeFastNotReady("blocked", cleanupFailureReason)
+                }
+              }
+            } else {
+              val afterPossibleDispatch = leaseState.mutationMayHaveDispatched
+              if (!keyboardClampReleased ||
+                afterPossibleDispatch ||
+                deferredCleanupOk != null ||
+                controlCodeSignatureCleanupRequired
+              ) {
+                preserveControlCodeCleanupCheckpoint(
+                  if (keyboardClampReleased) {
+                    "control_code_request_unsafe_finalization"
+                  } else {
+                    "control_code_keyboard_restore_unproved"
+                  }
+                )
+              }
+              val failureReason = when {
+                !keyboardClampReleased -> "control_code_keyboard_restore_failed"
+                afterPossibleDispatch -> "control_code_cleanup_attention_needed"
+                else -> "control_code_panel_dark_unavailable"
+              }
+              lastControlCodeRequestStatus = "failed"
+              lastControlCodeRequestReason = failureReason
+              lastControlCodeRequestCompletedAtMillis = SystemClock.elapsedRealtime()
+              if (!resultSent) {
+                sendControlCodeResult(
+                  cleanRequestId, false, failureReason, value, startedAtMillis, phases,
+                  cleanupPending = afterPossibleDispatch || !keyboardClampReleased
+                )
+                resultSent = true
+              }
+              if (!keyboardClampReleased || afterPossibleDispatch || deferredCleanupOk != null) {
+                sendControlCodeCleanup(
+                  cleanRequestId, false, failureReason, startedAtMillis
+                )
+              }
+              markControlCodeFastNotReady("blocked", failureReason)
+            }
+          }
+        }
       }
     } finally {
       if (burstStarted) rootHardwareH264CaptureEngine.stopControlCodeRequestBurst("control_code_request_finally")
-      withContext(NonCancellable) {
-        keyboardClampLease?.release("control_code_request_finally")
-        panelDarkLease?.release("control_code_terminal")
-      }
       requestPhases?.let { phases ->
         lastControlCodeRequestPhases = synchronized(phases) { phases.toMap() }
       }
-      if (activeControlCodeKeyboardClamp === keyboardClampLease) {
-        activeControlCodeKeyboardClamp = null
-      }
-      if (activeTicketActionPanelDarkLease === panelDarkLease) {
-        activeTicketActionPanelDarkLease = null
-      }
-      PhoneAutomationServiceBridge.clearNonTouchInputTailForBrowserCriticalAction(
-        "ticket:control_code_panel_dark:${cleanRequestId.takeLast(24)}:released"
-      )
       rootHardwareH264CaptureEngine.clearTransientControlCodeVisualProbes()
       scheduleControlCodeVisualSignatureExpiry()
       releaseControlCodeAutomationForRequest()
@@ -12476,10 +11009,7 @@ class TicketStreamService : Service() {
       phases = phases,
       requestStartedAtMillis = requestStartedAtMillis,
       submittedDigits = cleanDigits,
-      preSubmitDetailAnchor = transaction.preSubmitDetailAnchor,
-      preSubmitDetailState = transaction.preSubmitDetailState,
-      timeoutMillis = CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS,
-      rootDumpTimeoutMillis = CONTROL_CODE_FAST_RESULT_ROOT_DUMP_TIMEOUT_MILLIS
+      timeoutMillis = CONTROL_CODE_FAST_RESULT_TIMEOUT_MILLIS
     )
     val generated = waitOutcome.generated ?: return FastControlCodeDelivery(
       ok = false,
@@ -12567,21 +11097,8 @@ class TicketStreamService : Service() {
       recordTicketEvent("control_code_request_fast_fail", "reason=button_visual_unproved")
       return null
     }
-    val provedInitialVisualDetail = initialVisualDetail ?: return null
-    val visualDetail = canonicalizeControlCodeTicketDetail(
-      provedInitialVisualDetail,
-      phases,
-      requestStartedAtMillis
-    ) ?: run {
-      val reason = inputGateReason.takeIf { it.startsWith("control_code_") }
-        ?: "control_code_ticket_reopen_unproved"
-      recordInputGateDecision(allowed = false, reason = reason)
-      recordTicketEvent("control_code_request_fast_fail", "reason=$reason")
-      return null
-    }
-    if (visualDetail.state != TicketVisualPhoneState.ACTIVATED_DETAIL ||
-      !ticketControlCodeDetailAnchorIsValid(visualDetail.currentAnchor)
-    ) {
+    val visualDetail = initialVisualDetail ?: return null
+    if (!ticketControlCodeDetailAnchorIsValid(visualDetail.currentAnchor)) {
       recordInputGateDecision(allowed = false, reason = "control_code_detail_identity_unproved")
       recordTicketEvent("control_code_request_fast_fail", "reason=detail_identity_unproved")
       return null
@@ -12657,97 +11174,13 @@ class TicketStreamService : Service() {
         open = action,
         input = transaction.input,
         submit = transaction.submit,
-      inputSource = "rooted_visual_probe",
-      submitSource = "rooted_visual_probe",
-      preSubmitDetailAnchor = visualDetail.currentAnchor,
-      preSubmitDetailState = visualDetail.state
+        inputSource = "rooted_visual_probe",
+        submitSource = "rooted_visual_probe"
       )
     }
     recordInputGateDecision(allowed = false, reason = "control_code_popup_bounds_unavailable")
     recordTicketEvent("control_code_request_fast_fail", "reason=popup_bounds_unavailable")
     return null
-  }
-
-  private suspend fun canonicalizeControlCodeTicketDetail(
-    initial: TicketVisualActionObservation,
-    phases: MutableMap<String, Long>,
-    requestStartedAtMillis: Long
-  ): TicketVisualActionObservation? {
-    loadTicketVisualSwitchAnchorsIfNeeded()
-    if (initial.state == TicketVisualPhoneState.ACTIVATED_DETAIL &&
-      !controlCodeSignatureCleanupRequired
-    ) {
-      return initial
-    }
-    if (initial.state != TicketVisualPhoneState.UNACTIVATED_DETAIL) return null
-    val back = initial.backBounds ?: return null
-    if (!measureInputPhase(phases, "control_code_visual_reopen_to_list") {
-        tapTicketVisualProbeBounds(back, "control_code_visual_reopen_to_list")
-      }) return null
-    val list = awaitStableTicketVisualActionObservation(
-      "control_code_visual_reopen_list",
-      TICKET_ACTION_V3_VISUAL_TIMEOUT_MILLIS
-    )?.takeIf { it.state == TicketVisualPhoneState.TICKET_LIST } ?: return null
-    val activatedCard = list.activatedCardForControlCode(ticketVisualSwitchAnchors) ?: run {
-      val restored = restoreControlCodeUnactivatedDetailFromList(
-        initial = initial,
-        list = list,
-        phases = phases,
-        requestStartedAtMillis = requestStartedAtMillis
-      )
-      recordInputGateDecision(
-        allowed = false,
-        reason = if (restored) {
-          "control_code_recent_activated_unavailable"
-        } else {
-          "control_code_unactivated_restore_unproved"
-        }
-      )
-      return null
-    }
-    val activatedDetailBounds = activatedCard.activatedDetailBounds ?: return null
-    if (!measureInputPhase(phases, "control_code_visual_reopen_card") {
-        tapTicketVisualProbeBounds(activatedDetailBounds, "control_code_visual_reopen_card")
-      }) return null
-    val detail = awaitStableTicketVisualActionObservation(
-      "control_code_visual_reopen_detail",
-      TICKET_ACTION_V3_VISUAL_TIMEOUT_MILLIS
-    )?.takeIf {
-      ticketVisualControlCodeActivatedDetailProved(it, ticketVisualSwitchAnchors)
-    } ?: return null
-    markControlCodeRequestPhase(phases, "ticket_visual_reopened", requestStartedAtMillis)
-    return detail
-  }
-
-  /**
-   * If no activated-status target exists, compensate only the proved Back transition by opening
-   * the unique latest registration target and requiring the exact original detail signature.
-   * Nothing is retried after an activated-card tap or another uncertain mutation.
-   */
-  private suspend fun restoreControlCodeUnactivatedDetailFromList(
-    initial: TicketVisualActionObservation,
-    list: TicketVisualActionObservation,
-    phases: MutableMap<String, Long>,
-    requestStartedAtMillis: Long
-  ): Boolean {
-    val registrationBounds = list.latestRegistrationCard()?.registrationBounds ?: return false
-    if (!measureInputPhase(phases, "control_code_visual_restore_unactivated") {
-        tapTicketVisualProbeBounds(
-          registrationBounds,
-          "control_code_visual_restore_unactivated"
-        )
-      }) return false
-    val restored = awaitStableTicketVisualActionObservation(
-      "control_code_visual_restore_unactivated_detail",
-      TICKET_ACTION_V3_VISUAL_TIMEOUT_MILLIS
-    ) ?: return false
-    if (!ticketVisualControlCodeUnactivatedDetailRestored(initial, restored)) return false
-    markControlCodeRequestPhase(
-      phases,
-      "ticket_visual_unactivated_restored",
-      requestStartedAtMillis
-    )
-    return true
   }
 
   private suspend fun awaitStableControlCodeRawVisualSignature(
@@ -12809,13 +11242,25 @@ class TicketStreamService : Service() {
       CONTROL_CODE_VISUAL_CHECKPOINT_PREFERENCES,
       Context.MODE_PRIVATE
     ).edit().putBoolean(CONTROL_CODE_VISUAL_CHECKPOINT_PENDING_KEY, required)
-    if (required) {
-      if (!editor.commit()) return false
-    } else {
-      editor.apply()
-    }
+    // Both setting and clearing this gate are safety decisions. Public readiness may follow a
+    // clear, so an asynchronous apply is not strong enough for the finalization boundary.
+    if (!editor.commit()) return false
     controlCodeSignatureCleanupRequired = required
     return true
+  }
+
+  private fun preserveControlCodeCleanupCheckpoint(reason: String): Boolean {
+    val persisted = persistControlCodeSignatureCleanupRequired(true)
+    if (!persisted) {
+      // Keep the live admission fence closed even if durable storage is temporarily unavailable.
+      // The failed durable write is itself a needs-attention condition and must never reopen input.
+      controlCodeSignatureCleanupRequired = true
+      recordTicketEvent(
+        "control_code_cleanup_checkpoint_set_unproved",
+        "reason=$reason"
+      )
+    }
+    return persisted
   }
 
   private suspend fun awaitStableControlCodeSubmitLayout(
@@ -12900,10 +11345,9 @@ class TicketStreamService : Service() {
     phases: MutableMap<String, Long>,
     requestStartedAtMillis: Long
   ): Boolean {
-    var typeResult = measureInputPhase(phases, "root_virtual_keyboard_type") {
-      executeRootControlCodeType(digits, transaction, "control_code_root_virtual_keyboard_type")
+    var typeResult = measureInputPhase(phases, "root_input_manager_type") {
+      executeRootControlCodeType(digits, transaction, "control_code_root_input_manager_type")
     }
-    val initialTypeCompletedAtMillis = SystemClock.elapsedRealtime()
     if (!typeResult.ok) {
       transaction.open?.let { open ->
         recordControlCodeSnapAttempt(
@@ -12918,9 +11362,9 @@ class TicketStreamService : Service() {
           detectedButtonBounds = transaction.openDetectedButtonBounds
         )
       }
-      recordInputGateDecision(allowed = false, reason = "control_code_root_virtual_keyboard_type_failed")
+      recordInputGateDecision(allowed = false, reason = "control_code_root_input_manager_type_failed")
       recordTicketEvent(
-        "control_code_root_virtual_keyboard_type_failed",
+        "control_code_root_input_manager_type_failed",
         "exit_code=${typeResult.exitCode} timeout=${typeResult.exitCode == 124} duration_ms=${typeResult.durationMs}"
       )
       return false
@@ -12940,7 +11384,7 @@ class TicketStreamService : Service() {
       markControlCodeRequestPhase(phases, "native_open_type_completed", requestStartedAtMillis)
       recordTicketEvent(
         "control_code_popup_opened_keyboard_free",
-        "native_root_keyboard_pre_registered"
+        "input_manager_no_device_lifecycle"
       )
     }
     markControlCodeRequestPhase(phases, "first_digit_entry", requestStartedAtMillis)
@@ -12956,35 +11400,23 @@ class TicketStreamService : Service() {
       markControlCodeRequestPhase(phases, "value_render_recheck_finished", requestStartedAtMillis)
     }
     if (valueProof == ControlCodeEnteredValueProof.STATIC_BLANK) {
-      val leaseWaitMillis = TicketControlCodeRootInput.remainingInitialKeyboardLeaseMillis(
-        initialTypeCompletedAtMillis = initialTypeCompletedAtMillis,
-        nowMillis = SystemClock.elapsedRealtime(),
-        safetyMarginMillis = CONTROL_CODE_ROOT_RETYPE_LEASE_MARGIN_MILLIS
-      )
-      if (leaseWaitMillis > 0L) {
-        recordTicketEvent(
-          "control_code_root_retype_waiting_for_lease",
-          "wait_ms=$leaseWaitMillis"
-        )
-        delay(leaseWaitMillis)
-      }
       phases["control_code_root_retype_attempted"] = 1L
       recordTicketEvent(
         "control_code_root_retype_attempted",
-        "blank_unshifted_popup_reproved lease_expired=true"
+        "blank_unshifted_popup_reproved input_manager_retry=true"
       )
-      typeResult = measureInputPhase(phases, "root_virtual_keyboard_retype") {
+      typeResult = measureInputPhase(phases, "root_input_manager_retype") {
         executeRootControlCodeType(
           digits,
           transaction.copy(open = null),
-          "control_code_root_virtual_keyboard_retype"
+          "control_code_root_input_manager_retype"
         )
       }
       valueProof = if (typeResult.ok) {
         waitForEnteredControlCodeValueVisualProof(phases)
       } else {
         recordTicketEvent(
-          "control_code_root_virtual_keyboard_retype_failed",
+          "control_code_root_input_manager_retype_failed",
           "exit_code=${typeResult.exitCode} timeout=${typeResult.exitCode == 124} duration_ms=${typeResult.durationMs}"
         )
         ControlCodeEnteredValueProof.UNSAFE
@@ -12998,16 +11430,30 @@ class TicketStreamService : Service() {
       )
       return false
     }
+    val submitProbe = awaitStableControlCodeSubmitLayout()
+    val submitTransaction = submitProbe?.takeIf {
+      it.result == TicketControlCodeVisualClassifier.CONTROL_POPUP_VALUE_READY
+    }?.let(::visualControlCodePopupTransaction)
+    if (submitTransaction == null) {
+      recordInputGateDecision(allowed = false, reason = "control_code_submit_target_unproved")
+      recordTicketEvent(
+        "control_code_submit_target_unproved",
+        "fresh_value_and_ok_geometry_required"
+      )
+      return false
+    }
     markControlCodeRequestPhase(phases, "digits_typed", requestStartedAtMillis)
+    markControlCodeRequestPhase(phases, "field_focus_and_value_proved", requestStartedAtMillis)
+    markControlCodeRequestPhase(phases, "ok_target_proved", requestStartedAtMillis)
     markControlCodeRequestPhase(phases, "ok_dispatch_started", requestStartedAtMillis)
     recordTicketEvent(
       "control_code_root_value_proved_submit_dispatched",
-      "virtual_hardware_keyboard digits=${digits.length} input=${transaction.inputSource} submit=${transaction.submitSource}"
+      "input_manager_keyevents digits=${digits.length} input=${transaction.inputSource} submit=${submitTransaction.submitSource} fresh_target=true"
     )
     val submitted = measureInputPhase(phases, "root_submit_after_value_proof") {
       tapControlCodePointWithoutKeyboard(
-        transaction.submit.x,
-        transaction.submit.y,
+        submitTransaction.submit.x,
+        submitTransaction.submit.y,
         "control_code_root_submit_after_value_proof"
       )
     }
@@ -13025,7 +11471,7 @@ class TicketStreamService : Service() {
     }
     recordTicketEvent(
       "control_code_root_value_proved_submit_attempted",
-      "acknowledged=$submitted digits=${digits.length} input=${transaction.inputSource} submit=${transaction.submitSource}"
+      "acknowledged=$submitted digits=${digits.length} input=${transaction.inputSource} submit=${submitTransaction.submitSource} fresh_target=true"
     )
     return true
   }
@@ -13047,7 +11493,7 @@ class TicketStreamService : Service() {
     return runSensitiveFastNonTouchScript(
       // The popup and its input geometry were already proved on two fresh visual frames.
       // Re-tapping the header here can dismiss the current modal through its scrim, so the
-      // one-shot keyboard helper must focus only the proved input before entering the value.
+      // one-shot InputManager helper must focus only the proved input before entering the value.
       command = TicketControlCodeRootInput.buildTypeScript(
         digits = digits,
         inputX = transaction.input.x,
@@ -13082,6 +11528,7 @@ class TicketStreamService : Service() {
     y: Int,
     reason: String
   ): Boolean {
+    if (!beginControlCodePanelDarkMutation(reason)) return false
     recordTicketEvent("control_code_keyboard_free_tap", "reason=$reason source=root_panel_clamped")
     PhoneAutomationServiceBridge.markNonTouchInput("ticket:$reason")
     return try {
@@ -13172,10 +11619,7 @@ class TicketStreamService : Service() {
     phases: MutableMap<String, Long>,
     requestStartedAtMillis: Long,
     submittedDigits: String,
-    preSubmitDetailAnchor: String,
-    preSubmitDetailState: TicketVisualPhoneState,
-    timeoutMillis: Long,
-    rootDumpTimeoutMillis: Long
+    timeoutMillis: Long
   ): ControlCodeResultWaitOutcome {
     val startedAtMillis = SystemClock.elapsedRealtime()
     recordTicketEvent("control_code_waiting_result_marker", "await_phone_visual_generated_state_after_submit")
@@ -13190,13 +11634,13 @@ class TicketStreamService : Service() {
     var popupRejectCount = 0L
     var lastObservedState = "not_run"
     var rawTicketVisualCount = 0L
-    var previousLegacyGeneratedProbe: TicketControlCodeVisualProbe? = null
+    val generatedWithCloseProof = TicketGeneratedWithCloseProof()
     var submitRetryAttempted = false
     var popupRejectCountAfterRetry = 0L
     while (SystemClock.elapsedRealtime() < deadlineAtMillis) {
       val visualProbeStartedAtMillis = SystemClock.elapsedRealtime()
       val visualProbeId = rootHardwareH264CaptureEngine
-        .requestControlCodeRequestVisualProbe("control_code_after_ok_visual_state")
+        .requestControlCodeCleanupVisualProbe("control_code_after_ok_visual_state")
       if (visualProbeId == null) {
         lastObservedState = "probe_unavailable"
         phases["control_code_visual_probe_unavailable"] = SystemClock.elapsedRealtime() - startedAtMillis
@@ -13210,73 +11654,27 @@ class TicketStreamService : Service() {
       )
       if (visualProbe != null) {
         lastObservedState = visualProbe.result
-        val legacyGeneratedAgrees = visualProbe.result == TicketControlCodeVisualClassifier.GENERATED &&
-          visualProbe.closeBounds != null &&
-          previousLegacyGeneratedProbe?.probeId != visualProbe.probeId &&
-          previousLegacyGeneratedProbe?.result == visualProbe.result &&
-          previousLegacyGeneratedProbe?.closeBounds == visualProbe.closeBounds
-        if (legacyGeneratedAgrees) {
+        if (generatedWithCloseProof.observe(visualProbe)) {
           activeControlCodeGeneratedVisualSignature = visualProbe.visualSignature
           activeControlCodeVisualSignatureEpoch = visualProbe.visualSignatureEpoch
-          activeControlCodeVisualResultMode = TicketControlCodeVisualResultMode.LEGACY_GENERATED_WITH_CLOSE
+          activeControlCodeVisualResultMode = TicketControlCodeVisualResultMode.GENERATED_WITH_CLOSE
           val visualMarker = confirmGeneratedControlCodeResultForBrowser(
             value = "",
             hierarchy = CONTROL_CODE_MARKER_RESULT_HIERARCHY,
             phases = phases,
             requestStartedAtMillis = requestStartedAtMillis,
             waitStartedAtMillis = startedAtMillis,
-            phase = "wait_result_phone_visual_legacy_generated",
-            modeReason = "control_code_request_legacy_generated_after_submit",
-            eventValue = "phone_visual_legacy_generated_after_submit",
-            resultProof = "phone_visual_root_confirmed",
-            expectedResultMode = activeControlCodeVisualResultMode,
-            expectedDetailAnchor = preSubmitDetailAnchor,
-            expectedDetailState = preSubmitDetailState
+            phase = "wait_result_phone_visual_generated_with_close",
+            modeReason = "control_code_request_generated_with_close_after_submit",
+            eventValue = "phone_visual_generated_with_close_after_submit",
+            resultProof = "phone_visual_generated_with_close",
+            expectedResultMode = activeControlCodeVisualResultMode
           ) ?: return ControlCodeResultWaitOutcome(
             failureReason = "control_code_generated_frame_watermark_unavailable"
           )
           phases["control_code_visual_popup_reject_count"] = popupRejectCount
           return ControlCodeResultWaitOutcome(generated = visualMarker, failureReason = "")
         }
-        val redesignedCandidate = ticketControlCodeRedesignedDetailCandidate(visualProbe)
-        if (redesignedCandidate) {
-          val remainingMillis = (deadlineAtMillis - SystemClock.elapsedRealtime()).coerceAtLeast(1L)
-          val returnedDetail = awaitStableTicketVisualActionObservation(
-            "control_code_after_submit_same_detail",
-            minOf(TICKET_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS, remainingMillis)
-          )
-          val proposedMode = TicketControlCodeVisualResultMode.REDESIGNED_DETAIL_ALREADY_CLEAN
-          if (ticketControlCodeReturnedToSameDetail(
-              returnedDetail,
-              preSubmitDetailAnchor,
-              preSubmitDetailState,
-              proposedMode
-            )) {
-            activeControlCodeVisualResultMode = proposedMode
-            val visualMarker = confirmGeneratedControlCodeResultForBrowser(
-              value = "",
-              hierarchy = CONTROL_CODE_MARKER_RESULT_HIERARCHY,
-              phases = phases,
-              requestStartedAtMillis = requestStartedAtMillis,
-              waitStartedAtMillis = startedAtMillis,
-              phase = "wait_result_phone_visual_same_detail",
-              modeReason = "control_code_request_same_detail_after_submit",
-              eventValue = "phone_visual_same_detail_after_submit",
-              resultProof = "phone_visual_root_confirmed",
-              expectedResultMode = activeControlCodeVisualResultMode,
-              expectedDetailAnchor = preSubmitDetailAnchor,
-              expectedDetailState = preSubmitDetailState
-            ) ?: return ControlCodeResultWaitOutcome(
-              failureReason = "control_code_generated_frame_watermark_unavailable"
-            )
-            phases["control_code_visual_popup_reject_count"] = popupRejectCount
-            return ControlCodeResultWaitOutcome(generated = visualMarker, failureReason = "")
-          }
-        }
-        previousLegacyGeneratedProbe = if (
-          visualProbe.result == TicketControlCodeVisualClassifier.GENERATED &&
-          visualProbe.closeBounds != null
-        ) visualProbe else null
         when {
           visualProbe.result in setOf("generated", "raw_ticket") -> {
             rawTicketVisualCount += 1L
@@ -13319,10 +11717,9 @@ class TicketStreamService : Service() {
               val retryProbe = awaitStableControlCodeSubmitLayout()
               val retryLayout = retryProbe?.result
               val retryTransaction = retryProbe?.let(::visualControlCodePopupTransaction)
-              if (retryLayout !in setOf(
-                  TicketControlCodeVisualClassifier.CONTROL_POPUP_STATIC_READY,
-                  TicketControlCodeVisualClassifier.CONTROL_POPUP_VALUE_READY
-                ) || retryTransaction == null) {
+              if (retryLayout != TicketControlCodeVisualClassifier.CONTROL_POPUP_VALUE_READY ||
+                retryTransaction == null
+              ) {
                 recordTicketEvent(
                   "control_code_submit_retry_not_attempted",
                   "fresh_popup_visual_bounds_unavailable"
@@ -13420,9 +11817,7 @@ class TicketStreamService : Service() {
     modeReason: String,
     eventValue: String,
     resultProof: String = "phone_visual",
-    expectedResultMode: TicketControlCodeVisualResultMode = TicketControlCodeVisualResultMode.NONE,
-    expectedDetailAnchor: String = "",
-    expectedDetailState: TicketVisualPhoneState = TicketVisualPhoneState.UNKNOWN
+    expectedResultMode: TicketControlCodeVisualResultMode = TicketControlCodeVisualResultMode.NONE
   ): GeneratedControlCodeResult? {
     phases[phase] = (SystemClock.elapsedRealtime() - waitStartedAtMillis).coerceAtLeast(0L)
     markControlCodeRequestPhase(phases, "result_first_visible", requestStartedAtMillis)
@@ -13433,9 +11828,7 @@ class TicketStreamService : Service() {
       reason = "control_code_result_after_phone_visual_proof",
       phases = phases,
       requestStartedAtMillis = requestStartedAtMillis,
-      expectedResultMode = expectedResultMode,
-      expectedDetailAnchor = expectedDetailAnchor,
-      expectedDetailState = expectedDetailState
+      expectedResultMode = expectedResultMode
     ) ?: return null
     return GeneratedControlCodeResult(
       value = value,
@@ -13451,9 +11844,7 @@ class TicketStreamService : Service() {
     reason: String,
     phases: MutableMap<String, Long>,
     requestStartedAtMillis: Long,
-    expectedResultMode: TicketControlCodeVisualResultMode = TicketControlCodeVisualResultMode.NONE,
-    expectedDetailAnchor: String = "",
-    expectedDetailState: TicketVisualPhoneState = TicketVisualPhoneState.UNKNOWN
+    expectedResultMode: TicketControlCodeVisualResultMode = TicketControlCodeVisualResultMode.NONE
   ): Pair<Long, Long>? {
     // The generated proof above is a rooted visual proof, but the old marker was published
     // against the current stream counter immediately. That let the browser receive a valid
@@ -13473,25 +11864,11 @@ class TicketStreamService : Service() {
     var markerProbeId = 0L
     val markerProbeState: String
     val markerGeneratedFrameConfirmed = when (expectedResultMode) {
-      TicketControlCodeVisualResultMode.REDESIGNED_DETAIL_ALREADY_CLEAN -> {
-        val detail = awaitStableTicketVisualActionObservation(
-          "control_code_browser_marker_same_detail",
-          TICKET_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS
-        )
-        markerProbeId = detail?.probeId ?: 0L
-        markerProbeState = detail?.state?.wireName ?: "probe_unavailable"
-        ticketControlCodeReturnedToSameDetail(
-          detail,
-          expectedDetailAnchor,
-          expectedDetailState,
-          expectedResultMode
-        )
-      }
-      TicketControlCodeVisualResultMode.LEGACY_GENERATED_WITH_CLOSE -> {
-        val legacy = awaitStableLegacyGeneratedControlCodeCloseProbe()
-        markerProbeId = legacy?.probeId ?: 0L
-        markerProbeState = legacy?.result ?: "probe_unavailable"
-        legacy?.result == TicketControlCodeVisualClassifier.GENERATED && legacy.closeBounds != null
+      TicketControlCodeVisualResultMode.GENERATED_WITH_CLOSE -> {
+        val generated = awaitStableGeneratedControlCodeCloseProbe()
+        markerProbeId = generated?.probeId ?: 0L
+        markerProbeState = generated?.result ?: "probe_unavailable"
+        generated?.result == TicketControlCodeVisualClassifier.GENERATED && generated.closeBounds != null
       }
       TicketControlCodeVisualResultMode.NONE -> {
         markerProbeState = "result_mode_unproved"
@@ -13883,45 +12260,8 @@ class TicketStreamService : Service() {
       requestId = lastControlCodeRequestId.orEmpty()
     )
 
-    if (activeControlCodeVisualResultMode ==
-      TicketControlCodeVisualResultMode.REDESIGNED_DETAIL_ALREADY_CLEAN
-    ) {
-      val returnedDetail = awaitStableTicketVisualActionObservation(
-        "control_code_cleanup_same_detail",
-        TICKET_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS
-      )
-      if (ticketControlCodeReturnedToSameDetail(
-          returnedDetail,
-          activeControlCodeRawDetailAnchor,
-          activeControlCodeRawDetailState,
-          activeControlCodeVisualResultMode
-        )) {
-        recordTicketEvent(
-          "control_code_fast_cleanup_phase",
-          "same_detail_no_input source=rooted_visual_probe"
-        )
-        return FastControlCodeCleanupStart(
-          startedAtMillis = startedAtMillis,
-          closeAction = "control_code_same_detail_noop",
-          action = null,
-          closeSucceeded = true,
-          fallbackState = TicketViviRecoveryState.TICKET_DETAIL
-        )
-      }
-      recordTicketEvent(
-        "control_code_fast_cleanup_close_blocked_unproved",
-        "fresh_state=same_detail_mismatch source=rooted_visual_probe"
-      )
-      return FastControlCodeCleanupStart(
-        startedAtMillis = startedAtMillis,
-        closeAction = "none",
-        action = null,
-        closeSucceeded = false,
-        fallbackState = TicketViviRecoveryState.UNKNOWN_VIVI
-      )
-    }
     if (activeControlCodeVisualResultMode !=
-      TicketControlCodeVisualResultMode.LEGACY_GENERATED_WITH_CLOSE
+      TicketControlCodeVisualResultMode.GENERATED_WITH_CLOSE
     ) {
       recordTicketEvent(
         "control_code_fast_cleanup_close_blocked_unproved",
@@ -13936,7 +12276,7 @@ class TicketStreamService : Service() {
       )
     }
 
-    val closeProbe = awaitStableLegacyGeneratedControlCodeCloseProbe()
+    val closeProbe = awaitStableGeneratedControlCodeCloseProbe()
     val closeBounds = closeProbe?.closeBounds
     if (closeProbe?.result != TicketControlCodeVisualClassifier.GENERATED || closeBounds == null) {
       recordTicketEvent(
@@ -13973,9 +12313,13 @@ class TicketStreamService : Service() {
     )
   }
 
-  private suspend fun awaitStableLegacyGeneratedControlCodeCloseProbe(): TicketControlCodeVisualProbe? {
-    var previous: TicketControlCodeVisualProbe? = null
+  private suspend fun awaitStableGeneratedControlCodeCloseProbe(): TicketControlCodeVisualProbe? {
+    val proof = TicketGeneratedWithCloseProof()
+    val deadlineMillis = SystemClock.elapsedRealtime() +
+      CONTROL_CODE_GENERATED_CLOSE_PROOF_TIMEOUT_MILLIS
     repeat(CONTROL_CODE_FAST_INTERACTION_RETRY_COUNT + 2) { attempt ->
+      val remainingMillis = deadlineMillis - SystemClock.elapsedRealtime()
+      if (remainingMillis <= 0L) return null
       val started = SystemClock.elapsedRealtime()
       val probeId = rootHardwareH264CaptureEngine.requestControlCodeCleanupVisualProbe(
         "control_code_generated_close_${attempt + 1}"
@@ -13983,14 +12327,13 @@ class TicketStreamService : Service() {
       val current = waitForFreshControlCodeVisualProbe(
         started,
         probeId,
-        CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS
+        minOf(CONTROL_CODE_GENERATED_CLOSE_PROBE_WAIT_MILLIS, remainingMillis)
       )
-      val legacyGeneratedAgrees = current?.result == TicketControlCodeVisualClassifier.GENERATED &&
-        current.closeBounds != null && previous?.probeId != current.probeId &&
-        previous?.result == current.result && previous?.closeBounds == current.closeBounds
-      if (legacyGeneratedAgrees) return current
-      previous = current
-      delay(CONTROL_CODE_FAST_POLL_MILLIS)
+      if (proof.observe(current)) return current
+      val remainingAfterProbeMillis = deadlineMillis - SystemClock.elapsedRealtime()
+      if (remainingAfterProbeMillis > 0L) {
+        delay(minOf(CONTROL_CODE_FAST_POLL_MILLIS, remainingAfterProbeMillis))
+      }
     }
     return null
   }
@@ -14020,19 +12363,6 @@ class TicketStreamService : Service() {
     if (!cleanupStart.closeSucceeded) {
       recordTicketEvent("control_code_fast_cleanup_fallback", "surface=${cleanupStart.fallbackState?.name ?: "close_failed"}")
       return false
-    }
-    if (cleanupStart.closeAction == "control_code_same_detail_noop" &&
-      cleanupStart.fallbackState == TicketViviRecoveryState.TICKET_DETAIL
-    ) {
-      markControlCodeRequestPhase(phases, "phone_raw_recovered", requestStartedAtMillis)
-      return completeFastVerifiedTicketDetailControlExitCleanup(
-        reason = reason,
-        closeAction = cleanupStart.closeAction,
-        startedAtMillis = cleanupStart.startedAtMillis,
-        firstVerificationResult = "same_detail_h264_verified",
-        freshFrameRequested = true,
-        detectedState = TicketViviRecoveryState.TICKET_DETAIL.name
-      )
     }
     recordTicketEvent(
       "control_code_fast_cleanup_phase",
@@ -14068,6 +12398,22 @@ class TicketStreamService : Service() {
     }
     if (cleanState != TicketViviRecoveryState.TICKET_DETAIL) {
       recordTicketEvent("control_code_fast_cleanup_fallback", "surface=${cleanState?.name ?: "unavailable"}")
+      return false
+    }
+    val restoredDetail = awaitStableTicketVisualActionObservation(
+      "control_code_cleanup_original_detail",
+      TICKET_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS
+    )
+    val restoredDetailMismatch = ticketControlCodeRestoredOriginalDetailMismatch(
+      restoredDetail,
+      activeControlCodeRawDetailAnchor,
+      activeControlCodeRawDetailState
+    )
+    if (restoredDetailMismatch != null) {
+      recordTicketEvent(
+        "control_code_fast_cleanup_original_detail_unproved",
+        "state=${restoredDetail?.state?.wireName ?: "unknown"} dimension=$restoredDetailMismatch"
+      )
       return false
     }
     markControlCodeRequestPhase(phases, "phone_raw_recovered", requestStartedAtMillis)
@@ -14133,7 +12479,7 @@ class TicketStreamService : Service() {
       val visualProbe = waitForFreshControlCodeVisualProbe(
         visualProbeStartedAtMillis = visualProbeStartedAtMillis,
         expectedProbeId = visualProbeId,
-        timeoutMillis = minOf(CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS, remainingMillis)
+        timeoutMillis = minOf(CONTROL_CODE_CLEAN_SURFACE_PROBE_WAIT_MILLIS, remainingMillis)
       )
       if (visualProbe == null) {
         recordTicketEvent(
@@ -14142,29 +12488,11 @@ class TicketStreamService : Service() {
         )
         continue
       }
-      val signatureStillGenerated = ticketControlCodeExpectedDetailSignatureMatches(
-        visualProbe,
-        activeControlCodeGeneratedVisualSignature,
-        activeControlCodeVisualSignatureEpoch
-      )
-      val baselineSignatureMatches = ticketControlCodeExpectedDetailSignatureMatches(
-        visualProbe,
-        activeControlCodeRawVisualSignature,
-        activeControlCodeVisualSignatureEpoch
-      )
-      val baselineRawTicket = !signatureStillGenerated && (
-        !controlCodeSignatureCleanupRequired &&
-          visualProbe.result == TicketControlCodeVisualClassifier.RAW_TICKET ||
-          controlCodeSignatureCleanupRequired && baselineSignatureMatches
-        )
-      val proofResult = when {
-        signatureStillGenerated -> TicketControlCodeVisualClassifier.GENERATED
-        baselineRawTicket -> TicketControlCodeVisualClassifier.RAW_TICKET
-        controlCodeSignatureCleanupRequired &&
-          visualProbe.result == TicketControlCodeVisualClassifier.RAW_TICKET ->
-          TicketControlCodeVisualClassifier.UNKNOWN
-        else -> visualProbe.result
-      }
+      // This compact lane proves only that the result strip/popup is gone for two fresh frames.
+      // Ordinary ViVi Aztec payloads rotate, so their full code signature must never gate return
+      // to the ticket. Terminal cleanup authority follows below through two agreeing action probes
+      // of the exact pre-submit state, static detail anchor, and ViVi control geometry.
+      val proofResult = visualProbe.result
       val state = when (proofResult) {
         TicketControlCodeVisualClassifier.RAW_TICKET -> TicketViviRecoveryState.TICKET_DETAIL
         TicketControlCodeVisualClassifier.TICKET_LIST_WITH_REGISTRATION_BUTTON ->
@@ -14843,12 +13171,45 @@ class TicketStreamService : Service() {
     kept.forEach { recentControlCodeResultOrder.addLast(it) }
   }
 
+  /**
+   * Every ViVi input in an admitted control-code request crosses the same synchronous physical-
+   * touch and exact-zero boundary. Once this returns false, the lease remains terminally inactive,
+   * so retry/recovery branches can observe but cannot dispatch another phone input.
+   */
+  private suspend fun beginControlCodePanelDarkMutation(reason: String): Boolean {
+    val lease = activeTicketActionPanelDarkLease ?: return true
+    if (!lease.snapshot().ownerActionId.startsWith("control_code:")) return true
+    if (!lease.beforeMutationAllowed()) {
+      recordInputGateDecision(false, "control_code_panel_dark_preempted:$reason")
+      recordTicketEvent(
+        "control_code_panel_dark_mutation_blocked",
+        "reason=$reason release=${lease.snapshot().releaseReason}"
+      )
+      return false
+    }
+    // The root call can be accepted even when its result is lost. Mark the attempt before crossing
+    // that boundary so later touch/zero loss is always terminal and never eligible for replay.
+    lease.markMutationMayHaveDispatched()
+    return true
+  }
+
+  private fun controlCodePanelDarkMutationBlockedResult(reason: String): RootResult = RootResult(
+    exitCode = 46,
+    stdout = "",
+    stderr = "control-code panel-dark mutation gate blocked",
+    command = "panel_dark_gate:$reason",
+    durationMs = 0L
+  )
+
   private suspend fun runFastNonTouchInput(
     command: String,
     reason: String,
     postMillis: Long = NON_TOUCH_PANEL_SLEEP_CLAMP_POST_MILLIS,
     timeout: Duration = NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS.milliseconds
   ): RootResult {
+    if (!beginControlCodePanelDarkMutation(reason)) {
+      return controlCodePanelDarkMutationBlockedResult(reason)
+    }
     PhoneAutomationServiceBridge.markNonTouchInput("ticket:$reason")
     val commandTimeout = (timeout - postMillis.milliseconds).coerceAtLeast(250.milliseconds)
     val result = inputRootExecutor.runScript(
@@ -14868,16 +13229,47 @@ class TicketStreamService : Service() {
     reason: String,
     timeout: Duration
   ): RootResult {
+    if (!beginControlCodePanelDarkMutation(reason)) {
+      return controlCodePanelDarkMutationBlockedResult(reason)
+    }
     PhoneAutomationServiceBridge.markNonTouchInput("ticket:$reason")
     return try {
-      val rawResult = inputRootExecutor.runScript(
-        wrapNonTouchPanelSleepClamp(
-          command,
-          postMillis = CONTROL_CODE_FAST_PANEL_SLEEP_CLAMP_POST_MILLIS,
-          commandTimeout = timeout
-        ),
-        timeout
-      )
+      val rawResult = supervisorScope {
+        val rootCommand = async {
+          inputRootExecutor.runScript(
+            wrapNonTouchPanelSleepClamp(
+              command,
+              postMillis = CONTROL_CODE_FAST_PANEL_SLEEP_CLAMP_POST_MILLIS,
+              commandTimeout = timeout
+            ),
+            timeout
+          )
+        }
+        var preempted = false
+        while (!rootCommand.isCompleted) {
+          val touch = PhoneAutomationServiceBridge.currentRootPhysicalTouchState()
+          val lease = activeTicketActionPanelDarkLease
+          val leaseState = lease?.snapshot()
+          if (!touch.available || touch.active ||
+            leaseState?.physicalTouchPreempted == true ||
+            !leaseState?.failure.isNullOrBlank()
+          ) {
+            lease?.beforeMutationAllowed()
+            rootCommand.cancel(
+              CancellationException("control-code input preempted by physical-touch authority")
+            )
+            runCatching { rootCommand.await() }
+            preempted = true
+            break
+          }
+          delay(CONTROL_CODE_SENSITIVE_INPUT_TOUCH_POLL_MILLIS)
+        }
+        if (preempted) {
+          controlCodePanelDarkMutationBlockedResult("physical_touch_during:$reason")
+        } else {
+          rootCommand.await()
+        }
+      }
       rawResult.copy(command = "[REDACTED]", stdout = "", stderr = "")
         .also { recordInputCommandResult(reason, it) }
     } finally {
@@ -14889,6 +13281,9 @@ class TicketStreamService : Service() {
     command: String,
     reason: String
   ): RootResult {
+    if (!beginControlCodePanelDarkMutation(reason)) {
+      return controlCodePanelDarkMutationBlockedResult(reason)
+    }
     PhoneAutomationServiceBridge.markNonTouchInput("ticket:$reason")
     return try {
       val timeout = CONTROL_CODE_FAST_CLOSE_COMMAND_TIMEOUT_MILLIS.milliseconds
@@ -14905,6 +13300,9 @@ class TicketStreamService : Service() {
     timeout: Duration = TICKET_WAKE_RECOVERY_INPUT_TIMEOUT_MILLIS.milliseconds,
     zeroTailPanelClamp: Boolean = false
   ): RootResult {
+    if (!beginControlCodePanelDarkMutation(reason)) {
+      return controlCodePanelDarkMutationBlockedResult(reason)
+    }
     val suppressionTailMillis = if (zeroTailPanelClamp) 0L else NON_TOUCH_INPUT_SUPPRESSION_MILLIS
     if (zeroTailPanelClamp) {
       PhoneAutomationServiceBridge.clearNonTouchInputTailForBrowserCriticalAction("ticket:$reason")
@@ -14931,6 +13329,9 @@ class TicketStreamService : Service() {
   }
 
   private suspend fun runFastNonTouchWakeScript(command: String, reason: String, timeout: Duration): RootResult {
+    if (!beginControlCodePanelDarkMutation(reason)) {
+      return controlCodePanelDarkMutationBlockedResult(reason)
+    }
     PhoneAutomationServiceBridge.markNonTouchInput("ticket:$reason")
     val activeReassertJob = serviceScope.launch {
       while (true) {
@@ -14950,6 +13351,9 @@ class TicketStreamService : Service() {
   }
 
   private suspend fun runFastNonTouchScript(command: String, reason: String, timeout: Duration): RootResult {
+    if (!beginControlCodePanelDarkMutation(reason)) {
+      return controlCodePanelDarkMutationBlockedResult(reason)
+    }
     PhoneAutomationServiceBridge.markNonTouchInput("ticket:$reason")
     val activeReassertJob = serviceScope.launch {
       while (true) {
@@ -15863,7 +14267,7 @@ class TicketStreamService : Service() {
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
     private const val SESSION_START_TIMEOUT_MILLIS = 70_000L
     private const val SERVICE_DESTROY_JOIN_TIMEOUT_MILLIS = 12_000L
-    const val SERVER_VERSION = "ticket-stream-2026-08-25-native-edge-action-clamp-proof-v322"
+    const val SERVER_VERSION = "ticket-stream-2026-08-26-inputmanager-keyevents-v326"
     private const val CONTROL_CODE_MARKER_RESULT_HIERARCHY = "__marker_control_code_result__"
     private const val FRAME_ENVELOPE_VERSION = "tsf2"
     private const val FRAME_ENVELOPE_MAGIC = 0x54534632
@@ -16030,7 +14434,6 @@ class TicketStreamService : Service() {
     private const val VIVI_LOGIN_ROOT_DUMP_TIMEOUT_MILLIS = 3_000L
     private const val CONTROL_CODE_POPUP_READY_CACHE_MILLIS = 2_000L
     private const val CONTROL_CODE_FAST_ROOT_DUMP_TIMEOUT_MILLIS = 8_000L
-    private const val CONTROL_CODE_FAST_RESULT_ROOT_DUMP_TIMEOUT_MILLIS = 8_000L
     private const val CONTROL_CODE_RAW_TICKET_ROOT_CONFIRM_TIMEOUT_MILLIS = 8_000L
     private const val CONTROL_CODE_RECENT_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS = 1_500L
     private const val CONTROL_CODE_RAW_TICKET_VISUAL_REJECT_LOG_COUNT = 2L
@@ -16075,6 +14478,12 @@ class TicketStreamService : Service() {
     private const val CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS = 250L
     private const val CONTROL_CODE_VISUAL_STATE_POLL_MILLIS = 40L
     private const val CONTROL_CODE_VISUAL_STATE_RETRY_MILLIS = 50L
+    // The rooted helper can spend more than 250 ms capturing and classifying a frame while the
+    // stream remains healthy. Do not overwrite that exact probe id before its reply has had a
+    // bounded multi-frame opportunity to arrive. The two-frame generated signature proof still
+    // remains mandatory; this only enlarges the transport wait inside one final proof window.
+    private const val CONTROL_CODE_GENERATED_CLOSE_PROBE_WAIT_MILLIS = 700L
+    private const val CONTROL_CODE_GENERATED_CLOSE_PROOF_TIMEOUT_MILLIS = 3_200L
     private const val CONTROL_CODE_BROWSER_MARKER_PROBE_ATTEMPTS = 2
     private const val CONTROL_CODE_BROWSER_MARKER_PROBE_WAIT_MILLIS = 1_800L
     private const val CONTROL_CODE_GENERATED_RESULT_MARKER_DELAY_MILLIS = 200L
@@ -16083,8 +14492,8 @@ class TicketStreamService : Service() {
     private const val CONTROL_CODE_SUBMIT_VISUAL_PROBE_WAIT_MILLIS = 350L
     private const val CONTROL_CODE_SUBMIT_VISUAL_SAMPLE_GAP_MILLIS = 250L
     private const val CONTROL_CODE_VALUE_RENDER_RECHECK_SETTLE_MILLIS = 350L
-    private const val CONTROL_CODE_ROOT_RETYPE_LEASE_MARGIN_MILLIS = 250L
     private const val CONTROL_CODE_ROOT_TRANSACTION_TIMEOUT_MILLIS = 4_000L
+    private const val CONTROL_CODE_SENSITIVE_INPUT_TOUCH_POLL_MILLIS = 5L
     private const val CONTROL_CODE_ROOT_SUBMIT_TIMEOUT_MILLIS = 2_500L
     private const val CONTROL_CODE_FAST_POLL_MILLIS = 90L
     // A rooted hierarchy read can take about three seconds after an idle
@@ -16101,7 +14510,12 @@ class TicketStreamService : Service() {
     private const val SNAP_TARGET_CONTROL_CODE_BUTTON = "control_code_button"
     private val CONTROL_CODE_REQUEST_DIGITS_REGEX = Regex("""^[0-9]{2,8}$""")
     private const val CONTROL_CODE_SOFT_CHECK_TIMEOUT_MILLIS = 10_000L
-    private const val CONTROL_CODE_FAST_CLEANUP_VERIFY_TIMEOUT_MILLIS = 1_400L
+    // Cleanup probes share the rooted capture helper with the live stream. Keep each exact probe
+    // id outstanding across multiple 5 FPS frame opportunities so a healthy delayed reply is not
+    // discarded and replaced. The proof still requires two distinct consecutive RAW_TICKET
+    // samples; this only enlarges the bounded transport window used to receive them.
+    private const val CONTROL_CODE_CLEAN_SURFACE_PROBE_WAIT_MILLIS = 700L
+    private const val CONTROL_CODE_FAST_CLEANUP_VERIFY_TIMEOUT_MILLIS = 3_200L
   private const val CONTROL_CODE_FAST_CLEANUP_POLL_MILLIS = 75L
   private const val CONTROL_CODE_FAST_CLEANUP_RAW_VISUAL_PROOF_COUNT = 2
     private const val CONTROL_CODE_FAST_CLEANUP_VISUAL_SAMPLE_GAP_MILLIS = 200L

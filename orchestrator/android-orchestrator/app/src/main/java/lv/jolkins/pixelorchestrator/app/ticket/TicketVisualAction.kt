@@ -539,6 +539,30 @@ internal fun ticketRegistrationProofMatchesVisualDetail(
     proof.detailAnchor == visualAnchor
 }
 
+internal data class TicketRegistrationProofGateResult(
+  val proof: TicketRegistrationProof?,
+  val failureReason: String?
+)
+
+/**
+ * A geometry refresh for the same exact visual-action revision must retain the already-proved
+ * phone-local ticket identity. A geometry-only update must never erase the identity that
+ * register_current is required to reconcile before dispatch.
+ */
+internal fun ticketRegistrationProofPreservingExactIdentity(
+  prior: TicketRegistrationProof?,
+  next: TicketRegistrationProof
+): TicketRegistrationProof {
+  val exactPrior = prior?.takeIf {
+    it.interactionRevision.isNotBlank() &&
+      it.interactionRevision == next.interactionRevision
+  } ?: return next
+  return next.copy(
+    ticketAnchor = next.ticketAnchor.ifBlank { exactPrior.ticketAnchor },
+    detailAnchor = next.detailAnchor.ifBlank { exactPrior.detailAnchor }
+  )
+}
+
 /** Keeps the durable list-card identity separate from the fresh phone-local detail signature. */
 internal fun ticketVisualProvenTicketAnchor(
   observation: TicketVisualActionObservation,
@@ -559,9 +583,15 @@ internal fun ticketRegistrationProofForCurrentVisualAction(
   observation: TicketVisualActionObservation,
   currentStreamEpoch: Long,
   currentFrameSequence: Long
-): TicketRegistrationProof? {
-  if (request.target != TicketVisualActionTarget.REGISTER_CURRENT || proof == null) return null
-  return proof.takeIf {
+): TicketRegistrationProofGateResult {
+  val genericFailure = TicketRegistrationProofGateResult(
+    proof = null,
+    failureReason = "ticket_action_interaction_revision_unproved"
+  )
+  if (request.target != TicketVisualActionTarget.REGISTER_CURRENT || proof == null) {
+    return genericFailure
+  }
+  val candidate = proof.takeIf {
     observation.state == TicketVisualPhoneState.UNACTIVATED_DETAIL &&
       observation.sliderBounds != null &&
       it.status == "unactivated_ready" &&
@@ -570,9 +600,15 @@ internal fun ticketRegistrationProofForCurrentVisualAction(
       it.streamEpoch > 0L &&
       it.frameSequence > 0L &&
       it.streamEpoch == currentStreamEpoch &&
-      it.frameSequence <= currentFrameSequence &&
-      ticketRegistrationProofMatchesVisualDetail(it, observation.currentAnchor)
+      it.frameSequence <= currentFrameSequence
+  } ?: return genericFailure
+  if (!ticketRegistrationProofMatchesVisualDetail(candidate, observation.currentAnchor)) {
+    return TicketRegistrationProofGateResult(
+      proof = null,
+      failureReason = "ticket_action_detail_identity_conflict"
+    )
   }
+  return TicketRegistrationProofGateResult(proof = candidate, failureReason = null)
 }
 
 /**
@@ -592,6 +628,37 @@ internal fun ticketVisualObservationAfterCardSelection(
   observation.copy(currentAnchor = selectedAnchor)
 } else {
   observation
+}
+
+/**
+ * Activated-detail recognition intentionally reuses the exact pre-gesture identity because the
+ * activated layout cannot independently expose that detail identity. Every other post-gesture
+ * state keeps its detector-provided anchor so an unrelated or unproved detail is never mistaken
+ * for the ticket that was swiped.
+ */
+internal fun ticketVisualActivationObservationAfterCompletedGesture(
+  observation: TicketVisualActionObservation?,
+  provenAnchor: String
+): TicketVisualActionObservation? = if (
+  observation?.state == TicketVisualPhoneState.ACTIVATED_DETAIL && provenAnchor.isNotBlank()
+) {
+  observation.copy(currentAnchor = provenAnchor)
+} else {
+  observation
+}
+
+internal fun ticketVisualPostGestureFailureReason(
+  observation: TicketVisualActionObservation?,
+  provenAnchor: String
+): String = if (
+  observation?.state == TicketVisualPhoneState.UNACTIVATED_DETAIL &&
+  provenAnchor.isNotBlank() &&
+  observation.currentAnchor.isNotBlank() &&
+  observation.currentAnchor == provenAnchor
+) {
+  "ticket_action_gesture_completed_no_transition"
+} else {
+  "ticket_action_post_gesture_visual_unproved"
 }
 
 /**

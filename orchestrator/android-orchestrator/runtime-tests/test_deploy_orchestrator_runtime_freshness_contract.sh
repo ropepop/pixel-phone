@@ -25,6 +25,21 @@ if ! rg -Fq 'freshness_retry < 5 && rc == 3' "${DEPLOY_SCRIPT}"; then
   exit 1
 fi
 
+if ! rg -Fq 'runtime_scope_requires_current_apk "${scope}" && (( SKIP_BUILD == 1 && APK_INSTALLED_THIS_RUN == 0 ))' "${DEPLOY_SCRIPT}"; then
+  echo "FAIL: stale APK-backed repair must refuse --skip-build unless this run installed the APK" >&2
+  exit 1
+fi
+
+if rg -Fq 'runtime_scope_requires_current_apk "${scope}" && (( SKIP_BUILD == 1 )); then' "${DEPLOY_SCRIPT}"; then
+  echo "FAIL: a freshly installed APK must remain eligible to repair its bundled runtime assets" >&2
+  exit 1
+fi
+
+if ! rg -Fq 'APK_INSTALLED_THIS_RUN=1' "${DEPLOY_SCRIPT}"; then
+  echo "FAIL: deploy script no longer records a successful APK install for runtime repair admission" >&2
+  exit 1
+fi
+
 if rg -Fq 'advisory; continuing' "${DEPLOY_SCRIPT}"; then
   echo "FAIL: deploy_orchestrator_apk.sh still treats stale runtime assets as advisory" >&2
   exit 1

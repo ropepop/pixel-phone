@@ -15,6 +15,17 @@ if ! rg -Fq 'SUMMARY_FINAL_ROOTED_FRESHNESS' "${IMPL_SCRIPT}"; then
   exit 1
 fi
 
+for required in \
+  'SUMMARY_PREFLIGHT_TICKET_FRESHNESS' \
+  'SUMMARY_FINAL_TICKET_FRESHNESS' \
+  '"ticketRuntimeFreshness": os.environ.get("SUMMARY_FINAL_TICKET_FRESHNESS")' \
+  '"ticketRuntimeFreshnessReport": os.environ.get("SUMMARY_FINAL_TICKET_FRESHNESS_REPORT")'; do
+  if ! rg -Fq -- "${required}" "${IMPL_SCRIPT}"; then
+    echo "FAIL: pixel_redeploy.sh missing ${required} Ticket runtime freshness summary contract" >&2
+    exit 1
+  fi
+done
+
 if ! rg -Fq '"preflight": {' "${IMPL_SCRIPT}"; then
   echo "FAIL: pixel_redeploy.sh missing preflight summary block" >&2
   exit 1

@@ -677,30 +677,35 @@ class TicketVisualActionTest {
       sliderBounds = TicketVisualProbeBounds(10, 20, 180, 42)
     )
 
-    assertEquals(
+    val admitted = ticketRegistrationProofForCurrentVisualAction(
       proof,
-      ticketRegistrationProofForCurrentVisualAction(
-        proof,
-        request,
-        currentDetail,
-        currentStreamEpoch = 7,
-        currentFrameSequence = 12
-      )
+      request,
+      currentDetail,
+      currentStreamEpoch = 7,
+      currentFrameSequence = 12
     )
-    assertNull(ticketRegistrationProofForCurrentVisualAction(
+    assertEquals(proof, admitted.proof)
+    assertNull(admitted.failureReason)
+
+    val changedIdentity = ticketRegistrationProofForCurrentVisualAction(
       proof,
       request,
       currentDetail.copy(currentAnchor = "different-detail"),
       7,
       12
-    ))
-    assertNull(ticketRegistrationProofForCurrentVisualAction(
+    )
+    assertNull(changedIdentity.proof)
+    assertEquals("ticket_action_detail_identity_conflict", changedIdentity.failureReason)
+
+    val blankIdentity = ticketRegistrationProofForCurrentVisualAction(
       proof,
       request,
       currentDetail.copy(currentAnchor = ""),
       7,
       12
-    ))
+    )
+    assertNull(blankIdentity.proof)
+    assertEquals("ticket_action_detail_identity_conflict", blankIdentity.failureReason)
     // The old proof contributes only the exact durable revision and opaque ticket identity.
     // A fresh two-frame detail observation and a new encoded watermark provide action-time
     // freshness, so an otherwise idle open view must not make the Register button fail.
@@ -711,14 +716,16 @@ class TicketVisualActionTest {
       currentDetail,
       7,
       12
-    ))
-    assertNull(ticketRegistrationProofForCurrentVisualAction(
+    ).proof)
+    val invalidWatermark = ticketRegistrationProofForCurrentVisualAction(
       proof.copy(streamEpoch = 0, frameSequence = 0),
       request,
       currentDetail,
       7,
       12
-    ))
+    )
+    assertNull(invalidWatermark.proof)
+    assertEquals("ticket_action_interaction_revision_unproved", invalidWatermark.failureReason)
   }
 
   @Test
@@ -740,6 +747,72 @@ class TicketVisualActionTest {
         TicketVisualActionObservation(9, TicketVisualPhoneState.TICKET_LIST),
         "card-date"
       ).currentAnchor
+    )
+  }
+
+  @Test
+  fun postGestureClassificationRequiresTheSameFreshUnactivatedIdentity() {
+    val sameUnactivated = TicketVisualActionObservation(
+      probeId = 20,
+      state = TicketVisualPhoneState.UNACTIVATED_DETAIL,
+      currentAnchor = "detail-a"
+    )
+    val differentUnactivated = sameUnactivated.copy(
+      probeId = 21,
+      currentAnchor = "detail-b"
+    )
+    val blankUnactivated = sameUnactivated.copy(
+      probeId = 22,
+      currentAnchor = ""
+    )
+    val unknown = sameUnactivated.copy(
+      probeId = 23,
+      state = TicketVisualPhoneState.UNKNOWN,
+      currentAnchor = "detail-a"
+    )
+
+    assertEquals(
+      "ticket_action_gesture_completed_no_transition",
+      ticketVisualPostGestureFailureReason(sameUnactivated, "detail-a")
+    )
+    listOf(differentUnactivated, blankUnactivated, unknown).forEach { observation ->
+      assertEquals(
+        "ticket_action_post_gesture_visual_unproved",
+        ticketVisualPostGestureFailureReason(observation, "detail-a")
+      )
+    }
+    assertEquals(
+      "ticket_action_post_gesture_visual_unproved",
+      ticketVisualPostGestureFailureReason(null, "detail-a")
+    )
+
+    assertEquals(
+      "detail-b",
+      ticketVisualActivationObservationAfterCompletedGesture(
+        differentUnactivated,
+        "detail-a"
+      )?.currentAnchor
+    )
+    assertEquals(
+      "",
+      ticketVisualActivationObservationAfterCompletedGesture(
+        blankUnactivated,
+        "detail-a"
+      )?.currentAnchor
+    )
+    assertEquals(
+      "detail-a",
+      ticketVisualActivationObservationAfterCompletedGesture(
+        unknown,
+        "detail-a"
+      )?.currentAnchor
+    )
+    assertEquals(
+      "detail-a",
+      ticketVisualActivationObservationAfterCompletedGesture(
+        sameUnactivated.copy(state = TicketVisualPhoneState.ACTIVATED_DETAIL, currentAnchor = ""),
+        "detail-a"
+      )?.currentAnchor
     )
   }
 
@@ -1206,6 +1279,39 @@ class TicketVisualActionTest {
       commit = { true },
       readBack = { intended }
     ))
+  }
+
+  @Test
+  fun exactRevisionGeometryRefreshPreservesPhoneLocalTicketIdentityOnlyForThatRevision() {
+    val prior = TicketRegistrationProof(
+      status = "unactivated_ready",
+      reason = "visual",
+      interactionRevision = "proof-7",
+      streamEpoch = 7,
+      frameSequence = 11,
+      phoneDisplayWidth = 1080,
+      phoneDisplayHeight = 2424,
+      ticketAnchor = "card-anchor",
+      detailAnchor = "d_detail-anchor"
+    )
+    val refreshed = prior.copy(
+      reason = "geometry_refresh",
+      streamEpoch = 8,
+      frameSequence = 3,
+      ticketAnchor = "",
+      detailAnchor = ""
+    )
+    val retained = ticketRegistrationProofPreservingExactIdentity(prior, refreshed)
+    assertEquals("card-anchor", retained.ticketAnchor)
+    assertEquals("d_detail-anchor", retained.detailAnchor)
+    assertEquals(8, retained.streamEpoch)
+
+    val differentRevision = ticketRegistrationProofPreservingExactIdentity(
+      prior,
+      refreshed.copy(interactionRevision = "proof-8")
+    )
+    assertEquals("", differentRevision.ticketAnchor)
+    assertEquals("", differentRevision.detailAnchor)
   }
 
   private fun parse(value: String) = parseTicketVisualActionRequest(json.parseToJsonElement(value).jsonObject)

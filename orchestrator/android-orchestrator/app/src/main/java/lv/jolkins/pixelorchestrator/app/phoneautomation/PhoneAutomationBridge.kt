@@ -70,8 +70,8 @@ sealed interface PhoneAutomationBlackoutOverlayEvent {
   ) : PhoneAutomationBlackoutOverlayEvent
 }
 
-enum class TicketSliderGestureStartResult {
-  ACCEPTED,
+enum class TicketSliderGestureDispatchResult {
+  COMPLETED,
   REJECTED,
   UNKNOWN
 }
@@ -108,6 +108,15 @@ internal interface PhoneAutomationAccessibilityHost {
 
   suspend fun setBlackoutOverlayVisible(visible: Boolean): Boolean
 
+  /**
+   * A pixel-transparent, non-interactive accessibility window that keeps Android's window-level
+   * brightness authority at zero while panel sleep is active. This is deliberately independent of
+   * the touch-capturing blackout overlay so Ticket streaming can remain visible to the encoder.
+   */
+  fun syncPanelSleepBrightnessShieldVisibility(visible: Boolean): Boolean = !visible
+
+  suspend fun setPanelSleepBrightnessShieldVisible(visible: Boolean): Boolean = !visible
+
   suspend fun clickFirstMatching(
     expectedPackageName: String,
     selectors: List<PhoneAutomationSelector>,
@@ -131,7 +140,7 @@ internal interface PhoneAutomationAccessibilityHost {
 
   /**
    * Returns only the small set of ViVi registration semantic nodes needed by
-   * the ticket reset/slider fast path.  This deliberately does not walk the
+   * the visual registration readiness path. This deliberately does not walk the
    * entire accessibility tree.
    */
   suspend fun snapshotTicketRegistrationNodes(
@@ -161,6 +170,14 @@ internal interface PhoneAutomationAccessibilityHost {
     timeoutMillis: Long
   ): Boolean = false
 
+  suspend fun suppressViviControlCodeKeyboardMode(
+    expectedPackageName: String
+  ): Boolean = false
+
+  suspend fun isViviControlCodeKeyboardModeSuppressed(
+    expectedPackageName: String
+  ): Boolean = false
+
   suspend fun submitViviControlCodeWithoutKeyboard(
     expectedPackageName: String,
     expectedText: String,
@@ -178,34 +195,15 @@ internal interface PhoneAutomationAccessibilityHost {
     timeoutMillis: Long
   ): Boolean
 
-  suspend fun startTicketSliderGesture(
-    startX: Int,
-    startY: Int,
-    timeoutMillis: Long
-  ): Boolean = false
-
-  suspend fun continueTicketSliderGesture(
-    endX: Int,
-    endY: Int,
-    durationMillis: Long,
-    timeoutMillis: Long
-  ): Boolean = false
-
-  suspend fun endTicketSliderGesture(
-    endX: Int,
-    endY: Int,
-    durationMillis: Long,
-    timeoutMillis: Long
-  ): Boolean = false
-
-  suspend fun retryTicketSliderFullStroke(
+  suspend fun performTicketSliderFullStroke(
+    expectedPackageName: String,
     startX: Int,
     startY: Int,
     endX: Int,
     endY: Int,
     durationMillis: Long,
     timeoutMillis: Long
-  ): Boolean = false
+  ): TicketSliderGestureDispatchResult = TicketSliderGestureDispatchResult.REJECTED
 
   suspend fun performBack(): Boolean
 }
@@ -229,6 +227,7 @@ object PhoneAutomationServiceBridge {
   private val lastExpectedOrchestratorForegroundAtMillis = MutableStateFlow(0L)
   private val blackoutOverlayRequested = MutableStateFlow(false)
   private val blackoutOverlaySuppressed = MutableStateFlow(false)
+  private val panelSleepBrightnessShieldRequested = MutableStateFlow(false)
   private val remoteScreenBrightnessState = MutableStateFlow<ScreenBrightnessState?>(null)
   private val nonTouchInputSuppressedUntilUptimeMillis = MutableStateFlow(0L)
   private val rootPhysicalTouchState = MutableStateFlow(PhoneAutomationRootPhysicalTouchState())
@@ -255,6 +254,7 @@ object PhoneAutomationServiceBridge {
   internal fun bindAccessibilityService(service: PhoneAutomationAccessibilityHost) {
     accessibilityService.value = service
     service.syncBlackoutOverlayVisibility(blackoutOverlayRequested.value && !blackoutOverlaySuppressed.value)
+    service.syncPanelSleepBrightnessShieldVisibility(panelSleepBrightnessShieldRequested.value)
   }
 
   internal fun unbindAccessibilityService(service: PhoneAutomationAccessibilityHost) {
@@ -453,6 +453,15 @@ object PhoneAutomationServiceBridge {
     return service.setBlackoutOverlayVisible(visible)
   }
 
+  suspend fun setPanelSleepBrightnessShieldVisible(visible: Boolean): Boolean {
+    panelSleepBrightnessShieldRequested.value = visible
+    val service = accessibilityService.value ?: return !visible
+    return service.setPanelSleepBrightnessShieldVisible(visible)
+  }
+
+  internal fun isPanelSleepBrightnessShieldRequested(): Boolean =
+    panelSleepBrightnessShieldRequested.value
+
   suspend fun awaitAccessibilityConnection(timeoutMillis: Long): Boolean {
     if (accessibilityService.value != null) {
       return true
@@ -608,6 +617,20 @@ object PhoneAutomationServiceBridge {
     } ?: false
   }
 
+  suspend fun suppressViviControlCodeKeyboardMode(expectedPackageName: String): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(ACCESSIBILITY_CALL_GRACE_TIMEOUT_MILLIS) {
+      service.suppressViviControlCodeKeyboardMode(expectedPackageName)
+    } ?: false
+  }
+
+  suspend fun isViviControlCodeKeyboardModeSuppressed(expectedPackageName: String): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(ACCESSIBILITY_CALL_GRACE_TIMEOUT_MILLIS) {
+      service.isViviControlCodeKeyboardModeSuppressed(expectedPackageName)
+    } ?: false
+  }
+
   suspend fun submitViviControlCodeWithoutKeyboard(
     expectedPackageName: String,
     expectedText: String,
@@ -620,7 +643,7 @@ object PhoneAutomationServiceBridge {
   }
 
   suspend fun restoreViviControlCodeKeyboardMode(expectedPackageName: String): Boolean {
-    val service = accessibilityService.value ?: return true
+    val service = accessibilityService.value ?: return false
     return withTimeoutOrNull(ACCESSIBILITY_CALL_GRACE_TIMEOUT_MILLIS) {
       service.restoreViviControlCodeKeyboardMode(expectedPackageName)
     } ?: false
@@ -638,59 +661,20 @@ object PhoneAutomationServiceBridge {
     } ?: false
   }
 
-  suspend fun startTicketSliderGesture(
-    startX: Int,
-    startY: Int,
-    timeoutMillis: Long
-  ): TicketSliderGestureStartResult {
-    val service = accessibilityService.value ?: return TicketSliderGestureStartResult.REJECTED
-    val accepted = withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
-      service.startTicketSliderGesture(startX, startY, timeoutMillis)
-    }
-    return when (accepted) {
-      true -> TicketSliderGestureStartResult.ACCEPTED
-      false -> TicketSliderGestureStartResult.REJECTED
-      null -> TicketSliderGestureStartResult.UNKNOWN
-    }
-  }
-
-  suspend fun continueTicketSliderGesture(
-    endX: Int,
-    endY: Int,
-    durationMillis: Long,
-    timeoutMillis: Long
-  ): Boolean {
-    val service = accessibilityService.value ?: return false
-    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
-      service.continueTicketSliderGesture(endX, endY, durationMillis, timeoutMillis)
-    } ?: false
-  }
-
-  suspend fun endTicketSliderGesture(
-    endX: Int,
-    endY: Int,
-    durationMillis: Long,
-    timeoutMillis: Long
-  ): Boolean {
-    val service = accessibilityService.value ?: return false
-    // V3 registration is one held gesture. Every terminal outcome is reconciled visually by the
-    // caller and must never receive an automatic second full-track stroke here.
-    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
-      service.endTicketSliderGesture(endX, endY, durationMillis, timeoutMillis)
-    } ?: false
-  }
-
-  suspend fun retryTicketSliderFullStroke(
+  suspend fun performTicketSliderFullStroke(
+    expectedPackageName: String,
     startX: Int,
     startY: Int,
     endX: Int,
     endY: Int,
     durationMillis: Long,
     timeoutMillis: Long
-  ): Boolean {
-    val service = accessibilityService.value ?: return false
+  ): TicketSliderGestureDispatchResult {
+    val service = accessibilityService.value
+      ?: return TicketSliderGestureDispatchResult.REJECTED
     return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
-      service.retryTicketSliderFullStroke(
+      service.performTicketSliderFullStroke(
+        expectedPackageName,
         startX,
         startY,
         endX,
@@ -698,7 +682,7 @@ object PhoneAutomationServiceBridge {
         durationMillis,
         timeoutMillis
       )
-    } ?: false
+    } ?: TicketSliderGestureDispatchResult.UNKNOWN
   }
 
   suspend fun performBack(): Boolean {
@@ -813,6 +797,7 @@ object PhoneAutomationServiceBridge {
     lastExpectedOrchestratorForegroundAtMillis.value = 0L
     blackoutOverlayRequested.value = false
     blackoutOverlaySuppressed.value = false
+    panelSleepBrightnessShieldRequested.value = false
     remoteScreenBrightnessState.value = null
     nonTouchInputSuppressedUntilUptimeMillis.value = 0L
     rootPhysicalTouchState.value = PhoneAutomationRootPhysicalTouchState()

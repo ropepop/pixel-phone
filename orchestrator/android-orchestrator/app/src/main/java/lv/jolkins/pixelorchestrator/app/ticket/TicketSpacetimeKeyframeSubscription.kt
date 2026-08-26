@@ -454,8 +454,10 @@ internal fun parseTicketSpacetimeKeyframeSubscriptionMessage(
 }
 
 /**
- * Adds a low-latency view of the existing durable keyframe rows. The serialized HTTP worker stays
- * active as the recovery path; both paths meet in [TicketSpacetimeKeyframeDispatchCoordinator].
+ * Adds a low-latency view of the existing durable Ticket command rows. The serialized HTTP worker
+ * stays active as the recovery path. V3 actions use a small priority consumer so a keyframe that
+ * is waiting for stream startup cannot delay command observation; both sources still meet in the
+ * shared dispatch ledger before any phone work.
  */
 internal class TicketSpacetimeKeyframeSubscription(
   private val scope: CoroutineScope,
@@ -483,6 +485,7 @@ internal class TicketSpacetimeKeyframeSubscription(
     .build()
   private val ready = AtomicBoolean(false)
   private val stopped = AtomicBoolean(false)
+  private val priorityCommands = Channel<TicketSpacetimeCommand>(capacity = 32)
   private val commands = Channel<TicketSpacetimeCommand>(capacity = 64)
   private var job: Job? = null
 
@@ -501,6 +504,7 @@ internal class TicketSpacetimeKeyframeSubscription(
     if (job?.isActive == true) return
     job = scope.launch(Dispatchers.IO) {
       coroutineScope {
+        launch { consumePriorityCommands() }
         launch { consumeCommands() }
         connectionLoop()
       }
@@ -513,6 +517,7 @@ internal class TicketSpacetimeKeyframeSubscription(
     job = null
     activeJob?.cancelAndJoin()
     ready.set(false)
+    priorityCommands.close()
     commands.close()
     if (ownsHttpClient) {
       httpClient.connectionPool.evictAll()
@@ -522,15 +527,33 @@ internal class TicketSpacetimeKeyframeSubscription(
 
   fun isReady(): Boolean = ready.get()
 
+  private suspend fun consumePriorityCommands() {
+    for (command in priorityCommands) {
+      dispatchSubscribedCommand(command)
+    }
+  }
+
   private suspend fun consumeCommands() {
     for (command in commands) {
-      try {
-        onKeyframeCommand(command)
-      } catch (cancelled: CancellationException) {
-        throw cancelled
-      } catch (error: Throwable) {
-        onState(TicketSpacetimeKeyframeSubscriptionState.COMMAND_FAILED, ticketOperationalErrorCategory(error))
-      }
+      dispatchSubscribedCommand(command)
+    }
+  }
+
+  private suspend fun dispatchSubscribedCommand(command: TicketSpacetimeCommand) {
+    try {
+      onKeyframeCommand(command)
+    } catch (cancelled: CancellationException) {
+      throw cancelled
+    } catch (error: Throwable) {
+      onState(TicketSpacetimeKeyframeSubscriptionState.COMMAND_FAILED, ticketOperationalErrorCategory(error))
+    }
+  }
+
+  private fun enqueueSubscribedCommand(command: TicketSpacetimeCommand): Boolean {
+    return if (command.commandType == "ticket_action_v3") {
+      priorityCommands.trySend(command).isSuccess
+    } else {
+      commands.trySend(command).isSuccess
     }
   }
 
@@ -658,7 +681,7 @@ internal class TicketSpacetimeKeyframeSubscription(
                 onState(TicketSpacetimeKeyframeSubscriptionState.READY, "live_subscription")
               }
               for (command in event.message.commands) {
-                if (!commands.trySend(command).isSuccess) {
+                if (!enqueueSubscribedCommand(command)) {
                   return "command_buffer_full"
                 }
               }
@@ -666,7 +689,7 @@ internal class TicketSpacetimeKeyframeSubscription(
             TicketSpacetimeKeyframeSubscriptionMessageKind.UPDATE -> {
               if (!matchingSnapshotApplied) return "subscription_protocol_error"
               for (command in event.message.commands) {
-                if (!commands.trySend(command).isSuccess) {
+                if (!enqueueSubscribedCommand(command)) {
                   return "command_buffer_full"
                 }
               }
@@ -784,7 +807,6 @@ private const val SUBSCRIBED_COMMAND_ACK_TOMBSTONE_CAPACITY = 1_024
 private const val SUBSCRIBED_COMMAND_ACK_TOMBSTONE_TTL_MILLIS = 15 * 60_000L
 private val LIVE_TICKET_COMMAND_TYPES = setOf(
   "start", "activity", "keyframe", "recover_stream", "ticket_action_v3",
-  "force_ticket_reselect", "reset_ticket_registration", "slider_control_start",
   "generate_control_code", "control_code_browser_capture", "control_code_result_ack",
   "control_exit", "generate_rigassatiksme_qr_batch", "rigassatiksme_login_start",
   "rigassatiksme_login_sms", "cancel_rigassatiksme_login"

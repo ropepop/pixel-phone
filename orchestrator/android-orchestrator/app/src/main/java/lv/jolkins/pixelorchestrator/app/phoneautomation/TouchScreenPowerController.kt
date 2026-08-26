@@ -18,13 +18,23 @@ internal interface TouchScreenPowerController {
   fun releaseHold(reason: String)
 }
 
+internal fun touchScreenWakeHoldNeedsRefresh(
+  isHeld: Boolean,
+  nowUptimeMillis: Long,
+  expiresAtUptimeMillis: Long,
+  refreshMarginMillis: Long
+): Boolean = !isHeld || expiresAtUptimeMillis <= 0L ||
+  nowUptimeMillis >= expiresAtUptimeMillis - refreshMarginMillis.coerceAtLeast(0L)
+
 internal class AndroidTouchScreenPowerController(
   context: Context,
-  private val rootExecutor: RootExecutor
+  private val rootExecutor: RootExecutor,
+  private val uptimeClock: () -> Long = SystemClock::uptimeMillis
 ) : TouchScreenPowerController {
   private val appContext = context.applicationContext
   private val powerManager = appContext.getSystemService(PowerManager::class.java)
   private var wakeLock: PowerManager.WakeLock? = null
+  private var wakeHoldExpiresAtUptimeMillis: Long = 0L
 
   override val wakeHoldActive: Boolean
     get() = wakeLock?.isHeld == true
@@ -59,30 +69,39 @@ internal class AndroidTouchScreenPowerController(
   }
 
   @Suppress("DEPRECATION")
+  @Synchronized
   override fun holdScreen(reason: String) {
     val manager = powerManager ?: return
     val existing = wakeLock
-    if (existing?.isHeld == true) {
-      existing.acquire(WAKE_HOLD_REFRESH_MILLIS)
+    val now = uptimeClock()
+    if (!touchScreenWakeHoldNeedsRefresh(
+        isHeld = existing?.isHeld == true,
+        nowUptimeMillis = now,
+        expiresAtUptimeMillis = wakeHoldExpiresAtUptimeMillis,
+        refreshMarginMillis = WAKE_HOLD_REFRESH_MARGIN_MILLIS
+      )
+    ) {
       return
     }
-    val lock = manager.newWakeLock(
-      PowerManager.SCREEN_DIM_WAKE_LOCK,
-      "${appContext.packageName}:touch-brightness"
-    )
-    lock.setReferenceCounted(false)
+    val lock = existing ?: manager.newWakeLock(
+        PowerManager.SCREEN_DIM_WAKE_LOCK,
+        "${appContext.packageName}:touch-brightness"
+      ).also { it.setReferenceCounted(false) }
     runCatching {
       lock.acquire(WAKE_HOLD_REFRESH_MILLIS)
       wakeLock = lock
-      Log.d(TAG, "touch_screen_hold_acquired reason=$reason uptime=${SystemClock.uptimeMillis()}")
+      wakeHoldExpiresAtUptimeMillis = now + WAKE_HOLD_REFRESH_MILLIS
+      Log.d(TAG, "touch_screen_hold_acquired reason=$reason uptime=$now")
     }.onFailure {
       Log.w(TAG, "touch_screen_hold_failed reason=$reason", it)
     }
   }
 
+  @Synchronized
   override fun releaseHold(reason: String) {
     val lock = wakeLock ?: return
     wakeLock = null
+    wakeHoldExpiresAtUptimeMillis = 0L
     runCatching {
       if (lock.isHeld) {
         lock.release()
@@ -95,6 +114,7 @@ internal class AndroidTouchScreenPowerController(
 
   private companion object {
     private const val WAKE_HOLD_REFRESH_MILLIS = 10 * 60 * 1000L
+    private const val WAKE_HOLD_REFRESH_MARGIN_MILLIS = 60 * 1000L
     private const val TAG = "TouchScreenPower"
   }
 }

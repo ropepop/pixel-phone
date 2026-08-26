@@ -63,7 +63,6 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     override fun onCancelled(gestureDescription: GestureDescription?) {
       if (owner.ticketSliderDispatchGeneration == generation) {
         owner.ticketSliderStroke = null
-        owner.ticketSliderNextDispatchAtMillis = 0L
       }
       finish(TicketSliderTerminalDispatchResult.CANCELLED)
     }
@@ -83,16 +82,15 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
 
   private lateinit var windowManager: WindowManager
   private var blackoutOverlayView: View? = null
+  private var panelSleepBrightnessShieldView: View? = null
   private var blackoutOverlayActivePointerCount = 0
   private var viviControlCodePreviousKeyboardShowMode: Int? = null
   private var viviControlCodeKeyboardExpectedPackageName: String? = null
+  private var viviControlCodeKeyboardRecoveryReady: Boolean = false
   private var ticketSliderStroke: GestureDescription.StrokeDescription? = null
-  private var ticketSliderStartX: Int = 0
-  private var ticketSliderStartY: Int = 0
-  private var ticketSliderLastX: Int = 0
-  private var ticketSliderLastY: Int = 0
   private var ticketSliderDispatchGeneration: Long = 0L
-  private var ticketSliderNextDispatchAtMillis: Long = 0L
+  /** Main-thread gate that defers concurrent panel-sleep reassertions until a stroke is terminal. */
+  private var ticketSliderBrightnessShieldSuspended: Boolean = false
 
   override fun onServiceConnected() {
     super.onServiceConnected()
@@ -109,7 +107,11 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
         AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
       notificationTimeout = 100
     }
+    // Bind first so the already-requested panel-sleep brightness shield is synchronized before a
+    // crash marker can restore a focused ViVi field to a keyboard-visible mode. Suppression itself
+    // remains blocked on recoveryReady until the marker has been resolved.
     PhoneAutomationServiceBridge.bindAccessibilityService(this)
+    viviControlCodeKeyboardRecoveryReady = recoverOwnedViviControlCodeKeyboardModeOnMainThread()
   }
 
   override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -131,13 +133,16 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
   override fun onInterrupt() = Unit
 
   override fun onUnbind(intent: android.content.Intent?): Boolean {
-    syncBlackoutOverlayVisibility(false)
     ticketSliderDispatchGeneration += 1L
     ticketSliderStroke = null
-    ticketSliderNextDispatchAtMillis = 0L
     if (Looper.myLooper() == Looper.getMainLooper()) {
       restoreViviControlCodeKeyboardModeOnMainThread(null)
     }
+    // Restore while the transparent panel-sleep brightness authority is still attached. The
+    // window must be removed afterward because Android is unbinding this Accessibility service.
+    syncBlackoutOverlayVisibility(false)
+    syncPanelSleepBrightnessShieldVisibility(false)
+    viviControlCodeKeyboardRecoveryReady = false
     PhoneAutomationServiceBridge.unbindAccessibilityService(this)
     return super.onUnbind(intent)
   }
@@ -145,6 +150,20 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
   override suspend fun setBlackoutOverlayVisible(visible: Boolean): Boolean {
     return withContext(Dispatchers.Main.immediate) {
       setBlackoutOverlayVisibleOnMainThread(visible)
+    }
+  }
+
+  override suspend fun setPanelSleepBrightnessShieldVisible(visible: Boolean): Boolean {
+    return withContext(Dispatchers.Main.immediate) {
+      setPanelSleepBrightnessShieldVisibleOnMainThread(visible)
+    }
+  }
+
+  override fun syncPanelSleepBrightnessShieldVisibility(visible: Boolean): Boolean {
+    return if (Looper.myLooper() == Looper.getMainLooper()) {
+      setPanelSleepBrightnessShieldVisibleOnMainThread(visible)
+    } else {
+      false
     }
   }
 
@@ -442,6 +461,26 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     return false
   }
 
+  override suspend fun suppressViviControlCodeKeyboardMode(
+    expectedPackageName: String
+  ): Boolean {
+    return withContext(Dispatchers.Main.immediate) {
+      suppressViviControlCodeKeyboardOnMainThread(expectedPackageName)
+    }
+  }
+
+  override suspend fun isViviControlCodeKeyboardModeSuppressed(
+    expectedPackageName: String
+  ): Boolean {
+    return withContext(Dispatchers.Main.immediate) {
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
+        viviControlCodeKeyboardRecoveryReady &&
+        viviControlCodePreviousKeyboardShowMode != null &&
+        viviControlCodeKeyboardExpectedPackageName == expectedPackageName &&
+        softKeyboardController.showMode == SHOW_MODE_HIDDEN
+    }
+  }
+
   override suspend fun submitViviControlCodeWithoutKeyboard(
     expectedPackageName: String,
     expectedText: String,
@@ -504,213 +543,117 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     return false
   }
 
-  override suspend fun startTicketSliderGesture(
+  override suspend fun performTicketSliderFullStroke(
+    expectedPackageName: String,
     startX: Int,
     startY: Int,
+    endX: Int,
+    endY: Int,
+    durationMillis: Long,
     timeoutMillis: Long
-  ): Boolean {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+  ): TicketSliderGestureDispatchResult {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+      return TicketSliderGestureDispatchResult.REJECTED
+    }
     return withContext(Dispatchers.Main.immediate) {
       if (ticketSliderStroke != null) {
-        // TicketStreamService serializes slider ownership and only asks for a new start after
-        // its prior interaction has ended. A leftover continued-stroke handle here is therefore
-        // orphaned. Invalidate its callback generation before dispatching the replacement so a
-        // delayed cancellation from the old gesture cannot clear the new stroke.
-        val staleGeneration = ticketSliderDispatchGeneration
-        ticketSliderDispatchGeneration += 1L
-        ticketSliderStroke = null
-        ticketSliderNextDispatchAtMillis = 0L
+        return@withContext TicketSliderGestureDispatchResult.REJECTED
+      }
+      // A TouchBrightness reassertion can remove/re-add the full-display brightness authority while
+      // MotionEventInjector owns this stroke. Android may report the gesture completed even though
+      // Flutter discarded that mid-gesture window/display-policy transition. Keep the logical
+      // request intact but defer every actual accessibility-shield show until the stroke is
+      // terminal. The action root helper and separate one-pixel application shield remain at zero.
+      ticketSliderBrightnessShieldSuspended = true
+      val shieldWasVisible = panelSleepBrightnessShieldView != null
+      if (shieldWasVisible && !hidePanelSleepBrightnessShield()) {
+        ticketSliderBrightnessShieldSuspended = false
         Log.i(
           TICKET_SLIDER_DIAGNOSTIC_TAG,
-          "start_recover_stale previous_generation=$staleGeneration replacement_generation=$ticketSliderDispatchGeneration"
+          "full_stroke_input_target result=brightness_shield_hide_failed"
         )
+        return@withContext TicketSliderGestureDispatchResult.REJECTED
       }
-      val width = resources.displayMetrics.widthPixels.coerceAtLeast(1)
-      val height = resources.displayMetrics.heightPixels.coerceAtLeast(1)
-      val x = startX.coerceIn(0, width - 1)
-      val y = startY.coerceIn(0, height - 1)
-      // A zero-length continued stroke is treated as a tap by some Android
-      // accessibility implementations. Give the pointer a one-pixel hold
-      // segment so ViVi receives a real down/held gesture before the next
-      // continuation, while keeping the visual starting position unchanged.
-      val heldX = (x + 1).coerceAtMost(width - 1)
-      val path = Path().apply {
-        moveTo(x.toFloat(), y.toFloat())
-        lineTo(heldX.toFloat(), y.toFloat())
+      var generation = 0L
+      var brightnessShieldRestored = true
+      val result = try {
+        if (shieldWasVisible) {
+          // removeViewImmediate() detaches the view synchronously; one main-loop turn lets the input
+          // window snapshot converge before MotionEventInjector chooses the gesture target.
+          delay(TICKET_SLIDER_INPUT_WINDOW_SETTLE_MILLIS)
+        }
+        if (!isExpectedPackageFocusedForTicketSlider(expectedPackageName)) {
+          Log.i(
+            TICKET_SLIDER_DIAGNOSTIC_TAG,
+            "full_stroke_input_target result=expected_package_not_focused"
+          )
+          return@withContext TicketSliderGestureDispatchResult.REJECTED
+        }
+        val width = resources.displayMetrics.widthPixels.coerceAtLeast(1)
+        val height = resources.displayMetrics.heightPixels.coerceAtLeast(1)
+        val start = startX.coerceIn(0, width - 1) to startY.coerceIn(0, height - 1)
+        val end = endX.coerceIn(0, width - 1) to endY.coerceIn(0, height - 1)
+        val fullStrokeDurationMillis = durationMillis.coerceIn(700L, 1_100L)
+        val path = Path().apply {
+          moveTo(start.first.toFloat(), start.second.toFloat())
+          lineTo(end.first.toFloat(), end.second.toFloat())
+        }
+        val stroke = GestureDescription.StrokeDescription(
+          path,
+          0L,
+          fullStrokeDurationMillis,
+          false
+        )
+        generation = ++ticketSliderDispatchGeneration
+        ticketSliderStroke = stroke
+        Log.i(
+          TICKET_SLIDER_DIAGNOSTIC_TAG,
+          "full_stroke generation=$generation display=${width}x$height requested_start=$startX,$startY actual_start=${start.first},${start.second} requested_end=$endX,$endY actual_end=${end.first},${end.second} duration_ms=$fullStrokeDurationMillis"
+        )
+        dispatchTerminalTicketSliderStroke(
+          stroke = stroke,
+          reason = "ticket_slider_full_stroke",
+          generation = generation,
+          timeoutMillis = timeoutMillis
+        )
+      } finally {
+        if (generation > 0L && ticketSliderDispatchGeneration == generation) {
+          ticketSliderStroke = null
+        }
+        ticketSliderBrightnessShieldSuspended = false
+        val shieldRequested = PhoneAutomationServiceBridge.isPanelSleepBrightnessShieldRequested()
+        brightnessShieldRestored = if (shieldRequested) {
+          showPanelSleepBrightnessShield()
+        } else {
+          hidePanelSleepBrightnessShield()
+        }
+        if (shieldWasVisible || shieldRequested) {
+          Log.i(
+            TICKET_SLIDER_DIAGNOSTIC_TAG,
+            "full_stroke_input_target result=${if (brightnessShieldRestored) "brightness_shield_converged" else "brightness_shield_convergence_failed"} requested=$shieldRequested"
+          )
+        }
       }
-      val stroke = GestureDescription.StrokeDescription(path, 0L, 120L, true)
-      val generation = ++ticketSliderDispatchGeneration
-      ticketSliderStroke = stroke
       Log.i(
         TICKET_SLIDER_DIAGNOSTIC_TAG,
-        "start generation=$generation display=${width}x$height requested=$startX,$startY actual=$x,$y hold_end=$heldX,$y duration_ms=120"
+        "full_stroke_result generation=$generation result=${result.name.lowercase()}"
       )
-      val ok = dispatchTicketSliderStroke(stroke, "ticket_slider_start", generation)
-      Log.i(TICKET_SLIDER_DIAGNOSTIC_TAG, "start_dispatch generation=$generation accepted=$ok")
-      if (ok) {
-        ticketSliderStartX = x
-        ticketSliderStartY = y
-        ticketSliderLastX = heldX
-        ticketSliderLastY = y
-        ticketSliderNextDispatchAtMillis = SystemClock.uptimeMillis() + 120L +
-          TICKET_SLIDER_CONTINUATION_HANDOFF_GRACE_MILLIS
-      } else if (ticketSliderDispatchGeneration == generation) {
-        ticketSliderStroke = null
-        ticketSliderNextDispatchAtMillis = 0L
+      if (!brightnessShieldRestored) {
+        return@withContext TicketSliderGestureDispatchResult.UNKNOWN
       }
-      ok
+      when (result) {
+        TicketSliderTerminalDispatchResult.COMPLETED ->
+          TicketSliderGestureDispatchResult.COMPLETED
+        TicketSliderTerminalDispatchResult.REJECTED ->
+          TicketSliderGestureDispatchResult.REJECTED
+        TicketSliderTerminalDispatchResult.CANCELLED,
+        TicketSliderTerminalDispatchResult.TIMED_OUT ->
+          TicketSliderGestureDispatchResult.UNKNOWN
+      }
     }
   }
 
-  override suspend fun continueTicketSliderGesture(
-    endX: Int,
-    endY: Int,
-    durationMillis: Long,
-    timeoutMillis: Long
-  ): Boolean {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
-    val waitMillis = withContext(Dispatchers.Main.immediate) {
-      (ticketSliderNextDispatchAtMillis - SystemClock.uptimeMillis()).coerceAtLeast(0L)
-    }
-    if (waitMillis > 0L) delay(waitMillis)
-    return withContext(Dispatchers.Main.immediate) {
-      val current = ticketSliderStroke ?: return@withContext false
-      val width = resources.displayMetrics.widthPixels.coerceAtLeast(1)
-      val height = resources.displayMetrics.heightPixels.coerceAtLeast(1)
-      val x = endX.coerceIn(0, width - 1)
-      val y = endY.coerceIn(0, height - 1)
-      val path = Path().apply {
-        moveTo(ticketSliderLastX.toFloat(), ticketSliderLastY.toFloat())
-        lineTo(x.toFloat(), y.toFloat())
-      }
-      val next = current.continueStroke(path, 0L, durationMillis.coerceIn(32L, 100L), true)
-      val generation = ++ticketSliderDispatchGeneration
-      ticketSliderStroke = next
-      Log.i(
-        TICKET_SLIDER_DIAGNOSTIC_TAG,
-        "continue generation=$generation from=$ticketSliderLastX,$ticketSliderLastY requested=$endX,$endY actual=$x,$y duration_ms=${durationMillis.coerceIn(32L, 100L)} handoff_wait_ms=$waitMillis"
-      )
-      val ok = dispatchTicketSliderStroke(next, "ticket_slider_continue", generation)
-      Log.i(TICKET_SLIDER_DIAGNOSTIC_TAG, "continue_dispatch generation=$generation accepted=$ok")
-      if (ok) {
-        ticketSliderLastX = x
-        ticketSliderLastY = y
-        ticketSliderNextDispatchAtMillis = SystemClock.uptimeMillis() +
-          durationMillis.coerceIn(32L, 100L) + TICKET_SLIDER_CONTINUATION_HANDOFF_GRACE_MILLIS
-      } else if (ticketSliderDispatchGeneration == generation) {
-        ticketSliderStroke = null
-        ticketSliderNextDispatchAtMillis = 0L
-      }
-      ok
-    }
-  }
-
-  override suspend fun endTicketSliderGesture(
-    endX: Int,
-    endY: Int,
-    durationMillis: Long,
-    timeoutMillis: Long
-  ): Boolean {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
-    val waitMillis = withContext(Dispatchers.Main.immediate) {
-      (ticketSliderNextDispatchAtMillis - SystemClock.uptimeMillis()).coerceAtLeast(0L)
-    }
-    if (waitMillis > 0L) delay(waitMillis)
-    return withContext(Dispatchers.Main.immediate) {
-      val current = ticketSliderStroke ?: return@withContext false
-      val width = resources.displayMetrics.widthPixels.coerceAtLeast(1)
-      val height = resources.displayMetrics.heightPixels.coerceAtLeast(1)
-      val x = endX.coerceIn(0, width - 1)
-      val y = endY.coerceIn(0, height - 1)
-      val path = Path().apply {
-        moveTo(ticketSliderLastX.toFloat(), ticketSliderLastY.toFloat())
-        lineTo(x.toFloat(), y.toFloat())
-      }
-      // ViVi's Flutter slider intermittently ignores a fast synthetic fling even though Android
-      // accepts the gesture. Permit the caller's bounded human-like terminal sweep; ordinary
-      // interactive continuation segments retain their separate 100 ms cap above.
-      val terminalDurationMillis = durationMillis.coerceIn(32L, 1_000L)
-      val next = current.continueStroke(path, 0L, terminalDurationMillis, false)
-      val generation = ++ticketSliderDispatchGeneration
-      ticketSliderStroke = next
-      Log.i(
-        TICKET_SLIDER_DIAGNOSTIC_TAG,
-        "end generation=$generation from=$ticketSliderLastX,$ticketSliderLastY requested=$endX,$endY actual=$x,$y original_start=$ticketSliderStartX,$ticketSliderStartY duration_ms=$terminalDurationMillis handoff_wait_ms=$waitMillis"
-      )
-      val dispatchResult = dispatchTerminalTicketSliderStroke(
-        stroke = next,
-        reason = "ticket_slider_end",
-        generation = generation,
-        timeoutMillis = timeoutMillis
-      )
-      Log.i(
-        TICKET_SLIDER_DIAGNOSTIC_TAG,
-        "end_result generation=$generation result=${dispatchResult.name.lowercase()}"
-      )
-      val ok = dispatchResult == TicketSliderTerminalDispatchResult.COMPLETED
-      if (ok) {
-        ticketSliderStroke = null
-        ticketSliderNextDispatchAtMillis = 0L
-        ticketSliderLastX = x
-        ticketSliderLastY = y
-      } else if (ticketSliderDispatchGeneration == generation) {
-        ticketSliderStroke = null
-        ticketSliderNextDispatchAtMillis = 0L
-      }
-      ok
-    }
-  }
-
-  override suspend fun retryTicketSliderFullStroke(
-    startX: Int,
-    startY: Int,
-    endX: Int,
-    endY: Int,
-    durationMillis: Long,
-    timeoutMillis: Long
-  ): Boolean {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
-    return withContext(Dispatchers.Main.immediate) {
-      if (ticketSliderStroke != null) return@withContext false
-      val width = resources.displayMetrics.widthPixels.coerceAtLeast(1)
-      val height = resources.displayMetrics.heightPixels.coerceAtLeast(1)
-      val start = startX.coerceIn(0, width - 1) to startY.coerceIn(0, height - 1)
-      val end = endX.coerceIn(0, width - 1) to endY.coerceIn(0, height - 1)
-      val path = Path().apply {
-        moveTo(start.first.toFloat(), start.second.toFloat())
-        lineTo(end.first.toFloat(), end.second.toFloat())
-      }
-      val stroke = GestureDescription.StrokeDescription(
-        path,
-        0L,
-        durationMillis.coerceIn(32L, 1_000L),
-        false
-      )
-      val generation = ++ticketSliderDispatchGeneration
-      ticketSliderStroke = stroke
-      Log.i(
-        TICKET_SLIDER_DIAGNOSTIC_TAG,
-        "fresh_retry generation=$generation display=${width}x$height requested_start=$startX,$startY actual_start=${start.first},${start.second} requested_end=$endX,$endY actual_end=${end.first},${end.second} duration_ms=${durationMillis.coerceIn(32L, 1_000L)}"
-      )
-      val result = dispatchTerminalTicketSliderStroke(
-        stroke = stroke,
-        reason = "ticket_slider_fresh_unactivated_retry",
-        generation = generation,
-        timeoutMillis = timeoutMillis
-      )
-      if (ticketSliderDispatchGeneration == generation) {
-        ticketSliderStroke = null
-        ticketSliderNextDispatchAtMillis = 0L
-      }
-      Log.i(
-        TICKET_SLIDER_DIAGNOSTIC_TAG,
-        "fresh_retry_result generation=$generation result=${result.name.lowercase()}"
-      )
-      result == TicketSliderTerminalDispatchResult.COMPLETED
-    }
-  }
-
-  /** Waits for Android to finish the terminal segment before ViVi state proof begins. */
+  /** Waits for Android to finish the one full stroke before ViVi state proof begins. */
   private suspend fun dispatchTerminalTicketSliderStroke(
     stroke: GestureDescription.StrokeDescription,
     reason: String,
@@ -745,45 +688,6 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
       "terminal_dispatch reason=$reason generation=$generation accepted=$dispatched timeout_ms=${timeoutMillis.coerceAtLeast(1L)}"
     )
     if (!dispatched) awaiter.finish(TicketSliderTerminalDispatchResult.REJECTED)
-  }
-
-  /**
-   * Accessibility dispatch acknowledges that a segment was accepted, not that a
-   * continued stroke has reached its final endpoint. Waiting for onCompleted on
-   * a willContinue segment blocks the Spacetime command lane indefinitely on
-   * Android builds that defer that callback until the stroke is ended. The
-   * rooted H.264/state proof remains the authoritative completion check.
-   */
-  private fun dispatchTicketSliderStroke(
-    stroke: GestureDescription.StrokeDescription,
-    reason: String,
-    generation: Long
-  ): Boolean {
-    // Browser-owned slider segments should keep the panel dark only for the
-    // accepted segment, without the generic four-second suppression tail.
-    PhoneAutomationServiceBridge.clearNonTouchInputTailForBrowserCriticalAction(reason)
-    val gesture = GestureDescription.Builder().addStroke(stroke).build()
-    val dispatched = runCatching {
-      dispatchGesture(
-        gesture,
-        object : GestureResultCallback() {
-          override fun onCompleted(gestureDescription: GestureDescription?) = Unit
-
-          override fun onCancelled(gestureDescription: GestureDescription?) {
-            if (ticketSliderDispatchGeneration == generation) {
-              ticketSliderStroke = null
-              ticketSliderNextDispatchAtMillis = 0L
-            }
-          }
-        },
-        null
-      )
-    }.getOrDefault(false)
-    if (!dispatched && ticketSliderDispatchGeneration == generation) {
-      ticketSliderStroke = null
-      ticketSliderNextDispatchAtMillis = 0L
-    }
-    return dispatched
   }
 
   override suspend fun openFirstEditableInput(
@@ -821,6 +725,16 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     return windows.asSequence()
       .mapNotNull { window -> window.root }
       .firstOrNull { root -> rootPackageMatchesExpected(root, expectedPackageName) }
+  }
+
+  /** Final dispatch authority: the expected app must own Android's focused accessibility window. */
+  private fun isExpectedPackageFocusedForTicketSlider(expectedPackageName: String): Boolean {
+    if (expectedPackageName.isBlank()) return false
+    val activePackage = rootInActiveWindow?.packageName?.toString().orEmpty()
+    if (activePackage == expectedPackageName) return true
+    return windows.asSequence().any { window ->
+      window.isFocused && window.root?.packageName?.toString().orEmpty() == expectedPackageName
+    }
   }
 
   private fun fastRootForPackage(expectedPackageName: String): AccessibilityNodeInfo? {
@@ -949,12 +863,90 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
       return false
     }
-    val controller = softKeyboardController
-    if (viviControlCodePreviousKeyboardShowMode == null) {
-      viviControlCodePreviousKeyboardShowMode = controller.showMode
+    if (!viviControlCodeKeyboardRecoveryReady) {
+      // A later Ticket request reaches this method only after acquiring the panel-dark lane. That
+      // gives a stale crash marker one safe retry once ViVi's rooted window is available again.
+      viviControlCodeKeyboardRecoveryReady = recoverOwnedViviControlCodeKeyboardModeOnMainThread()
     }
+    if (!viviControlCodeKeyboardRecoveryReady ||
+      viviControlCodePreviousKeyboardShowMode != null
+    ) return false
+    val preferences = getSharedPreferences(
+      VIVI_CONTROL_CODE_KEYBOARD_MODE_PREFERENCES,
+      MODE_PRIVATE
+    )
+    if (preferences.getBoolean(VIVI_CONTROL_CODE_KEYBOARD_MODE_OWNED_KEY, false)) {
+      viviControlCodeKeyboardRecoveryReady = false
+      return false
+    }
+    val controller = softKeyboardController
+    val previousMode = controller.showMode
+    val markerSaved = preferences.edit()
+      .putBoolean(VIVI_CONTROL_CODE_KEYBOARD_MODE_OWNED_KEY, true)
+      .putInt(VIVI_CONTROL_CODE_KEYBOARD_MODE_PREVIOUS_KEY, previousMode)
+      .commit()
+    if (!markerSaved) {
+      return false
+    }
+    viviControlCodePreviousKeyboardShowMode = previousMode
     viviControlCodeKeyboardExpectedPackageName = expectedPackageName
-    return controller.setShowMode(SHOW_MODE_HIDDEN)
+    val applied = controller.setShowMode(SHOW_MODE_HIDDEN) &&
+      controller.showMode == SHOW_MODE_HIDDEN
+    if (!applied) {
+      restoreViviControlCodeKeyboardModeOnMainThread(expectedPackageName)
+    }
+    return applied
+  }
+
+  private fun clearOwnedViviControlCodeKeyboardModeMarker(): Boolean {
+    return getSharedPreferences(VIVI_CONTROL_CODE_KEYBOARD_MODE_PREFERENCES, MODE_PRIVATE)
+      .edit()
+      .remove(VIVI_CONTROL_CODE_KEYBOARD_MODE_OWNED_KEY)
+      .remove(VIVI_CONTROL_CODE_KEYBOARD_MODE_PREVIOUS_KEY)
+      .commit()
+  }
+
+  private fun clearFocusedViviControlCodeInputOnMainThread(expectedPackageName: String): Boolean {
+    val root = rootForPackage(expectedPackageName) ?: return false
+    val focused = editableNodes(root).filter { node -> node.isFocused }.toList()
+    if (focused.isEmpty()) {
+      return true
+    }
+    return focused.all { node ->
+      node.performAction(AccessibilityNodeInfo.ACTION_CLEAR_FOCUS) &&
+        runCatching {
+          node.refresh()
+          !node.isFocused
+        }.getOrDefault(false)
+    }
+  }
+
+  private fun recoverOwnedViviControlCodeKeyboardModeOnMainThread(): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+      return true
+    }
+    val preferences = getSharedPreferences(
+      VIVI_CONTROL_CODE_KEYBOARD_MODE_PREFERENCES,
+      MODE_PRIVATE
+    )
+    if (!preferences.getBoolean(VIVI_CONTROL_CODE_KEYBOARD_MODE_OWNED_KEY, false)) {
+      return true
+    }
+    val previousMode = preferences.getInt(
+      VIVI_CONTROL_CODE_KEYBOARD_MODE_PREVIOUS_KEY,
+      SHOW_MODE_AUTO
+    )
+    val controller = softKeyboardController
+    if (controller.showMode != SHOW_MODE_HIDDEN) {
+      return clearOwnedViviControlCodeKeyboardModeMarker()
+    }
+    if (!clearFocusedViviControlCodeInputOnMainThread(VIVI_CONTROL_CODE_PACKAGE)) {
+      return false
+    }
+    if (!controller.setShowMode(previousMode) || controller.showMode != previousMode) {
+      return false
+    }
+    return clearOwnedViviControlCodeKeyboardModeMarker()
   }
 
   private fun restoreViviControlCodeKeyboardModeOnMainThread(
@@ -963,22 +955,37 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
       return true
     }
+    val previousMode = viviControlCodePreviousKeyboardShowMode ?: return !getSharedPreferences(
+      VIVI_CONTROL_CODE_KEYBOARD_MODE_PREFERENCES,
+      MODE_PRIVATE
+    ).getBoolean(VIVI_CONTROL_CODE_KEYBOARD_MODE_OWNED_KEY, false)
+    val controller = softKeyboardController
+    if (controller.showMode != SHOW_MODE_HIDDEN) {
+      // Another accessibility service or the user took ownership after our last verified gate.
+      // Do not overwrite that newer choice with this request's stale prior mode.
+      val markerCleared = clearOwnedViviControlCodeKeyboardModeMarker()
+      if (markerCleared) {
+        viviControlCodePreviousKeyboardShowMode = null
+        viviControlCodeKeyboardExpectedPackageName = null
+        viviControlCodeKeyboardRecoveryReady = true
+      }
+      return markerCleared
+    }
     val packageToClear = expectedPackageName?.takeIf { it.isNotBlank() }
       ?: viviControlCodeKeyboardExpectedPackageName
-    if (!packageToClear.isNullOrBlank()) {
-      rootForPackage(packageToClear)?.let { root ->
-        editableNodes(root)
-          .filter { node -> node.isFocused }
-          .forEach { node -> node.performAction(AccessibilityNodeInfo.ACTION_CLEAR_FOCUS) }
-      }
+    if (packageToClear.isNullOrBlank() ||
+      !clearFocusedViviControlCodeInputOnMainThread(packageToClear)
+    ) {
+      return false
     }
-    val previousMode = viviControlCodePreviousKeyboardShowMode ?: return true
-    val restored = softKeyboardController.setShowMode(previousMode)
-    if (restored) {
+    val restored = controller.setShowMode(previousMode) && controller.showMode == previousMode
+    val markerCleared = restored && clearOwnedViviControlCodeKeyboardModeMarker()
+    if (markerCleared) {
       viviControlCodePreviousKeyboardShowMode = null
       viviControlCodeKeyboardExpectedPackageName = null
+      viviControlCodeKeyboardRecoveryReady = true
     }
-    return restored
+    return markerCleared
   }
 
   private fun nodeAccessibilityLabel(node: AccessibilityNodeInfo): String {
@@ -1098,6 +1105,61 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     }
   }
 
+  private fun setPanelSleepBrightnessShieldVisibleOnMainThread(visible: Boolean): Boolean {
+    if (visible && ticketSliderBrightnessShieldSuspended) {
+      return true
+    }
+    return if (visible) {
+      showPanelSleepBrightnessShield()
+    } else {
+      hidePanelSleepBrightnessShield()
+    }
+  }
+
+  private fun showPanelSleepBrightnessShield(): Boolean {
+    if (panelSleepBrightnessShieldView != null) return true
+    val shield = View(this).apply {
+      setBackgroundColor(Color.TRANSPARENT)
+      isClickable = false
+      importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+    val layoutParams = WindowManager.LayoutParams(
+      WindowManager.LayoutParams.MATCH_PARENT,
+      WindowManager.LayoutParams.MATCH_PARENT,
+      WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+      PixelFormat.TRANSLUCENT
+    ).apply {
+      gravity = Gravity.TOP or Gravity.START
+      // The surface itself is fully transparent, so this non-zero window alpha changes no pixels.
+      // It does keep WindowManager from transiently dropping the zero-brightness override while a
+      // short-lived hardware keyboard changes the display configuration under ViVi.
+      alpha = PANEL_SLEEP_BRIGHTNESS_SHIELD_WINDOW_ALPHA
+      screenBrightness = 0f
+      title = PANEL_SLEEP_BRIGHTNESS_SHIELD_WINDOW_TITLE
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+      }
+    }
+    return runCatching {
+      windowManager.addView(shield, layoutParams)
+      panelSleepBrightnessShieldView = shield
+      true
+    }.getOrElse { false }
+  }
+
+  private fun hidePanelSleepBrightnessShield(): Boolean {
+    val shield = panelSleepBrightnessShieldView ?: return true
+    return runCatching {
+      windowManager.removeViewImmediate(shield)
+      panelSleepBrightnessShieldView = null
+      true
+    }.getOrElse { false }
+  }
+
   private fun showBlackoutOverlay(): Boolean {
     if (blackoutOverlayView != null) {
       return true
@@ -1188,5 +1250,16 @@ class PhoneAutomationAccessibilityService : AccessibilityService(), PhoneAutomat
     private const val TICKET_SLIDER_DIAGNOSTIC_TAG = "PixelTicketSlider"
     private const val OVERLAY_WAKE_REFRESH_MILLIS = 250L
     private const val TICKET_SLIDER_CONTINUATION_HANDOFF_GRACE_MILLIS = 80L
+    // Live WindowManager/DisplayPower tracing measured the zero-to-zero authority handoff at
+    // 48 ms after removeViewImmediate(). Keep it outside the stroke with bounded headroom.
+    private const val TICKET_SLIDER_INPUT_WINDOW_SETTLE_MILLIS = 120L
+    private const val PANEL_SLEEP_BRIGHTNESS_SHIELD_WINDOW_ALPHA = 0.001f
+    private const val PANEL_SLEEP_BRIGHTNESS_SHIELD_WINDOW_TITLE =
+      "PixelPanelSleepAccessibilityBrightnessShield"
+    private const val VIVI_CONTROL_CODE_KEYBOARD_MODE_PREFERENCES =
+      "vivi_control_code_keyboard_mode"
+    private const val VIVI_CONTROL_CODE_KEYBOARD_MODE_OWNED_KEY = "owned"
+    private const val VIVI_CONTROL_CODE_KEYBOARD_MODE_PREVIOUS_KEY = "previous"
+    private const val VIVI_CONTROL_CODE_PACKAGE = "com.pv.vivi"
   }
 }

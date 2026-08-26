@@ -10,6 +10,11 @@ if [[ ! -f "${HELPER_SCRIPT}" ]]; then
   exit 1
 fi
 
+if ! rg -Fq '[[ -d "${local_root}" ]] || return 0' "${HELPER_SCRIPT}"; then
+  echo "FAIL: runtime freshness should quietly ignore retired template groups" >&2
+  exit 1
+fi
+
 specs="$("${HELPER_SCRIPT}" --scope readiness --print-specs)"
 
 if [[ -z "${specs}" ]]; then

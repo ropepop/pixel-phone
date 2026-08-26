@@ -985,12 +985,12 @@ public final class TicketRootHardwareH264CaptureMain {
     boolean copiedSource = false;
     int probeWidth = ticketActionProbe
       ? TicketVisualActionClassifier.PROBE_WIDTH
-      : submitLayoutProbe
+      : (submitLayoutProbe || cleanupProbe)
       ? TicketControlCodeVisualClassifier.SUBMIT_SAMPLE_WIDTH
       : TicketControlCodeVisualClassifier.SAMPLE_WIDTH;
     int probeHeight = ticketActionProbe
       ? TicketVisualActionClassifier.PROBE_HEIGHT
-      : submitLayoutProbe
+      : (submitLayoutProbe || cleanupProbe)
       ? TicketControlCodeVisualClassifier.SUBMIT_SAMPLE_HEIGHT
       : TicketControlCodeVisualClassifier.SAMPLE_HEIGHT;
     Bitmap probe = Bitmap.createBitmap(
@@ -1078,7 +1078,7 @@ public final class TicketRootHardwareH264CaptureMain {
       if (activatedTicketProbe) {
         state = TicketControlCodeVisualClassifier.classifyForActivatedTicket(pixels);
       } else if (cleanupProbe) {
-        state = TicketControlCodeVisualClassifier.classifyForCleanup(pixels);
+        state = TicketControlCodeVisualClassifier.classifyForCleanupHighResolution(pixels);
       } else {
         state = TicketControlCodeVisualClassifier.classify(pixels);
       }
@@ -1087,9 +1087,11 @@ public final class TicketRootHardwareH264CaptureMain {
         sliderBounds = TicketControlCodeVisualClassifier.registrationSliderBounds(pixels);
       }
       String closeBounds = cleanupProbe
-        ? TicketControlCodeVisualClassifier.generatedResultCloseBounds(pixels)
+        ? TicketControlCodeVisualClassifier.generatedResultCloseBoundsHighResolution(pixels)
         : "";
-      String visualSignature = TicketControlCodeVisualClassifier.ticketCodeVisualSignature(pixels);
+      String visualSignature = cleanupProbe
+        ? TicketControlCodeVisualClassifier.ticketCodeVisualSignatureHighResolution(pixels)
+        : TicketControlCodeVisualClassifier.ticketCodeVisualSignature(pixels);
       String visualSignatureEpoch = visualSignature.isEmpty()
         ? ""
         : TicketControlCodeVisualClassifier.ticketCodeVisualSignatureEpoch();

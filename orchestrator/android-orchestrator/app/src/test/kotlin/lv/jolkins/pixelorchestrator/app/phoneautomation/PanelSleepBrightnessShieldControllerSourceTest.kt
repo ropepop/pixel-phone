@@ -10,6 +10,7 @@ class PanelSleepBrightnessShieldControllerSourceTest {
   @Test
   fun shieldIsPixelNeutralNonInteractiveAndRootSelfHealed() {
     val source = controllerSource()
+    val accessibilitySource = accessibilityServiceSource()
 
     assertTrue(source.contains("SHIELD_SIZE_PX = 1"))
     assertTrue(source.contains("WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY"))
@@ -21,6 +22,17 @@ class PanelSleepBrightnessShieldControllerSourceTest {
     assertTrue(source.contains("appops set \$packageName SYSTEM_ALERT_WINDOW allow"))
     assertTrue(source.contains("Settings.canDrawOverlays(appContext)"))
     assertFalse(source.contains("TYPE_ACCESSIBILITY_OVERLAY"))
+    assertTrue(source.contains("setPanelSleepBrightnessShieldVisible(true)"))
+    assertTrue(source.contains("setPanelSleepBrightnessShieldVisible(false)"))
+
+    assertTrue(accessibilitySource.contains("WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY"))
+    assertTrue(accessibilitySource.contains("WindowManager.LayoutParams.MATCH_PARENT"))
+    assertTrue(accessibilitySource.contains("WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE"))
+    assertTrue(accessibilitySource.contains("WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE"))
+    assertTrue(accessibilitySource.contains("PixelFormat.TRANSLUCENT"))
+    assertTrue(accessibilitySource.contains("setBackgroundColor(Color.TRANSPARENT)"))
+    assertTrue(accessibilitySource.contains("PANEL_SLEEP_BRIGHTNESS_SHIELD_WINDOW_ALPHA = 0.001f"))
+    assertTrue(accessibilitySource.contains("screenBrightness = 0f"))
   }
 
   @Test
@@ -50,6 +62,11 @@ class PanelSleepBrightnessShieldControllerSourceTest {
   private fun controllerSource(): String = readFirstExisting(
     Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PanelSleepBrightnessShieldController.kt"),
     Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PanelSleepBrightnessShieldController.kt")
+  )
+
+  private fun accessibilityServiceSource(): String = readFirstExisting(
+    Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
+    Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
   )
 
   private fun String.substringBetween(startNeedle: String, endNeedle: String): String {

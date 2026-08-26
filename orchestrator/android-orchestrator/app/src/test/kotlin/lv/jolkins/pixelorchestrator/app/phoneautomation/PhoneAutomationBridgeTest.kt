@@ -58,31 +58,62 @@ class PhoneAutomationBridgeTest {
   }
 
   @Test
-  fun ticketSliderStartDistinguishesAcceptedRejectedAndUnknownResults() = runTest {
+  fun ticketSliderFullStrokeDistinguishesCompletedRejectedAndUnknownResults() = runTest {
     PhoneAutomationServiceBridge.resetForTests()
     assertEquals(
-      TicketSliderGestureStartResult.REJECTED,
-      PhoneAutomationServiceBridge.startTicketSliderGesture(10, 20, 10L)
+      TicketSliderGestureDispatchResult.REJECTED,
+      PhoneAutomationServiceBridge.performTicketSliderFullStroke(
+        "com.pv.vivi",
+        10, 20, 90, 20, 800L, 10L
+      )
     )
 
     val host = FakeAccessibilityHost()
     PhoneAutomationServiceBridge.bindAccessibilityService(host)
-    host.ticketSliderStartResult = true
+    host.ticketSliderFullStrokeResult = TicketSliderGestureDispatchResult.COMPLETED
     assertEquals(
-      TicketSliderGestureStartResult.ACCEPTED,
-      PhoneAutomationServiceBridge.startTicketSliderGesture(10, 20, 10L)
+      TicketSliderGestureDispatchResult.COMPLETED,
+      PhoneAutomationServiceBridge.performTicketSliderFullStroke(
+        "com.pv.vivi",
+        10, 20, 90, 20, 800L, 10L
+      )
     )
-    host.ticketSliderStartResult = false
+    host.ticketSliderFullStrokeResult = TicketSliderGestureDispatchResult.REJECTED
     assertEquals(
-      TicketSliderGestureStartResult.REJECTED,
-      PhoneAutomationServiceBridge.startTicketSliderGesture(10, 20, 10L)
+      TicketSliderGestureDispatchResult.REJECTED,
+      PhoneAutomationServiceBridge.performTicketSliderFullStroke(
+        "com.pv.vivi",
+        10, 20, 90, 20, 800L, 10L
+      )
     )
-    host.ticketSliderStartNeverReturns = true
+    host.ticketSliderFullStrokeNeverReturns = true
     assertEquals(
-      TicketSliderGestureStartResult.UNKNOWN,
-      PhoneAutomationServiceBridge.startTicketSliderGesture(10, 20, 10L)
+      TicketSliderGestureDispatchResult.UNKNOWN,
+      PhoneAutomationServiceBridge.performTicketSliderFullStroke(
+        "com.pv.vivi",
+        10, 20, 90, 20, 800L, 10L
+      )
     )
-    assertEquals(3, host.ticketSliderStartCalls)
+    assertEquals(3, host.ticketSliderFullStrokeCalls)
+    assertEquals(
+      List(3) {
+        RecordedTicketSliderFullStroke(
+          expectedPackageName = "com.pv.vivi",
+          startX = 10,
+          startY = 20,
+          endX = 90,
+          endY = 20,
+          durationMillis = 800L,
+          timeoutMillis = 10L
+        )
+      },
+      host.ticketSliderFullStrokeRequests
+    )
+    assertTrue(host.ticketSliderFullStrokeRequests.all { request ->
+      request.endX > request.startX &&
+        request.endY == request.startY &&
+        request.durationMillis == 800L
+    })
     PhoneAutomationServiceBridge.unbindAccessibilityService(host)
   }
 
@@ -250,6 +281,29 @@ class PhoneAutomationBridgeTest {
     val secondHost = FakeAccessibilityHost()
     PhoneAutomationServiceBridge.bindAccessibilityService(secondHost)
     assertEquals(listOf(true), secondHost.syncedVisibility)
+  }
+
+  @Test
+  fun panelSleepBrightnessShieldRequestSurvivesAccessibilityReconnect() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+
+    assertFalse(PhoneAutomationServiceBridge.setPanelSleepBrightnessShieldVisible(true))
+    assertTrue(PhoneAutomationServiceBridge.isPanelSleepBrightnessShieldRequested())
+
+    val firstHost = FakeAccessibilityHost()
+    PhoneAutomationServiceBridge.bindAccessibilityService(firstHost)
+    assertEquals(listOf(true), firstHost.syncedPanelSleepBrightnessShieldVisibility)
+    assertTrue(PhoneAutomationServiceBridge.setPanelSleepBrightnessShieldVisible(true))
+    assertEquals(listOf(true), firstHost.requestedPanelSleepBrightnessShieldVisibility)
+
+    PhoneAutomationServiceBridge.unbindAccessibilityService(firstHost)
+
+    val secondHost = FakeAccessibilityHost()
+    PhoneAutomationServiceBridge.bindAccessibilityService(secondHost)
+    assertEquals(listOf(true), secondHost.syncedPanelSleepBrightnessShieldVisibility)
+    assertTrue(PhoneAutomationServiceBridge.setPanelSleepBrightnessShieldVisible(false))
+    assertFalse(PhoneAutomationServiceBridge.isPanelSleepBrightnessShieldRequested())
+    assertEquals(listOf(false), secondHost.requestedPanelSleepBrightnessShieldVisibility)
   }
 
   @Test
@@ -506,6 +560,28 @@ class PhoneAutomationBridgeTest {
   }
 
   @Test
+  fun controlCodeKeyboardModeAcquireAndValidationDelegateToAccessibilityHost() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    val host = FakeAccessibilityHost().apply {
+      suppressControlCodeKeyboardModeResult = true
+      controlCodeKeyboardModeSuppressed = true
+    }
+    PhoneAutomationServiceBridge.bindAccessibilityService(host)
+
+    assertTrue(PhoneAutomationServiceBridge.suppressViviControlCodeKeyboardMode("com.pv.vivi"))
+    assertTrue(PhoneAutomationServiceBridge.isViviControlCodeKeyboardModeSuppressed("com.pv.vivi"))
+    assertEquals(listOf("com.pv.vivi"), host.suppressControlCodeKeyboardModeRequests)
+    assertEquals(listOf("com.pv.vivi"), host.validateControlCodeKeyboardModeRequests)
+  }
+
+  @Test
+  fun controlCodeKeyboardModeRestoreFailsClosedWithoutAccessibilityHost() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+
+    assertFalse(PhoneAutomationServiceBridge.restoreViviControlCodeKeyboardMode("com.pv.vivi"))
+  }
+
+  @Test
   fun keyboardFreeTextActionSuppressesImeBeforeActivatingAndSettingText() {
     val source = readFirstExisting(
       Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
@@ -562,129 +638,93 @@ class PhoneAutomationBridgeTest {
     )
     val restore = source.substringAfter("private fun restoreViviControlCodeKeyboardModeOnMainThread(")
       .substringBefore("private fun nodeAccessibilityLabel(")
+    val restoredBranch = restore.substringAfter("if (markerCleared) {")
+      .substringBefore("return markerCleared")
+    val focusCleanup = source.substringAfter("private fun clearFocusedViviControlCodeInputOnMainThread(")
+      .substringBefore("private fun recoverOwnedViviControlCodeKeyboardModeOnMainThread(")
 
     assertTrue(source.contains("viviControlCodeKeyboardExpectedPackageName = expectedPackageName"))
     assertTrue(restore.contains("?: viviControlCodeKeyboardExpectedPackageName"))
-    assertTrue(restore.contains("AccessibilityNodeInfo.ACTION_CLEAR_FOCUS"))
+    assertTrue(restore.contains("clearFocusedViviControlCodeInputOnMainThread(packageToClear)"))
+    assertTrue(focusCleanup.contains("AccessibilityNodeInfo.ACTION_CLEAR_FOCUS"))
+    assertTrue(focusCleanup.contains("node.refresh()"))
+    assertTrue(focusCleanup.contains("!node.isFocused"))
+    assertTrue(focusCleanup.contains("?: return false"))
     assertFalse(restore.contains("rootForPackage(packageToClear) ?: return false"))
     assertFalse(restore.contains("if (!focusCleared)"))
-    assertTrue(restore.contains("val restored = softKeyboardController.setShowMode(previousMode)"))
-    assertTrue(restore.indexOf("ACTION_CLEAR_FOCUS") < restore.indexOf("softKeyboardController.setShowMode(previousMode)"))
-    assertTrue(restore.indexOf("if (restored)") < restore.indexOf("viviControlCodePreviousKeyboardShowMode = null"))
-    assertTrue(restore.indexOf("if (restored)") < restore.indexOf("viviControlCodeKeyboardExpectedPackageName = null"))
+    assertTrue(restore.contains("if (controller.showMode != SHOW_MODE_HIDDEN)"))
+    assertTrue(restore.contains("clearOwnedViviControlCodeKeyboardModeMarker()"))
+    assertTrue(restore.contains("val restored = controller.setShowMode(previousMode)"))
+    assertTrue(restore.indexOf("clearFocusedViviControlCodeInputOnMainThread(packageToClear)") < restore.indexOf("controller.setShowMode(previousMode)"))
+    assertTrue(restoredBranch.contains("viviControlCodePreviousKeyboardShowMode = null"))
+    assertTrue(restoredBranch.contains("viviControlCodeKeyboardExpectedPackageName = null"))
   }
 
   @Test
-  fun ticketSliderUsesDispatchAcceptanceForContinuingSegments() {
+  fun keyboardSuppressionBlocksNewRequestsUntilCrashRecoveryIsResolved() {
     val source = readFirstExisting(
       Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
       Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
     )
-    val dispatch = source.substringAfter("private fun dispatchTicketSliderStroke(")
-      .substringBefore("override suspend fun openFirstEditableInput(")
+    val connected = source.substringAfter("override fun onServiceConnected()")
+      .substringBefore("override fun onAccessibilityEvent")
+    val unbind = source.substringAfter("override fun onUnbind(")
+      .substringBefore("override suspend fun setBlackoutOverlayVisible")
+    val suppress = source.substringAfter("private fun suppressViviControlCodeKeyboardOnMainThread(")
+      .substringBefore("private fun clearOwnedViviControlCodeKeyboardModeMarker")
+    val recover = source.substringAfter("private fun recoverOwnedViviControlCodeKeyboardModeOnMainThread()")
+      .substringBefore("private fun restoreViviControlCodeKeyboardModeOnMainThread(")
 
-    assertTrue(dispatch.contains("dispatchGesture("))
-    assertTrue(dispatch.contains("return dispatched"))
-    assertTrue(source.contains("StrokeDescription(path, 0L, 120L, true)"))
-    assertTrue(source.contains("lineTo(heldX.toFloat(), y.toFloat())"))
-    assertTrue(source.contains("ticketSliderNextDispatchAtMillis"))
-    assertTrue(source.contains("delay(waitMillis)"))
-    assertTrue(source.contains("willContinue segment"))
-    assertTrue(source.contains("rooted H.264/state proof remains the authoritative completion check"))
-    assertFalse(dispatch.contains("suspendCancellableCoroutine"))
-    assertFalse(dispatch.contains("continuation.resume(true)"))
+    assertTrue(connected.indexOf("bindAccessibilityService(this)") < connected.indexOf("recoverOwnedViviControlCodeKeyboardModeOnMainThread()"))
+    assertTrue(suppress.contains("!viviControlCodeKeyboardRecoveryReady"))
+    assertTrue(suppress.contains("VIVI_CONTROL_CODE_KEYBOARD_MODE_OWNED_KEY"))
+    assertTrue(suppress.indexOf("VIVI_CONTROL_CODE_KEYBOARD_MODE_OWNED_KEY") < suppress.indexOf(".putBoolean("))
+    assertTrue(recover.contains("clearFocusedViviControlCodeInputOnMainThread(VIVI_CONTROL_CODE_PACKAGE)"))
+    assertTrue(recover.indexOf("clearFocusedViviControlCodeInputOnMainThread") < recover.indexOf("controller.setShowMode(previousMode)"))
+    assertTrue(recover.contains("return false"))
+    assertTrue(unbind.indexOf("restoreViviControlCodeKeyboardModeOnMainThread(null)") < unbind.indexOf("syncPanelSleepBrightnessShieldVisibility(false)"))
   }
 
   @Test
-  fun ticketSliderStartInvalidatesAnOrphanedContinuationBeforeReplacement() {
+  fun ticketSliderFullStrokeIsOneIndependentCompletedGesture() {
     val source = readFirstExisting(
       Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
       Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
     )
-    val start = source.substringAfter("override suspend fun startTicketSliderGesture(")
-      .substringBefore("override suspend fun continueTicketSliderGesture(")
+    val fullStroke = source.substringAfter("override suspend fun performTicketSliderFullStroke(")
+      .substringBefore("/** Waits for Android to finish the one full stroke")
 
-    assertTrue(start.contains("if (ticketSliderStroke != null)"))
-    assertTrue(start.contains("val staleGeneration = ticketSliderDispatchGeneration"))
-    assertTrue(start.contains("ticketSliderDispatchGeneration += 1L"))
-    assertTrue(start.contains("ticketSliderStroke = null"))
-    assertTrue(start.contains("ticketSliderNextDispatchAtMillis = 0L"))
-    assertTrue(start.contains("start_recover_stale previous_generation="))
-    assertTrue(start.indexOf("ticketSliderDispatchGeneration += 1L") < start.indexOf("val generation = ++ticketSliderDispatchGeneration"))
-    assertFalse(start.contains("if (ticketSliderStroke != null) return@withContext false"))
-  }
-
-  @Test
-  fun ticketSliderTerminalSegmentWaitsForAndroidCompletion() {
-    val source = readFirstExisting(
-      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
-      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
-    )
-    val end = source.substringAfter("override suspend fun endTicketSliderGesture(")
-      .substringBefore("override suspend fun retryTicketSliderFullStroke(")
-    val terminal = source.substringAfter("private suspend fun dispatchTerminalTicketSliderStroke(")
-      .substringBefore("private suspend fun awaitTerminalTicketSliderStroke(")
-    val callbackWait = source.substringAfter("private suspend fun awaitTerminalTicketSliderStroke(")
-      .substringBefore("private fun dispatchTicketSliderStroke(")
-    val awaiter = source.substringAfter("private class TicketSliderTerminalGestureAwaiter(")
-      .substringBefore("private lateinit var windowManager")
-
-    assertTrue(end.contains("dispatchTerminalTicketSliderStroke("))
-    assertTrue(terminal.contains("awaitTerminalTicketSliderStroke(gesture, reason, generation, timeoutMillis)"))
-    assertFalse(terminal.contains("withTimeoutOrNull"))
-    assertFalse(terminal.contains("suspendCancellableCoroutine"))
-    assertFalse(terminal.contains("object : GestureResultCallback()"))
-    assertTrue(callbackWait.contains("suspendCancellableCoroutine"))
-    assertTrue(callbackWait.contains("TicketSliderTerminalGestureAwaiter(this, reason, generation, continuation)"))
-    assertTrue(callbackWait.contains("continuation.invokeOnCancellation(awaiter)"))
-    assertTrue(callbackWait.contains("awaiter.scheduleTimeout(timeoutMillis)"))
-    assertTrue(callbackWait.contains("dispatchGesture(gesture, awaiter, null)"))
-    assertTrue(callbackWait.contains("TicketSliderTerminalDispatchResult.REJECTED"))
-    assertTrue(awaiter.contains("override fun onCompleted"))
-    assertTrue(awaiter.contains("TicketSliderTerminalDispatchResult.COMPLETED"))
-    assertTrue(awaiter.contains("override fun onCancelled"))
-    assertTrue(awaiter.contains("TicketSliderTerminalDispatchResult.CANCELLED"))
-    assertTrue(awaiter.contains("override fun run()"))
-    assertTrue(awaiter.contains("TicketSliderTerminalDispatchResult.TIMED_OUT"))
-    assertTrue(awaiter.contains("handler.postDelayed(this, timeoutMillis.coerceAtLeast(1L))"))
-    assertTrue(source.contains("terminal_dispatch reason=\$reason generation=\$generation accepted=\$dispatched"))
-    assertTrue(source.contains("terminal_callback reason=\$reason generation=\$generation result="))
-  }
-
-  @Test
-  fun ticketSliderTerminalSegmentNeverDispatchesASecondStroke() {
-    val source = readFirstExisting(
-      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
-      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
-    )
-    val end = source.substringAfter("override suspend fun endTicketSliderGesture(")
-      .substringBefore("override suspend fun retryTicketSliderFullStroke(")
-
-    assertEquals(1, Regex("dispatchTerminalTicketSliderStroke\\(").findAll(end).count())
-    assertTrue(end.contains("reason = \"ticket_slider_end\""))
-    assertFalse(end.contains("TicketSliderTerminalDispatchResult.REJECTED"))
-    assertFalse(end.contains("TICKET_SLIDER_TERMINAL_RETRY_DELAY_MILLIS"))
-    assertFalse(end.contains("val retryPath = Path().apply"))
-    assertFalse(end.contains("moveTo(ticketSliderStartX.toFloat(), ticketSliderStartY.toFloat())"))
-    assertFalse(end.contains("ticket_slider_end_retry"))
-    assertTrue(source.contains("TICKET_SLIDER_CONTINUATION_HANDOFF_GRACE_MILLIS"))
-  }
-
-  @Test
-  fun ticketSliderFreshUnactivatedRetryIsOneIndependentCompletedStroke() {
-    val source = readFirstExisting(
-      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt"),
-      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationAccessibilityService.kt")
-    )
-    val retry = source.substringAfter("override suspend fun retryTicketSliderFullStroke(")
-      .substringBefore("/** Waits for Android to finish the terminal segment")
-
-    assertTrue(retry.contains("if (ticketSliderStroke != null) return@withContext false"))
-    assertTrue(retry.contains("GestureDescription.StrokeDescription("))
-    assertTrue(retry.contains("false"))
-    assertTrue(retry.contains("reason = \"ticket_slider_fresh_unactivated_retry\""))
-    assertTrue(retry.contains("dispatchTerminalTicketSliderStroke("))
-    assertTrue(retry.contains("result == TicketSliderTerminalDispatchResult.COMPLETED"))
+    assertTrue(fullStroke.contains("if (ticketSliderStroke != null)"))
+    assertTrue(fullStroke.contains("TicketSliderGestureDispatchResult.REJECTED"))
+    assertTrue(fullStroke.contains("ticketSliderBrightnessShieldSuspended = true"))
+    assertTrue(fullStroke.contains("ticketSliderBrightnessShieldSuspended = false"))
+    assertTrue(fullStroke.contains("isExpectedPackageFocusedForTicketSlider(expectedPackageName)"))
+    assertTrue(fullStroke.contains("PhoneAutomationServiceBridge.isPanelSleepBrightnessShieldRequested()"))
+    assertTrue(fullStroke.contains("hidePanelSleepBrightnessShield()"))
+    assertTrue(fullStroke.contains("showPanelSleepBrightnessShield()"))
+    assertTrue(fullStroke.indexOf("hidePanelSleepBrightnessShield()") < fullStroke.indexOf("dispatchTerminalTicketSliderStroke("))
+    assertTrue(fullStroke.indexOf("dispatchTerminalTicketSliderStroke(") < fullStroke.indexOf("showPanelSleepBrightnessShield()"))
+    assertTrue(fullStroke.indexOf("val result = try {") < fullStroke.indexOf("delay(TICKET_SLIDER_INPUT_WINDOW_SETTLE_MILLIS)"))
+    assertTrue(fullStroke.contains("TICKET_SLIDER_INPUT_WINDOW_SETTLE_MILLIS"))
+    assertTrue(source.contains("TICKET_SLIDER_INPUT_WINDOW_SETTLE_MILLIS = 120L"))
+    assertTrue(fullStroke.contains("if (!brightnessShieldRestored)"))
+    val shieldSetter = source.substringAfter("private fun setPanelSleepBrightnessShieldVisibleOnMainThread(")
+      .substringBefore("private fun showPanelSleepBrightnessShield()")
+    assertTrue(shieldSetter.contains("visible && ticketSliderBrightnessShieldSuspended"))
+    assertTrue(shieldSetter.contains("return true"))
+    assertEquals(1, Regex("GestureDescription\\.StrokeDescription\\(").findAll(fullStroke).count())
+    assertTrue(fullStroke.contains("durationMillis.coerceIn(700L, 1_100L)"))
+    assertTrue(fullStroke.contains("lineTo(end.first.toFloat(), end.second.toFloat())"))
+    assertTrue(fullStroke.contains("reason = \"ticket_slider_full_stroke\""))
+    assertEquals(1, Regex("dispatchTerminalTicketSliderStroke\\(").findAll(fullStroke).count())
+    assertTrue(fullStroke.contains("} finally {"))
+    assertTrue(fullStroke.contains("ticketSliderStroke = null"))
+    assertFalse(fullStroke.contains("continueStroke("))
+    assertFalse(fullStroke.contains("retry"))
+    assertTrue(fullStroke.contains("TicketSliderTerminalDispatchResult.COMPLETED ->"))
+    assertTrue(fullStroke.contains("TicketSliderTerminalDispatchResult.CANCELLED,"))
+    assertTrue(fullStroke.contains("TicketSliderTerminalDispatchResult.TIMED_OUT ->"))
+    assertTrue(fullStroke.contains("TicketSliderGestureDispatchResult.UNKNOWN"))
   }
 
   @Test
@@ -694,12 +734,14 @@ class PhoneAutomationBridgeTest {
       Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhoneAutomationBridge.kt")
     )
     val bridge = source.substringAfter("object PhoneAutomationServiceBridge")
-    val end = bridge.substringAfter("suspend fun endTicketSliderGesture(")
-      .substringBefore("suspend fun retryTicketSliderFullStroke(")
+    val fullStroke = bridge.substringAfter("suspend fun performTicketSliderFullStroke(")
+      .substringBefore("suspend fun performBack(")
 
-    assertTrue(end.contains("timeoutMillis.accessibilityCallTimeoutMillis()"))
+    assertTrue(fullStroke.contains("timeoutMillis.accessibilityCallTimeoutMillis()"))
+    assertTrue(fullStroke.contains("TicketSliderGestureDispatchResult.UNKNOWN"))
+    assertEquals(1, Regex("service\\.performTicketSliderFullStroke\\(").findAll(fullStroke).count())
     assertFalse(bridge.contains("terminalGestureCallTimeoutMillis"))
-    assertFalse(end.contains("* 2L"))
+    assertFalse(fullStroke.contains("* 2L"))
     assertTrue(source.contains("private const val TICKET_SLIDER_DIAGNOSTIC_TAG = \"PixelTicketSlider\""))
     assertTrue(source.contains("Log.i(TICKET_SLIDER_DIAGNOSTIC_TAG, message.take(800))"))
   }
@@ -750,9 +792,21 @@ class PhoneAutomationBridgeTest {
   }
 }
 
+private data class RecordedTicketSliderFullStroke(
+  val expectedPackageName: String,
+  val startX: Int,
+  val startY: Int,
+  val endX: Int,
+  val endY: Int,
+  val durationMillis: Long,
+  val timeoutMillis: Long
+)
+
 private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
   val syncedVisibility = mutableListOf<Boolean>()
   val requestedVisibility = mutableListOf<Boolean>()
+  val syncedPanelSleepBrightnessShieldVisibility = mutableListOf<Boolean>()
+  val requestedPanelSleepBrightnessShieldVisibility = mutableListOf<Boolean>()
   val selectorPresencePackages = mutableListOf<String>()
   var selectorPresence = false
   var visibleNodes: List<PhoneAutomationVisibleNode> = emptyList()
@@ -764,13 +818,18 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
   var firstEditableTextWithoutKeyboardResult = false
   val controlCodeSubmitWithoutKeyboardRequests = mutableListOf<Pair<String, String>>()
   var controlCodeSubmitWithoutKeyboardResult = false
+  val suppressControlCodeKeyboardModeRequests = mutableListOf<String>()
+  var suppressControlCodeKeyboardModeResult = false
+  val validateControlCodeKeyboardModeRequests = mutableListOf<String>()
+  var controlCodeKeyboardModeSuppressed = false
   val restoreControlCodeKeyboardModeRequests = mutableListOf<String>()
   var restoreControlCodeKeyboardModeResult = true
   var backResult = false
   var backCalls = 0
-  var ticketSliderStartResult = false
-  var ticketSliderStartNeverReturns = false
-  var ticketSliderStartCalls = 0
+  var ticketSliderFullStrokeResult = TicketSliderGestureDispatchResult.REJECTED
+  var ticketSliderFullStrokeNeverReturns = false
+  var ticketSliderFullStrokeCalls = 0
+  val ticketSliderFullStrokeRequests = mutableListOf<RecordedTicketSliderFullStroke>()
 
   override fun syncBlackoutOverlayVisibility(visible: Boolean): Boolean {
     syncedVisibility += visible
@@ -779,6 +838,16 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
 
   override suspend fun setBlackoutOverlayVisible(visible: Boolean): Boolean {
     requestedVisibility += visible
+    return true
+  }
+
+  override fun syncPanelSleepBrightnessShieldVisibility(visible: Boolean): Boolean {
+    syncedPanelSleepBrightnessShieldVisibility += visible
+    return true
+  }
+
+  override suspend fun setPanelSleepBrightnessShieldVisible(visible: Boolean): Boolean {
+    requestedPanelSleepBrightnessShieldVisibility += visible
     return true
   }
 
@@ -839,6 +908,16 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
     return controlCodeSubmitWithoutKeyboardResult
   }
 
+  override suspend fun suppressViviControlCodeKeyboardMode(expectedPackageName: String): Boolean {
+    suppressControlCodeKeyboardModeRequests += expectedPackageName
+    return suppressControlCodeKeyboardModeResult
+  }
+
+  override suspend fun isViviControlCodeKeyboardModeSuppressed(expectedPackageName: String): Boolean {
+    validateControlCodeKeyboardModeRequests += expectedPackageName
+    return controlCodeKeyboardModeSuppressed
+  }
+
   override suspend fun restoreViviControlCodeKeyboardMode(expectedPackageName: String): Boolean {
     restoreControlCodeKeyboardModeRequests += expectedPackageName
     return restoreControlCodeKeyboardModeResult
@@ -859,14 +938,27 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
     timeoutMillis: Long
   ): Boolean = false
 
-  override suspend fun startTicketSliderGesture(
+  override suspend fun performTicketSliderFullStroke(
+    expectedPackageName: String,
     startX: Int,
     startY: Int,
+    endX: Int,
+    endY: Int,
+    durationMillis: Long,
     timeoutMillis: Long
-  ): Boolean {
-    ticketSliderStartCalls += 1
-    if (ticketSliderStartNeverReturns) awaitCancellation()
-    return ticketSliderStartResult
+  ): TicketSliderGestureDispatchResult {
+    ticketSliderFullStrokeCalls += 1
+    ticketSliderFullStrokeRequests += RecordedTicketSliderFullStroke(
+      expectedPackageName = expectedPackageName,
+      startX = startX,
+      startY = startY,
+      endX = endX,
+      endY = endY,
+      durationMillis = durationMillis,
+      timeoutMillis = timeoutMillis
+    )
+    if (ticketSliderFullStrokeNeverReturns) awaitCancellation()
+    return ticketSliderFullStrokeResult
   }
 
   override suspend fun performBack(): Boolean {
