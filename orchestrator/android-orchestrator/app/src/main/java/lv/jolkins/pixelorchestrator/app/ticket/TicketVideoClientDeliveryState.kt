@@ -1,7 +1,5 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
-import java.util.ArrayDeque
-
 internal data class TicketVideoDeliveryFrame(
   val bytes: ByteArray,
   val keyFrame: Boolean,
@@ -13,7 +11,7 @@ internal data class TicketVideoDeliveryDecision(
   val frameToWrite: TicketVideoDeliveryFrame? = null,
   val writeToken: Long = 0L,
   val droppedFrames: Int = 0,
-  val requestKeyFrame: Boolean = false,
+  val requestImmediateRefresh: Boolean = false,
   val closeSlowClient: Boolean = false,
   val dropReason: String? = null,
   val blockedMillis: Long = 0L
@@ -25,53 +23,38 @@ internal data class TicketVideoDeliverySnapshot(
   val writeInFlight: Boolean,
   val inFlightSequence: Long,
   val inFlightWriteToken: Long,
-  val queuedFrames: Int,
-  val queuedBytes: Int,
-  val waitingForKeyFrame: Boolean,
-  val lastAdmittedEpoch: Long,
-  val lastAdmittedSequence: Long,
-  val keyFrameRequestPending: Boolean,
+  val pendingFrames: Int,
+  val pendingBytes: Int,
+  val pendingSequence: Long,
+  val latestAcceptedSequence: Long,
   val closed: Boolean
 )
 
 /**
- * Per-viewer, bounded delivery state for already-numbered Ticket video frames.
+ * Per-viewer delivery state for the fixed all-intra Ticket stream.
  *
- * A single writer drains the queue in order. Normal encoder bursts therefore retain every
- * admitted sequence instead of replacing a one-slot "latest" frame. If the bounded queue really
- * overflows, dependent deltas are discarded together and delivery resumes only from a keyframe.
+ * A client has one write in flight and, at most, the newest pending independent frame. Replacing
+ * an older pending frame prevents a slow viewer from building latency while the generation and
+ * write-token guards keep obsolete asynchronous work from affecting a replacement connection.
  */
 internal class TicketVideoClientDeliveryState(
   internal val expectedEpoch: Long,
-  private val maxQueuedFrames: Int,
-  private val maxQueuedBytes: Int,
-  private val pendingMaxAgeMillis: Long,
+  private val maxFrameBytes: Int,
   private val slowCloseMillis: Long
 ) {
-  private data class QueuedFrame(
-    val frame: TicketVideoDeliveryFrame,
-    val queuedAtMillis: Long
-  )
-
-  private val queued = ArrayDeque<QueuedFrame>()
-  private var queuedBytes = 0
+  private var pendingFrame: TicketVideoDeliveryFrame? = null
   private var configReady = false
   private var inFlightSinceMillis = 0L
   private var inFlightSequence = 0L
   private var inFlightWriteToken = 0L
   private var nextWriteToken = 0L
-  private var waitingForKeyFrame = true
-  private var lastAdmittedEpoch = 0L
-  private var lastAdmittedSequence = 0L
-  private var keyFrameRequestPending = false
+  private var latestAcceptedSequence = 0L
   private var closed = false
 
   init {
     require(expectedEpoch >= 0L)
-    require(maxQueuedFrames > 0)
-    require(maxQueuedBytes > 0)
-    require(pendingMaxAgeMillis >= 0L)
-    require(slowCloseMillis >= pendingMaxAgeMillis)
+    require(maxFrameBytes > 0)
+    require(slowCloseMillis > 0L)
   }
 
   @Synchronized
@@ -102,107 +85,43 @@ internal class TicketVideoClientDeliveryState(
     if (!configReady) {
       return TicketVideoDeliveryDecision(droppedFrames = 1, dropReason = DROP_CONFIG_NOT_READY)
     }
-    if (frame.epoch != expectedEpoch) {
-      return TicketVideoDeliveryDecision(
-        droppedFrames = 1,
-        requestKeyFrame = armKeyFrameRequest(),
-        dropReason = DROP_EPOCH_MISMATCH
-      )
-    }
     if (inFlightSinceMillis > 0L && nowMillis - inFlightSinceMillis >= slowCloseMillis) {
-      val blockedMillis = (nowMillis - inFlightSinceMillis).coerceAtLeast(0L)
       return closeSlowWrite(
-        blockedMillis = blockedMillis,
+        blockedMillis = (nowMillis - inFlightSinceMillis).coerceAtLeast(0L),
         additionalDroppedFrames = 2
       )
     }
-    if (waitingForKeyFrame && !frame.keyFrame) {
+    if (frame.epoch != expectedEpoch) {
+      return TicketVideoDeliveryDecision(droppedFrames = 1, dropReason = DROP_EPOCH_MISMATCH)
+    }
+    if (!frame.keyFrame) {
       return TicketVideoDeliveryDecision(
         droppedFrames = 1,
-        requestKeyFrame = armKeyFrameRequest(),
-        dropReason = DROP_WAITING_FOR_KEYFRAME
+        requestImmediateRefresh = true,
+        dropReason = DROP_UNEXPECTED_DELTA
       )
     }
-    if (
-      frame.keyFrame &&
-      lastAdmittedEpoch == frame.epoch &&
-      lastAdmittedSequence > 0L &&
-      frame.sequence <= lastAdmittedSequence
-    ) {
+    if (latestAcceptedSequence > 0L && frame.sequence <= latestAcceptedSequence) {
+      return TicketVideoDeliveryDecision(droppedFrames = 1, dropReason = DROP_STALE_FRAME)
+    }
+    if (frame.bytes.size > maxFrameBytes) {
       return TicketVideoDeliveryDecision(
         droppedFrames = 1,
-        requestKeyFrame = armKeyFrameRequest(),
-        dropReason = DROP_STALE_KEYFRAME
+        requestImmediateRefresh = true,
+        dropReason = DROP_FRAME_TOO_LARGE
       )
     }
-    if (
-      !frame.keyFrame &&
-      (
-        lastAdmittedEpoch != frame.epoch ||
-        lastAdmittedSequence <= 0L ||
-        frame.sequence != lastAdmittedSequence + 1L
-      )
-    ) {
-      val dropped = queued.size + 1
-      clearQueued()
-      waitingForKeyFrame = true
-      lastAdmittedEpoch = 0L
-      lastAdmittedSequence = 0L
-      return TicketVideoDeliveryDecision(
-        droppedFrames = dropped,
-        requestKeyFrame = armKeyFrameRequest(),
-        dropReason = DROP_SEQUENCE_GAP
-      )
-    }
-    if (frame.bytes.size > maxQueuedBytes) {
-      val dropped = queued.size + 1
-      clearQueued()
-      waitingForKeyFrame = true
-      lastAdmittedEpoch = 0L
-      lastAdmittedSequence = 0L
-      return TicketVideoDeliveryDecision(
-        droppedFrames = dropped,
-        requestKeyFrame = armKeyFrameRequest(),
-        dropReason = DROP_QUEUE_OVERFLOW
-      )
-    }
+
+    latestAcceptedSequence = frame.sequence
     if (inFlightSinceMillis <= 0L) {
-      if (frame.keyFrame) acceptKeyFrame()
-      lastAdmittedEpoch = frame.epoch
-      lastAdmittedSequence = frame.sequence
       return startWrite(frame = frame, nowMillis = nowMillis)
     }
 
-    val fits = queued.size < maxQueuedFrames && queuedBytes + frame.bytes.size <= maxQueuedBytes
-    if (fits) {
-      if (frame.keyFrame) acceptKeyFrame()
-      queued.addLast(QueuedFrame(frame = frame, queuedAtMillis = nowMillis))
-      queuedBytes += frame.bytes.size
-      lastAdmittedEpoch = frame.epoch
-      lastAdmittedSequence = frame.sequence
-      return TicketVideoDeliveryDecision()
-    }
-
-    val dropped = queued.size
-    clearQueued()
-    if (frame.keyFrame) {
-      acceptKeyFrame()
-      queued.addLast(QueuedFrame(frame = frame, queuedAtMillis = nowMillis))
-      queuedBytes = frame.bytes.size
-      lastAdmittedEpoch = frame.epoch
-      lastAdmittedSequence = frame.sequence
-      return TicketVideoDeliveryDecision(
-        droppedFrames = dropped,
-        dropReason = DROP_QUEUE_OVERFLOW
-      )
-    }
-    waitingForKeyFrame = true
-    lastAdmittedEpoch = 0L
-    lastAdmittedSequence = 0L
+    val dropped = if (pendingFrame == null) 0 else 1
+    pendingFrame = frame
     return TicketVideoDeliveryDecision(
-      droppedFrames = dropped + 1,
-      requestKeyFrame = armKeyFrameRequest(),
-      dropReason = DROP_QUEUE_OVERFLOW
+      droppedFrames = dropped,
+      dropReason = DROP_PENDING_REPLACED.takeIf { dropped > 0 }
     )
   }
 
@@ -226,53 +145,18 @@ internal class TicketVideoClientDeliveryState(
     inFlightSequence = 0L
     inFlightWriteToken = 0L
     if (!succeeded) {
-      val dropped = queued.size + 1
-      clearQueued()
+      val dropped = pendingFrameCount() + 1
+      pendingFrame = null
       closed = true
-      lastAdmittedEpoch = 0L
-      lastAdmittedSequence = 0L
-      keyFrameRequestPending = false
+      latestAcceptedSequence = 0L
       return TicketVideoDeliveryDecision(
         droppedFrames = dropped,
         dropReason = DROP_WRITE_FAILED
       )
     }
-    if (queued.isEmpty()) return TicketVideoDeliveryDecision()
 
-    val oldest = requireNotNull(queued.peekFirst())
-    if (nowMillis - oldest.queuedAtMillis > pendingMaxAgeMillis) {
-      val freshKeyFrameIndex = queued.indexOfLast { queuedFrame ->
-        queuedFrame.frame.keyFrame && nowMillis - queuedFrame.queuedAtMillis <= pendingMaxAgeMillis
-      }
-      if (freshKeyFrameIndex < 0) {
-        val dropped = queued.size
-        clearQueued()
-        waitingForKeyFrame = true
-        lastAdmittedEpoch = 0L
-        lastAdmittedSequence = 0L
-        return TicketVideoDeliveryDecision(
-          droppedFrames = dropped,
-          requestKeyFrame = armKeyFrameRequest(),
-          dropReason = DROP_QUEUE_STALE
-        )
-      }
-      var dropped = 0
-      repeat(freshKeyFrameIndex) {
-        removeFirstQueued()
-        dropped += 1
-      }
-      val next = removeFirstQueued().frame
-      waitingForKeyFrame = false
-      keyFrameRequestPending = false
-      return startWrite(
-        frame = next,
-        nowMillis = nowMillis,
-        droppedFrames = dropped,
-        dropReason = DROP_QUEUE_STALE
-      )
-    }
-
-    val next = removeFirstQueued().frame
+    val next = pendingFrame ?: return TicketVideoDeliveryDecision()
+    pendingFrame = null
     return startWrite(frame = next, nowMillis = nowMillis)
   }
 
@@ -300,46 +184,30 @@ internal class TicketVideoClientDeliveryState(
     inFlightSinceMillis = 0L
     inFlightSequence = 0L
     inFlightWriteToken = 0L
-    lastAdmittedSequence = 0L
-    lastAdmittedEpoch = 0L
-    keyFrameRequestPending = false
-    clearQueued()
+    latestAcceptedSequence = 0L
+    pendingFrame = null
   }
 
   @Synchronized
   fun snapshot(): TicketVideoDeliverySnapshot {
+    val pending = pendingFrame
     return TicketVideoDeliverySnapshot(
       expectedEpoch = expectedEpoch,
       configReady = configReady,
       writeInFlight = inFlightSinceMillis > 0L,
       inFlightSequence = inFlightSequence,
       inFlightWriteToken = inFlightWriteToken,
-      queuedFrames = queued.size,
-      queuedBytes = queuedBytes,
-      waitingForKeyFrame = waitingForKeyFrame,
-      lastAdmittedEpoch = lastAdmittedEpoch,
-      lastAdmittedSequence = lastAdmittedSequence,
-      keyFrameRequestPending = keyFrameRequestPending,
+      pendingFrames = pendingFrameCount(),
+      pendingBytes = pending?.bytes?.size ?: 0,
+      pendingSequence = pending?.sequence ?: 0L,
+      latestAcceptedSequence = latestAcceptedSequence,
       closed = closed
     )
   }
 
-  private fun removeFirstQueued(): QueuedFrame {
-    val removed = queued.removeFirst()
-    queuedBytes = (queuedBytes - removed.frame.bytes.size).coerceAtLeast(0)
-    return removed
-  }
-
-  private fun clearQueued() {
-    queued.clear()
-    queuedBytes = 0
-  }
-
   private fun startWrite(
     frame: TicketVideoDeliveryFrame,
-    nowMillis: Long,
-    droppedFrames: Int = 0,
-    dropReason: String? = null
+    nowMillis: Long
   ): TicketVideoDeliveryDecision {
     nextWriteToken = if (nextWriteToken == Long.MAX_VALUE) 1L else nextWriteToken + 1L
     inFlightSinceMillis = nowMillis.coerceAtLeast(1L)
@@ -347,30 +215,21 @@ internal class TicketVideoClientDeliveryState(
     inFlightWriteToken = nextWriteToken
     return TicketVideoDeliveryDecision(
       frameToWrite = frame,
-      writeToken = inFlightWriteToken,
-      droppedFrames = droppedFrames,
-      dropReason = dropReason
+      writeToken = inFlightWriteToken
     )
-  }
-
-  private fun acceptKeyFrame() {
-    waitingForKeyFrame = false
-    keyFrameRequestPending = false
   }
 
   private fun closeSlowWrite(
     blockedMillis: Long,
     additionalDroppedFrames: Int
   ): TicketVideoDeliveryDecision {
-    val dropped = queued.size + additionalDroppedFrames
-    clearQueued()
+    val dropped = pendingFrameCount() + additionalDroppedFrames
+    pendingFrame = null
     closed = true
     inFlightSinceMillis = 0L
     inFlightSequence = 0L
     inFlightWriteToken = 0L
-    lastAdmittedSequence = 0L
-    lastAdmittedEpoch = 0L
-    keyFrameRequestPending = false
+    latestAcceptedSequence = 0L
     return TicketVideoDeliveryDecision(
       droppedFrames = dropped,
       closeSlowClient = true,
@@ -379,22 +238,17 @@ internal class TicketVideoClientDeliveryState(
     )
   }
 
-  private fun armKeyFrameRequest(): Boolean {
-    if (keyFrameRequestPending) return false
-    keyFrameRequestPending = true
-    return true
-  }
+  private fun pendingFrameCount(): Int = if (pendingFrame == null) 0 else 1
 
   companion object {
     const val DROP_CLOSED = "closed"
     const val DROP_CONFIG_NOT_READY = "config_not_ready"
-    const val DROP_WAITING_FOR_KEYFRAME = "waiting_for_keyframe"
-    const val DROP_STALE_KEYFRAME = "stale_keyframe"
     const val DROP_EPOCH_MISMATCH = "epoch_mismatch"
-    const val DROP_SEQUENCE_GAP = "sequence_gap"
+    const val DROP_UNEXPECTED_DELTA = "unexpected_delta"
+    const val DROP_STALE_FRAME = "stale_frame"
+    const val DROP_FRAME_TOO_LARGE = "frame_too_large"
+    const val DROP_PENDING_REPLACED = "pending_replaced"
     const val DROP_SLOW_CLIENT = "slow_client"
-    const val DROP_QUEUE_OVERFLOW = "queue_overflow"
-    const val DROP_QUEUE_STALE = "queue_stale"
     const val DROP_WRITE_FAILED = "write_failed"
   }
 }

@@ -91,7 +91,7 @@ The module registry and module manifests are the source of truth for ownership. 
 | `ddns` | `orchestrator/android-orchestrator` | job | `job` | Runs sync entrypoint and records last-sync state. |
 | `remote` | none (retired with DNS) | none | none | No longer aliases DNS release ownership. |
 | `management` | `orchestrator/android-orchestrator` | synthetic health | `derived` from `vpn` | Represents management reachability. |
-| `runtime_cleanup` | `orchestrator/android-orchestrator` | job | `job` | Weekly Monday 03:00 allowlisted cleanup; uses an approximate idle alarm when exact-alarm permission is unavailable. A separate narrow hourly guard enforces the root-command-history ceiling. |
+| `runtime_cleanup` | `orchestrator/android-orchestrator` | job | `job` | Weekly Monday 03:00 cleanup owns 30-day artifacts and releases. A frequent lane runs immediately and hourly for root history, 24-hour action receipts, and bounded allowlisted logs. |
 | `train_bot` | `workloads/train-bot` | rooted service | `artifact_release` | Uses immutable releases under `/apps/train-bot/releases`. |
 | `satiksme_bot` | `workloads/satiksme-bot` | rooted service | `artifact_release` | Uses immutable releases under `/apps/satiksme-bot/releases`. |
 | `site_notifier` | `workloads/site-notifications` | rooted service | `artifact_release` | Uses immutable releases under `/apps/site-notifications/releases`. |
@@ -113,7 +113,7 @@ Use the narrowest action that matches the intended mutation.
 
 Host-side deployment uses three explicit profiles:
 
-- `fast`: the inner development lane. It defaults to orchestrator-only scope, reuses current APK and runtime artifacts when their content hashes match, performs local readiness checks, and records per-phase timings from a monotonic clock. A direct `redeploy_component ticket_screen` selects this profile when no profile was supplied, so the normal Ticket update path stays below its one-minute budget; other actions still default to `standard`. Timing telemetry contains only safe run metadata and is handed to the sibling deployment reporter asynchronously, so it cannot delay or change a deploy result; interrupted runs are marked `cancelled` while preserving their signal exit code. For `redeploy_component ticket_screen`, it keeps the mutation lock, target asset sync, runtime-input write, restart, and local `/api/v1/health` proof, but intentionally skips unrelated full-system/network probes; use `standard` or `full` when cross-component validation is required.
+- `fast`: the inner development lane. It defaults to orchestrator-only scope, reuses current APK and runtime artifacts when their content hashes match, performs local readiness checks, and records per-phase timings from a monotonic clock. A direct `redeploy_component ticket_screen` selects this profile when no profile was supplied, so the normal Ticket update path stays below its one-minute budget; other actions still default to `standard`. Timing telemetry contains only safe run metadata and is handed to the sibling deployment reporter asynchronously, so it cannot delay or change a deploy result; interrupted runs are marked `cancelled` while preserving their signal exit code. For `redeploy_component ticket_screen`, it keeps the mutation lock, target asset sync, runtime-input write, restart, and local `/api/v1/health` proof, but intentionally skips unrelated full-system/network probes. The host wrapper trusts artifact-backed embedded proof after a mutating Ticket deploy; validate-only runs and non-artifact fallbacks use `health_component ticket_screen`. Use `standard` or `full` when cross-component validation is required.
 - `standard`: the normal targeted deployment lane. It builds and tests the changed scope, applies it, and checks the affected component without running every destructive or external probe.
 - `full`: the release-assurance lane. It packages the complete selected runtime set, runs strict checks, and performs retention cleanup.
 
@@ -132,7 +132,7 @@ Release modes:
 - `derived`: health/update surface owned by another component.
 - `asset_refresh`: component-owned asset refresh without a release artifact, if a future module declares it.
 
-Deployment payloads use one content-addressed device store at `/data/local/pixel-stack/conf/runtime/artifacts/sha256/<sha256>`. Runtime and component manifests reference that canonical path; a deploy transfers only a missing hash, verifies every hash before atomically activating the new manifest, and removes interrupted staging on exit. The active manifest and exactly one previous manifest protect the active and rollback source artifacts. The Android installer deletes its app-private staging copy in a `finally` path after success or failure. Retired DNS artifacts are excluded from normal runtime packaging and cannot be recreated by bootstrap.
+Deployment payloads use one content-addressed device store at `/data/local/pixel-stack/conf/runtime/artifacts/sha256/<sha256>`. Runtime and component manifests reference that canonical path; a deploy transfers only a missing hash, verifies every hash before atomically activating the new manifest, and removes interrupted staging on exit. The active manifest always exists after the first successful activation. A previous manifest exists only after a distinct active manifest is successfully superseded and protects that one rollback generation; identical restaging does not manufacture a false rollback generation. The Android installer deletes its app-private staging copy in a `finally` path after success or failure. Retired DNS artifacts are excluded from normal runtime packaging and cannot be recreated by bootstrap.
 
 Operational details live in [ROOT_OPERATIONS](../runbooks/ROOT_OPERATIONS.md). Module-specific overlays live under `docs/runbooks/`.
 
@@ -148,6 +148,7 @@ Canonical evidence locations:
 - `ops/reports/`: dated analysis and measurement reports.
 - `standards/schemas/`: observability event and health schemas.
 - `/data/local/pixel-stack/run/orchestrator-action-results`: short-lived on-device action results. A confirmed consumer deletes them immediately; interrupted consumers have a 24-hour fallback.
+- `/data/local/pixel-stack/run/runtime-maintenance-latest.json`: one atomic, path-free result for the immediate/hourly maintenance lane, including its limits, post-run sizes, bounded category totals, and deferred or failed state.
 - `/data/local/pixel-stack/logs`: unavoidable allowlisted service logs only. Each known process keeps one 1 MiB active file and one 1 MiB rotation, with a 32 MiB total stack ceiling.
 - `/data/local/pixel-stack/logs/events/cleanup-*.json`: exactly one latest cleanup summary, containing counts and reclaimed bytes but no path lists.
 - `operational-logging-prod.operationallog_event`: the single private operational-history data table for deployment, general Pixel, and Ticket diagnostic events. General Pixel events retain fixed enums/scalars and database-time 24-hour expiry. Ticket application/control state remains in `ticket-remote-prod-v3`; only bounded Ticket diagnostics use the shared logging table.
@@ -172,13 +173,15 @@ These boundaries are architectural constraints:
 - Do not treat public and Pixel-local ticket surfaces as the same deploy target.
 - Do not clear browser profiles, cookies, or stored auth state unless explicitly requested.
 - Runtime cleanup must remain allowlisted and protected-path driven. It must not delete active runtime artifacts, chroots, current releases, state, run, conf, ssh, vpn, `/data/app`, or Termux repo roots.
-- Root-command history is inspected hourly and rotated above 32 MiB with root re-verification and rollback of interrupted moves. Cleanup never changes root authorization.
+- Frequent maintenance runs immediately when the supervisor starts and hourly thereafter. If the runtime mutation lock is occupied, it records the deferral and retries once after 60 seconds. It rotates root-command history above 32 MiB with overflow-safe DB/WAL/SHM accounting and root re-verification, removes action receipts older than 24 hours, and enforces one-MiB allowlisted log and 32-MiB aggregate limits. Cleanup never changes root authorization.
 - Ticket hierarchy XML is transient only: known filenames are swept at Ticket startup and deleted on success, failure, timeout, or cancellation.
 - When touch brightness is enabled, it is the sole owner of physical panel brightness, physical-touch timing, and power-button wake rebound. Ticket brightness guards and other screen guards must park instead of writing the panel.
 
 ## Architecture Update Notes
 
 Future agents should append short notes here only when a change affects the whole-stack architecture but does not yet fit a stable section above. Promote recurring notes into the main sections during cleanup.
+
+- 2026-08-29: Frequent maintenance now replaces the root-history-only hourly loop. It synchronizes its owned asset, runs immediately and hourly with one lock-deferral retry, covers 24-hour action receipts and bounded allowlisted logs, and stores one path-free latest result. Root-history byte accounting is safe above 2 GiB. Ticket wrapper deploys no longer append unrelated global health, supervisor command telemetry is terminal and monotonic, and scheduled automation wake bookkeeping is not labeled as a measured manual action.
 
 - 2026-05-03: `ticket_screen` auto-start is now governed by a persisted Android toggle instead of generic supervisor auto-start. This keeps OFF truly stopped and ON ready after reboot without forcing ViVi or stream capture.
 - 2026-05-05: Root executor timeouts now clean up shell child process trees, and stable ticket readiness checks are throttled once the local server and tunnel are already ready. This prevents idle health probes from leaving CPU-burning orphan processes.

@@ -6,7 +6,7 @@ import org.junit.Test
 
 class TicketEncoderOutputLivenessTest {
   @Test
-  fun secondSpacedScheduledStaticMissRequestsExactlyOneRecoveryUntilOutputResumes() {
+  fun secondSpacedScheduledFixedCadenceMissRequestsExactlyOneRecoveryUntilOutputResumes() {
     val liveness = TicketEncoderOutputLiveness()
 
     assertFalse(note(liveness, atMillis = 1_000L))
@@ -20,48 +20,30 @@ class TicketEncoderOutputLivenessTest {
   }
 
   @Test
-  fun startupAndHigherCadenceMissesNeverRequestStaticRecovery() {
+  fun startupWarmupMissesNeverRequestRecovery() {
     val liveness = TicketEncoderOutputLiveness()
 
     repeat(3) { index ->
       val atMillis = index * 1_000L
       assertFalse(note(liveness, steadyState = false, atMillis = atMillis))
-      assertFalse(note(liveness, targetFps = TicketCaptureCadenceScheduler.MODERATE_FPS, atMillis = atMillis + 100L))
-      assertFalse(note(liveness, targetFps = TicketCaptureCadenceScheduler.ACTIVE_FPS, atMillis = atMillis + 200L))
     }
 
-    assertFalse(
-      note(
-        liveness,
-        targetFps = TicketCaptureCadenceScheduler.ACTIVE_FPS,
-        outputs = 1,
-        atMillis = 3_000L
-      )
-    )
+    assertFalse(note(liveness, outputs = 1, atMillis = 3_000L))
     assertFalse(note(liveness, atMillis = 4_000L))
     assertTrue(note(liveness, atMillis = 5_000L))
   }
 
   @Test
-  fun armedRecoverySurvivesCadenceAndFragmentProgressUntilCompleteMediaOutput() {
+  fun armedRecoverySurvivesWarmupAndFragmentProgressUntilCompleteMediaOutput() {
     val liveness = TicketEncoderOutputLiveness()
 
     assertFalse(note(liveness, atMillis = 1_000L))
     assertTrue(note(liveness, atMillis = 2_000L))
-    assertFalse(note(liveness, madeCodecProgress = true, scheduledCadenceDrain = false, atMillis = 2_100L))
-    assertFalse(note(liveness, targetFps = TicketCaptureCadenceScheduler.MODERATE_FPS, atMillis = 2_200L))
-    assertFalse(note(liveness, targetFps = TicketCaptureCadenceScheduler.ACTIVE_FPS, atMillis = 2_300L))
+    assertFalse(note(liveness, madeCodecProgress = true, scheduledPeriodicDrain = false, atMillis = 2_100L))
     assertFalse(note(liveness, steadyState = false, atMillis = 2_400L))
     assertFalse(note(liveness, atMillis = 3_000L))
 
-    assertFalse(
-      note(
-        liveness,
-        targetFps = TicketCaptureCadenceScheduler.MODERATE_FPS,
-        outputs = 1,
-        atMillis = 3_100L
-      )
-    )
+    assertFalse(note(liveness, outputs = 1, atMillis = 3_100L))
     assertFalse(note(liveness, atMillis = 4_000L))
     assertTrue(note(liveness, atMillis = 5_000L))
   }
@@ -74,7 +56,7 @@ class TicketEncoderOutputLivenessTest {
       assertFalse(
         note(
           liveness,
-          scheduledCadenceDrain = false,
+          scheduledPeriodicDrain = false,
           atMillis = 100L + index * 20L
         )
       )
@@ -84,7 +66,7 @@ class TicketEncoderOutputLivenessTest {
       assertFalse(
         note(
           liveness,
-          scheduledCadenceDrain = false,
+          scheduledPeriodicDrain = false,
           atMillis = 1_010L + index * 20L
         )
       )
@@ -95,7 +77,7 @@ class TicketEncoderOutputLivenessTest {
     assertFalse(
       note(
         liveness,
-        scheduledCadenceDrain = false,
+        scheduledPeriodicDrain = false,
         outputs = 1,
         atMillis = 2_100L
       )
@@ -114,7 +96,7 @@ class TicketEncoderOutputLivenessTest {
     assertFalse(
       note(
         liveness,
-        scheduledCadenceDrain = false,
+        scheduledPeriodicDrain = false,
         madeCodecProgress = true,
         atMillis = 1_600L
       )
@@ -132,16 +114,14 @@ class TicketEncoderOutputLivenessTest {
 
   private fun note(
     liveness: TicketEncoderOutputLiveness,
-    targetFps: Int = TicketCaptureCadenceScheduler.STATIC_FPS,
     steadyState: Boolean = true,
-    scheduledCadenceDrain: Boolean = true,
+    scheduledPeriodicDrain: Boolean = true,
     madeCodecProgress: Boolean = false,
     outputs: Int = 0,
     atMillis: Long
   ): Boolean = liveness.noteDrain(
-    targetFps,
     steadyState,
-    scheduledCadenceDrain,
+    scheduledPeriodicDrain,
     madeCodecProgress,
     outputs,
     atMillis

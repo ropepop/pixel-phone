@@ -7,5 +7,6 @@ data class FacadeOperationResult(
   val message: String,
   val healthSnapshot: HealthSnapshot? = null,
   val outputPath: String = "",
-  val cleanupSummary: CleanupSummary? = null
+  val cleanupSummary: CleanupSummary? = null,
+  val deferred: Boolean = false
 )

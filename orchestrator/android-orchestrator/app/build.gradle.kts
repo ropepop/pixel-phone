@@ -84,11 +84,19 @@ val buildTicketRootKeyboard by tasks.registering(Exec::class) {
   commandLine(buildScript.asFile.absolutePath, ticketRootKeyboardAsset.get().asFile.absolutePath)
 }
 
+val checkComponentRegistry by tasks.registering(Exec::class) {
+  val registry = layout.projectDirectory.file("../../modules/registry/modules.yaml")
+  val generatedAsset = layout.projectDirectory.file("src/main/assets/runtime/component-registry.json")
+  val generator = layout.projectDirectory.file("../../../tools/import/sync_component_registry.py")
+  inputs.files(registry, generatedAsset, generator)
+  commandLine("python3", generator.asFile.absolutePath, "--check")
+}
+
 android.sourceSets.getByName("main").assets.srcDir(ticketRootKeyboardAssetDir)
 tasks.matching { task ->
   task.name.startsWith("merge") && task.name.endsWith("Assets") || task.name.contains("Lint", ignoreCase = true)
 }.configureEach {
-  dependsOn(buildTicketRootKeyboard)
+  dependsOn(buildTicketRootKeyboard, checkComponentRegistry)
 }
 
 kotlin {

@@ -1,7 +1,7 @@
 package lv.jolkins.pixelorchestrator.app.ticket;
 
 /**
- * Requests one bounded sync-frame recovery when the static encoder stops producing media.
+ * Requests one bounded sync-frame recovery when the fixed one-FPS encoder stops producing media.
  *
  * <p>At one frame per second, one empty dequeue can be ordinary encoder latency: the next
  * scheduled drain can still collect that output. Two consecutive steady-state captures without a
@@ -9,24 +9,22 @@ package lv.jolkins.pixelorchestrator.app.ticket;
  * resumes so the helper cannot create a keyframe or immediate-capture storm.</p>
  */
 final class TicketEncoderOutputLiveness {
-  private static final int STATIC_EMPTY_DRAIN_THRESHOLD = 2;
-  private static final long STATIC_INTERVAL_MILLIS =
-    TicketCaptureCadenceScheduler.intervalMillisForFps(TicketCaptureCadenceScheduler.STATIC_FPS);
+  private static final int EMPTY_DRAIN_THRESHOLD = 2;
+  private static final long FIXED_INTERVAL_MILLIS = TicketCaptureCadenceScheduler.INTERVAL_MILLIS;
   private static final long SCHEDULING_JITTER_ALLOWANCE_MILLIS = 250L;
-  private static final long MIN_STATIC_EVIDENCE_INTERVAL_MILLIS =
-    STATIC_INTERVAL_MILLIS - SCHEDULING_JITTER_ALLOWANCE_MILLIS;
+  private static final long MIN_EVIDENCE_INTERVAL_MILLIS =
+    FIXED_INTERVAL_MILLIS - SCHEDULING_JITTER_ALLOWANCE_MILLIS;
   private static final long MAX_PROGRESS_WITHOUT_MEDIA_MILLIS =
-    (2L * STATIC_INTERVAL_MILLIS) - SCHEDULING_JITTER_ALLOWANCE_MILLIS;
+    (2L * FIXED_INTERVAL_MILLIS) - SCHEDULING_JITTER_ALLOWANCE_MILLIS;
 
-  private int consecutiveStaticEmptyDrains;
-  private long lastStaticEmptyDrainAtMillis;
+  private int consecutiveEmptyDrains;
+  private long lastEmptyDrainAtMillis;
   private long mediaDroughtStartedAtMillis = -1L;
   private boolean recoveryArmed;
 
   boolean noteDrain(
-    int targetFps,
     boolean steadyState,
-    boolean scheduledCadenceDrain,
+    boolean scheduledPeriodicDrain,
     boolean madeCodecProgress,
     int encodedFrameOutputs,
     long nowMillis
@@ -47,16 +45,15 @@ final class TicketEncoderOutputLiveness {
       }
       return false;
     }
-    if (!steadyState || targetFps != TicketCaptureCadenceScheduler.STATIC_FPS) {
+    if (!steadyState) {
       if (!recoveryArmed) {
         clearCandidate();
       }
       return false;
     }
-    // Keyframe requests, cadence transitions, and other immediate captures can run several
-    // static-target drains inside one second. They are useful recovery work, not additional
-    // evidence that two scheduled 1 FPS outputs were missed.
-    if (!scheduledCadenceDrain) {
+    // A coalesced refresh can add one drain before the newly scheduled one-second deadline.
+    // It is useful recovery work, not additional evidence that two scheduled outputs were missed.
+    if (!scheduledPeriodicDrain) {
       return false;
     }
     if (recoveryArmed) {
@@ -69,22 +66,22 @@ final class TicketEncoderOutputLiveness {
       return true;
     }
     if (
-      consecutiveStaticEmptyDrains > 0 &&
-      nowMillis - lastStaticEmptyDrainAtMillis < MIN_STATIC_EVIDENCE_INTERVAL_MILLIS
+      consecutiveEmptyDrains > 0 &&
+      nowMillis - lastEmptyDrainAtMillis < MIN_EVIDENCE_INTERVAL_MILLIS
     ) {
       return false;
     }
-    consecutiveStaticEmptyDrains += 1;
-    lastStaticEmptyDrainAtMillis = nowMillis;
-    if (consecutiveStaticEmptyDrains < STATIC_EMPTY_DRAIN_THRESHOLD) {
+    consecutiveEmptyDrains += 1;
+    lastEmptyDrainAtMillis = nowMillis;
+    if (consecutiveEmptyDrains < EMPTY_DRAIN_THRESHOLD) {
       return false;
     }
     recoveryArmed = true;
     return true;
   }
 
-  int consecutiveStaticEmptyDrains() {
-    return consecutiveStaticEmptyDrains;
+  int consecutiveEmptyDrains() {
+    return consecutiveEmptyDrains;
   }
 
   private void resetDrought() {
@@ -93,7 +90,7 @@ final class TicketEncoderOutputLiveness {
   }
 
   private void clearCandidate() {
-    consecutiveStaticEmptyDrains = 0;
-    lastStaticEmptyDrainAtMillis = 0L;
+    consecutiveEmptyDrains = 0;
+    lastEmptyDrainAtMillis = 0L;
   }
 }

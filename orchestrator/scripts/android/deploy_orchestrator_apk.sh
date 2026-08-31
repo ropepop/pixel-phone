@@ -1225,6 +1225,35 @@ for artifact in payload.get("artifacts") or []:
 PY
 }
 
+activate_manifest_with_previous() {
+  local active_manifest="$1"
+  local staged_manifest="$2"
+  local previous_manifest="$3"
+  local previous_temp="$4"
+  local previous_update=0
+
+  if pixel_transport_root_exec test -s "${active_manifest}" >/dev/null 2>&1 &&
+    ! pixel_transport_root_exec cmp -s "${active_manifest}" "${staged_manifest}" >/dev/null 2>&1; then
+    pixel_transport_root_exec cp "${active_manifest}" "${previous_temp}"
+    pixel_transport_root_exec chmod 600 "${previous_temp}" >/dev/null
+    previous_update=1
+  fi
+
+  if ! pixel_transport_root_exec mv "${staged_manifest}" "${active_manifest}"; then
+    pixel_transport_root_exec rm -f "${staged_manifest}" "${previous_temp}" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  if (( previous_update == 1 )) &&
+    ! pixel_transport_root_exec mv "${previous_temp}" "${previous_manifest}"; then
+    echo "Manifest rollback metadata could not be published; restoring the prior active manifest" >&2
+    if ! pixel_transport_root_exec mv -f "${previous_temp}" "${active_manifest}"; then
+      echo "Failed to restore the prior active manifest after rollback metadata failure" >&2
+    fi
+    return 1
+  fi
+}
+
 stage_runtime_bundle() {
   local bundle_dir="$1"
   local manifest_path="${bundle_dir}/runtime-manifest.json"
@@ -1292,19 +1321,11 @@ stage_runtime_bundle() {
       exit 1
     fi
   done < <(component_release_manifest_artifacts "${manifest_path}")
-  if pixel_transport_root_exec test -s "${target_root}/runtime-manifest.json" >/dev/null 2>&1; then
-    pixel_transport_root_exec cp \
-      "${target_root}/runtime-manifest.json" \
-      "${target_root}/.runtime-manifest.previous.${PIXEL_RUN_ID}.tmp"
-    pixel_transport_root_exec chmod 600 \
-      "${target_root}/.runtime-manifest.previous.${PIXEL_RUN_ID}.tmp" >/dev/null
-    pixel_transport_root_exec mv \
-      "${target_root}/.runtime-manifest.previous.${PIXEL_RUN_ID}.tmp" \
-      "${target_root}/runtime-manifest.previous.json"
-  fi
-  pixel_transport_root_exec mv \
+  activate_manifest_with_previous \
+    "${target_root}/runtime-manifest.json" \
     "${target_root}/.runtime-manifest.${PIXEL_RUN_ID}.tmp" \
-    "${target_root}/runtime-manifest.json"
+    "${target_root}/runtime-manifest.previous.json" \
+    "${target_root}/.runtime-manifest.previous.${PIXEL_RUN_ID}.tmp"
   pixel_transport_root_exec rm -rf "${stage_root}" >/dev/null 2>&1 || true
   echo "Runtime bundle staged: artifacts=${artifact_count} transferred=${transferred_count} reused=${reused_count}"
 }
@@ -1390,17 +1411,11 @@ stage_component_release() {
 
   pixel_transport_root_exec cp "${stage_root}/release-manifest.json" "${device_component_root}/.release-manifest.${PIXEL_RUN_ID}.tmp"
   pixel_transport_root_exec chmod 600 "${device_component_root}/.release-manifest.${PIXEL_RUN_ID}.tmp" >/dev/null
-  if pixel_transport_root_exec test -s "${device_component_root}/release-manifest.json" >/dev/null 2>&1; then
-    pixel_transport_root_exec cp \
-      "${device_component_root}/release-manifest.json" \
-      "${device_component_root}/.release-manifest.previous.${PIXEL_RUN_ID}.tmp"
-    pixel_transport_root_exec chmod 600 \
-      "${device_component_root}/.release-manifest.previous.${PIXEL_RUN_ID}.tmp" >/dev/null
-    pixel_transport_root_exec mv \
-      "${device_component_root}/.release-manifest.previous.${PIXEL_RUN_ID}.tmp" \
-      "${device_component_root}/release-manifest.previous.json"
-  fi
-  pixel_transport_root_exec mv "${device_component_root}/.release-manifest.${PIXEL_RUN_ID}.tmp" "${device_component_root}/release-manifest.json"
+  activate_manifest_with_previous \
+    "${device_component_root}/release-manifest.json" \
+    "${device_component_root}/.release-manifest.${PIXEL_RUN_ID}.tmp" \
+    "${device_component_root}/release-manifest.previous.json" \
+    "${device_component_root}/.release-manifest.previous.${PIXEL_RUN_ID}.tmp"
   pixel_transport_root_exec rm -rf "${stage_root}" >/dev/null 2>&1 || true
   echo "Component release staged: artifacts=${artifact_count} transferred=${transferred_count} reused=${reused_count}"
 }
@@ -1458,19 +1473,18 @@ wait_for_action_result() {
     logs="$(pixel_transport_shell "logcat -d -v time | grep -E 'OrchestratorActionReceiver|SupervisorService' | tail -n 200" || true)"
     marker_line="$(printf '%s\n' "${logs}" | grep -n -F "${marker}" | tail -n1 | cut -d: -f1 || true)"
     action_logs=""
-    if [[ -n "${marker_line}" ]]; then
-      ACTION_RESULT_LOG_MARKER_SEEN=1
-      action_logs="$(printf '%s\n' "${logs}" | tail -n +"${marker_line}")"
-    fi
-    scan_logs="${action_logs:-${logs}}"
-    if grep -Fq "command_action=${ACTION} component=${COMPONENT} success=false" <<<"${scan_logs}"; then
+    [[ -n "${marker_line}" ]] || return 1
+    ACTION_RESULT_LOG_MARKER_SEEN=1
+    action_logs="$(printf '%s\n' "${logs}" | tail -n +"${marker_line}")"
+    scan_logs="${action_logs}"
+    if grep -Fq "command_action=${ACTION} component=${COMPONENT} run_id=${PIXEL_RUN_ID} success=false" <<<"${scan_logs}"; then
       ACTION_RESULT_SOURCE="log"
       ACTION_RESULT_LOGS="${scan_logs}"
       echo "Action ${ACTION} reported FAILURE:"
       echo "${scan_logs}"
       return 2
     fi
-    if grep -Fq "command_action=${ACTION} component=${COMPONENT} success=true" <<<"${scan_logs}"; then
+    if grep -Fq "command_action=${ACTION} component=${COMPONENT} run_id=${PIXEL_RUN_ID} success=true" <<<"${scan_logs}"; then
       ACTION_RESULT_SOURCE="log"
       ACTION_RESULT_LOGS="${scan_logs}"
       echo "Action ${ACTION} reported SUCCESS"
@@ -1522,7 +1536,7 @@ wait_for_action_result() {
   ACTION_RESULT_LOGS="${logs}"
   echo "Timed out waiting for action ${ACTION} result after ${timeout_sec}s"
   if (( ACTION_RESULT_LOG_MARKER_SEEN == 0 )); then
-    echo "WARN: did not observe marker '${marker}' in OrchestratorActionReceiver logs; used fallback SupervisorService scan"
+    echo "WARN: did not observe marker '${marker}' in OrchestratorActionReceiver logs; unscoped service logs were ignored"
   fi
   echo "${logs}"
   return 1

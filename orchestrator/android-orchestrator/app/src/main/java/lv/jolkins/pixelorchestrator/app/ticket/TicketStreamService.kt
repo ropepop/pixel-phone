@@ -539,7 +539,6 @@ class TicketStreamService : Service() {
   @Volatile private var hardwareCaptureVerified: Boolean = false
   @Volatile private var hardwareFrameBroadcastAllowed: Boolean = false
   @Volatile private var activeCaptureMode: String = CAPTURE_MODE_IDLE
-  @Volatile private var lifecycleCadenceFps: Int? = null
   @Volatile private var fallbackReason: String? = null
   @Volatile private var hardwareReliabilityFailures: Int = 0
   @Volatile private var hardwareMarkedUnreliableAtMillis: Long = 0L
@@ -882,7 +881,6 @@ class TicketStreamService : Service() {
       PhoneAutomationServiceBridge.setRemoteScreenBrightnessState(null)
     }
     PhoneAutomationServiceBridge.setBlackoutOverlaySuppressed(false)
-    requestSteadyHardwareCadenceBeforeStop("service_destroyed")
     rootHardwareH264CaptureEngine.stop("service_destroyed")
     runCatching { runBlocking { rootHardwareH264CaptureEngine.cleanupStaleProcesses() } }
     closeAllClients("service_destroyed")
@@ -1096,7 +1094,6 @@ class TicketStreamService : Service() {
         serviceScope.launch {
           sessionMutex.withLock {
             if (totalClientCount() == 0) {
-              requestSteadyHardwareCadenceBeforeStop("all_clients_disconnected")
               scheduleClientDisconnectGraceLocked()
             }
           }
@@ -1158,9 +1155,6 @@ class TicketStreamService : Service() {
       }
     }
     ensureEncoderIfPossible()
-    if (video) {
-      requestActiveHardwareCadence("video_client_connected")
-    }
     scheduleStreamWatchdog("client_connected")
     client.readLoop()
   }
@@ -1288,7 +1282,6 @@ class TicketStreamService : Service() {
   }
 
   private fun handleVideoClientCommand(client: TicketWebSocket, message: String) {
-    requestActiveHardwareCadence("video_client_activity")
     val element = runCatching { json.parseToJsonElement(message).jsonObject }.getOrNull() ?: return
     when (element["type"]?.jsonPrimitive?.contentOrNull) {
       "keyframe" -> sendCachedKeyFrameOrRequest(client, element["reason"]?.jsonPrimitive?.contentOrNull ?: "video_client_request")
@@ -1323,34 +1316,6 @@ class TicketStreamService : Service() {
         "keyframe" -> {
           requestKeyFrame(reason.ifBlank { "spacetime_keyframe" })
           TicketSpacetimeCommandResult(ok = true, reason = "keyframe_requested", streamState = ticketSpacetimeStreamState())
-        }
-        "stream_cadence" -> {
-          // Relay feedback is an advisory demand signal.  It may arrive while the
-          // helper is starting, so requestCadence() persists the supported tier and
-          // replays it when the helper becomes available.  A slow client asks for
-          // independent keyframes only; a full client may use the configured 1/5/10
-          // FPS ceiling without restarting MediaCodec.
-          val demand = payload?.stringValue("demand").orEmpty().trim().lowercase()
-          val requestedFps = payload?.longValue("maxFps")?.toInt() ?: 0
-          val targetFps = when (demand) {
-            "keyframe_only" -> TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS
-            "full" -> requestedFps
-            else -> 0
-          }
-          val accepted = targetFps > 0 &&
-            TicketCaptureCadenceScheduler.isSupportedFps(targetFps) &&
-            rootHardwareH264CaptureEngine.requestCadence(
-              targetFps,
-              "relay_stream_cadence_${demand.ifBlank { "invalid" }}"
-            )
-          if (!accepted) {
-            recordTicketEvent("spacetime_stream_cadence_rejected", "demand=$demand fps=$requestedFps")
-          }
-          TicketSpacetimeCommandResult(
-            ok = accepted,
-            reason = if (accepted) "stream_cadence_applied" else "unsupported_stream_cadence",
-            streamState = ticketSpacetimeStreamState()
-          )
         }
         "recover_stream" -> {
           if (ticketSpacetimeBackgroundStreamAlreadyHealthy()) {
@@ -1587,7 +1552,7 @@ class TicketStreamService : Service() {
       )
     }
     updateTicketVisualActionPhase(request, "read_only_capture")
-    rootHardwareH264CaptureEngine.startControlCodeRequestBurst("ticket_action_v3_read_only_proof")
+    rootHardwareH264CaptureEngine.requestImmediateRefresh("ticket_action_v3_read_only_proof")
     return try {
       val rawDetailProofEpoch = streamEpoch
       val rawDetailProofRestartCount = rootHardwareH264CaptureEngine.snapshot().restartCount
@@ -1674,11 +1639,7 @@ class TicketStreamService : Service() {
         }
       }
     } finally {
-      if (ticketActionV3Generation == generation && !controlCodeRequestActive()) {
-        rootHardwareH264CaptureEngine.stopControlCodeRequestBurst(
-          "ticket_action_v3_read_only_proof_released"
-        )
-      }
+      // The one-shot all-intra refresh needs no release operation.
     }
   }
 
@@ -1828,9 +1789,6 @@ class TicketStreamService : Service() {
           "ticket:ticket_action_panel_dark:${request.actionId.takeLast(24)}:released"
         )
         ticketVisualActionCaptureLeaseActive = false
-        if (!controlCodeRequestActive()) {
-          rootHardwareH264CaptureEngine.stopControlCodeRequestBurst("ticket_action_v3_capture_lease_released")
-        }
       }
     }
     val completedLease = finalization
@@ -2052,7 +2010,7 @@ class TicketStreamService : Service() {
       )
     }
     ensureRootHardwareH264CaptureIfPossible()
-    rootHardwareH264CaptureEngine.startControlCodeRequestBurst("ticket_action_v3_capture_lease")
+    rootHardwareH264CaptureEngine.requestImmediateRefresh("ticket_action_v3_capture_lease")
     if (request.target.activatesTicket) {
       updateTicketVisualActionPhase(request, "preparing_registration_input")
       if (!PhoneAutomationServiceBridge.awaitAccessibilityConnection(
@@ -2994,7 +2952,7 @@ class TicketStreamService : Service() {
             // Recovery only restores the proof source. The already-journaled physical mutation is
             // never repeated, and a same-generation candidate remains available for convergence.
             ensureRootHardwareH264CaptureIfPossible()
-            rootHardwareH264CaptureEngine.startControlCodeRequestBurst(
+            rootHardwareH264CaptureEngine.requestImmediateRefresh(
               "ticket_action_v3_capture_recovery"
             )
           }
@@ -3016,7 +2974,7 @@ class TicketStreamService : Service() {
         // This only restores the proof source. It never repeats the tap or registration drag.
         consensus.reset()
         ensureRootHardwareH264CaptureIfPossible()
-        rootHardwareH264CaptureEngine.startControlCodeRequestBurst(
+        rootHardwareH264CaptureEngine.requestImmediateRefresh(
           "ticket_action_v3_capture_recovery"
         )
         continue
@@ -3590,11 +3548,12 @@ class TicketStreamService : Service() {
       put("hardwareH264State", h264.state)
       put("hardwareH264Active", h264.active)
       put("hardwareH264Available", h264.available)
+      put("hardwareH264FrameDependencyMode", h264.frameDependencyMode)
+      put("hardwareH264UnexpectedDeltaFrames", h264.unexpectedDeltaFrames)
       put("hardwareH264HelperState", h264.captureHelperState)
       put("hardwareH264Visibility", h264.lastVisibilityCheckResult)
-      put("hardwareH264CadenceFps", h264.cadenceFpsTarget ?: -1)
-      put("hardwareH264CadenceTier", h264.cadenceTier)
-      put("hardwareH264CadenceChanges", h264.cadenceChanges)
+      put("hardwareH264Fps", h264.fps ?: -1)
+      put("hardwareH264FrameIntervalMillis", h264.currentIntervalMillis ?: -1L)
       put("hardwareH264CadenceDeadlineMisses", h264.cadenceDeadlineMisses)
       put("hardwareH264CadenceSkippedTicks", h264.cadenceSkippedTicks)
       put("lastStreamRecoveryResult", lastStreamRecoveryResult)
@@ -4291,7 +4250,6 @@ class TicketStreamService : Service() {
       resetFrameEpoch("client_detached_$reason", active = false)
       cancelInactivityTimer()
       cancelForegroundGuard()
-      requestSteadyHardwareCadenceBeforeStop("client_detached:$reason")
       rootHardwareH264CaptureEngine.stop(reason)
       rootHardwareH264CaptureEngine.cleanupStaleProcesses()
       val bypassRelease = disableSecureWindowCaptureBypass("client_detached:$reason")
@@ -4376,7 +4334,6 @@ class TicketStreamService : Service() {
     resetFrameEpoch("session_stop_$reason", active = false)
     cancelInactivityTimer()
     cancelForegroundGuard()
-    requestSteadyHardwareCadenceBeforeStop("session_stop:$reason")
     rootHardwareH264CaptureEngine.stop(reason)
     rootHardwareH264CaptureEngine.cleanupStaleProcesses()
     val bypassRelease = disableSecureWindowCaptureBypass("session_stop:$reason")
@@ -4503,30 +4460,9 @@ class TicketStreamService : Service() {
       ticketSessionOpen()
     }
     if (sessionWasOpen) {
-      requestActiveHardwareCadence("viewer_input:$reason")
       holdTicketScreenAwake("viewer_input_$reason")
       ensureInactivityTimer()
       broadcastInactivityStatus()
-    }
-  }
-
-  private fun requestActiveHardwareCadence(reason: String) {
-    if (!streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264) {
-      return
-    }
-    val activeFps = TicketScreenConfig.ROOT_HARDWARE_H264_ACTIVE_FPS
-    if (lifecycleCadenceFps == activeFps) {
-      return
-    }
-    rootHardwareH264CaptureEngine.requestCadence(activeFps, reason)
-    lifecycleCadenceFps = activeFps
-  }
-
-  private fun requestSteadyHardwareCadenceBeforeStop(reason: String) {
-    val steadyFps = TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS
-    if (lifecycleCadenceFps != steadyFps) {
-      rootHardwareH264CaptureEngine.requestCadence(steadyFps, reason)
-      lifecycleCadenceFps = steadyFps
     }
   }
 
@@ -5639,13 +5575,10 @@ class TicketStreamService : Service() {
         sourceHeight = sourceSize.second,
         targetWidth = size.width,
         targetHeight = size.height,
-        targetBitrate = TicketScreenConfig.ROOT_HARDWARE_H264_BITRATE,
-        targetFps = TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS,
-        startupFps = TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FPS,
-        startupFrameCount = TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FRAMES
+        targetBitrate = TicketScreenConfig.ROOT_HARDWARE_H264_BITRATE
       )
       hardwareCaptureSnapshot = rootHardwareH264CaptureEngine.snapshot()
-      recordStartupTracePhase("root_capture_start_requested", "width=${size.width} height=${size.height} fps=${TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS} startup_fps=${TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FPS} startup_frames=${TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FRAMES}", once = true)
+      recordStartupTracePhase("root_capture_start_requested", "width=${size.width} height=${size.height} fps=${TicketScreenConfig.ROOT_HARDWARE_H264_FPS} frame_dependency_mode=${TicketScreenConfig.ROOT_HARDWARE_H264_FRAME_DEPENDENCY_MODE}", once = true)
       scheduleStreamWatchdog("root_capture_start_requested")
     }
   }
@@ -5695,7 +5628,7 @@ class TicketStreamService : Service() {
     if (streamActive && activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264 && shouldPublishRootHardwareH264Health(health)) {
       recordTicketEvent(
         "hardware_h264_health_changed",
-        "state=${health.state} active=${health.active} available=${health.available} frames=${health.frames} keyframes=${health.keyFrames} restarts=${health.restartCount} last_exit=${health.lastExitReason.orEmpty()} frame_age_ms=${ageMillis(lastFrameSentAtMillis, SystemClock.elapsedRealtime()) ?: -1L} clients=${videoClients.size}"
+        "state=${health.state} active=${health.active} available=${health.available} frames=${health.frames} keyframes=${health.keyFrames} unexpected_deltas=${health.unexpectedDeltaFrames} restarts=${health.restartCount} last_exit=${health.lastExitReason.orEmpty()} frame_age_ms=${ageMillis(lastFrameSentAtMillis, SystemClock.elapsedRealtime()) ?: -1L} clients=${videoClients.size}"
       )
       broadcastStatus()
     }
@@ -5736,6 +5669,7 @@ class TicketStreamService : Service() {
       health.height,
       health.bitrate,
       health.fps,
+      health.frameDependencyMode,
       health.frames == 0L,
       health.frames == 1L,
       health.keyFrames == 0L,
@@ -5743,6 +5677,7 @@ class TicketStreamService : Service() {
       health.staleCaptureProcessCount,
       health.lastCaptureCleanupResult,
       health.blankFrameFailures,
+      health.unexpectedDeltaFrames,
       health.lastVisibilityCheckResult,
       health.restartCount,
       health.lastExitReason
@@ -5878,19 +5813,17 @@ class TicketStreamService : Service() {
     val captureSource = hardware.captureSource
     val captureMethod = hardware.captureMethod
     val bitrate = TicketScreenConfig.ROOT_HARDWARE_H264_BITRATE
-    // Advertise the configured source ceiling, not the idle cadence.  The
-    // helper changes cadence in-process (1/5/10 FPS), so this remains stable
-    // while the relay uses feedback to decide how much of the stream to show.
-    val fps = TicketScreenConfig.ROOT_HARDWARE_H264_ACTIVE_FPS
+    val fps = TicketScreenConfig.ROOT_HARDWARE_H264_FPS
     val feedbackVersion = 1
-    val sourceFps = TicketScreenConfig.ROOT_HARDWARE_H264_ACTIVE_FPS
-    val keyframeIntervalFrames = TicketScreenConfig.ROOT_HARDWARE_H264_ACTIVE_FPS
+    val sourceFps = TicketScreenConfig.ROOT_HARDWARE_H264_FPS
+    val keyframeIntervalFrames = 1
+    val frameDependencyMode = TicketScreenConfig.ROOT_HARDWARE_H264_FRAME_DEPENDENCY_MODE
     val keyFrameInterval = TicketScreenConfig.ROOT_HARDWARE_H264_KEYFRAME_INTERVAL_MILLIS
     val colorCorrection = TicketScreenConfig.ROOT_HARDWARE_H264_COLOR_CORRECTION
     val colorStandard = TicketScreenConfig.ROOT_HARDWARE_H264_COLOR_STANDARD
     val phoneUptimeMillis = SystemClock.elapsedRealtime()
     return """
-      {"type":"config","serverVersion":"$SERVER_VERSION","codec":"$codec","transport":"$transport","captureMode":"$activeCaptureMode","captureSource":${json.encodeToString(captureSource)},"captureMethod":${json.encodeToString(captureMethod)},"rootCapture":true,"frameEnvelope":"$FRAME_ENVELOPE_VERSION","streamEpoch":$configuredEpoch,"phoneUptimeMillis":$phoneUptimeMillis,"qualityProfile":"$qualityProfile","colorCorrection":${json.encodeToString(colorCorrection)},"colorStandard":${json.encodeToString(colorStandard)},"width":${size.width},"height":${size.height},"sourceWidth":${size.sourceWidth},"sourceHeight":${size.sourceHeight},"sourceLeftCrop":${size.sourceLeftCrop},"sourceTopCrop":${size.sourceTopCrop},"sourceRightCrop":${size.sourceRightCrop},"sourceBottomCrop":${size.sourceBottomCrop},"sourceVisibleWidth":${size.sourceVisibleWidth},"sourceVisibleHeight":${size.sourceVisibleHeight},"bitrate":$bitrate,"fps":$fps,"sourceFps":$sourceFps,"keyframeIntervalFrames":$keyframeIntervalFrames,"feedbackVersion":$feedbackVersion,"keyFrameIntervalMillis":$keyFrameInterval}
+      {"type":"config","serverVersion":"$SERVER_VERSION","codec":"$codec","transport":"$transport","captureMode":"$activeCaptureMode","captureSource":${json.encodeToString(captureSource)},"captureMethod":${json.encodeToString(captureMethod)},"rootCapture":true,"frameEnvelope":"$FRAME_ENVELOPE_VERSION","frameDependencyMode":"$frameDependencyMode","streamEpoch":$configuredEpoch,"phoneUptimeMillis":$phoneUptimeMillis,"qualityProfile":"$qualityProfile","colorCorrection":${json.encodeToString(colorCorrection)},"colorStandard":${json.encodeToString(colorStandard)},"width":${size.width},"height":${size.height},"sourceWidth":${size.sourceWidth},"sourceHeight":${size.sourceHeight},"sourceLeftCrop":${size.sourceLeftCrop},"sourceTopCrop":${size.sourceTopCrop},"sourceRightCrop":${size.sourceRightCrop},"sourceBottomCrop":${size.sourceBottomCrop},"sourceVisibleWidth":${size.sourceVisibleWidth},"sourceVisibleHeight":${size.sourceVisibleHeight},"bitrate":$bitrate,"fps":$fps,"sourceFps":$sourceFps,"keyframeIntervalFrames":$keyframeIntervalFrames,"feedbackVersion":$feedbackVersion,"keyFrameIntervalMillis":$keyFrameInterval}
     """.trimIndent()
   }
 
@@ -5924,9 +5857,7 @@ class TicketStreamService : Service() {
   private fun newVideoClientDeliveryState(expectedEpoch: Long = 0L): TicketVideoClientDeliveryState {
     return TicketVideoClientDeliveryState(
       expectedEpoch = expectedEpoch,
-      maxQueuedFrames = VIDEO_CLIENT_PENDING_MAX_FRAMES,
-      maxQueuedBytes = VIDEO_CLIENT_PENDING_MAX_BYTES,
-      pendingMaxAgeMillis = VIDEO_CLIENT_PENDING_MAX_AGE_MILLIS,
+      maxFrameBytes = VIDEO_CLIENT_MAX_FRAME_BYTES,
       slowCloseMillis = VIDEO_CLIENT_SLOW_CLOSE_MILLIS
     )
   }
@@ -6246,27 +6177,24 @@ class TicketStreamService : Service() {
     }
     if (!accepted) return
     if (
-      decision.dropReason == TicketVideoClientDeliveryState.DROP_QUEUE_OVERFLOW ||
-      decision.dropReason == TicketVideoClientDeliveryState.DROP_QUEUE_STALE ||
-      decision.dropReason == TicketVideoClientDeliveryState.DROP_SEQUENCE_GAP ||
+      decision.dropReason == TicketVideoClientDeliveryState.DROP_PENDING_REPLACED ||
       decision.dropReason == TicketVideoClientDeliveryState.DROP_EPOCH_MISMATCH ||
-      decision.dropReason == TicketVideoClientDeliveryState.DROP_STALE_KEYFRAME
+      decision.dropReason == TicketVideoClientDeliveryState.DROP_STALE_FRAME ||
+      decision.dropReason == TicketVideoClientDeliveryState.DROP_UNEXPECTED_DELTA ||
+      decision.dropReason == TicketVideoClientDeliveryState.DROP_FRAME_TOO_LARGE
     ) {
       recordTicketEvent(
-        "video_client_queue_drop",
-        "reason=${decision.dropReason} dropped=${decision.droppedFrames} request_keyframe=${decision.requestKeyFrame}"
+        "video_client_frame_drop",
+        "reason=${decision.dropReason} dropped=${decision.droppedFrames} request_refresh=${decision.requestImmediateRefresh}"
       )
     }
-    if (decision.requestKeyFrame) {
+    if (decision.requestImmediateRefresh) {
       val reason = when (decision.dropReason) {
-        TicketVideoClientDeliveryState.DROP_QUEUE_OVERFLOW -> "video_client_queue_overflow"
-        TicketVideoClientDeliveryState.DROP_QUEUE_STALE -> "video_client_queue_stale"
-        TicketVideoClientDeliveryState.DROP_SEQUENCE_GAP -> "video_client_sequence_gap"
-        TicketVideoClientDeliveryState.DROP_EPOCH_MISMATCH -> "video_client_epoch_mismatch"
-        TicketVideoClientDeliveryState.DROP_STALE_KEYFRAME -> "video_client_stale_keyframe"
-        else -> "video_client_waiting_keyframe"
+        TicketVideoClientDeliveryState.DROP_UNEXPECTED_DELTA -> "video_client_unexpected_delta"
+        TicketVideoClientDeliveryState.DROP_FRAME_TOO_LARGE -> "video_client_frame_too_large"
+        else -> "video_client_refresh"
       }
-      requestKeyFrame(reason)
+      rootHardwareH264CaptureEngine.requestImmediateRefresh(reason)
     }
     if (decision.closeSlowClient) {
       recordTicketEvent(
@@ -6278,6 +6206,12 @@ class TicketStreamService : Service() {
 
   private fun handleRootHardwareH264CaptureFrame(frame: TicketRootCaptureFrame) {
     val encodedAtMillis = SystemClock.elapsedRealtime()
+    if (!frame.keyFrame) {
+      droppedVideoFrames += 1L
+      rootHardwareH264CaptureEngine.requestImmediateRefresh("service_rejected_unexpected_delta")
+      hardwareCaptureSnapshot = rootHardwareH264CaptureEngine.snapshot()
+      return
+    }
     val acceptedGeneration = synchronized(encoderLock) {
       if (!streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264) {
         null
@@ -6293,10 +6227,8 @@ class TicketStreamService : Service() {
         }
         encodedFrames += 1
         lastFrameEncodedAtMillis = encodedAtMillis
-        if (frame.keyFrame) {
-          keyFrames += 1
-          lastKeyFrameEncodedAtMillis = encodedAtMillis
-        }
+        keyFrames += 1
+        lastKeyFrameEncodedAtMillis = encodedAtMillis
         TicketVideoFrameGeneration(
           epoch = streamEpoch,
           width = frame.width,
@@ -6307,22 +6239,14 @@ class TicketStreamService : Service() {
     if (acceptedGeneration == null) {
       return
     }
-    if (!frame.keyFrame && latestKeyFrame == null) {
-      droppedVideoFrames += 1
-      requestKeyFrame("hardware_h264_waiting_initial_key_frame")
-      hardwareCaptureSnapshot = rootHardwareH264CaptureEngine.snapshot()
-      return
-    }
-    if (frame.keyFrame) {
-      recordStartupTracePhase("first_keyframe_encoded", "encoded_frames=$encodedFrames", once = true)
-    }
+    recordStartupTracePhase("first_keyframe_encoded", "encoded_frames=$encodedFrames", once = true)
     if (!hardwareFrameBroadcastAllowed) {
       hardwareCaptureSnapshot = rootHardwareH264CaptureEngine.snapshot()
       return
     }
     val firstVisibleFrame = sentFrames == 0L
     val deliveredFrame = broadcastFrame(
-      keyFrame = frame.keyFrame,
+      keyFrame = true,
       timestampUs = frame.timestampUs,
       payload = frame.payload,
       acceptedGeneration = acceptedGeneration
@@ -6332,7 +6256,7 @@ class TicketStreamService : Service() {
     }
     hardwareCaptureSnapshot = rootHardwareH264CaptureEngine.snapshot()
     if (hardwareCaptureVerified || firstVisibleFrame) {
-      recordStartupTracePhase("first_visible_frame_sent", "sequence=${deliveredFrame.sequence} keyframe=${frame.keyFrame}", once = true, complete = hardwareCaptureVerified)
+      recordStartupTracePhase("first_visible_frame_sent", "sequence=${deliveredFrame.sequence} keyframe=true", once = true, complete = hardwareCaptureVerified)
       if (lastStreamRecoveryResult == "started") {
         lastStreamRecoveryResult = "succeeded"
         lastStreamRecoveryFailureReason = null
@@ -6341,7 +6265,7 @@ class TicketStreamService : Service() {
         recordTicketEvent("stream_watchdog_recovery_succeeded", lastStreamWatchdogReason.orEmpty())
         recordTicketEvent(
           "stream_recovery_completed",
-          "reason=${lastStreamWatchdogReason.orEmpty()} frame_sequence=${deliveredFrame.sequence} keyframe=${frame.keyFrame} clients=${videoClients.size}"
+          "reason=${lastStreamWatchdogReason.orEmpty()} frame_sequence=${deliveredFrame.sequence} keyframe=true clients=${videoClients.size}"
         )
       }
     }
@@ -6768,6 +6692,11 @@ class TicketStreamService : Service() {
         else -> ""
       },
       frameEnvelope = FRAME_ENVELOPE_VERSION,
+      frameDependencyMode = if (activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264) {
+        TicketScreenConfig.ROOT_HARDWARE_H264_FRAME_DEPENDENCY_MODE
+      } else {
+        ""
+      },
       streamEpoch = streamEpoch,
       frameSequence = frameSequence,
       lastKeyFrameSequence = latestKeyFrame?.sequence ?: 0L,
@@ -9251,7 +9180,6 @@ class TicketStreamService : Service() {
             sessionOpen = ticketSessionOpen()
           )
         ) {
-          requestSteadyHardwareCadenceBeforeStop("control_automation_released_without_clients")
           scheduleClientDisconnectGraceLocked()
           recordTicketEvent("client_disconnect_cleanup_rescheduled", "reason=control_automation_released")
         }
@@ -9441,11 +9369,10 @@ class TicketStreamService : Service() {
   }
 
   private fun beginControlCodeBrowserCaptureWait(requestId: String) {
-    // The request-entry burst can expire while ViVi finishes rendering the generated
-    // result. Re-arm the same bounded burst for the browser handoff so the moved result
-    // strip reaches the public page promptly without raising the steady-state stream rate.
+    // The generated result asks for one independent frame. Normal 1 FPS capture resumes
+    // one second later; repeated requests inside that period are coalesced.
     controlCodeResultEncoderRefreshActive = true
-    val burstStarted = rootHardwareH264CaptureEngine.startControlCodeRequestBurst(
+    val refreshRequested = rootHardwareH264CaptureEngine.requestImmediateRefresh(
       "control_code_browser_capture_wait"
     )
     synchronized(controlCodeBrowserCaptureLock) {
@@ -9456,7 +9383,7 @@ class TicketStreamService : Service() {
     lastControlCodeBrowserCaptureCompletedAtMillis = 0L
     recordTicketEvent(
       "control_code_browser_capture_wait_started",
-      "request=$requestId burst_rearmed=$burstStarted"
+      "request=$requestId refresh_requested=$refreshRequested"
     )
     broadcastStatus()
   }
@@ -9520,9 +9447,6 @@ class TicketStreamService : Service() {
           pendingControlCodeBrowserCaptureAck?.takeIf { it.requestId == requestId }
         }
         if (ack != null) {
-          rootHardwareH264CaptureEngine.stopControlCodeRequestBurst("browser_capture_acknowledged")
-          markControlCodeRequestPhase(phases, "capture_burst_stopped", requestStartedAtMillis)
-          phases["capture_burst_duration"] = (nowMillis - requestStartedAtMillis).coerceAtLeast(0L)
           phases["browser_capture_ack_wait"] = (nowMillis - startedAtMillis).coerceAtLeast(0L)
           markControlCodeRequestPhase(phases, "browser_capture_ack_received", requestStartedAtMillis)
           recordTicketEvent(
@@ -9533,9 +9457,6 @@ class TicketStreamService : Service() {
         }
         if (nowMillis >= deadlineMillis) {
           val reason = "control_code_browser_capture_ack_timeout"
-          rootHardwareH264CaptureEngine.stopControlCodeRequestBurst(reason)
-          markControlCodeRequestPhase(phases, "capture_burst_stopped", requestStartedAtMillis)
-          phases["capture_burst_duration"] = (nowMillis - requestStartedAtMillis).coerceAtLeast(0L)
           phases["browser_capture_ack_wait"] = (nowMillis - startedAtMillis).coerceAtLeast(0L)
           markControlCodeRequestPhase(phases, "browser_capture_ack_timeout", requestStartedAtMillis)
           lastControlCodeBrowserCaptureReason = reason
@@ -9859,7 +9780,7 @@ class TicketStreamService : Service() {
     activeControlCodeVisualSignatureExpiresAtMillis = 0L
     persistControlCodeSignatureCleanupRequired(false)
     if (replyClient != null) protectedControlClients.add(replyClient)
-    var burstStarted = false
+    var refreshRequested = false
     var requestPhases: MutableMap<String, Long>? = null
     var requestStartedAtMillis = 0L
     var keyboardClampLease: RequestScopedKeyboardClampLease? = null
@@ -9873,10 +9794,10 @@ class TicketStreamService : Service() {
       )
       databaseToPhoneMillis?.let { phases["database_to_phone_receipt"] = it }
       requestPhases = phases
-      // Capture cadence is non-mutating and may warm immediately while this request waits for the
-      // phone lane. Display and input mutations remain behind the confirmed raw-panel lease.
-      burstStarted = rootHardwareH264CaptureEngine.startControlCodeRequestBurst("control_code_browser_dispatch")
-      if (burstStarted) phases["capture_burst_started"] = 0L
+      // One independent frame may be requested while this request waits for the phone lane.
+      // Display and input mutations remain behind the confirmed raw-panel lease.
+      refreshRequested = rootHardwareH264CaptureEngine.requestImmediateRefresh("control_code_browser_dispatch")
+      if (refreshRequested) phases["capture_refresh_requested"] = 0L
       controlCodePhoneMutationLane.withOwnership {
         if (sendCachedControlCodeResult(cleanRequestId) ||
           controlCodeRequestDuplicateActiveOrCompleted(cleanRequestId)
@@ -9974,8 +9895,8 @@ class TicketStreamService : Service() {
             measureInputPhase(phases, "gate") { canForwardRemoteInput() }
           ) {
             markControlCodeRequestPhase(phases, "request_gate_passed", startedAtMillis)
-            if (!burstStarted) {
-              burstStarted = rootHardwareH264CaptureEngine.startControlCodeRequestBurst("control_code_gate_ready")
+            if (!refreshRequested) {
+              refreshRequested = rootHardwareH264CaptureEngine.requestImmediateRefresh("control_code_gate_ready")
             }
             val delivery = runFastControlCodeDeliveryForRequest(
               cleanDigits,
@@ -10209,7 +10130,6 @@ class TicketStreamService : Service() {
         }
       }
     } finally {
-      if (burstStarted) rootHardwareH264CaptureEngine.stopControlCodeRequestBurst("control_code_request_finally")
       requestPhases?.let { phases ->
         lastControlCodeRequestPhases = synchronized(phases) { phases.toMap() }
       }
@@ -14264,7 +14184,7 @@ class TicketStreamService : Service() {
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
     private const val SESSION_START_TIMEOUT_MILLIS = 70_000L
     private const val SERVICE_DESTROY_JOIN_TIMEOUT_MILLIS = 12_000L
-    const val SERVER_VERSION = "ticket-stream-2026-08-26-inputmanager-keyevents-v326"
+    const val SERVER_VERSION = "ticket-stream-2026-08-31-all-intra-clarity-v328"
     private const val CONTROL_CODE_MARKER_RESULT_HIERARCHY = "__marker_control_code_result__"
     private const val FRAME_ENVELOPE_VERSION = "tsf2"
     private const val FRAME_ENVELOPE_MAGIC = 0x54534632
@@ -14289,19 +14209,19 @@ class TicketStreamService : Service() {
     private const val TICKET_PIXEL_STATE_CONTROL_POPUP = "control_popup"
     private const val TICKET_PIXEL_STATE_GENERATED_RESULT = "generated_result"
     private const val TICKET_PIXEL_STATE_RETURNING_RAW = "returning_raw"
-    private const val ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS = 750L
+    private const val ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS = 1_250L
     private const val LIVE_FRAME_MAX_AGE_MILLIS = 2_000L
     private const val ACTIVE_STREAM_REUSE_TICKET_DETAIL_MAX_AGE_MILLIS = 5 * 60_000L
-    private const val STREAM_STALE_ENGINE_RESTART_MILLIS = 4_000L
+    private const val STREAM_STALE_ENGINE_RESTART_MILLIS = 3_000L
     private const val STREAM_WATCHDOG_POLL_MILLIS = 500L
-    private const val STREAM_WATCHDOG_NO_ENCODER_RESTART_MILLIS = 1_200L
-    private const val STREAM_WATCHDOG_NO_FRAME_RESTART_MILLIS = 2_500L
-    private const val STREAM_WATCHDOG_STALE_FRAME_RESTART_MILLIS = 4_000L
+    private const val STREAM_WATCHDOG_NO_ENCODER_RESTART_MILLIS = 3_000L
+    private const val STREAM_WATCHDOG_NO_FRAME_RESTART_MILLIS = 3_000L
+    private const val STREAM_WATCHDOG_STALE_FRAME_RESTART_MILLIS = 3_000L
     private const val STREAM_WATCHDOG_RECOVERY_COOLDOWN_MILLIS = 1_000L
     private const val SPACETIME_DESIRED_RECOVERY_COOLDOWN_MILLIS = 20_000L
     private const val SPACETIME_DESIRED_RECOVERY_STALE_BLOCK_MILLIS = 15_000L
     private const val HARDWARE_RELIABILITY_FAILURE_THRESHOLD = 3
-    private const val POST_CLEANUP_FRESH_FRAME_TIMEOUT_MILLIS = 2_500L
+    private const val POST_CLEANUP_FRESH_FRAME_TIMEOUT_MILLIS = 3_000L
     private const val POST_CLEANUP_FRESH_FRAME_POLL_MILLIS = 100L
     private const val SECURE_CAPTURE_PROBE_START_FRAME_COUNT = 3L
     private const val SECURE_CAPTURE_PROBE_DELAY_MILLIS = 700L
@@ -14320,20 +14240,16 @@ class TicketStreamService : Service() {
     private const val KEY_VIVI_MEMORY_TICKET_WALL_MILLIS = "ticket_detail_wall_millis"
     private const val SEND_BITRATE_WINDOW_MILLIS = 1_000L
     private const val VIDEO_CLIENT_SLOW_WRITE_MILLIS = 100L
-    // Bound short encoder bursts by frame count and bytes. The stricter age limit keeps latency
-    // low; overflow discards dependent deltas and resumes only from a fresh keyframe.
-    private const val VIDEO_CLIENT_PENDING_MAX_FRAMES = 12
-    private const val VIDEO_CLIENT_PENDING_MAX_BYTES = 5 * 1024 * 1024
-    private const val VIDEO_CLIENT_PENDING_MAX_AGE_MILLIS = 150L
+    private const val VIDEO_CLIENT_MAX_FRAME_BYTES = 5 * 1024 * 1024
     private const val VIDEO_CLIENT_SLOW_CLOSE_MILLIS = 250L
     private const val TICKET_WAKE_BUDGET_MILLIS = 3_000L
     private const val TICKET_FAST_PUBLIC_OPEN_BUDGET_MILLIS = 5_000L
     private const val TICKET_FAST_PUBLIC_OPEN_ROOT_PROOF_TIMEOUT_MILLIS = 6_000L
     private const val TICKET_FAST_PUBLIC_OPEN_VISUAL_PROOF_POLL_MILLIS = 40L
     private const val TICKET_FAST_PUBLIC_OPEN_VISUAL_PROOF_SAMPLE_GAP_MILLIS = 80L
-    private const val TICKET_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS = 2_000L
+    private const val TICKET_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS = 3_000L
     private const val TICKET_DETAIL_VISUAL_PROOF_SAMPLE_COUNT = 2
-    private const val TICKET_SLIDER_PROOF_TIMEOUT_MILLIS = 1_500L
+    private const val TICKET_SLIDER_PROOF_TIMEOUT_MILLIS = 3_000L
     // Production rooted UiAutomator reads settle in roughly 2.5-3s after ViVi's Flutter
     // activation transition. Keep slider-geometry probes fast, but give activated semantics a
     // dedicated bounded read that can actually return the nonblank hierarchy.
@@ -14365,7 +14281,7 @@ class TicketStreamService : Service() {
     // caller still requires both explicit activated-detail semantics and fresh rooted H.264.
     private const val TICKET_SLIDER_ACTIVATED_PROOF_TIMEOUT_MILLIS = 16_000L
     private const val TICKET_ACTIVATED_ROOTED_FRAME_FALLBACK_TIMEOUT_MILLIS = 1_500L
-    private const val TICKET_ACTIVATED_ROOTED_FRAME_MAX_AGE_MILLIS = 750L
+    private const val TICKET_ACTIVATED_ROOTED_FRAME_MAX_AGE_MILLIS = 1_250L
     private const val TICKET_SLIDER_COMPLETION_PROGRESS = 5_000
     private const val TICKET_WAKE_RECOVERY_BUDGET_MILLIS = 60_000L
     private const val TICKET_WAKE_RECOVERY_MAX_ACTIONS = 4
@@ -14432,7 +14348,7 @@ class TicketStreamService : Service() {
     private const val CONTROL_CODE_POPUP_READY_CACHE_MILLIS = 2_000L
     private const val CONTROL_CODE_FAST_ROOT_DUMP_TIMEOUT_MILLIS = 8_000L
     private const val CONTROL_CODE_RAW_TICKET_ROOT_CONFIRM_TIMEOUT_MILLIS = 8_000L
-    private const val CONTROL_CODE_RECENT_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS = 1_500L
+    private const val CONTROL_CODE_RECENT_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS = 3_000L
     private const val CONTROL_CODE_RAW_TICKET_VISUAL_REJECT_LOG_COUNT = 2L
     private const val CONTROL_CODE_SUBMIT_RETRY_MIN_POPUP_SAMPLES = 2L
     private const val CONTROL_CODE_SUBMIT_RETRY_MIN_AGE_MILLIS = 300L
@@ -14472,14 +14388,14 @@ class TicketStreamService : Service() {
         LATEST_TICKET_RESELECT_SETTLE_TIMEOUT_MILLIS +
         30_000L
     private const val CONTROL_CODE_POST_SUBMIT_FRAME_SETTLE_MILLIS = 0L
-    private const val CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS = 250L
+    private const val CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS = 1_250L
     private const val CONTROL_CODE_VISUAL_STATE_POLL_MILLIS = 40L
     private const val CONTROL_CODE_VISUAL_STATE_RETRY_MILLIS = 50L
     // The rooted helper can spend more than 250 ms capturing and classifying a frame while the
     // stream remains healthy. Do not overwrite that exact probe id before its reply has had a
     // bounded multi-frame opportunity to arrive. The two-frame generated signature proof still
     // remains mandatory; this only enlarges the transport wait inside one final proof window.
-    private const val CONTROL_CODE_GENERATED_CLOSE_PROBE_WAIT_MILLIS = 700L
+    private const val CONTROL_CODE_GENERATED_CLOSE_PROBE_WAIT_MILLIS = 1_250L
     private const val CONTROL_CODE_GENERATED_CLOSE_PROOF_TIMEOUT_MILLIS = 3_200L
     private const val CONTROL_CODE_BROWSER_MARKER_PROBE_ATTEMPTS = 2
     private const val CONTROL_CODE_BROWSER_MARKER_PROBE_WAIT_MILLIS = 1_800L
@@ -14489,7 +14405,7 @@ class TicketStreamService : Service() {
     // moments later. Extra samples are observation-only: value still needs two agreeing frames,
     // and retyping remains gated by two freshly proved static-blank frames.
     private const val CONTROL_CODE_SUBMIT_VISUAL_MAX_SAMPLES = 8
-    private const val CONTROL_CODE_SUBMIT_VISUAL_PROBE_WAIT_MILLIS = 350L
+    private const val CONTROL_CODE_SUBMIT_VISUAL_PROBE_WAIT_MILLIS = 1_250L
     private const val CONTROL_CODE_SUBMIT_VISUAL_SAMPLE_GAP_MILLIS = 250L
     private const val CONTROL_CODE_VALUE_RENDER_RECHECK_SETTLE_MILLIS = 350L
     private const val CONTROL_CODE_ROOT_TRANSACTION_TIMEOUT_MILLIS = 4_000L
@@ -14510,11 +14426,9 @@ class TicketStreamService : Service() {
     private const val SNAP_TARGET_CONTROL_CODE_BUTTON = "control_code_button"
     private val CONTROL_CODE_REQUEST_DIGITS_REGEX = Regex("""^[0-9]{2,8}$""")
     private const val CONTROL_CODE_SOFT_CHECK_TIMEOUT_MILLIS = 10_000L
-    // Cleanup probes share the rooted capture helper with the live stream. Keep each exact probe
-    // id outstanding across multiple 5 FPS frame opportunities so a healthy delayed reply is not
-    // discarded and replaced. The proof still requires two distinct consecutive RAW_TICKET
-    // samples; this only enlarges the bounded transport window used to receive them.
-    private const val CONTROL_CODE_CLEAN_SURFACE_PROBE_WAIT_MILLIS = 700L
+    // Each exact cleanup probe gets one full 1 FPS frame opportunity. The surrounding proof keeps
+    // at least three seconds for two distinct consecutive RAW_TICKET samples.
+    private const val CONTROL_CODE_CLEAN_SURFACE_PROBE_WAIT_MILLIS = 1_250L
     private const val CONTROL_CODE_FAST_CLEANUP_VERIFY_TIMEOUT_MILLIS = 3_200L
   private const val CONTROL_CODE_FAST_CLEANUP_POLL_MILLIS = 75L
   private const val CONTROL_CODE_FAST_CLEANUP_RAW_VISUAL_PROOF_COUNT = 2

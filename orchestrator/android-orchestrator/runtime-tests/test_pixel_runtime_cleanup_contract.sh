@@ -366,6 +366,105 @@ for truncated in \
   fi
 done
 
+FREQUENT_OUTPUT="${TEST_ROOT}/frequent-maintenance.txt"
+touch "${STACK_BASE}/run/orchestrator-action-results/frequent-old.json"
+touch -t 202603010101 "${STACK_BASE}/run/orchestrator-action-results/frequent-old.json"
+truncate -s 7 "${STACK_BASE}/vpn/logs/tailscaled.log.2"
+truncate -s 9 "${STACK_BASE}/ssh/logs/dropbear.log.bak-stale"
+truncate -s 2147483649 "${SUPERUSER_DB}"
+rm -f "${SUPERUSER_DB}-wal" "${SUPERUSER_DB}-shm"
+sh "${SCRIPT_PATH}" \
+  --frequent \
+  --dry-run \
+  --protected-list "${PROTECTED_LIST}" \
+  --stack-base "${STACK_BASE}" \
+  --superuser-log-db "${SUPERUSER_DB}" \
+  --root-recheck-command true \
+  --superuser-log-max-bytes 33554432 \
+  --known-log-max-bytes 8 \
+  --stack-log-max-bytes 16 > "${FREQUENT_OUTPUT}"
+
+if ! grep -Fq $'CANDIDATE\tsuperuser_log_db\t2147483649' "${FREQUENT_OUTPUT}"; then
+  echo "FAIL: frequent maintenance did not safely classify a root-history database above 2 GiB" >&2
+  exit 1
+fi
+if ! grep -Fq "${STACK_BASE}/run/orchestrator-action-results/frequent-old.json" "${FREQUENT_OUTPUT}"; then
+  echo "FAIL: frequent maintenance did not select an action receipt older than 24 hours" >&2
+  exit 1
+fi
+if ! grep -Fq "${STACK_BASE}/vpn/logs/tailscaled.log.2" "${FREQUENT_OUTPUT}" ||
+  ! grep -Fq "${STACK_BASE}/ssh/logs/dropbear.log.bak-stale" "${FREQUENT_OUTPUT}"; then
+  echo "FAIL: frequent maintenance did not select extra known-log rotations" >&2
+  cat "${FREQUENT_OUTPUT}" >&2
+  exit 1
+fi
+if ! grep -Fq $'OBSERVE\truntime_log_total\t32' "${FREQUENT_OUTPUT}"; then
+  echo "FAIL: frequent maintenance did not account for extra known-log rotations" >&2
+  cat "${FREQUENT_OUTPUT}" >&2
+  exit 1
+fi
+
+truncate -s 33554432 "${SUPERUSER_DB}"
+sh "${SCRIPT_PATH}" \
+  --frequent \
+  --dry-run \
+  --protected-list "${PROTECTED_LIST}" \
+  --stack-base "${STACK_BASE}" \
+  --superuser-log-db "${SUPERUSER_DB}" \
+  --root-recheck-command true \
+  --superuser-log-max-bytes 33554432 > "${FREQUENT_OUTPUT}"
+if ! grep -Fq $'SKIP\tsuperuser_log_db\t33554432' "${FREQUENT_OUTPUT}"; then
+  echo "FAIL: root-history database exactly at its ceiling should be retained" >&2
+  exit 1
+fi
+
+truncate -s 33554430 "${SUPERUSER_DB}"
+truncate -s 3 "${SUPERUSER_DB}-wal"
+sh "${SCRIPT_PATH}" \
+  --frequent \
+  --dry-run \
+  --protected-list "${PROTECTED_LIST}" \
+  --stack-base "${STACK_BASE}" \
+  --superuser-log-db "${SUPERUSER_DB}" \
+  --root-recheck-command true \
+  --superuser-log-max-bytes 33554432 > "${FREQUENT_OUTPUT}"
+if ! grep -Fq $'CANDIDATE\tsuperuser_log_db\t33554433' "${FREQUENT_OUTPUT}"; then
+  echo "FAIL: root-history DB and WAL bytes were not compared together" >&2
+  cat "${FREQUENT_OUTPUT}" >&2
+  exit 1
+fi
+
+FREQUENT_PROTECTED_LIST="${TEST_ROOT}/frequent-protected.txt"
+printf '%s\n' "${SUPERUSER_DB}" > "${FREQUENT_PROTECTED_LIST}"
+sh "${SCRIPT_PATH}" \
+  --frequent \
+  --dry-run \
+  --protected-list "${FREQUENT_PROTECTED_LIST}" \
+  --stack-base "${STACK_BASE}" \
+  --superuser-log-db "${SUPERUSER_DB}" \
+  --root-recheck-command true \
+  --superuser-log-max-bytes 8 > "${FREQUENT_OUTPUT}"
+if ! grep -Fq $'SKIP\tsuperuser_log_db\t33554433' "${FREQUENT_OUTPUT}" ||
+  ! grep -Fq $'\tprotected' "${FREQUENT_OUTPUT}"; then
+  echo "FAIL: frequent maintenance did not preserve a protected root-history database" >&2
+  exit 1
+fi
+
+rm -f "${SUPERUSER_DB}" "${SUPERUSER_DB}-wal" "${SUPERUSER_DB}-shm"
+sh "${SCRIPT_PATH}" \
+  --frequent \
+  --dry-run \
+  --protected-list "${PROTECTED_LIST}" \
+  --stack-base "${STACK_BASE}" \
+  --superuser-log-db "${SUPERUSER_DB}" \
+  --root-recheck-command true \
+  --superuser-log-max-bytes 8 > "${FREQUENT_OUTPUT}"
+if ! grep -Fq $'SKIP\tsuperuser_log_db\t0' "${FREQUENT_OUTPUT}" ||
+  ! grep -Fq $'\tmissing' "${FREQUENT_OUTPUT}"; then
+  echo "FAIL: missing root-history state was not recorded safely" >&2
+  exit 1
+fi
+
 ROOT_RECHECK_COUNTER="${TEST_ROOT}/root-recheck-count"
 ROOT_RECHECK_SCRIPT="${TEST_ROOT}/root-recheck.sh"
 printf '0\n' > "${ROOT_RECHECK_COUNTER}"

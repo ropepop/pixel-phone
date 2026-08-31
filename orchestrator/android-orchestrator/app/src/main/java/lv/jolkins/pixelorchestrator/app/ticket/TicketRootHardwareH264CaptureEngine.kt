@@ -54,10 +54,7 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
     val sourceHeight: Int,
     val targetWidth: Int,
     val targetHeight: Int,
-    val targetBitrate: Int,
-    val targetFps: Int,
-    val startupFps: Int,
-    val startupFrameCount: Int
+    val targetBitrate: Int
   )
 
   private val startupLock = Any()
@@ -73,6 +70,9 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
   @Volatile private var state = "idle"
   @Volatile private var message = "Hardware H.264 capture is idle"
   @Volatile private var encoderName: String? = "MediaCodec video/avc"
+  @Volatile private var configuredEncoderProfile = "unknown"
+  @Volatile private var configuredEncoderLevel = "unknown"
+  @Volatile private var configuredEncoderBitrateMode = "unknown"
   @Volatile private var width: Int? = null
   @Volatile private var height: Int? = null
   @Volatile private var bitrate: Int? = null
@@ -80,6 +80,8 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
   @Volatile private var frames = 0L
   @Volatile private var keyFrames = 0L
   @Volatile private var lastFrameBytes = 0
+  @Volatile private var lastKeyFrameBytes = 0
+  @Volatile private var lastKeyFrameAtMillis = 0L
   @Volatile private var lastFrameAtMillis = 0L
   @Volatile private var lastStartAtMillis = 0L
   @Volatile private var lastFrameTotalDurationMillis: Long? = null
@@ -89,6 +91,7 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
   @Volatile private var lastVisibilityCheckResult = "not_run"
   @Volatile private var blankFrameFailures = 0L
   @Volatile private var droppedFrames = 0L
+  @Volatile private var unexpectedDeltaFrames = 0L
   @Volatile private var restartCount = 0L
   @Volatile private var lastExitReason: String? = null
   @Volatile private var lastExitAtMillis = 0L
@@ -109,24 +112,13 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
   @Volatile private var lastControlCodeVisualSubmitBounds: TicketControlCodeVisualBounds? = null
   @Volatile private var lastTicketActionObservation: TicketVisualActionObservation? = null
   @Volatile private var lastTicketActionDiagnostic = ""
-  @Volatile private var controlCodeBurstActive = false
-  @Volatile private var controlCodeBurstState = "idle"
-  @Volatile private var lastControlCodeBurstAtMillis = 0L
-  @Volatile private var cadenceFpsTarget: Int? = null
-  @Volatile private var cadenceTier = "static"
-  @Volatile private var cadenceChanges = 0L
   @Volatile private var cadenceDeadlineMisses = 0L
   @Volatile private var cadenceSkippedTicks = 0L
   @Volatile private var cadenceLastLatenessMillis: Long? = null
   @Volatile private var cadenceLastSkippedTicks = 0L
-  @Volatile private var lastCadenceCommand: String? = null
-  @Volatile private var lastCadenceCommandAccepted: Boolean? = null
-  @Volatile private var lastCadenceCommandAtMillis = 0L
   private val encoderLivenessRecoveryLock = Any()
   private var encoderLivenessRecoveryCount = 0L
   private var lastEncoderLivenessRecoveryAtMillis = 0L
-  /** The latest service-selected tier, replayed when a restarted helper is ready. */
-  @Volatile private var desiredCadenceFps: Int? = null
   @Volatile private var encoderProcessCount = 0
   @Volatile private var staleCaptureProcessCount = 0
   @Volatile private var lastCaptureCleanupResult = "not_run"
@@ -210,20 +202,14 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
     sourceHeight: Int,
     targetWidth: Int,
     targetHeight: Int,
-    targetBitrate: Int,
-    targetFps: Int,
-    startupFps: Int = targetFps,
-    startupFrameCount: Int = 0
+    targetBitrate: Int
   ) {
     val request = HardwareH264StartRequest(
       sourceWidth = sourceWidth,
       sourceHeight = sourceHeight,
       targetWidth = targetWidth,
       targetHeight = targetHeight,
-      targetBitrate = targetBitrate,
-      targetFps = targetFps,
-      startupFps = startupFps.coerceAtLeast(targetFps),
-      startupFrameCount = startupFrameCount.coerceAtLeast(0)
+      targetBitrate = targetBitrate
     )
     synchronized(startupLock) {
       val previousRequest = desiredStartRequest
@@ -234,14 +220,14 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
       wanted = true
       if (job?.isActive == true) {
         if (previousRequest != null && previousRequest != request) {
-          fps = targetFps
+          fps = TicketScreenConfig.ROOT_HARDWARE_H264_FPS
           requestCaptureRestartLocked("capture_config_changed")
         } else {
           publish()
         }
         return
       }
-      fps = targetFps
+      fps = TicketScreenConfig.ROOT_HARDWARE_H264_FPS
       job = scope.launch(Dispatchers.IO) {
         runCaptureLoop()
       }
@@ -289,8 +275,13 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
   }
 
   fun requestKeyFrame(reason: String) {
+    requestImmediateRefresh(reason)
+  }
+
+  /** Coalesces onto the helper's next immediate all-intra capture. */
+  fun requestImmediateRefresh(reason: String): Boolean {
     pendingKeyFrameRequest.offer(reason)
-    flushPendingKeyFrameRequest("request")
+    return flushPendingKeyFrameRequest("request")
   }
 
   fun requestControlCodeVisualProbe(reason: String): Long? =
@@ -329,28 +320,6 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
 
   fun requestTicketCurrentVisualProbe(reason: String): Long? =
     requestControlCodeVisualProbe("ticket_current_visual_probe", reason)
-
-  fun startControlCodeRequestBurst(reason: String): Boolean =
-    writeHardwareCommand("control_code_burst_start\n", "control_code_burst_start", reason)
-
-  fun stopControlCodeRequestBurst(reason: String): Boolean =
-    writeHardwareCommand("control_code_burst_stop\n", "control_code_burst_stop", reason)
-
-  /** Change capture cadence in the running helper without restarting MediaCodec. */
-  fun requestCadence(fps: Int, reason: String = "cadence_request"): Boolean {
-    val command = "${TicketScreenConfig.ROOT_HARDWARE_H264_CADENCE_COMMAND_PREFIX}$fps\n"
-    val supported = TicketCaptureCadenceScheduler.isSupportedFps(fps)
-    if (supported) {
-      // A viewer can attach while the helper process is still starting. Keep the
-      // accepted tier in-process and replay it as soon as the process exists.
-      desiredCadenceFps = fps
-    }
-    val accepted = supported && (writeHardwareCommand(command, "cadence", reason) || desiredCadenceFps == fps)
-    lastCadenceCommand = command.trim()
-    lastCadenceCommandAccepted = accepted
-    lastCadenceCommandAtMillis = SystemClock.elapsedRealtime()
-    return accepted
-  }
 
   private fun requestControlCodeVisualProbe(command: String, reason: String): Long? {
     val probeId = controlCodeVisualProbeSequence.incrementAndGet()
@@ -403,11 +372,13 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
     }
   }
 
-  private fun flushPendingKeyFrameRequest(reason: String) {
-    val pending = pendingKeyFrameRequest.take() ?: return
+  private fun flushPendingKeyFrameRequest(reason: String): Boolean {
+    val pending = pendingKeyFrameRequest.take() ?: return false
     if (!writeHardwareKeyFrameRequest("$reason:${pending.reason}")) {
       pendingKeyFrameRequest.restoreIfEmpty(pending)
+      return false
     }
+    return true
   }
 
   suspend fun cleanupStaleProcesses() {
@@ -428,6 +399,9 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
       available = available,
       active = job?.isActive == true && encoderProcess?.isAlive == true,
       encoderName = encoderName,
+      configuredEncoderProfile = configuredEncoderProfile,
+      configuredEncoderLevel = configuredEncoderLevel,
+      configuredEncoderBitrateMode = configuredEncoderBitrateMode,
       captureSource = TicketScreenConfig.ROOT_HARDWARE_H264_CAPTURE_SOURCE,
       captureMethod = TicketScreenConfig.ROOT_HARDWARE_H264_CAPTURE_METHOD,
       captureHelperAvailable = captureHelperAvailable,
@@ -439,26 +413,13 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
       height = height,
       bitrate = bitrate,
       fps = fps,
-      steadyFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS,
-      burstFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FPS.takeIf {
-        TicketScreenConfig.ROOT_HARDWARE_H264_STARTUP_FRAMES > 0
-      },
-      controlCodeRequestFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS,
-      cadenceFpsTarget = cadenceFpsTarget,
-      cadenceTier = cadenceTier,
-      cadenceChanges = cadenceChanges,
+      frameDependencyMode = TicketScreenConfig.ROOT_HARDWARE_H264_FRAME_DEPENDENCY_MODE,
       cadenceDeadlineMisses = cadenceDeadlineMisses,
       cadenceSkippedTicks = cadenceSkippedTicks,
       cadenceLastLatenessMillis = cadenceLastLatenessMillis,
       cadenceLastSkippedTicks = cadenceLastSkippedTicks,
-      lastCadenceCommand = lastCadenceCommand,
-      lastCadenceCommandAccepted = lastCadenceCommandAccepted,
-      lastCadenceCommandAgoMillis = ageMillis(lastCadenceCommandAtMillis, nowMillis),
       encoderLivenessRecoveryCount = encoderLivenessRecoveryCountSnapshot,
       lastEncoderLivenessRecoveryAgoMillis = lastEncoderLivenessRecoveryAgoMillisSnapshot,
-      controlCodeBurstActive = controlCodeBurstActive,
-      controlCodeBurstState = controlCodeBurstState,
-      lastControlCodeBurstAgoMillis = ageMillis(lastControlCodeBurstAtMillis, nowMillis),
       intervalMode = hardwareIntervalMode(),
       currentIntervalMillis = hardwareFrameIntervalMillis(),
       colorCorrection = TicketScreenConfig.ROOT_HARDWARE_H264_COLOR_CORRECTION,
@@ -466,6 +427,8 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
       frames = frames,
       keyFrames = keyFrames,
       lastFrameBytes = lastFrameBytes,
+      lastKeyFrameBytes = lastKeyFrameBytes,
+      lastKeyFrameAgoMillis = ageMillis(lastKeyFrameAtMillis, nowMillis),
       estimatedBitrate = estimatedBitrate,
       lastFrameAgoMillis = ageMillis(lastFrameAtMillis, nowMillis),
       lastStartAgoMillis = ageMillis(lastStartAtMillis, nowMillis),
@@ -481,6 +444,7 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
       staleCaptureProcessCount = staleCaptureProcessCount,
       lastCaptureCleanupResult = lastCaptureCleanupResult,
       droppedFrames = droppedFrames,
+      unexpectedDeltaFrames = unexpectedDeltaFrames,
       restartCount = restartCount,
       lastExitReason = lastExitReason,
       lastExitAgoMillis = ageMillis(lastExitAtMillis, nowMillis),
@@ -497,17 +461,23 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
       val parser = TicketH264AnnexBParser { payload, keyFrame ->
         if (parserGeneration == captureGeneration.get()) {
           val now = SystemClock.elapsedRealtime()
+          if (!keyFrame) {
+            droppedFrames += 1L
+            unexpectedDeltaFrames += 1L
+            requestImmediateRefresh("unexpected_delta_all_intra")
+            return@TicketH264AnnexBParser
+          }
           frames += 1
           lastFrameAtMillis = now
           lastFrameBytes = payload.size
+          lastKeyFrameBytes = payload.size
+          lastKeyFrameAtMillis = now
           lastFrameTotalDurationMillis = 0L
           updateEstimatedBitrate(payload.size, now)
-          if (keyFrame) {
-            keyFrames += 1
-          }
+          keyFrames += 1
           onFrame(
             TicketRootCaptureFrame(
-              keyFrame = keyFrame,
+              keyFrame = true,
               timestampUs = SystemClock.elapsedRealtimeNanos() / 1_000L,
               payload = payload,
               width = request.targetWidth,
@@ -531,16 +501,12 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
             request.sourceHeight,
             request.targetWidth,
             request.targetHeight,
-            request.targetBitrate,
-            request.targetFps,
-            request.startupFps,
-            request.startupFrameCount
+            request.targetBitrate
           )
         )
           .redirectErrorStream(false)
           .start()
         encoderProcess = localEncoder
-        flushDesiredCadenceCommand("encoder_started")
         flushPendingKeyFrameRequest("encoder_started")
         readStderrTail(localEncoder, parserGeneration)
         schedulePostStartProcessSanityCheck()
@@ -637,7 +603,7 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
   private suspend fun probeCaptureHelper(sourceWidth: Int, sourceHeight: Int): RootResult {
     val size = TicketStreamSizing.rootHardwareH264(sourceWidth, sourceHeight)
     return rootExecutor.run(
-      "${rootEncoderCommand(sourceWidth, sourceHeight, size.width, size.height, TicketScreenConfig.ROOT_HARDWARE_H264_BITRATE, targetFps = 1, startupFps = 1, startupFrameCount = 0)} --frames 1 >/dev/null",
+      "${rootEncoderCommand(sourceWidth, sourceHeight, size.width, size.height, TicketScreenConfig.ROOT_HARDWARE_H264_BITRATE)} --frames 1 >/dev/null",
       timeout = 8.seconds
     )
   }
@@ -655,21 +621,14 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
     sourceHeight: Int,
     width: Int,
     height: Int,
-    targetBitrate: Int,
-    targetFps: Int,
-    startupFps: Int = targetFps,
-    startupFrameCount: Int = 0
+    targetBitrate: Int
   ): String {
-    val cleanStartupFps = startupFps.coerceAtLeast(targetFps)
-    val cleanStartupFrames = startupFrameCount.coerceAtLeast(0)
     val commonArgs = "--source-width $sourceWidth --source-height $sourceHeight --width $width --height $height " +
       "--crop-left-source ${TicketScreenConfig.TICKET_MEDIA_LEFT_CROP_SOURCE_PIXELS} " +
       "--crop-top-source ${TicketScreenConfig.TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS} " +
       "--crop-right-source ${TicketScreenConfig.TICKET_MEDIA_RIGHT_CROP_SOURCE_PIXELS} " +
       "--crop-bottom-source ${TicketScreenConfig.TICKET_MEDIA_BOTTOM_CROP_SOURCE_PIXELS} " +
-      "--fps $targetFps --startup-fps $cleanStartupFps --startup-frames $cleanStartupFrames " +
-      "--control-code-request-fps ${TicketScreenConfig.ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS} " +
-      "--bitrate $targetBitrate --keyframe-interval-millis ${TicketScreenConfig.ROOT_HARDWARE_H264_KEYFRAME_INTERVAL_MILLIS}"
+      "--fps ${TicketScreenConfig.ROOT_HARDWARE_H264_FPS} --bitrate $targetBitrate"
     return rootCaptureHelperCommand(commonArgs)
   }
 
@@ -726,7 +685,11 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
   ) {
     val cleanLine = sanitizeStderrLine(line)
     parseHelperDiagnostic(cleanLine, nowMillis, sourceGeneration)
-    if (cleanLine.startsWith("ENCODER_LIVENESS ") || cleanLine.startsWith("CONTROL_CODE_VISUAL ")) {
+    if (
+      cleanLine.startsWith("ENCODER_LIVENESS ") ||
+      cleanLine.startsWith("CONTROL_CODE_VISUAL ") ||
+      cleanLine.startsWith("ENCODER_CONFIG ")
+    ) {
       return
     }
     stderrTail = (stderrTail + "\n" + cleanLine).trim().takeLast(STDERR_TAIL_CHARS)
@@ -738,15 +701,24 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
 
   private fun parseHelperDiagnostic(line: String, nowMillis: Long, sourceGeneration: Long?) {
     when {
+      line.startsWith("ENCODER_CONFIG ") -> {
+        if (sourceGeneration != null && sourceGeneration != captureGeneration.get()) return
+        val fields = diagnosticFields(line)
+        fields["name"]?.takeIf { it.isNotBlank() }?.let { encoderName = it }
+        fields["configured_profile"]?.takeIf { it.isNotBlank() }?.let { configuredEncoderProfile = it }
+        fields["configured_level"]?.takeIf { it.isNotBlank() }?.let { configuredEncoderLevel = it }
+        fields["configured_bitrate_mode"]?.takeIf { it.isNotBlank() }?.let {
+          configuredEncoderBitrateMode = it
+        }
+        fields["configured_fps"]?.toIntOrNull()?.let { fps = it }
+      }
       line.startsWith("METRIC ") -> {
+        if (sourceGeneration != null && sourceGeneration != captureGeneration.get()) return
         val fields = diagnosticFields(line)
         lastCaptureDurationMillis = fields["capture_ms"]?.toLongOrNull()
         lastDrawDurationMillis = fields["draw_ms"]?.toLongOrNull()
         lastEncodeDurationMillis = fields["encode_ms"]?.toLongOrNull()
         fields["fps_target"]?.toIntOrNull()?.let { fps = it }
-        fields["cadence_fps"]?.toIntOrNull()?.let { cadenceFpsTarget = it }
-        fields["cadence_tier"]?.takeIf { it.isNotBlank() }?.let { cadenceTier = it }
-        fields["cadence_changes"]?.toLongOrNull()?.let { cadenceChanges = it }
         fields["deadline_misses"]?.toLongOrNull()?.let { cadenceDeadlineMisses = it }
         fields["skipped_ticks"]?.toLongOrNull()?.let { cadenceSkippedTicks = it }
         fields["deadline_late_ms"]?.toLongOrNull()?.let { cadenceLastLatenessMillis = it }
@@ -818,25 +790,6 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
             )
           )
         }
-      }
-      line.startsWith("CONTROL_CODE_BURST ") -> {
-        val fields = diagnosticFields(line)
-        controlCodeBurstState = fields["state"].orEmpty().ifBlank { "unknown" }
-        controlCodeBurstActive = controlCodeBurstState == "started"
-        lastControlCodeBurstAtMillis = nowMillis
-      }
-      line.startsWith("CADENCE ") -> {
-        val fields = diagnosticFields(line)
-        fields["command"]?.takeIf { it.isNotBlank() }?.let { lastCadenceCommand = it }
-        fields["accepted"]?.toBooleanStrictOrNull()?.let { lastCadenceCommandAccepted = it }
-        lastCadenceCommandAtMillis = nowMillis
-        fields["fps"]?.toIntOrNull()?.let { cadenceFpsTarget = it }
-        fields["tier"]?.takeIf { it.isNotBlank() }?.let { cadenceTier = it }
-        fields["changes"]?.toLongOrNull()?.let { cadenceChanges = it }
-        fields["deadline_misses"]?.toLongOrNull()?.let { cadenceDeadlineMisses = it }
-        fields["skipped_ticks"]?.toLongOrNull()?.let { cadenceSkippedTicks = it }
-        fields["last_lateness_ms"]?.toLongOrNull()?.let { cadenceLastLatenessMillis = it }
-        fields["last_skipped_ticks"]?.toLongOrNull()?.let { cadenceLastSkippedTicks = it }
       }
       line.startsWith("ENCODER_LIVENESS ") -> {
         val fields = diagnosticFields(line)
@@ -971,25 +924,16 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
   }
 
   private fun hardwareIntervalMode(): String {
-    val request = activeStartRequest ?: desiredStartRequest ?: return ""
-    return when {
-      controlCodeBurstActive -> "control_code_request_burst"
-      request.startupFrameCount > 0 && frames < request.startupFrameCount -> "startup_burst"
-      cadenceFpsTarget != null -> "adaptive_${cadenceTier}"
-      else -> "fixed"
+    return if (activeStartRequest != null || desiredStartRequest != null || fps != null) {
+      "fixed_all_intra"
+    } else {
+      ""
     }
   }
 
   private fun hardwareFrameIntervalMillis(): Long? {
-    val request = activeStartRequest ?: desiredStartRequest
-    val currentFps = when {
-      controlCodeBurstActive -> TicketScreenConfig.ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS
-      cadenceFpsTarget != null -> cadenceFpsTarget
-      request != null && request.startupFrameCount > 0 && frames < request.startupFrameCount -> request.startupFps
-      request != null -> request.targetFps
-      else -> fps
-    }?.takeIf { it > 0 } ?: return null
-    return kotlin.math.round(1000.0 / currentFps).toLong().coerceAtLeast(1L)
+    if (activeStartRequest == null && desiredStartRequest == null && fps == null) return null
+    return 1_000L
   }
 
   private fun stopProcesses() {
@@ -1025,6 +969,11 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
     frames = 0L
     keyFrames = 0L
     lastFrameBytes = 0
+    configuredEncoderProfile = "unknown"
+    configuredEncoderLevel = "unknown"
+    configuredEncoderBitrateMode = "unknown"
+    lastKeyFrameBytes = 0
+    lastKeyFrameAtMillis = 0L
     lastFrameAtMillis = 0L
     lastStartAtMillis = 0L
     lastFrameTotalDurationMillis = null
@@ -1034,27 +983,18 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
     lastVisibilityCheckResult = "not_run"
     blankFrameFailures = 0L
     droppedFrames = 0L
+    unexpectedDeltaFrames = 0L
     estimatedBitrate = 0L
     bitrateWindowStartedAtMillis = 0L
     bitrateWindowBytes = 0L
-    controlCodeBurstActive = false
-    controlCodeBurstState = "idle"
-    lastControlCodeBurstAtMillis = 0L
-    cadenceFpsTarget = null
-    cadenceTier = "static"
-    cadenceChanges = 0L
     cadenceDeadlineMisses = 0L
     cadenceSkippedTicks = 0L
     cadenceLastLatenessMillis = null
     cadenceLastSkippedTicks = 0L
-    lastCadenceCommand = null
-    lastCadenceCommandAccepted = null
-    lastCadenceCommandAtMillis = 0L
     synchronized(controlCodeVisualProbeResultLock) {
       controlCodeVisualProbeResults.clear()
     }
     resetEncoderLivenessRecoveryMetrics()
-    desiredCadenceFps = null
   }
 
   internal fun resetEncoderLivenessRecoveryMetrics() {
@@ -1067,12 +1007,6 @@ class TicketRootHardwareH264CaptureEngine internal constructor(
   internal fun advanceCaptureGeneration(): Long {
     clearTransientControlCodeVisualProbes()
     return captureGeneration.incrementAndGet()
-  }
-
-  private fun flushDesiredCadenceCommand(reason: String) {
-    val fps = desiredCadenceFps ?: return
-    val command = "${TicketScreenConfig.ROOT_HARDWARE_H264_CADENCE_COMMAND_PREFIX}$fps\n"
-    writeHardwareCommand(command, "cadence", reason)
   }
 
   private fun schedulePostStartProcessSanityCheck() {

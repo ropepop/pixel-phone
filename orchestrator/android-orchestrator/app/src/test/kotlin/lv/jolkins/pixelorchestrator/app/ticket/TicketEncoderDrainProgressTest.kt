@@ -49,4 +49,12 @@ class TicketEncoderDrainProgressTest {
     assertTrue(combined.madeCodecProgress)
     assertEquals(1, combined.encodedFrameOutputs)
   }
+
+  @Test
+  fun multipleCompletedMediaOutputsAccumulate() {
+    val first = TicketEncoderDrainProgress.fromDequeuedOutput(40_000, 40_000, false, true)
+    val second = TicketEncoderDrainProgress.fromDequeuedOutput(20_000, 20_000, false, true)
+
+    assertEquals(2, first.plus(second).encodedFrameOutputs)
+  }
 }

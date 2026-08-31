@@ -5,7 +5,10 @@ final class TicketEncoderDrainProgress {
   final int encodedFrameOutputs;
   final boolean madeCodecProgress;
 
-  TicketEncoderDrainProgress(int encodedFrameOutputs, boolean madeCodecProgress) {
+  TicketEncoderDrainProgress(
+    int encodedFrameOutputs,
+    boolean madeCodecProgress
+  ) {
     this.encodedFrameOutputs = Math.max(0, encodedFrameOutputs);
     this.madeCodecProgress = madeCodecProgress;
   }
@@ -20,8 +23,9 @@ final class TicketEncoderDrainProgress {
     boolean emittedCodecConfig,
     boolean emittedKeyFrame
   ) {
+    boolean encodedFrame = isEncodedFrameOutput(emittedSize, emittedCodecConfig, emittedKeyFrame);
     return new TicketEncoderDrainProgress(
-      isEncodedFrameOutput(emittedSize, emittedCodecConfig, emittedKeyFrame) ? 1 : 0,
+      encodedFrame ? 1 : 0,
       dequeuedSize > 0
     );
   }

@@ -27,91 +27,23 @@ object ComponentRegistry {
   }
 
   fun load(context: Context): List<ComponentRegistryEntry> {
-    return runCatching {
-      context.assets.open(ASSET_PATH).use { input ->
-        val raw = input.bufferedReader().readText()
-        val parsed = json.decodeFromString<ComponentRegistryDocument>(raw)
-        val deduped = linkedMapOf<String, ComponentRegistryEntry>()
-        parsed.components
-          .filter { it.id.isNotBlank() }
-          .forEach { deduped[it.id] = it }
-        if (deduped.isEmpty()) defaultEntries() else deduped.values.toList()
-      }
-    }.getOrElse { defaultEntries() }
+    return context.assets.open(ASSET_PATH).use { input ->
+      parse(input.bufferedReader().readText())
+    }
   }
 
-  private fun defaultEntries(): List<ComponentRegistryEntry> = listOf(
-    ComponentRegistryEntry(
-      id = "dns",
-      startCommand = "sh /data/local/pixel-stack/bin/pixel-dns-start.sh",
-      stopCommand = "sh /data/local/pixel-stack/bin/pixel-dns-stop.sh",
-      healthCommand = "ss -ltn 2>/dev/null | grep -E '[:.]53[[:space:]]' >/dev/null"
-    ),
-    ComponentRegistryEntry(
-      id = "ssh",
-      startCommand = "sh /data/local/pixel-stack/bin/pixel-ssh-start.sh",
-      stopCommand = "sh /data/local/pixel-stack/bin/pixel-ssh-stop.sh",
-      healthCommand = "ss -ltn 2>/dev/null | grep -E '[:.]2222[[:space:]]' >/dev/null"
-    ),
-    ComponentRegistryEntry(
-      id = "vpn",
-      startCommand = "sh /data/local/pixel-stack/bin/pixel-vpn-start.sh",
-      stopCommand = "sh /data/local/pixel-stack/bin/pixel-vpn-stop.sh",
-      healthCommand = "sh /data/local/pixel-stack/bin/pixel-vpn-health.sh"
-    ),
-    ComponentRegistryEntry(
-      id = "train_bot",
-      startCommand = "sh /data/local/pixel-stack/bin/pixel-train-start.sh",
-      stopCommand = "sh /data/local/pixel-stack/bin/pixel-train-stop.sh",
-      healthCommand = "pid=${'$'}(cat /data/local/pixel-stack/apps/train-bot/run/train-bot.pid 2>/dev/null || true); [ -n \"${'$'}pid\" ] && kill -0 \"${'$'}pid\" >/dev/null 2>&1"
-    ),
-    ComponentRegistryEntry(
-      id = "satiksme_bot",
-      startCommand = "sh /data/local/pixel-stack/bin/pixel-satiksme-start.sh",
-      stopCommand = "sh /data/local/pixel-stack/bin/pixel-satiksme-stop.sh",
-      healthCommand = "sh /data/local/pixel-stack/bin/pixel-satiksme-health.sh"
-    ),
-    ComponentRegistryEntry(
-      id = "site_notifier",
-      startCommand = "sh /data/local/pixel-stack/bin/pixel-notifier-start.sh",
-      stopCommand = "sh /data/local/pixel-stack/bin/pixel-notifier-stop.sh",
-      healthCommand = "pid=${'$'}(cat /data/local/pixel-stack/apps/site-notifications/run/site-notifier.pid 2>/dev/null || true); [ -n \"${'$'}pid\" ] && kill -0 \"${'$'}pid\" >/dev/null 2>&1"
-    ),
-    ComponentRegistryEntry(
-      id = "subscription_bot",
-      startCommand = "sh /data/local/pixel-stack/bin/pixel-subscription-start.sh",
-      stopCommand = "sh /data/local/pixel-stack/bin/pixel-subscription-stop.sh",
-      healthCommand = "sh /data/local/pixel-stack/bin/pixel-subscription-health.sh"
-    ),
-    ComponentRegistryEntry(
-      id = "ticket_screen",
-      startCommand = "sh /data/local/pixel-stack/bin/pixel-ticket-start.sh",
-      stopCommand = "sh /data/local/pixel-stack/bin/pixel-ticket-stop.sh",
-      healthCommand = "sh /data/local/pixel-stack/bin/pixel-ticket-health.sh"
-    ),
-    ComponentRegistryEntry(
-      id = "ddns",
-      startCommand = "sh /data/local/pixel-stack/bin/pixel-ddns-sync.sh",
-      stopCommand = "true",
-      healthCommand = "test -f /data/local/pixel-stack/run/ddns-last-sync-epoch"
-    ),
-    ComponentRegistryEntry(
-      id = "remote",
-      startCommand = "true",
-      stopCommand = "true",
-      healthCommand = "ss -ltn 2>/dev/null | grep -E '[:.]443[[:space:]]' >/dev/null || true"
-    ),
-    ComponentRegistryEntry(
-      id = "management",
-      startCommand = "true",
-      stopCommand = "true",
-      healthCommand = "sh /data/local/pixel-stack/bin/pixel-management-health.sh"
-    ),
-    ComponentRegistryEntry(
-      id = RuntimeCleanupComponentController.COMPONENT_NAME,
-      startCommand = "am start-foreground-service -n lv.jolkins.pixelorchestrator/.app.SupervisorService -a lv.jolkins.pixelorchestrator.action.CLEANUP --es orchestrator_action cleanup --es orchestrator_cleanup_trigger manual",
-      stopCommand = "true",
-      healthCommand = "latest=${'$'}(ls -1t /data/local/pixel-stack/logs/events/cleanup-*.json 2>/dev/null | grep -v -- '-dry-run.json' | sed -n '1p'); [ -n \"${'$'}latest\" ] && ! grep -q '\"status\"[[:space:]]*:[[:space:]]*\"failed\"' \"${'$'}latest\""
-    )
-  )
+  internal fun parse(raw: String): List<ComponentRegistryEntry> {
+    val parsed = json.decodeFromString<ComponentRegistryDocument>(raw)
+    require(parsed.schema == 1) { "Unsupported component registry schema: ${parsed.schema}" }
+    require(parsed.components.isNotEmpty()) { "Component registry must not be empty" }
+    val ids = mutableSetOf<String>()
+    parsed.components.forEach { entry ->
+      require(entry.id.matches(Regex("[a-z0-9_]+"))) { "Invalid component id" }
+      require(ids.add(entry.id)) { "Duplicate component id: ${entry.id}" }
+      require(entry.startCommand.isNotBlank()) { "Missing start command for ${entry.id}" }
+      require(entry.stopCommand.isNotBlank()) { "Missing stop command for ${entry.id}" }
+      require(entry.healthCommand.isNotBlank()) { "Missing health command for ${entry.id}" }
+    }
+    return parsed.components
+  }
 }

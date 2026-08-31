@@ -19,7 +19,7 @@ SUPERUSER_LOG_MAX_BYTES=33554432
 KNOWN_LOG_MAX_BYTES=1048576
 STACK_LOG_MAX_BYTES=33554432
 RETIRED_DNS=0
-SUPERUSER_ONLY=0
+FREQUENT_MAINTENANCE=0
 SUPERUSER_ROTATION_ACTIVE=0
 SUPERUSER_ROTATION_BACKUP=""
 
@@ -109,7 +109,12 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --superuser-only)
-      SUPERUSER_ONLY=1
+      # One-release compatibility alias for the former root-history-only lane.
+      FREQUENT_MAINTENANCE=1
+      shift
+      ;;
+    --frequent)
+      FREQUENT_MAINTENANCE=1
       shift
       ;;
     --dry-run)
@@ -151,7 +156,8 @@ bytes_of_path() {
     return 0
   fi
   if [ -e "${bytes_path}" ]; then
-    wc -c < "${bytes_path}" 2>/dev/null | tr -d '[:space:]' || echo 0
+    file_bytes="$(wc -c < "${bytes_path}" 2>/dev/null | tr -d '[:space:]' || true)"
+    printf '%s\n' "${file_bytes:-0}"
     return 0
   fi
   echo 0
@@ -344,16 +350,30 @@ known_runtime_log_paths() {
 }
 
 allowlisted_log_total_bytes() {
-  allowlisted_total=0
   for allowlisted_path in $(known_runtime_log_paths); do
-    allowlisted_total=$((allowlisted_total + $(bytes_of_path "${allowlisted_path}")))
-    allowlisted_total=$((allowlisted_total + $(bytes_of_path "${allowlisted_path}.1")))
-  done
-  echo "${allowlisted_total}"
+    bytes_of_path "${allowlisted_path}"
+    bytes_of_path "${allowlisted_path}.1"
+    bytes_of_path "${allowlisted_path}.2"
+    bytes_of_path "${allowlisted_path}.3"
+    bytes_of_path "${allowlisted_path}.old"
+    for backup_path in "${allowlisted_path}".bak*; do
+      [ -e "${backup_path}" ] || continue
+      bytes_of_path "${backup_path}"
+    done
+  done | awk '{ total += $1 } END { printf "%.0f\n", total }'
+}
+
+retained_allowlisted_log_total_bytes() {
+  for allowlisted_path in $(known_runtime_log_paths); do
+    bytes_of_path "${allowlisted_path}"
+    bytes_of_path "${allowlisted_path}.1"
+  done | awk '{ total += $1 } END { printf "%.0f\n", total }'
 }
 
 enforce_allowlisted_log_total() {
-  total_bytes="$(allowlisted_log_total_bytes)"
+  # Extra rotations are removed immediately before this check. In dry-run mode,
+  # plan against the retained active/.1 set so the preview matches an apply run.
+  total_bytes="$(retained_allowlisted_log_total_bytes)"
   [ "${total_bytes}" -gt "${STACK_LOG_MAX_BYTES}" ] || return 0
   remaining_bytes="${total_bytes}"
 
@@ -387,14 +407,15 @@ root_recheck_ok() {
 }
 
 superuser_log_bytes() {
-  total=0
   for superuser_log_path in "${SUPERUSER_LOG_DB}" "${SUPERUSER_LOG_DB}-wal" "${SUPERUSER_LOG_DB}-shm"; do
     if [ -e "${superuser_log_path}" ]; then
-      path_bytes="$(bytes_of_path "${superuser_log_path}")"
-      total=$((total + path_bytes))
+      bytes_of_path "${superuser_log_path}"
     fi
-  done
-  echo "${total}"
+  done | awk '{ total += $1 } END { printf "%.0f\n", total }'
+}
+
+decimal_lte() {
+  awk -v left="$1" -v right="$2" 'BEGIN { exit !((left + 0) <= (right + 0)) }'
 }
 
 recover_interrupted_superuser_rotation() {
@@ -424,6 +445,7 @@ recover_interrupted_superuser_rotation() {
 cleanup_superuser_log_db() {
   recover_interrupted_superuser_rotation || return 0
   if [ ! -e "${SUPERUSER_LOG_DB}" ] && [ ! -e "${SUPERUSER_LOG_DB}-wal" ] && [ ! -e "${SUPERUSER_LOG_DB}-shm" ]; then
+    record "SKIP" "superuser_log_db" "0" "${SUPERUSER_LOG_DB}" "missing"
     return 0
   fi
 
@@ -432,7 +454,7 @@ cleanup_superuser_log_db() {
     record "SKIP" "superuser_log_db" "${superuser_bytes}" "${SUPERUSER_LOG_DB}" "protected"
     return 0
   fi
-  if [ "${superuser_bytes}" -le "${SUPERUSER_LOG_MAX_BYTES}" ]; then
+  if decimal_lte "${superuser_bytes}" "${SUPERUSER_LOG_MAX_BYTES}"; then
     record "SKIP" "superuser_log_db" "${superuser_bytes}" "${SUPERUSER_LOG_DB}" "within_size_limit"
     return 0
   fi
@@ -545,8 +567,20 @@ cleanup_retired_dns_logs() {
   done
 }
 
-if [ "${SUPERUSER_ONLY}" -eq 1 ]; then
+if [ "${FREQUENT_MAINTENANCE}" -eq 1 ]; then
+  scan_find "action_result" "unconsumed_action_result" "${STACK_BASE}/run/orchestrator-action-results" \
+    -mindepth 1 -maxdepth 1 -type f -name '*.json' -mmin +${ACTION_RESULT_AGE_MINUTES}
+  for runtime_log_path in $(known_runtime_log_paths); do
+    rotate_known_log_if_oversize "${runtime_log_path}" "known_runtime_log"
+    bound_known_log_rotation "${runtime_log_path}.1"
+    remove_extra_known_log_rotations "${runtime_log_path}" ".2" ".3" ".old"
+    scan_find "runtime_log_rotation" "extra_backup_rotation" "$(dirname "${runtime_log_path}")" \
+      -mindepth 1 -maxdepth 1 -type f -name "$(basename "${runtime_log_path}").bak*"
+  done
+  enforce_allowlisted_log_total
   cleanup_superuser_log_db
+  record "OBSERVE" "superuser_log_db" "$(superuser_log_bytes)" "${SUPERUSER_LOG_DB}" "after_maintenance"
+  record "OBSERVE" "runtime_log_total" "$(allowlisted_log_total_bytes)" "${STACK_BASE}/logs" "after_maintenance"
   exit 0
 fi
 

@@ -31,7 +31,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -44,13 +43,6 @@ public final class TicketRootHardwareH264CaptureMain {
   private static final long CONTROL_CODE_VISUAL_PROBE_MILLIS = 2_500L;
   private static final long CONTROL_CODE_VISUAL_GENERATED_HOLD_MILLIS = 1_200L;
   private static final long CONTROL_CODE_VISUAL_REPORT_INTERVAL_MILLIS = 150L;
-  private static final long CONTROL_CODE_REQUEST_BURST_MAX_MILLIS = 20_000L;
-  // A HARDWARE bitmap cannot be read by the software Canvas used for the bounded thumbnail
-  // without a readback copy. Keep that readback well below the 10 FPS capture cadence.
-  private static final long MOTION_SAMPLE_INTERVAL_MILLIS = 1_000L;
-  private static final long MOTION_SAMPLE_MAX_DURATION_MILLIS = 40L;
-  private static final int MOTION_MAX_SLOW_SAMPLES = 2;
-  private static final int MOTION_THUMBNAIL_SIZE = 64;
   // The public viewer is an SDR canvas. Keep the encoder metadata truthful and apply only a
   // conservative display-referred lift here, after correcting the capture surface's R/B order.
   // No offset is used so black UI surfaces remain black instead of turning gray.
@@ -71,13 +63,15 @@ public final class TicketRootHardwareH264CaptureMain {
     int cropTopSource = intArg(args, "--crop-top-source", 0);
     int cropRightSource = intArg(args, "--crop-right-source", 0);
     int cropBottomSource = intArg(args, "--crop-bottom-source", 0);
-    int steadyFps = Math.max(1, intArg(args, "--fps", 10));
-    int startupFps = Math.max(steadyFps, intArg(args, "--startup-fps", steadyFps));
-    int controlCodeRequestFps = Math.max(steadyFps, intArg(args, "--control-code-request-fps", steadyFps));
-    int startupFrames = Math.max(0, intArg(args, "--startup-frames", 0));
-    int encoderFps = Math.max(controlCodeRequestFps, Math.max(steadyFps, startupFrames > 0 ? startupFps : steadyFps));
-    int bitrate = Math.max(500_000, intArg(args, "--bitrate", 5_000_000));
-    int keyframeMillis = Math.max(1, intArg(args, "--keyframe-interval-millis", 1_000));
+    int captureFps = intArg(args, "--fps", TicketCaptureCadenceScheduler.FIXED_FPS);
+    if (captureFps != TicketCaptureCadenceScheduler.FIXED_FPS) {
+      throw new IllegalArgumentException("fixed all-intra capture requires 1 FPS");
+    }
+    int encoderFps = TicketCaptureCadenceScheduler.FIXED_FPS;
+    int bitrate = Math.max(
+      500_000,
+      intArg(args, "--bitrate", TicketScreenConfig.ROOT_HARDWARE_H264_BITRATE)
+    );
     int frames = intArg(args, "--frames", 0);
     boolean pngBase64 = hasFlag(args, "--png-base64");
     if (width <= 0 || height <= 0 || sourceWidth <= 0 || sourceHeight <= 0) {
@@ -116,25 +110,15 @@ public final class TicketRootHardwareH264CaptureMain {
     AtomicBoolean syncFrameRequested = new AtomicBoolean(true);
     AtomicReference<ControlCodeVisualProbeRequest> controlCodeVisualProbeRequest =
       new AtomicReference<>(ControlCodeVisualProbeRequest.idle());
-    AtomicLong controlCodeBurstUntilMillis = new AtomicLong(0L);
-    AtomicInteger requestedCadenceFps = new AtomicInteger(
-      TicketCaptureCadenceScheduler.isSupportedFps(steadyFps)
-        ? steadyFps
-        : TicketCaptureCadenceScheduler.STATIC_FPS
-    );
     Object frameWaitLock = new Object();
     TicketH264EncoderOutputAssembler outputAssembler = new TicketH264EncoderOutputAssembler();
     TicketCaptureCadenceScheduler cadenceScheduler = new TicketCaptureCadenceScheduler(
-      requestedCadenceFps.get(),
       SystemClock.elapsedRealtime()
     );
     TicketEncoderOutputLiveness outputLiveness = new TicketEncoderOutputLiveness();
     Thread commandThread = null;
-    MotionSampler motionSampler = new MotionSampler();
     try {
       MediaFormat format = MediaFormat.createVideoFormat("video/avc", width, height);
-      long configuredFrameIntervalMillis = Math.max(1L, Math.round(1000.0 / encoderFps));
-      boolean allKeyFrames = keyframeMillis <= configuredFrameIntervalMillis + 1L;
       format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
       format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate);
       format.setInteger(MediaFormat.KEY_FRAME_RATE, encoderFps);
@@ -144,7 +128,7 @@ public final class TicketRootHardwareH264CaptureMain {
       if (supportsCbrBitrateMode(encoder)) {
         format.setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR);
       }
-      format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, allKeyFrames ? 0 : Math.max(1, Math.round(keyframeMillis / 1000.0f)));
+      format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 0);
       format.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709);
       format.setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED);
       format.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO);
@@ -153,21 +137,25 @@ public final class TicketRootHardwareH264CaptureMain {
       encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
       inputSurface = encoder.createInputSurface();
       encoder.start();
+      System.err.println(
+        "ENCODER_CONFIG name=" + safeDiagnosticValue(encoder.getName()) +
+          " configured_profile=baseline configured_level=4 configured_bitrate_mode=" +
+          (supportsCbrBitrateMode(encoder) ? "cbr" : "encoder_default") +
+          " bitrate=" + bitrate +
+          " configured_fps=" + encoderFps +
+          " keyframe_interval_frames=1 frame_dependency_mode=all_intra"
+      );
       commandThread = startCommandReader(
         syncFrameRequested,
         controlCodeVisualProbeRequest,
-        controlCodeBurstUntilMillis,
         frameWaitLock,
-        controlCodeRequestFps,
-        startupFps,
-        requestedCadenceFps,
         cadenceScheduler
       );
 
       // The native Android display composition can carry a one-pixel colored ring at the
       // physical left, right, and bottom edges. The configured rectangle also leaves two source
       // pixels of sampling guard on the live-proven left edge and one on the right and bottom.
-      // Use the same rectangle for encoding, motion, visibility, and every Ticket visual
+      // Use the same rectangle for encoding, visibility, and every Ticket visual
       // classifier so proof geometry and visible media always describe the same cropped source.
       Rect sourceCrop = sourceCropRect(
         cropLeftSource,
@@ -180,42 +168,15 @@ public final class TicketRootHardwareH264CaptureMain {
       Rect destination = new Rect(0, 0, width, height);
       Paint paint = hardwareColorCorrectionPaint();
       int sent = 0;
-      int startupVisibilityFrames = Math.max(1, startupFrames > 0 ? startupFrames : steadyFps);
-      int startupPrimeInputs = 1;
+      int startupVisibilityFrames = 1;
       int blockedOrBlankFrames = 0;
       long lastMetricAt = 0L;
       long lastVisibilityProbeAt = 0L;
-      long lastMotionSampleAt = 0L;
       boolean lastVisibilityVisible = true;
-      int adaptiveMotionFps = TicketMotionCadenceController.STATIC_FPS;
-      TicketMotionCadenceController motionCadence = new TicketMotionCadenceController();
-      int scheduledTargetFps = -1;
       while (frames <= 0 || sent < frames) {
         long started = SystemClock.elapsedRealtime();
         ControlCodeVisualProbeRequest visualProbeRequest = controlCodeVisualProbeRequest.get();
         boolean controlCodeVisualProbeActive = started <= visualProbeRequest.untilMillis.get();
-        long controlCodeBurstUntil = controlCodeBurstUntilMillis.get();
-        boolean controlCodeBurstActive = started <= controlCodeBurstUntil;
-        if (
-          !controlCodeBurstActive &&
-          controlCodeBurstUntil > 0L &&
-          controlCodeBurstUntilMillis.compareAndSet(controlCodeBurstUntil, 0L)
-        ) {
-          System.err.println("CONTROL_CODE_BURST state=expired fps_target=" + controlCodeRequestFps);
-        }
-        int currentTargetFps = controlCodeBurstActive
-          ? controlCodeRequestFps
-          : (startupFrames > 0 && sent < startupFrames
-            ? startupFps
-            : (controlCodeVisualProbeActive ? visualProbeRequest.targetFps : Math.min(requestedCadenceFps.get(), adaptiveMotionFps)));
-        if (!TicketCaptureCadenceScheduler.isSupportedFps(currentTargetFps)) {
-          currentTargetFps = TicketCaptureCadenceScheduler.STATIC_FPS;
-        }
-        boolean cadenceTransitionCapture = scheduledTargetFps != currentTargetFps;
-        if (cadenceTransitionCapture) {
-          cadenceScheduler.setTargetFps(currentTargetFps, started);
-          scheduledTargetFps = currentTargetFps;
-        }
         long waitMillis = cadenceScheduler.waitMillis(started);
         if (waitMillis > 0L) {
           waitForNextFrame(frameWaitLock, cadenceScheduler, waitMillis);
@@ -228,9 +189,8 @@ public final class TicketRootHardwareH264CaptureMain {
           explicitSyncFrame = syncFrameRequested.getAndSet(false);
         }
         long frameIntervalMillis = cadenceScheduler.intervalMillis();
-        if (sent == 0 || allKeyFrames || explicitSyncFrame) {
-          requestSyncFrame(encoder);
-        }
+        // Ask explicitly on every input in addition to the all-intra MediaFormat contract.
+        requestSyncFrame(encoder);
         long captureStarted = SystemClock.elapsedRealtime();
         CapturedFrame source = capture.capture();
         long captureFinished = SystemClock.elapsedRealtime();
@@ -243,49 +203,6 @@ public final class TicketRootHardwareH264CaptureMain {
         long drawFinished = 0L;
         long encodeStarted = 0L;
         try {
-          if (!controlCodeBurstActive && (startupFrames <= 0 || sent >= startupFrames)) {
-            if (
-              motionSampler.isEnabled() &&
-              started - lastMotionSampleAt >= MOTION_SAMPLE_INTERVAL_MILLIS
-            ) {
-              lastMotionSampleAt = started;
-              try {
-                MotionSample sample = motionSampler.sample(source.bitmap, sourceCrop);
-                adaptiveMotionFps = motionCadence.update(
-                  sample.changedPixels,
-                  sample.totalPixels,
-                  started,
-                  controlCodeVisualProbeActive,
-                  requestedCadenceFps.get()
-                );
-                System.err.println(
-                  "MOTION changed_pixels=" + sample.changedPixels +
-                    " total_pixels=" + sample.totalPixels +
-                    " target_fps=" + adaptiveMotionFps +
-                    " sample_ms=" + motionSampler.lastSampleDurationMillis() +
-                    " slow_samples=" + motionSampler.slowSampleCount() +
-                    " disabled=" + (!motionSampler.isEnabled()) +
-                    " readback=hardware_bitmap_copy"
-                );
-                if (!motionSampler.isEnabled()) {
-                  adaptiveMotionFps = TicketMotionCadenceController.STATIC_FPS;
-                  System.err.println(
-                    "MOTION unavailable=true disabled=true reason=" +
-                      safeDiagnosticValue(motionSampler.disabledReason()) +
-                      " sample_ms=" + motionSampler.lastSampleDurationMillis()
-                  );
-                }
-              } catch (Throwable error) {
-                motionSampler.disable("sample_error");
-                adaptiveMotionFps = TicketMotionCadenceController.STATIC_FPS;
-                System.err.println(
-                  "MOTION unavailable=true disabled=true reason=" +
-                    safeDiagnosticValue(error.getMessage()) +
-                    " sample_ms=" + motionSampler.lastSampleDurationMillis()
-                );
-              }
-            }
-          }
           boolean shouldProbeVisibility = sent < startupVisibilityFrames || started - lastVisibilityProbeAt >= VISIBILITY_PROBE_INTERVAL_MILLIS;
           if (shouldProbeVisibility) {
             lastVisibilityProbeAt = started;
@@ -295,7 +212,7 @@ public final class TicketRootHardwareH264CaptureMain {
               blockedOrBlankFrames = 0;
             } else {
               blockedOrBlankFrames += 1;
-              boolean failure = sent >= startupVisibilityFrames && blockedOrBlankFrames >= Math.max(4, currentTargetFps / 2);
+              boolean failure = sent >= startupVisibilityFrames && blockedOrBlankFrames >= 4;
               System.err.println(
                 "VISIBILITY result=blocked invisible_frames=" + blockedOrBlankFrames +
                   " failure=" + failure +
@@ -369,19 +286,19 @@ public final class TicketRootHardwareH264CaptureMain {
               );
               if (visualProbeRequest.ticketAction) {
                 // Ticket action probes are explicit, one-frame observations. Keeping the request
-                // active would rerun the date recognizer on every burst frame even though the
+                // active would rerun the date recognizer on every later fixed-cadence frame even though the
                 // action executor can consume only one result for this probe id.
                 visualProbeRequest.untilMillis.set(0L);
               }
             }
           }
-          inputPosts = sent == 0 ? startupPrimeInputs : 1;
+          inputPosts = 1;
           drawStarted = SystemClock.elapsedRealtime();
           for (int post = 0; post < inputPosts; post++) {
             drawBitmap(inputSurface, source.bitmap, sourceCrop, destination, paint);
           }
           drawFinished = SystemClock.elapsedRealtime();
-          long drainTimeoutUs = sent < Math.max(3, startupFrames)
+          long drainTimeoutUs = sent < 3
             ? Math.min(80_000L, Math.max(25_000L, frameIntervalMillis * 1_000L))
             : 10_000L;
           encodeStarted = SystemClock.elapsedRealtime();
@@ -403,14 +320,13 @@ public final class TicketRootHardwareH264CaptureMain {
               );
             }
           }
-          boolean steadyEncoderDrain = sent >= Math.max(3, startupFrames);
-          boolean scheduledCadenceDrain =
-            !cadenceTransitionCapture && !cadenceDecision.immediate && !explicitSyncFrame;
+          boolean steadyEncoderDrain = sent >= 3;
+          boolean scheduledPeriodicDrain =
+            !cadenceDecision.immediate && !explicitSyncFrame;
           if (
             outputLiveness.noteDrain(
-              currentTargetFps,
               steadyEncoderDrain,
-              scheduledCadenceDrain,
+              scheduledPeriodicDrain,
               drainProgress.madeCodecProgress,
               drainProgress.encodedFrameOutputs,
               SystemClock.elapsedRealtime()
@@ -418,8 +334,9 @@ public final class TicketRootHardwareH264CaptureMain {
           ) {
             requestImmediateSyncFrame(syncFrameRequested, cadenceScheduler, frameWaitLock);
             System.err.println(
-              "ENCODER_LIVENESS state=sync_requested fps_target=" + currentTargetFps +
-                " consecutive_empty_drains=" + outputLiveness.consecutiveStaticEmptyDrains()
+              "ENCODER_LIVENESS state=sync_requested fps_target=" +
+                TicketCaptureCadenceScheduler.FIXED_FPS +
+                " consecutive_empty_drains=" + outputLiveness.consecutiveEmptyDrains()
             );
           }
           output.flush();
@@ -439,22 +356,14 @@ public final class TicketRootHardwareH264CaptureMain {
               " draw_ms=" + (drawFinished - drawStarted) +
               " encode_ms=" + (encodeFinished - encodeStarted) +
               " frame_ms=" + elapsed +
-              " fps_target=" + currentTargetFps +
-              " cadence_fps=" + cadenceScheduler.targetFps() +
-              " cadence_tier=" + cadenceTier(currentTargetFps) +
-              " cadence_changes=" + cadenceScheduler.cadenceChanges() +
+              " fps_target=" + TicketCaptureCadenceScheduler.FIXED_FPS +
+              " frame_interval_ms=" + TicketCaptureCadenceScheduler.INTERVAL_MILLIS +
               " deadline_misses=" + cadenceScheduler.deadlineMisses() +
               " skipped_ticks=" + cadenceScheduler.skippedTicks() +
               " deadline_late_ms=" + cadenceDecision.latenessMillis +
               " last_skipped_ticks=" + cadenceDecision.skippedTicks +
-              " steady_fps=" + steadyFps +
-              " startup_fps=" + startupFps +
-              " control_code_request_fps=" + controlCodeRequestFps +
-              " startup_frames=" + startupFrames +
+              " frame_dependency_mode=all_intra" +
               " visibility=" + (visible ? "visible" : "blocked") +
-              " motion_sample_ms=" + motionSampler.lastSampleDurationMillis() +
-              " motion_slow_samples=" + motionSampler.slowSampleCount() +
-              " motion_disabled=" + (!motionSampler.isEnabled()) +
               " secure_layers=true protected_content=true method=secure_screen_capture"
           );
         }
@@ -467,7 +376,6 @@ public final class TicketRootHardwareH264CaptureMain {
       if (commandThread != null) {
         commandThread.interrupt();
       }
-      motionSampler.close();
       if (inputSurface != null) {
         inputSurface.release();
       }
@@ -480,11 +388,7 @@ public final class TicketRootHardwareH264CaptureMain {
   private static Thread startCommandReader(
     AtomicBoolean syncFrameRequested,
     AtomicReference<ControlCodeVisualProbeRequest> controlCodeVisualProbeRequest,
-    AtomicLong controlCodeBurstUntilMillis,
     Object frameWaitLock,
-    int controlCodeRequestFps,
-    int startupFps,
-    AtomicInteger requestedCadenceFps,
     TicketCaptureCadenceScheduler cadenceScheduler
   ) {
     Thread thread = new Thread(() -> {
@@ -494,39 +398,6 @@ public final class TicketRootHardwareH264CaptureMain {
           String cmd = line.trim();
           if (cmd.equals("keyframe")) {
             requestImmediateSyncFrame(syncFrameRequested, cadenceScheduler, frameWaitLock);
-          } else if (cmd.equals("control_code_burst_start")) {
-            controlCodeBurstUntilMillis.set(SystemClock.elapsedRealtime() + CONTROL_CODE_REQUEST_BURST_MAX_MILLIS);
-            System.err.println("CONTROL_CODE_BURST state=started fps_target=" + controlCodeRequestFps);
-            syncFrameRequested.set(true);
-            wakeFrameLoop(frameWaitLock);
-          } else if (cmd.equals("control_code_burst_stop")) {
-            controlCodeBurstUntilMillis.set(0L);
-            ControlCodeVisualProbeRequest current = controlCodeVisualProbeRequest.get();
-            if (!current.cleanup) {
-              current.untilMillis.set(0L);
-            }
-            System.err.println("CONTROL_CODE_BURST state=stopped fps_target=" + controlCodeRequestFps);
-            wakeFrameLoop(frameWaitLock);
-          } else if (cmd.startsWith("cadence:")) {
-            String cadenceValue = cmd.substring("cadence:".length());
-            long parsed = parseLong(cadenceValue, -1L);
-            int requested = parsed > Integer.MAX_VALUE ? -1 : (int) parsed;
-            boolean accepted = TicketCaptureCadenceScheduler.isSupportedFps(requested);
-            accepted = accepted && (
-              cadenceValue.equals("1") || cadenceValue.equals("5") || cadenceValue.equals("10")
-            );
-            if (accepted) {
-              requestedCadenceFps.set(requested);
-            }
-            System.err.println(
-              "CADENCE state=command command=" + safeDiagnosticValue(cmd) +
-                " fps=" + requested +
-                " accepted=" + accepted
-            );
-            if (accepted) {
-              syncFrameRequested.set(true);
-            }
-            wakeFrameLoop(frameWaitLock);
           } else if (
             cmd.startsWith("control_code_visual_probe:") ||
             cmd.startsWith("control_code_request_visual_probe:") ||
@@ -548,7 +419,6 @@ public final class TicketRootHardwareH264CaptureMain {
             boolean activatedTicket = cmd.startsWith("ticket_activated_visual_probe:");
             boolean ticketCurrentOnly = cmd.startsWith("ticket_current_visual_probe:");
             boolean ticketAction = cmd.startsWith("ticket_action_visual_probe:") || ticketCurrentOnly;
-            boolean requestCadence = cmd.startsWith("control_code_request_visual_probe:") || submitLayout;
             controlCodeVisualProbeRequest.set(new ControlCodeVisualProbeRequest(
               probeId,
               ticketAction ? "ticket_action" : (activatedTicket ? "ticket_activated" : (ticketDetail ? "ticket_detail" : (cleanup ? "control_code_cleanup" : (submitLayout ? "control_code_submit_layout" : "control_code_after_ok")))),
@@ -557,11 +427,9 @@ public final class TicketRootHardwareH264CaptureMain {
               activatedTicket,
               ticketAction,
               ticketCurrentOnly,
-              requestCadence ? controlCodeRequestFps : startupFps,
               SystemClock.elapsedRealtime() + CONTROL_CODE_VISUAL_PROBE_MILLIS
             ));
-            syncFrameRequested.set(true);
-            wakeFrameLoop(frameWaitLock);
+            requestImmediateSyncFrame(syncFrameRequested, cadenceScheduler, frameWaitLock);
           }
         }
       } catch (Throwable ignored) {
@@ -581,7 +449,6 @@ public final class TicketRootHardwareH264CaptureMain {
     final boolean activatedTicket;
     final boolean ticketAction;
     final boolean ticketCurrentOnly;
-    final int targetFps;
     final AtomicLong untilMillis;
     final AtomicLong lastReportMillis = new AtomicLong(0L);
     final AtomicBoolean generated = new AtomicBoolean(false);
@@ -594,7 +461,6 @@ public final class TicketRootHardwareH264CaptureMain {
       boolean activatedTicket,
       boolean ticketAction,
       boolean ticketCurrentOnly,
-      int targetFps,
       long untilMillis
     ) {
       this.id = id;
@@ -604,12 +470,11 @@ public final class TicketRootHardwareH264CaptureMain {
       this.activatedTicket = activatedTicket;
       this.ticketAction = ticketAction;
       this.ticketCurrentOnly = ticketCurrentOnly;
-      this.targetFps = Math.max(1, targetFps);
       this.untilMillis = new AtomicLong(untilMillis);
     }
 
     static ControlCodeVisualProbeRequest idle() {
-      return new ControlCodeVisualProbeRequest(0L, "idle", false, false, false, false, false, 1, 0L);
+      return new ControlCodeVisualProbeRequest(0L, "idle", false, false, false, false, false, 0L);
     }
   }
 
@@ -638,24 +503,6 @@ public final class TicketRootHardwareH264CaptureMain {
     }
   }
 
-  private static void wakeFrameLoop(Object frameWaitLock) {
-    synchronized (frameWaitLock) {
-      frameWaitLock.notifyAll();
-    }
-  }
-
-  private static String cadenceTier(int fps) {
-    switch (fps) {
-      case TicketCaptureCadenceScheduler.ACTIVE_FPS:
-        return "active";
-      case TicketCaptureCadenceScheduler.MODERATE_FPS:
-        return "moderate";
-      case TicketCaptureCadenceScheduler.STATIC_FPS:
-      default:
-        return "static";
-    }
-  }
-
   private static void extendUntil(AtomicLong value, long untilMillis) {
     long current;
     do {
@@ -672,7 +519,7 @@ public final class TicketRootHardwareH264CaptureMain {
       params.putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0);
       encoder.setParameters(params);
     } catch (Throwable ignored) {
-      // If the codec rejects an explicit sync-frame request, the configured GOP still applies.
+      // Pixel-side output filtering prevents a rejected request from leaking a dependent frame.
     }
   }
 
@@ -693,114 +540,6 @@ public final class TicketRootHardwareH264CaptureMain {
       drawBitmapOnCanvas(surface, source, sourceCrop, destination, paint);
     } catch (Throwable error) {
       throw new IllegalStateException("Unable to draw captured frame into hardware encoder surface", error);
-    }
-  }
-
-  /**
-   * Persistent 64x64 readback and pixel storage used only for motion policy.
-   *
-   * The secure capture API gives us a HARDWARE bitmap. A software Canvas cannot consume that
-   * bitmap on every supported Pixel build, so this class retains the existing readback fallback,
-   * but bounds how often it runs and disables itself when the readback exceeds its budget. It
-   * never exports the bitmap or changes the secure capture/encoder path.
-   */
-  private static final class MotionSampler implements AutoCloseable {
-    private final Bitmap thumbnail = Bitmap.createBitmap(
-      MOTION_THUMBNAIL_SIZE,
-      MOTION_THUMBNAIL_SIZE,
-      Bitmap.Config.ARGB_8888
-    );
-    private final Canvas canvas = new Canvas(thumbnail);
-    private final Paint paint = new Paint();
-    private final Rect destination = new Rect(0, 0, MOTION_THUMBNAIL_SIZE, MOTION_THUMBNAIL_SIZE);
-    private final int[] pixels = new int[MOTION_THUMBNAIL_SIZE * MOTION_THUMBNAIL_SIZE];
-    private final int[] previousPixels = new int[pixels.length];
-    private boolean hasPrevious;
-    private long lastSampleDurationMillis;
-    private int slowSampleCount;
-    private boolean enabled = true;
-    private String disabledReason = "";
-
-    MotionSampler() {
-      paint.setFilterBitmap(false);
-      paint.setDither(false);
-    }
-
-    boolean isEnabled() {
-      return enabled;
-    }
-
-    long lastSampleDurationMillis() {
-      return lastSampleDurationMillis;
-    }
-
-    int slowSampleCount() {
-      return slowSampleCount;
-    }
-
-    String disabledReason() {
-      return disabledReason;
-    }
-
-    void disable(String reason) {
-      enabled = false;
-      if (disabledReason.isEmpty()) {
-        disabledReason = reason == null || reason.isEmpty() ? "unknown" : reason;
-      }
-    }
-
-    MotionSample sample(Bitmap source, Rect sourceCrop) {
-      if (!enabled) {
-        throw new IllegalStateException("motion_sampler_disabled:" + disabledReason);
-      }
-      long started = SystemClock.elapsedRealtime();
-      Bitmap readable = source;
-      boolean copied = false;
-      try {
-        if (source.getConfig() == Bitmap.Config.HARDWARE) {
-          readable = source.copy(Bitmap.Config.ARGB_8888, false);
-          copied = true;
-        }
-        canvas.drawColor(Color.BLACK);
-        canvas.drawBitmap(readable, sourceCrop, destination, paint);
-        thumbnail.getPixels(pixels, 0, MOTION_THUMBNAIL_SIZE, 0, 0, MOTION_THUMBNAIL_SIZE, MOTION_THUMBNAIL_SIZE);
-        int changed = 0;
-        if (hasPrevious) {
-          for (int i = 0; i < pixels.length; i++) {
-            int previous = previousPixels[i];
-            int current = pixels[i];
-            int previousLuma = (((previous >> 16) & 0xff) * 299 + ((previous >> 8) & 0xff) * 587 + (previous & 0xff) * 114) / 1000;
-            int currentLuma = (((current >> 16) & 0xff) * 299 + ((current >> 8) & 0xff) * 587 + (current & 0xff) * 114) / 1000;
-            if (Math.abs(currentLuma - previousLuma) > 8) changed += 1;
-          }
-        }
-        System.arraycopy(pixels, 0, previousPixels, 0, pixels.length);
-        hasPrevious = true;
-        return new MotionSample(changed, pixels.length);
-      } finally {
-        lastSampleDurationMillis = Math.max(0L, SystemClock.elapsedRealtime() - started);
-        if (lastSampleDurationMillis > MOTION_SAMPLE_MAX_DURATION_MILLIS) {
-          slowSampleCount += 1;
-          if (slowSampleCount >= MOTION_MAX_SLOW_SAMPLES) {
-            disable("sample_budget_exceeded");
-          }
-        }
-        if (copied && readable != null) readable.recycle();
-      }
-    }
-
-    @Override public void close() {
-      if (!thumbnail.isRecycled()) thumbnail.recycle();
-    }
-  }
-
-  private static final class MotionSample {
-    final int changedPixels;
-    final int totalPixels;
-
-    MotionSample(int changedPixels, int totalPixels) {
-      this.changedPixels = changedPixels;
-      this.totalPixels = totalPixels;
     }
   }
 

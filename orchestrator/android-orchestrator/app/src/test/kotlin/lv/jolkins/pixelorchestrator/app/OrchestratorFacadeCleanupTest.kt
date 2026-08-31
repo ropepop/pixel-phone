@@ -74,6 +74,46 @@ class OrchestratorFacadeCleanupTest {
         )
       )
 
+    val rollbackRuntimeManifestJson =
+      json.encodeToString(
+        ArtifactManifest.serializer(),
+        ArtifactManifest(
+          schema = 1,
+          manifestVersion = "pixel-redeploy-rollback",
+          signatureSchema = "none",
+          artifacts = listOf(
+            ArtifactEntry(
+              id = "rollback-rootfs",
+              url = "/data/local/pixel-stack/conf/runtime/artifacts/rollback-rootfs-arm64.tar",
+              sha256 = "rollback-abc",
+              fileName = "rollback-rootfs-arm64.tar",
+              sizeBytes = 11,
+              required = true
+            )
+          )
+        )
+      )
+    val rollbackSiteNotifierManifestJson =
+      json.encodeToString(
+        ComponentReleaseManifest.serializer(),
+        ComponentReleaseManifest(
+          schema = 1,
+          componentId = "site_notifier",
+          releaseId = "site-notifier-rollback",
+          signatureSchema = "none",
+          artifacts = listOf(
+            ArtifactEntry(
+              id = "rollback-site-notifier-bundle",
+              url = "/data/local/pixel-stack/conf/runtime/components/site_notifier/artifacts/rollback-site-notifier-bundle.tar",
+              sha256 = "rollback-def",
+              fileName = "rollback-site-notifier-bundle.tar",
+              sizeBytes = 21,
+              required = true
+            )
+          )
+        )
+      )
+
     val rootExecutor = FakeCleanupRootExecutor(
       runtimeManifestJson = runtimeManifestJson,
       componentManifests = mapOf("site_notifier" to siteNotifierManifestJson),
@@ -81,7 +121,9 @@ class OrchestratorFacadeCleanupTest {
         SKIP	release_dir	4096	/data/local/pixel-stack/apps/train-bot/releases/train-current	protected
         CANDIDATE	release_dir	2048	/data/local/pixel-stack/apps/train-bot/releases/train-old	non_current_release
         CANDIDATE	app_cache	1024	/data/user/0/lv.jolkins.pixelorchestrator/cache/runtime-artifacts/site-notifier-bundle-old.tar	runtime_artifact_cache
-      """.trimIndent()
+      """.trimIndent(),
+      runtimeRollbackManifestJson = rollbackRuntimeManifestJson,
+      componentRollbackManifests = mapOf("site_notifier" to rollbackSiteNotifierManifestJson)
     )
     val runtimeInstaller = FakeRuntimeInstaller()
     val facade = buildFacade(rootExecutor, runtimeInstaller)
@@ -90,6 +132,7 @@ class OrchestratorFacadeCleanupTest {
 
     assertTrue(result.success)
     assertTrue(result.message.contains("Cleanup dry-run complete"))
+    assertTrue(rootExecutor.commands.any { it.contains("su -M -c") })
     val report = rootExecutor.decodeCleanupReport(result.outputPath)
     assertEquals(CleanupReportStatus.DRY_RUN.wireValue(), report.status)
     assertTrue(report.protectedPaths.isEmpty())
@@ -99,6 +142,8 @@ class OrchestratorFacadeCleanupTest {
     assertEquals(2, report.summary.candidateCount)
     assertEquals(1, report.summary.skippedCount)
     assertEquals("runtime_cleanup", runtimeInstaller.lastSyncedComponent)
+    assertTrue(rootExecutor.anyWrittenBodyContains("rollback-rootfs-arm64.tar"))
+    assertTrue(rootExecutor.anyWrittenBodyContains("rollback-site-notifier-bundle.tar"))
   }
 
   @Test
@@ -178,20 +223,52 @@ class OrchestratorFacadeCleanupTest {
   }
 
   @Test
-  fun hourlySuperuserMaintenanceUsesTheNarrowCleanupMode() = runBlocking {
+  fun frequentMaintenanceSyncsTheAssetAndWritesAPathFreeResult() = runBlocking {
     val rootExecutor = FakeCleanupRootExecutor(
       runtimeManifestJson = "",
       componentManifests = emptyMap(),
-      cleanupStdout = "SKIP\tsuperuser_log_db\t1024\t/sulogs.db\twithin_size_limit"
+      cleanupStdout = """
+        SKIP	superuser_log_db	1024	/sulogs.db	within_size_limit
+        OBSERVE	superuser_log_db	1024	/sulogs.db	after_maintenance
+        OBSERVE	runtime_log_total	2048	/stack/logs	after_maintenance
+      """.trimIndent()
+    )
+    val runtimeInstaller = FakeRuntimeInstaller()
+    val facade = buildFacade(rootExecutor, runtimeInstaller)
+
+    val result = facade.runFrequentMaintenance()
+
+    assertTrue(result.success)
+    assertTrue(result.message.contains("limits are satisfied"))
+    assertTrue(rootExecutor.commands.any { it.contains("--frequent") })
+    assertTrue(rootExecutor.commands.any { it.contains("su -M -c") })
+    assertFalse(rootExecutor.commands.any { it.contains("--retired-dns") })
+    assertEquals("runtime_cleanup", runtimeInstaller.lastSyncedComponent)
+    val report = rootExecutor.decodeFrequentMaintenanceReport(result.outputPath)
+    assertEquals(1024L, report.rootHistoryBytes)
+    assertEquals(2048L, report.stackLogBytes)
+    assertTrue(report.failureReason.isEmpty())
+    assertFalse(rootExecutor.writtenBody(result.outputPath).contains("/sulogs.db"))
+  }
+
+  @Test
+  fun frequentMaintenanceRecordsMutationLockDeferral() = runBlocking {
+    val rootExecutor = FakeCleanupRootExecutor(
+      runtimeManifestJson = "",
+      componentManifests = emptyMap(),
+      cleanupStdout = "",
+      lockAvailable = false
     )
     val facade = buildFacade(rootExecutor)
 
-    val result = facade.maintainSuperuserLogDb()
+    val result = facade.runFrequentMaintenance()
 
     assertTrue(result.success)
-    assertTrue(result.message.contains("within its size limit"))
-    assertTrue(rootExecutor.commands.any { it.contains("--superuser-only") })
-    assertFalse(rootExecutor.commands.any { it.contains("--retired-dns") })
+    assertTrue(result.deferred)
+    val report = rootExecutor.decodeFrequentMaintenanceReport(result.outputPath)
+    assertEquals(CleanupReportStatus.SKIPPED.wireValue(), report.status)
+    assertTrue(report.deferred)
+    assertEquals("another runtime mutation is active", report.failureReason)
   }
 
   private fun basicRuntimeManifestJson(): String =
@@ -252,6 +329,8 @@ class OrchestratorFacadeCleanupTest {
     private val runtimeManifestJson: String,
     private val componentManifests: Map<String, String>,
     private val cleanupStdout: String,
+    private val runtimeRollbackManifestJson: String = "",
+    private val componentRollbackManifests: Map<String, String> = emptyMap(),
     private val lockAvailable: Boolean = true,
     private val lockAcquireFailuresBeforeSuccess: Int = 0,
     private val staleLockOwner: String = ""
@@ -276,10 +355,20 @@ class OrchestratorFacadeCleanupTest {
           }
         }
         command.contains("/data/local/pixel-stack/run/orchestrator-mutation.lock/owner") -> ok(command, staleLockOwner)
+        command.contains("/data/local/pixel-stack/conf/runtime/runtime-manifest.previous.json") ->
+          ok(command, runtimeRollbackManifestJson)
         command.contains("/data/local/pixel-stack/conf/runtime/runtime-manifest.json") -> ok(command, runtimeManifestJson)
         command.contains("/data/local/pixel-stack/conf/runtime/components/") -> {
-          val component = componentManifests.keys.firstOrNull { command.contains("/$it/release-manifest.json") }
-          ok(command, component?.let { componentManifests[it] }.orEmpty())
+          val rollbackComponent =
+            componentRollbackManifests.keys.firstOrNull {
+              command.contains("/$it/release-manifest.previous.json")
+            }
+          if (rollbackComponent != null) {
+            ok(command, componentRollbackManifests.getValue(rollbackComponent))
+          } else {
+            val component = componentManifests.keys.firstOrNull { command.contains("/$it/release-manifest.json") }
+            ok(command, component?.let { componentManifests[it] }.orEmpty())
+          }
         }
         else -> ok(command)
       }
@@ -367,6 +456,15 @@ class OrchestratorFacadeCleanupTest {
       val body = writes[path] ?: error("Missing written report at $path")
       return Json { ignoreUnknownKeys = true }.decodeFromString(body)
     }
+
+    fun decodeFrequentMaintenanceReport(path: String): FrequentMaintenanceReport {
+      val body = writes[path] ?: error("Missing written report at $path")
+      return Json { ignoreUnknownKeys = true }.decodeFromString(body)
+    }
+
+    fun writtenBody(path: String): String = writes[path] ?: error("Missing written report at $path")
+
+    fun anyWrittenBodyContains(value: String): Boolean = writes.values.any { it.contains(value) }
 
     private fun captureWrite(script: String): RootResult {
       val target = Regex("""target='([^']+)'""").find(script)?.groupValues?.get(1)

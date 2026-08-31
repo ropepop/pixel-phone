@@ -25,7 +25,7 @@ class TicketVideoClientDeliveryRegistryTest {
   }
 
   @Test
-  fun epochResetInvalidatesEveryQueuedDeliveryGeneration() {
+  fun epochResetInvalidatesEveryPendingDeliveryGeneration() {
     val registry = TicketVideoClientDeliveryRegistry<String>()
     val first = state(epoch = 7L)
     val second = state(epoch = 7L)
@@ -60,9 +60,7 @@ class TicketVideoClientDeliveryRegistryTest {
   private fun state(epoch: Long): TicketVideoClientDeliveryState {
     return TicketVideoClientDeliveryState(
       expectedEpoch = epoch,
-      maxQueuedFrames = 4,
-      maxQueuedBytes = 1024,
-      pendingMaxAgeMillis = 150L,
+      maxFrameBytes = 1024,
       slowCloseMillis = 250L
     )
   }

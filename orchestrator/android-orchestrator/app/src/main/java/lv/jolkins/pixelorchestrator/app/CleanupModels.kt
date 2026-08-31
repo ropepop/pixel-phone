@@ -79,6 +79,23 @@ data class CleanupReport(
   val failurePaths: List<CleanupPathRecord> = emptyList()
 )
 
+@Serializable
+data class FrequentMaintenanceReport(
+  val schema: Int = 1,
+  val startedAt: String,
+  val finishedAt: String,
+  val status: String,
+  val deferred: Boolean = false,
+  val failureReason: String = "",
+  val rootHistoryBytes: Long = 0,
+  val rootHistoryMaxBytes: Long = 33_554_432,
+  val actionResultMaxAgeHours: Int = 24,
+  val knownLogMaxBytes: Long = 1_048_576,
+  val stackLogBytes: Long = 0,
+  val stackLogMaxBytes: Long = 33_554_432,
+  val summary: CleanupSummary = CleanupSummary()
+)
+
 internal data class CleanupScheduleResult(
   val success: Boolean,
   val scheduledAtMillis: Long = 0,

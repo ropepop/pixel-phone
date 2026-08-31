@@ -17,6 +17,54 @@ import kotlin.time.Duration
 
 class TicketEncoderLivenessHealthTest {
   @Test
+  fun helperDiagnosticsExposeFixedAllIntraEncoderHealth() {
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+    try {
+      val engine = TicketRootHardwareH264CaptureEngine(
+        scope = scope,
+        rootExecutor = UnusedRootExecutor,
+        onFrame = {},
+        onStateChanged = {}
+      )
+
+      engine.ingestStderrLine(
+        "ENCODER_CONFIG name=c2.google.avc.encoder configured_profile=baseline configured_level=4 " +
+          "configured_bitrate_mode=cbr bitrate=8000000 configured_fps=1 " +
+          "keyframe_interval_frames=1 frame_dependency_mode=all_intra",
+        nowMillis = 1_000L
+      )
+      val health = engine.snapshot(nowMillis = 1_450L)
+
+      assertEquals("c2.google.avc.encoder", health.encoderName)
+      assertEquals("baseline", health.configuredEncoderProfile)
+      assertEquals("4", health.configuredEncoderLevel)
+      assertEquals("cbr", health.configuredEncoderBitrateMode)
+      assertEquals("all_intra", health.frameDependencyMode)
+      assertEquals(1, health.fps)
+      assertEquals("fixed_all_intra", health.intervalMode)
+      assertEquals(1_000L, health.currentIntervalMillis)
+      assertEquals(0L, health.unexpectedDeltaFrames)
+      assertFalse(health.stderrTail.contains("ENCODER_CONFIG"))
+      val healthJson = Json.encodeToString(health)
+      assertFalse(healthJson.contains("steadyFpsTarget"))
+      assertFalse(healthJson.contains("burstFpsTarget"))
+      assertFalse(healthJson.contains("adaptiveKeyFrameRequests"))
+
+      val staleGeneration = engine.advanceCaptureGeneration()
+      engine.advanceCaptureGeneration()
+      engine.ingestStderrLine(
+        "METRIC capture_ms=1 fps_target=1 cadence_fps=1 cadence_tier=fixed_all_intra",
+        nowMillis = 1_525L,
+        sourceGeneration = staleGeneration
+      )
+      val afterStaleDiagnostics = engine.snapshot(nowMillis = 1_550L)
+      assertNull(afterStaleDiagnostics.lastCaptureDurationMillis)
+    } finally {
+      scope.cancel()
+    }
+  }
+
+  @Test
   fun helperStderrIngestionConsumesLivenessDetailAndUpdatesBoundedHealth() {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
     try {

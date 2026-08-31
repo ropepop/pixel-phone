@@ -22,31 +22,22 @@ object TicketScreenConfig {
   const val TICKET_QR_RESULT_SOURCE_APP_RIGAS_SATIKSME = RIGAS_SATIKSME_PACKAGE
   const val TICKET_QR_RESULT_FLOW_RIGAS_SATIKSME_ANDROID_MONTHLY = "rigas_satiksme_android_monthly_ticket_control"
   const val ACCRESCENT_PACKAGE = "app.accrescent.client"
-  const val MAX_FPS = 10
   const val MAX_EQUIVALENT_PIXELS = 1920 * 1080
   const val ROOT_HARDWARE_H264_CAPTURE_MODE = "root_hardware_h264"
   const val ROOT_HARDWARE_H264_TRANSPORT = "hardware-h264-annexb"
-  const val ROOT_HARDWARE_H264_QUALITY_PROFILE = "hardware_h264_light_marker_low_latency"
+  const val ROOT_HARDWARE_H264_QUALITY_PROFILE = "hardware_h264_crisp_all_intra_1fps"
   const val ROOT_HARDWARE_H264_CODEC_STRING = "avc1.42C028"
   const val ROOT_HARDWARE_H264_FPS = 1
-  const val ROOT_HARDWARE_H264_STEADY_FPS = 1
-  const val ROOT_HARDWARE_H264_MODERATE_FPS = 5
-  const val ROOT_HARDWARE_H264_ACTIVE_FPS = 10
-  const val ROOT_HARDWARE_H264_MAX_FPS = ROOT_HARDWARE_H264_ACTIVE_FPS
-  const val ROOT_HARDWARE_H264_STARTUP_FPS = ROOT_HARDWARE_H264_ACTIVE_FPS
-  const val ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS = ROOT_HARDWARE_H264_ACTIVE_FPS
-  const val ROOT_HARDWARE_H264_CADENCE_COMMAND_PREFIX = "cadence:"
-  const val ROOT_HARDWARE_H264_STARTUP_FRAMES = 3
-  const val ROOT_HARDWARE_H264_BURST_HOLD_MILLIS = 0L
-  const val ROOT_HARDWARE_H264_BITRATE = 1_200_000
-  const val ROOT_HARDWARE_H264_TARGET_WIDTH = 720
+  const val ROOT_HARDWARE_H264_FRAME_DEPENDENCY_MODE = "all_intra"
+  const val ROOT_HARDWARE_H264_BITRATE = 8_000_000
+  const val ROOT_HARDWARE_H264_TARGET_WIDTH = 994
   const val ROOT_HARDWARE_H264_KEYFRAME_INTERVAL_MILLIS = 1000
   const val ROOT_HARDWARE_H264_CAPTURE_SOURCE = "root_display_capture"
   const val ROOT_HARDWARE_H264_CAPTURE_METHOD = "app_process_mediacodec_surface_secure_screen_capture"
   const val ROOT_HARDWARE_H264_COLOR_CORRECTION = "red_blue_swap_high_brightness_sdr_gpu_paint_r1.08_g1.05_b1.03"
   const val ROOT_HARDWARE_H264_COLOR_STANDARD = "bt709_limited_sdr"
   // ScreenCapture exposes a one-pixel native display ring. Live encoded-frame proof requires
-  // two additional source pixels on the left and one on the right/bottom so filtered 1080-to-720
+  // two additional source pixels on the left and one on the right/bottom so filtered 1080-to-994
   // sampling and 4:2:0 chroma cannot carry that saturated edge into the encoded outer pixels.
   const val TICKET_MEDIA_LEFT_CROP_SOURCE_PIXELS = 4
   const val TICKET_MEDIA_TOP_CROP_SOURCE_PIXELS = 200
@@ -103,6 +94,7 @@ data class TicketStreamPipeline(
   val codec: String = "",
   val transport: String = "",
   val frameEnvelope: String = "tsf2",
+  val frameDependencyMode: String = TicketScreenConfig.ROOT_HARDWARE_H264_FRAME_DEPENDENCY_MODE,
   val streamEpoch: Long = 0L,
   val frameSequence: Long = 0L,
   val lastKeyFrameSequence: Long = 0L,
@@ -167,6 +159,9 @@ data class TicketHardwareH264Health(
   val available: Boolean = false,
   val active: Boolean = false,
   val encoderName: String? = null,
+  val configuredEncoderProfile: String = "unknown",
+  val configuredEncoderLevel: String = "unknown",
+  val configuredEncoderBitrateMode: String = "unknown",
   val captureSource: String = TicketScreenConfig.ROOT_HARDWARE_H264_CAPTURE_SOURCE,
   val captureMethod: String = TicketScreenConfig.ROOT_HARDWARE_H264_CAPTURE_METHOD,
   val captureHelperAvailable: Boolean = false,
@@ -178,24 +173,13 @@ data class TicketHardwareH264Health(
   val height: Int? = null,
   val bitrate: Int? = null,
   val fps: Int? = null,
-  val steadyFpsTarget: Int? = null,
-  val burstFpsTarget: Int? = null,
-  val controlCodeRequestFpsTarget: Int? = null,
-  val cadenceFpsTarget: Int? = null,
-  val cadenceTier: String = "static",
-  val cadenceChanges: Long = 0L,
+  val frameDependencyMode: String = TicketScreenConfig.ROOT_HARDWARE_H264_FRAME_DEPENDENCY_MODE,
   val cadenceDeadlineMisses: Long = 0L,
   val cadenceSkippedTicks: Long = 0L,
   val cadenceLastLatenessMillis: Long? = null,
   val cadenceLastSkippedTicks: Long = 0L,
-  val lastCadenceCommand: String? = null,
-  val lastCadenceCommandAccepted: Boolean? = null,
-  val lastCadenceCommandAgoMillis: Long? = null,
   val encoderLivenessRecoveryCount: Long = 0L,
   val lastEncoderLivenessRecoveryAgoMillis: Long? = null,
-  val controlCodeBurstActive: Boolean = false,
-  val controlCodeBurstState: String = "idle",
-  val lastControlCodeBurstAgoMillis: Long? = null,
   val intervalMode: String = "",
   val currentIntervalMillis: Long? = null,
   val colorCorrection: String = TicketScreenConfig.ROOT_HARDWARE_H264_COLOR_CORRECTION,
@@ -203,6 +187,8 @@ data class TicketHardwareH264Health(
   val frames: Long = 0L,
   val keyFrames: Long = 0L,
   val lastFrameBytes: Int = 0,
+  val lastKeyFrameBytes: Int = 0,
+  val lastKeyFrameAgoMillis: Long? = null,
   val estimatedBitrate: Long = 0L,
   val lastFrameAgoMillis: Long? = null,
   val lastStartAgoMillis: Long? = null,
@@ -218,6 +204,7 @@ data class TicketHardwareH264Health(
   val staleCaptureProcessCount: Int = 0,
   val lastCaptureCleanupResult: String = "not_run",
   val droppedFrames: Long = 0L,
+  val unexpectedDeltaFrames: Long = 0L,
   val restartCount: Long = 0L,
   val lastExitReason: String? = null,
   val lastExitAgoMillis: Long? = null,
@@ -473,8 +460,8 @@ internal object TicketCaptureGeometry {
 object TicketStreamSizing {
   fun rootHardwareH264(sourceWidth: Int, sourceHeight: Int): TicketStreamSize {
     val crop = TicketCaptureGeometry.sourceCrop(sourceWidth, sourceHeight)
-    // Preserve the deployed encoded dimensions. The new native-edge crop is scaled into the
-    // same output rectangle so the H.264/TSF2 and browser layout contracts stay stable.
+    // Keep the stream close to the native ticket width while remaining below both the existing
+    // equivalent-pixel ceiling and the H.264 Level 4 macroblock ceiling on the production Pixel.
     val legacyVisibleSourceHeight = (sourceHeight - crop.top).coerceAtLeast(1)
     val width = minOf(sourceWidth, TicketScreenConfig.ROOT_HARDWARE_H264_TARGET_WIDTH).evenAtLeastTwo()
     val height = ((legacyVisibleSourceHeight / sourceWidth.toFloat()) * width).roundToInt().evenAtLeastTwo()

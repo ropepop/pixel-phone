@@ -13,133 +13,74 @@ class TicketCaptureCadenceSourceTest {
   private val helper by lazy { source("TicketRootHardwareH264CaptureMain.java") }
   private val service by lazy { source("TicketStreamService.kt") }
   private val scheduler by lazy { source("TicketCaptureCadenceScheduler.java") }
-  private val outputLiveness by lazy { source("TicketEncoderOutputLiveness.java") }
 
   @Test
-  fun configDefinesOnlyTheThreeAdaptiveTiersAndKeepsTheSdrPipeline() {
-    assertTrue(config.contains("ROOT_HARDWARE_H264_STEADY_FPS = 1"))
-    assertTrue(config.contains("ROOT_HARDWARE_H264_MODERATE_FPS = 5"))
-    assertTrue(config.contains("ROOT_HARDWARE_H264_ACTIVE_FPS = 10"))
-    assertTrue(config.contains("ROOT_HARDWARE_H264_MAX_FPS = ROOT_HARDWARE_H264_ACTIVE_FPS"))
-    assertTrue(config.contains("ROOT_HARDWARE_H264_CADENCE_COMMAND_PREFIX = \"cadence:\""))
+  fun configDefinesOneFpsAllIntraWithoutAdaptiveRuntimeTiers() {
+    assertTrue(config.contains("ROOT_HARDWARE_H264_FPS = 1"))
+    assertTrue(config.contains("ROOT_HARDWARE_H264_FRAME_DEPENDENCY_MODE = \"all_intra\""))
+    assertTrue(config.contains("ROOT_HARDWARE_H264_QUALITY_PROFILE = \"hardware_h264_crisp_all_intra_1fps\""))
+    assertTrue(config.contains("ROOT_HARDWARE_H264_BITRATE = 8_000_000"))
+    assertTrue(config.contains("ROOT_HARDWARE_H264_TARGET_WIDTH = 994"))
     assertTrue(config.contains("ROOT_HARDWARE_H264_TRANSPORT = \"hardware-h264-annexb\""))
     assertTrue(config.contains("ROOT_HARDWARE_H264_COLOR_STANDARD = \"bt709_limited_sdr\""))
     assertTrue(config.contains("frameEnvelope: String = \"tsf2\""))
+    assertFalse(config.contains("ROOT_HARDWARE_H264_STEADY_FPS"))
+    assertFalse(config.contains("ROOT_HARDWARE_H264_MAX_FPS"))
+    assertFalse(config.contains("ROOT_HARDWARE_H264_MODERATE_FPS"))
+    assertFalse(config.contains("ROOT_HARDWARE_H264_ACTIVE_FPS"))
+    assertFalse(config.contains("ROOT_HARDWARE_H264_STARTUP_FRAMES"))
   }
 
   @Test
-  fun helperAcceptsCadenceCommandsAndRejectsOtherFpsWithoutASecondEncoder() {
-    assertTrue(helper.contains("cmd.startsWith(\"cadence:\")"))
-    assertTrue(helper.contains("TicketCaptureCadenceScheduler.isSupportedFps(requested)"))
-    assertTrue(helper.contains("requestedCadenceFps.set(requested)"))
-    assertTrue(helper.contains("accepted=\" + accepted"))
+  fun helperConfiguresOneFpsAllIntraAndHasNoMotionBurstOrAdaptivePath() {
+    assertTrue(helper.contains("fixed all-intra capture requires 1 FPS"))
     assertTrue(helper.contains("MediaFormat.KEY_FRAME_RATE, encoderFps"))
+    assertTrue(helper.contains("MediaFormat.KEY_I_FRAME_INTERVAL, 0"))
+    assertTrue(helper.contains("MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR"))
+    assertTrue(helper.contains("requestSyncFrame(encoder);"))
+    assertTrue(helper.contains("frame_dependency_mode=all_intra"))
     assertTrue(helper.contains("new TicketCaptureCadenceScheduler"))
     assertTrue(helper.contains("cadenceScheduler.beginCapture(started)"))
     assertTrue(helper.contains("cadenceScheduler.waitMillis(started)"))
+    assertFalse(helper.contains("MotionSampler"))
+    assertFalse(helper.contains("TicketMotionCadenceController"))
+    assertFalse(helper.contains("TicketAdaptiveKeyframeController"))
+    assertFalse(helper.contains("MediaFormat.KEY_QUALITY"))
+    assertFalse(helper.contains("BITRATE_MODE_CQ"))
+    assertFalse(helper.contains("CONTROL_CODE_BURST"))
+  }
+
+  @Test
+  fun immediateRefreshIsCoalescedAndThereIsNoRuntimeCadenceCommand() {
+    assertTrue(scheduler.contains("immediateCaptureBlockedUntilMillis"))
+    assertTrue(scheduler.contains("nextDeadlineMillis = nowMillis + intervalMillis()"))
+    assertTrue(scheduler.contains("FIXED_FPS = 1"))
+    assertTrue(engine.contains("fun requestImmediateRefresh(reason: String): Boolean"))
     assertTrue(helper.contains("requestImmediateSyncFrame(syncFrameRequested, cadenceScheduler, frameWaitLock)"))
-    assertTrue(helper.contains("cadenceScheduler.requestImmediateCapture(SystemClock.elapsedRealtime())"))
-    assertTrue(helper.contains("if (!cadenceScheduler.hasImmediateCapturePending())"))
-    assertTrue(helper.contains("MOTION_THUMBNAIL_SIZE"))
-    assertTrue(helper.contains("MOTION_SAMPLE_INTERVAL_MILLIS = 1_000L"))
-    assertTrue(helper.contains("MOTION_SAMPLE_MAX_DURATION_MILLIS"))
-    assertTrue(helper.contains("MOTION_MAX_SLOW_SAMPLES"))
-    assertTrue(helper.contains("readback=hardware_bitmap_copy"))
-    assertTrue(helper.contains("sample_budget_exceeded"))
-    assertTrue(helper.contains("motionSampler.isEnabled()"))
-    assertTrue(helper.contains("motion_disabled="))
-    assertTrue(helper.contains("Math.abs(currentLuma - previousLuma) > 8"))
-    assertTrue(helper.contains("TicketMotionCadenceController"))
-    assertTrue(helper.contains("if (visualProbeRequest.ticketAction)"))
-    assertTrue(helper.contains("visualProbeRequest.untilMillis.set(0L)"))
-    assertFalse(helper.contains("for (int catchUp"))
-    assertFalse(helper.contains("while (.*catch"))
+    assertFalse(scheduler.contains("isLegacyCommandFps"))
+    assertFalse(helper.contains("cmd.startsWith(\"cadence:\")"))
+    assertFalse(engine.contains("requestCadence"))
+    assertFalse(service.contains("\"stream_cadence\" ->"))
   }
 
   @Test
-  fun helperWaitsForMediaOutputWhenTheFirstDrainOnlyReturnsCodecConfiguration() {
-    assertTrue(helper.contains("TicketEncoderDrainProgress drainProgress"))
-    assertTrue(helper.contains("if (drainProgress.encodedFrameOutputs == 0 && sent == 0)"))
-    assertTrue(helper.contains("TicketEncoderDrainProgress.fromDequeuedOutput("))
-    assertTrue(helper.contains("emitted.codecConfig,"))
-    assertTrue(helper.contains("emitted.keyFrame"))
-    assertTrue(helper.contains("TicketH264EncoderOutputAssembler"))
-    assertTrue(helper.contains("MediaCodec.BUFFER_FLAG_PARTIAL_FRAME"))
-    assertTrue(helper.contains("if (eos && data.length == 0)"))
-    assertTrue(helper.contains("outputAssembler.reset()"))
-    assertFalse(helper.contains("int drained = drainEncoder"))
+  fun pixelDropsUnexpectedDeltasAndRequestsTheNextSyncFrame() {
+    assertTrue(engine.contains("if (!keyFrame)"))
+    assertTrue(engine.contains("unexpectedDeltaFrames += 1L"))
+    assertTrue(engine.contains("droppedFrames += 1L"))
+    assertTrue(engine.contains("requestImmediateRefresh(\"unexpected_delta_all_intra\")"))
+    assertTrue(service.contains("requestImmediateRefresh(\"service_rejected_unexpected_delta\")"))
+    assertTrue(config.contains("val unexpectedDeltaFrames: Long = 0L"))
   }
 
   @Test
-  fun helperUsesOneCoalescedImmediateSyncRecoveryForAStaticOutputDrought() {
-    assertTrue(helper.contains("TicketEncoderOutputLiveness outputLiveness"))
-    assertTrue(helper.contains("!cadenceTransitionCapture && !cadenceDecision.immediate && !explicitSyncFrame"))
-    assertTrue(helper.contains("scheduledCadenceDrain,"))
-    assertTrue(helper.contains("requestImmediateSyncFrame(syncFrameRequested, cadenceScheduler, frameWaitLock)"))
-    assertTrue(helper.contains("ENCODER_LIVENESS state=sync_requested"))
-    assertTrue(outputLiveness.contains("STATIC_EMPTY_DRAIN_THRESHOLD = 2"))
-    assertTrue(outputLiveness.contains("targetFps != TicketCaptureCadenceScheduler.STATIC_FPS"))
-    assertTrue(outputLiveness.contains("if (recoveryArmed)"))
-    assertTrue(outputLiveness.contains("if (encodedFrameOutputs > 0)"))
-    assertTrue(outputLiveness.contains("if (madeCodecProgress && !completeMediaOverdue)"))
-    assertTrue(outputLiveness.contains("MIN_STATIC_EVIDENCE_INTERVAL_MILLIS"))
-    assertTrue(outputLiveness.contains("MAX_PROGRESS_WITHOUT_MEDIA_MILLIS"))
-    assertTrue(engine.contains("line.startsWith(\"ENCODER_LIVENESS \")"))
-    assertTrue(engine.contains("fields[\"state\"] == \"sync_requested\""))
-    assertTrue(engine.contains("cleanLine.startsWith(\"ENCODER_LIVENESS \") || cleanLine.startsWith(\"CONTROL_CODE_VISUAL \")"))
-    assertTrue(engine.contains("encoderLivenessRecoveryCount = encoderLivenessRecoveryCountSnapshot"))
-    assertTrue(engine.contains("lastEncoderLivenessRecoveryAgoMillis = lastEncoderLivenessRecoveryAgoMillisSnapshot"))
-    assertTrue(engine.contains("synchronized(encoderLivenessRecoveryLock)"))
-    assertTrue(engine.contains("sourceGeneration != captureGeneration.get()"))
-    assertTrue(engine.contains("resetEncoderLivenessRecoveryMetrics()"))
-    assertTrue(engine.contains("encoderLivenessRecoveryCount = 0L"))
-    assertTrue(engine.contains("lastEncoderLivenessRecoveryAtMillis = 0L"))
-    assertTrue(config.contains("val encoderLivenessRecoveryCount: Long = 0L"))
-    assertTrue(config.contains("val lastEncoderLivenessRecoveryAgoMillis: Long? = null"))
-  }
-
-  @Test
-  fun schedulerDocumentsAbsoluteDeadlineNoCatchUpMetrics() {
-    assertTrue(scheduler.contains("nextDeadlineMillis"))
-    assertTrue(scheduler.contains("skippedTicks"))
-    assertTrue(scheduler.contains("deadlineMisses"))
-    assertTrue(scheduler.contains("at most one"))
-    assertTrue(scheduler.contains("capture decision"))
-    assertTrue(scheduler.contains("nextDeadlineMillis += intervalsToAdvance * intervalMillis()") ||
-      scheduler.contains("nextDeadlineMillis += (expiredTicks + 1L) * intervalMillis()"))
-  }
-
-  @Test
-  fun engineExposesInProcessCadenceAndHealthMetrics() {
-    assertTrue(engine.contains("fun requestCadence(fps: Int"))
-    assertTrue(engine.contains("CADENCE "))
-    assertTrue(engine.contains("cadenceDeadlineMisses"))
-    assertTrue(engine.contains("lastCadenceCommandAccepted"))
-    assertTrue(engine.contains("desiredCadenceFps"))
-    assertTrue(engine.contains("flushDesiredCadenceCommand(\"encoder_started\")"))
-    assertTrue(engine.contains("writeHardwareCommand(command, \"cadence\", reason)"))
-  }
-
-  @Test
-  fun servicePublishesCadenceMetricsWithoutChangingTheStreamContract() {
-    assertTrue(service.contains("hardwareH264CadenceFps"))
-    assertTrue(service.contains("hardwareH264CadenceTier"))
-    assertTrue(service.contains("hardwareH264CadenceSkippedTicks"))
-    assertTrue(service.contains("val feedbackVersion = 1"))
-    assertTrue(service.contains("val fps = TicketScreenConfig.ROOT_HARDWARE_H264_ACTIVE_FPS"))
-    assertTrue(service.contains("val sourceFps = TicketScreenConfig.ROOT_HARDWARE_H264_ACTIVE_FPS"))
-    assertTrue(service.contains("val keyframeIntervalFrames = TicketScreenConfig.ROOT_HARDWARE_H264_ACTIVE_FPS"))
-    assertTrue(service.contains("\"sourceFps\":\$sourceFps"))
-    assertTrue(service.contains("\"keyframeIntervalFrames\":\$keyframeIntervalFrames"))
-    assertTrue(service.contains("\"feedbackVersion\":\$feedbackVersion"))
-    assertTrue(service.contains("requestActiveHardwareCadence(\"video_client_connected\")"))
-    assertTrue(service.contains("requestActiveHardwareCadence(\"video_client_activity\")"))
-    assertTrue(service.contains("requestSteadyHardwareCadenceBeforeStop(\"all_clients_disconnected\")"))
-    assertTrue(service.contains("requestSteadyHardwareCadenceBeforeStop(\"session_stop:\$reason\")"))
-    assertTrue(service.contains("requestCadence(activeFps, reason)"))
-    assertTrue(service.contains("requestCadence(steadyFps, reason)"))
-    assertTrue(service.contains("rootHardwareH264CaptureEngine.startControlCodeRequestBurst("))
-    assertTrue(service.contains("rootHardwareH264CaptureEngine.stopControlCodeRequestBurst("))
+  fun configAndHealthAdvertiseTheExactAllIntraContract() {
+    assertTrue(service.contains("val fps = TicketScreenConfig.ROOT_HARDWARE_H264_FPS"))
+    assertTrue(service.contains("val sourceFps = TicketScreenConfig.ROOT_HARDWARE_H264_FPS"))
+    assertTrue(service.contains("val keyframeIntervalFrames = 1"))
+    assertTrue(service.contains("\"frameDependencyMode\":\"\$frameDependencyMode\""))
+    assertTrue(service.contains("hardwareH264FrameDependencyMode"))
+    assertTrue(service.contains("hardwareH264UnexpectedDeltaFrames"))
     assertTrue(service.contains("FRAME_ENVELOPE_VERSION = \"tsf2\""))
   }
 

@@ -14,7 +14,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class TicketVideoClientWriterPumpTest {
   @Test
-  fun actualPumpDrainsBlockedFrameAndTwoFrameBurstContiguously() = runTest {
+  fun actualPumpDrainsBlockedFrameThenOnlyTheNewestPendingFrame() = runTest {
     val state = state()
     state.markConfigReady()
     val first = state.offer(frame(10, keyFrame = true), nowMillis = 1L)
@@ -41,8 +41,8 @@ class TicketVideoClientWriterPumpTest {
     releaseFirst.complete(Unit)
     advanceUntilIdle()
 
-    assertEquals(listOf(10L, 11L, 12L), writes)
-    assertEquals(0, state.snapshot().queuedFrames)
+    assertEquals(listOf(10L, 12L), writes)
+    assertEquals(0, state.snapshot().pendingFrames)
     assertFalse(state.snapshot().writeInFlight)
   }
 
@@ -84,7 +84,7 @@ class TicketVideoClientWriterPumpTest {
     assertEquals(250L, closeDecisions.single().blockedMillis)
     assertEquals(2, closeDecisions.single().droppedFrames)
     assertTrue(state.snapshot().closed)
-    assertEquals(0, state.snapshot().queuedFrames)
+    assertEquals(0, state.snapshot().pendingFrames)
     assertEquals(0, rejectedCurrent)
   }
 
@@ -194,8 +194,8 @@ class TicketVideoClientWriterPumpTest {
 
   @Test
   fun blockedPumpCannotDelayOrReorderIndependentFastPump() = runTest {
-    val slowState = state(maxQueuedFrames = 2)
-    val fastState = state(maxQueuedFrames = 2)
+    val slowState = state()
+    val fastState = state()
     slowState.markConfigReady()
     fastState.markConfigReady()
     val slowFirst = slowState.offer(frame(1, keyFrame = true), 1L)
@@ -233,10 +233,11 @@ class TicketVideoClientWriterPumpTest {
     }
 
     assertEquals(listOf(1L, 2L, 3L, 4L), fastWrites)
-    assertTrue(slowState.snapshot().waitingForKeyFrame)
+    assertEquals(1, slowState.snapshot().pendingFrames)
+    assertEquals(4L, slowState.snapshot().pendingSequence)
     slowGate.complete(Unit)
     advanceUntilIdle()
-    assertEquals(listOf(1L), slowWrites)
+    assertEquals(listOf(1L, 4L), slowWrites)
   }
 
   @Test
@@ -293,22 +294,17 @@ class TicketVideoClientWriterPumpTest {
     )
   }
 
-  private fun state(
-    expectedEpoch: Long = 7L,
-    maxQueuedFrames: Int = 12
-  ): TicketVideoClientDeliveryState {
+  private fun state(expectedEpoch: Long = 7L): TicketVideoClientDeliveryState {
     return TicketVideoClientDeliveryState(
       expectedEpoch = expectedEpoch,
-      maxQueuedFrames = maxQueuedFrames,
-      maxQueuedBytes = 1024,
-      pendingMaxAgeMillis = 150L,
+      maxFrameBytes = 1024,
       slowCloseMillis = 250L
     )
   }
 
   private fun frame(
     sequence: Long,
-    keyFrame: Boolean = false,
+    keyFrame: Boolean = true,
     epoch: Long = 7L
   ): TicketVideoDeliveryFrame {
     return TicketVideoDeliveryFrame(

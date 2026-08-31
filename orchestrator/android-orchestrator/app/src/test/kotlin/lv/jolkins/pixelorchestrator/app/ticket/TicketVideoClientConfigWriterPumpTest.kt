@@ -235,7 +235,7 @@ class TicketVideoClientConfigWriterPumpTest {
 
     assertEquals(1, freshKeyFrameRequests)
     assertFalse(state.snapshot().writeInFlight)
-    assertTrue(state.snapshot().waitingForKeyFrame)
+    assertEquals(0, state.snapshot().pendingFrames)
   }
 
   @Test
@@ -271,14 +271,12 @@ class TicketVideoClientConfigWriterPumpTest {
   private fun state(): TicketVideoClientDeliveryState {
     return TicketVideoClientDeliveryState(
       expectedEpoch = 7L,
-      maxQueuedFrames = 12,
-      maxQueuedBytes = 1024,
-      pendingMaxAgeMillis = 150L,
+      maxFrameBytes = 1024,
       slowCloseMillis = 250L
     )
   }
 
-  private fun frame(sequence: Long, keyFrame: Boolean = false): TicketVideoDeliveryFrame {
+  private fun frame(sequence: Long, keyFrame: Boolean = true): TicketVideoDeliveryFrame {
     return TicketVideoDeliveryFrame(
       bytes = byteArrayOf(sequence.toByte()),
       keyFrame = keyFrame,

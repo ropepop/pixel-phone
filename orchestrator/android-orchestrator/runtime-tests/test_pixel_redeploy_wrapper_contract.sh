@@ -151,6 +151,7 @@ cat > "${ORCHESTRATOR_FIXTURE}/scripts/android/deploy_orchestrator_apk.sh" <<'EO
 set -euo pipefail
 
 printf '%s\n' "$*" >> "${FAKE_STATE_DIR}/${FAKE_LOG_PREFIX}-deploy-invocations.log"
+printf '%s\n' "${PIXEL_RUN_ID}" >> "${FAKE_STATE_DIR}/${FAKE_LOG_PREFIX}-deploy-operation-ids.log"
 
 action=""
 component=""
@@ -179,7 +180,7 @@ if [[ "${action}" == "redeploy_component" && "${component}" == "ticket_screen" &
   printf 'fresh\n' > "${FAKE_STATE_DIR}/${FAKE_LOG_PREFIX}-ticket-freshness-state"
 fi
 
-printf 'Action result source: artifact\n'
+printf 'Action result source: %s\n' "${FAKE_DEPLOY_RESULT_SOURCE:-artifact}"
 EOF_DEPLOY
 chmod +x "${ORCHESTRATOR_FIXTURE}/scripts/android/deploy_orchestrator_apk.sh"
 
@@ -355,6 +356,13 @@ if [[ "${#auto_invocations[@]}" -lt 2 ]]; then
   exit 1
 fi
 
+if [[ "$(sort -u "${STATE_DIR}/auto-deploy-operation-ids.log" | wc -l | tr -d ' ')" != "${#auto_invocations[@]}" ]] ||
+  ! grep -Eq '^test-run-id-[0-9]+-' "${STATE_DIR}/auto-deploy-operation-ids.log"; then
+  echo "FAIL: nested deploy invocations must have unique operation ids derived from the wrapper run" >&2
+  cat "${STATE_DIR}/auto-deploy-operation-ids.log" >&2
+  exit 1
+fi
+
 if [[ "${auto_invocations[0]}" != *"--skip-build"* || "${auto_invocations[0]}" != *"--install-apk"* ]]; then
   echo "FAIL: first deploy invocation should install the freshly built APK without rebuilding it" >&2
   printf '%s\n' "${auto_invocations[@]}" >&2
@@ -503,6 +511,77 @@ fi
 if ! rg -q -- '--action redeploy_component --component ticket_screen' "${STATE_DIR}/ticket-explicit-deploy-invocations.log"; then
   echo "FAIL: explicit ticket_screen scope did not run the targeted redeploy" >&2
   cat "${STATE_DIR}/ticket-explicit-deploy-invocations.log" >&2
+  exit 1
+fi
+read_lines_into_array "${STATE_DIR}/ticket-explicit-deploy-invocations.log" ticket_explicit_invocations
+if [[ "${#ticket_explicit_invocations[@]}" != "1" ]]; then
+  echo "FAIL: a mutating ticket_screen wrapper run should trust its embedded targeted readiness proof" >&2
+  printf '%s\n' "${ticket_explicit_invocations[@]}" >&2
+  exit 1
+fi
+if ! jq -e '.validations.ticket_screen_health == "embedded"' \
+  "${WORKSPACE_FIXTURE}/output/pixel/redeploy/test-run-id/summary.json" >/dev/null 2>&1; then
+  echo "FAIL: ticket_screen wrapper summary should record its embedded targeted health proof" >&2
+  cat "${WORKSPACE_FIXTURE}/output/pixel/redeploy/test-run-id/summary.json" >&2
+  exit 1
+fi
+
+rm -f "${STATE_DIR}/ticket-log-fallback-deploy-invocations.log" \
+  "${STATE_DIR}/ticket-log-fallback-freshness-invocations.log" \
+  "${STATE_DIR}/ticket-log-fallback-ticket-freshness-state"
+ticket_log_fallback_log="${TMP_ROOT}/ticket-log-fallback.log"
+if ! FAKE_DEPLOY_RESULT_SOURCE=log \
+  FAKE_TICKET_FRESHNESS_INITIAL=fresh \
+  run_ticket_wrapper ticket-log-fallback ticket_screen >"${ticket_log_fallback_log}" 2>&1; then
+  echo "FAIL: ticket_screen log fallback should receive targeted health confirmation" >&2
+  cat "${ticket_log_fallback_log}" >&2
+  exit 1
+fi
+read_lines_into_array "${STATE_DIR}/ticket-log-fallback-deploy-invocations.log" ticket_log_fallback_invocations
+if [[ "${#ticket_log_fallback_invocations[@]}" != "2" ]] ||
+  [[ "${ticket_log_fallback_invocations[1]}" != *"--action health_component --component ticket_screen"* ]]; then
+  echo "FAIL: a log-backed Ticket result must be followed by targeted health" >&2
+  printf '%s\n' "${ticket_log_fallback_invocations[@]}" >&2
+  exit 1
+fi
+if printf '%s\n' "${ticket_log_fallback_invocations[@]}" | rg -q -- '(^| )--action health($| )'; then
+  echo "FAIL: Ticket log fallback used broad stack health" >&2
+  printf '%s\n' "${ticket_log_fallback_invocations[@]}" >&2
+  exit 1
+fi
+if ! jq -e '.validations.ticket_screen_health == "pass"' \
+  "${WORKSPACE_FIXTURE}/output/pixel/redeploy/test-run-id/summary.json" >/dev/null 2>&1; then
+  echo "FAIL: targeted Ticket fallback health was not recorded as passing" >&2
+  cat "${WORKSPACE_FIXTURE}/output/pixel/redeploy/test-run-id/summary.json" >&2
+  exit 1
+fi
+
+rm -f "${STATE_DIR}/ticket-validate-deploy-invocations.log" \
+  "${STATE_DIR}/ticket-validate-freshness-invocations.log" \
+  "${STATE_DIR}/ticket-validate-ticket-freshness-state"
+ticket_validate_log="${TMP_ROOT}/ticket-validate.log"
+if ! PATH="${BIN_DIR}:${PATH}" \
+  FAKE_STATE_DIR="${STATE_DIR}" \
+  FAKE_LOG_PREFIX="ticket-validate" \
+  FAKE_TICKET_FRESHNESS_INITIAL=fresh \
+  PIXEL_RUN_ID="ticket-validate-run" \
+  "${ORCHESTRATOR_FIXTURE}/scripts/android/pixel_redeploy.sh" \
+  --device fake-device \
+  --scope ticket_screen \
+  --mode validate-only >"${ticket_validate_log}" 2>&1; then
+  echo "FAIL: ticket_screen validate-only should run targeted health" >&2
+  cat "${ticket_validate_log}" >&2
+  exit 1
+fi
+if ! grep -Fq -- '--action health_component --component ticket_screen' \
+  "${STATE_DIR}/ticket-validate-deploy-invocations.log"; then
+  echo "FAIL: ticket_screen validate-only did not use component-scoped health" >&2
+  cat "${STATE_DIR}/ticket-validate-deploy-invocations.log" >&2
+  exit 1
+fi
+if rg -q -- '(^| )--action health($| )' "${STATE_DIR}/ticket-validate-deploy-invocations.log"; then
+  echo "FAIL: ticket_screen validate-only used broad stack health" >&2
+  cat "${STATE_DIR}/ticket-validate-deploy-invocations.log" >&2
   exit 1
 fi
 

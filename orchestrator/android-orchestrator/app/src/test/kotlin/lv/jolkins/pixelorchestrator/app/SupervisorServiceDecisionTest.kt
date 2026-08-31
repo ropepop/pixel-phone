@@ -144,6 +144,23 @@ class SupervisorServiceDecisionTest {
   }
 
   @Test
+  fun supervisorCommandTelemetryIsTerminalMonotonicAndExcludesWakeBookkeeping() {
+    val sourcePath = listOf(
+      Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/SupervisorService.kt"),
+      Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/SupervisorService.kt")
+    ).first(Files::exists)
+    val source = String(Files.readAllBytes(sourcePath))
+    val onStart = source.substringBetween("override fun onStartCommand", "  override fun onDestroy")
+    val eventType = source.substringBetween("private fun telemetryEventType", "  private fun telemetryComponent")
+    val completed = source.substringBetween("private suspend fun recordCompletedActionTelemetry", "  private fun telemetryCleanupCategory")
+
+    assertTrue(onStart.contains("val actionStartedAtMillis = SystemClock.elapsedRealtime()"))
+    assertTrue(!onStart.contains("OrchestratorTelemetryStatus.RUNNING"))
+    assertTrue(eventType.contains("ACTION_PHONE_AUTOMATION_WAKE -> null"))
+    assertTrue(completed.contains("SystemClock.elapsedRealtime() - startedAtMillis"))
+  }
+
+  @Test
   fun supervisorContinuouslyMaintainsPortraitLock() {
     val sourcePath = listOf(
       Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/SupervisorService.kt"),

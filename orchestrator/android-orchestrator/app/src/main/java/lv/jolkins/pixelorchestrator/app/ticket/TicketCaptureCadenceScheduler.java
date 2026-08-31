@@ -1,66 +1,30 @@
 package lv.jolkins.pixelorchestrator.app.ticket;
 
 /**
- * Monotonic, single-capture cadence scheduler for the rooted capture helper.
+ * Monotonic, fixed one-frame-per-second scheduler for the rooted capture helper.
  *
  * <p>Deadlines stay on the original monotonic timeline. When capture work runs
  * long, expired ticks are counted and skipped; the caller receives at most one
  * capture decision and never enters a catch-up loop.</p>
  */
 public final class TicketCaptureCadenceScheduler {
-  public static final int STATIC_FPS = 1;
-  public static final int MODERATE_FPS = 5;
-  public static final int ACTIVE_FPS = 10;
+  public static final int FIXED_FPS = 1;
+  public static final long INTERVAL_MILLIS = 1_000L;
 
-  private int targetFps;
   private long nextDeadlineMillis;
-  private long cadenceChanges;
   private long deadlineMisses;
   private long skippedTicks;
   private long lastLatenessMillis;
   private long lastSkippedTicks;
   private boolean immediateCapturePending;
+  private long immediateCaptureBlockedUntilMillis;
 
-  public TicketCaptureCadenceScheduler(int initialFps, long nowMillis) {
-    if (!isSupportedFps(initialFps)) {
-      throw new IllegalArgumentException("unsupported cadence: " + initialFps);
-    }
-    targetFps = initialFps;
+  public TicketCaptureCadenceScheduler(long nowMillis) {
     nextDeadlineMillis = nowMillis;
-  }
-
-  public static boolean isSupportedFps(int fps) {
-    return fps == STATIC_FPS || fps == MODERATE_FPS || fps == ACTIVE_FPS;
-  }
-
-  public static long intervalMillisForFps(int fps) {
-    if (!isSupportedFps(fps)) {
-      throw new IllegalArgumentException("unsupported cadence: " + fps);
-    }
-    return Math.max(1L, Math.round(1000.0 / fps));
-  }
-
-  public synchronized boolean setTargetFps(int fps, long nowMillis) {
-    if (!isSupportedFps(fps)) {
-      return false;
-    }
-    if (targetFps != fps) {
-      targetFps = fps;
-      cadenceChanges += 1L;
-    }
-    // A cadence transition is immediate and starts a fresh absolute schedule.
-    nextDeadlineMillis = nowMillis;
-    lastLatenessMillis = 0L;
-    lastSkippedTicks = 0L;
-    return true;
-  }
-
-  public synchronized int targetFps() {
-    return targetFps;
   }
 
   public synchronized long intervalMillis() {
-    return intervalMillisForFps(targetFps);
+    return INTERVAL_MILLIS;
   }
 
   public synchronized long waitMillis(long nowMillis) {
@@ -68,11 +32,15 @@ public final class TicketCaptureCadenceScheduler {
   }
 
   /**
-   * Makes one capture immediately due without changing the selected cadence.
-   * Repeated requests before that capture are coalesced into the same pending
-   * grant; a request after the grant is consumed schedules the next capture.
+   * Makes one capture immediately due without changing the fixed cadence.
+   * Repeated requests before that capture share the same pending grant. Once
+   * consumed, the refresh starts a new one-second period; requests inside that
+   * period coalesce onto the already-produced refresh instead of adding frames.
    */
   public synchronized boolean requestImmediateCapture(long nowMillis) {
+    if (!immediateCapturePending && nowMillis < immediateCaptureBlockedUntilMillis) {
+      return false;
+    }
     boolean newlyPending = !immediateCapturePending;
     immediateCapturePending = true;
     nextDeadlineMillis = Math.min(nextDeadlineMillis, nowMillis);
@@ -99,17 +67,20 @@ public final class TicketCaptureCadenceScheduler {
     skippedTicks += expiredTicks;
     lastLatenessMillis = lateness;
     lastSkippedTicks = expiredTicks;
-    // A partially late capture still owns the next future tick. At an exact
-    // deadline, advance one interval; otherwise advance past the expired
-    // ticks but leave the first future deadline intact.
-    long intervalsToAdvance = (lateness / intervalMillis()) + 1L;
-    nextDeadlineMillis += intervalsToAdvance * intervalMillis();
+    if (immediate) {
+      // An event refresh starts a fresh one-second period. Requests in that period
+      // coalesce onto the already-produced frame rather than exceeding 1 FPS.
+      nextDeadlineMillis = nowMillis + intervalMillis();
+      immediateCaptureBlockedUntilMillis = nextDeadlineMillis;
+    } else {
+      // A partially late capture still owns the next future tick. At an exact
+      // deadline, advance one interval; otherwise advance past the expired
+      // ticks but leave the first future deadline intact.
+      long intervalsToAdvance = (lateness / intervalMillis()) + 1L;
+      nextDeadlineMillis += intervalsToAdvance * intervalMillis();
+    }
     immediateCapturePending = false;
     return new CaptureDecision(lateness, expiredTicks, immediate);
-  }
-
-  public synchronized long cadenceChanges() {
-    return cadenceChanges;
   }
 
   public synchronized long deadlineMisses() {

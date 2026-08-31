@@ -48,7 +48,8 @@ if ! rg -Fq 'const val ACTION_EXPORT_BUNDLE = "lv.jolkins.pixelorchestrator.acti
   exit 1
 fi
 
-if ! rg -Fq 'command_action=$resultAction' "${SUPERVISOR_SERVICE}"; then
+if ! rg -Fq 'command_action=$resultAction' "${SUPERVISOR_SERVICE}" ||
+  ! rg -Fq 'run_id=$pixelRunId success=${result.success}' "${SUPERVISOR_SERVICE}"; then
   echo "FAIL: SupervisorService missing logical command action logging" >&2
   exit 1
 fi
@@ -229,10 +230,42 @@ case "${cmd}" in
         touch "${state_dir}/action-result-consumed-${run_id}"
         ;;
       *"logcat -d -v time | grep -E 'OrchestratorActionReceiver|SupervisorService|OrchestratorMain' | tail -n 120"*)
-        printf '%s\n' "03-09 12:58:52.867 I/OrchestratorActionReceiver( 5326): command_accepted action=redeploy_component component=train_bot run_id=test-run-id"
+        case "${FAKE_LOG_MODE:-current-marker}" in
+          stale-success)
+            printf '%s\n' "03-09 12:57:01.100 I/SupervisorService( 5326): command_action=redeploy_component component=train_bot run_id=older-run success=true"
+            ;;
+          current-success)
+            printf '%s\n' "03-09 12:58:52.867 I/OrchestratorActionReceiver( 5326): command_accepted action=redeploy_component component=train_bot run_id=${run_id}"
+            printf '%s\n' "03-09 12:58:53.100 I/SupervisorService( 5326): command_action=redeploy_component component=train_bot run_id=${run_id} success=true"
+            ;;
+          interleaved-success)
+            printf '%s\n' "03-09 12:58:52.867 I/OrchestratorActionReceiver( 5326): command_accepted action=redeploy_component component=train_bot run_id=${run_id}"
+            printf '%s\n' "03-09 12:58:53.000 I/OrchestratorActionReceiver( 5326): command_accepted action=redeploy_component component=train_bot run_id=other-run"
+            printf '%s\n' "03-09 12:58:53.100 I/SupervisorService( 5326): command_action=redeploy_component component=train_bot run_id=other-run success=true"
+            ;;
+          *)
+            printf '%s\n' "03-09 12:58:52.867 I/OrchestratorActionReceiver( 5326): command_accepted action=redeploy_component component=train_bot run_id=${run_id}"
+            ;;
+        esac
         ;;
       *"logcat -d -v time | grep -E 'OrchestratorActionReceiver|SupervisorService' | tail -n 200"*)
-        printf '%s\n' "03-09 12:58:52.867 I/OrchestratorActionReceiver( 5326): command_accepted action=redeploy_component component=train_bot run_id=test-run-id"
+        case "${FAKE_LOG_MODE:-current-marker}" in
+          stale-success)
+            printf '%s\n' "03-09 12:57:01.100 I/SupervisorService( 5326): command_action=redeploy_component component=train_bot run_id=older-run success=true"
+            ;;
+          current-success)
+            printf '%s\n' "03-09 12:58:52.867 I/OrchestratorActionReceiver( 5326): command_accepted action=redeploy_component component=train_bot run_id=${run_id}"
+            printf '%s\n' "03-09 12:58:53.100 I/SupervisorService( 5326): command_action=redeploy_component component=train_bot run_id=${run_id} success=true"
+            ;;
+          interleaved-success)
+            printf '%s\n' "03-09 12:58:52.867 I/OrchestratorActionReceiver( 5326): command_accepted action=redeploy_component component=train_bot run_id=${run_id}"
+            printf '%s\n' "03-09 12:58:53.000 I/OrchestratorActionReceiver( 5326): command_accepted action=redeploy_component component=train_bot run_id=other-run"
+            printf '%s\n' "03-09 12:58:53.100 I/SupervisorService( 5326): command_action=redeploy_component component=train_bot run_id=other-run success=true"
+            ;;
+          *)
+            printf '%s\n' "03-09 12:58:52.867 I/OrchestratorActionReceiver( 5326): command_accepted action=redeploy_component component=train_bot run_id=${run_id}"
+            ;;
+        esac
         ;;
       *)
         if [[ "${shell_cmd}" == *"/orchestrator-action-results/"* ]]; then
@@ -404,5 +437,60 @@ fi
 
 wait_for_timing_line 'run-complete --run-id test-run-id --source pixel --action redeploy_component --profile standard --target train_bot --status failed'
 wait_for_timing_line 'action_wait=failed='
+
+current_log_success="${TMP_ROOT}/current-log-success.log"
+if ! FAKE_LOG_MODE=current-success TEST_PIXEL_RUN_ID=current-log-success-run run_script "${TEST_ROOT}/scripts/android/deploy_orchestrator_apk.sh" \
+  --device fake-device \
+  --skip-build \
+  --action redeploy_component \
+  --component train_bot \
+  --component-release-dir "${TEST_ROOT}/release" >"${current_log_success}" 2>&1; then
+  echo "FAIL: current operation-scoped success log was not accepted" >&2
+  cat "${current_log_success}" >&2
+  exit 1
+fi
+if ! rg -Fq 'Action result source: log' "${current_log_success}"; then
+  echo "FAIL: operation-scoped log fallback did not report its source" >&2
+  cat "${current_log_success}" >&2
+  exit 1
+fi
+
+interleaved_success_log="${TMP_ROOT}/interleaved-success.log"
+set +e
+FAKE_LOG_MODE=interleaved-success TEST_PIXEL_RUN_ID=interleaved-run run_script "${TEST_ROOT}/scripts/android/deploy_orchestrator_apk.sh" \
+  --device fake-device \
+  --skip-build \
+  --action redeploy_component \
+  --component train_bot \
+  --component-release-dir "${TEST_ROOT}/release" >"${interleaved_success_log}" 2>&1
+interleaved_success_rc=$?
+set -e
+if [[ "${interleaved_success_rc}" == "0" ]]; then
+  echo "FAIL: another operation's interleaved success log was accepted" >&2
+  cat "${interleaved_success_log}" >&2
+  exit 1
+fi
+
+stale_success_log="${TMP_ROOT}/stale-success.log"
+set +e
+FAKE_LOG_MODE=stale-success TEST_PIXEL_RUN_ID=stale-success-run run_script "${TEST_ROOT}/scripts/android/deploy_orchestrator_apk.sh" \
+  --device fake-device \
+  --skip-build \
+  --action redeploy_component \
+  --component train_bot \
+  --component-release-dir "${TEST_ROOT}/release" >"${stale_success_log}" 2>&1
+stale_success_rc=$?
+set -e
+
+if [[ "${stale_success_rc}" == "0" ]]; then
+  echo "FAIL: an unscoped stale success log was accepted as current action proof" >&2
+  cat "${stale_success_log}" >&2
+  exit 1
+fi
+if ! rg -Fq 'unscoped service logs were ignored' "${stale_success_log}"; then
+  echo "FAIL: stale-log rejection was not explained" >&2
+  cat "${stale_success_log}" >&2
+  exit 1
+fi
 
 echo "PASS: deploy_orchestrator_apk.sh dispatches through the foreground service and prefers artifact-backed results"

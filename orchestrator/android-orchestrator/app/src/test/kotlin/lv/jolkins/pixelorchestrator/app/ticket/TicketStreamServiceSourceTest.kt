@@ -94,7 +94,7 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun nativeEdgeCropIsSharedByEncodingMotionVisibilityAndVisualClassification() {
+  fun nativeEdgeCropIsSharedByEncodingVisibilityAndVisualClassification() {
     listOf(
       "TICKET_MEDIA_LEFT_CROP_SOURCE_PIXELS = 4",
       "TICKET_MEDIA_RIGHT_CROP_SOURCE_PIXELS = 3",
@@ -107,7 +107,7 @@ class TicketStreamServiceSourceTest {
       "--crop-bottom-source"
     ).forEach { assertTrue(h264Engine.contains(it)) }
     assertTrue(h264Main.contains("Rect sourceCrop = sourceCropRect("))
-    assertTrue(h264Main.contains("MotionSample sample = motionSampler.sample(source.bitmap, sourceCrop)"))
+    assertFalse(h264Main.contains("motionSampler"))
     assertTrue(h264Main.contains("visible = frameLooksVisible(source.bitmap, sourceCrop)"))
     assertTrue(h264Main.contains("classifyControlCodeVisualState(\n              source.bitmap,\n              sourceCrop,"))
     assertTrue(h264Main.contains("drawBitmap(inputSurface, source.bitmap, sourceCrop, destination, paint)"))
@@ -1177,7 +1177,7 @@ class TicketStreamServiceSourceTest {
     assertFalse(action.contains("UiAutomator"))
     assertFalse(action.contains("dumpViviHierarchy"))
     assertTrue(service.contains(
-      "ticket-stream-2026-08-26-inputmanager-keyevents-v326"
+      "ticket-stream-2026-08-31-all-intra-clarity-v328"
     ))
     assertFalse(service.contains(
       "ticket-stream-2026-08-25-native-edge-action-clamp-proof-v320"
@@ -1609,7 +1609,7 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun videoFanoutUsesOneBoundedOrderedPumpPerClient() {
+  fun videoFanoutUsesOneInFlightAndOneNewestPendingIndependentFramePerClient() {
     val delivery = source("ticket/TicketVideoClientDeliveryState.kt")
     val writerPump = source("ticket/TicketVideoClientWriterPump.kt")
     val registry = source("ticket/TicketVideoClientDeliveryRegistry.kt")
@@ -1618,15 +1618,14 @@ class TicketStreamServiceSourceTest {
     val effects = body(service, "private fun applyVideoDeliveryEffects", "private fun handleRootHardwareH264CaptureFrame")
     val cached = body(service, "private fun sendCachedKeyFrameOrRequest", "private fun broadcastFrame")
 
-    assertTrue(delivery.contains("private val queued = ArrayDeque<QueuedFrame>()"))
-    assertTrue(delivery.contains("queued.size < maxQueuedFrames"))
-    assertTrue(delivery.contains("queuedBytes + frame.bytes.size <= maxQueuedBytes"))
-    assertTrue(delivery.contains("nowMillis - oldest.queuedAtMillis > pendingMaxAgeMillis"))
-    assertTrue(delivery.contains("frame.sequence != lastAdmittedSequence + 1L"))
-    assertTrue(delivery.contains("lastAdmittedEpoch != frame.epoch"))
-    assertTrue(delivery.contains("frame.sequence <= lastAdmittedSequence"))
-    assertTrue(delivery.contains("requestKeyFrame = armKeyFrameRequest()"))
-    assertTrue(delivery.contains("DROP_QUEUE_OVERFLOW"))
+    assertTrue(delivery.contains("private var pendingFrame: TicketVideoDeliveryFrame? = null"))
+    assertTrue(delivery.contains("if (!frame.keyFrame)"))
+    assertTrue(delivery.contains("frame.sequence <= latestAcceptedSequence"))
+    assertTrue(delivery.contains("pendingFrame = frame"))
+    assertTrue(delivery.contains("DROP_PENDING_REPLACED"))
+    assertTrue(delivery.contains("requestImmediateRefresh = true"))
+    assertFalse(delivery.contains("ArrayDeque"))
+    assertFalse(delivery.contains("frame.sequence != lastAdmittedSequence + 1L"))
     assertTrue(sendFrame.contains("launchVideoFrameWriter(client, sendState, firstFrame, decision.writeToken)"))
     assertTrue(writer.contains("TicketVideoClientWriterPump("))
     assertTrue(writerPump.contains("while (nextFrame != null)"))
@@ -1637,12 +1636,13 @@ class TicketStreamServiceSourceTest {
     assertTrue(writerPump.contains("onWriteExpired("))
     assertTrue(writerPump.contains("currentWriteToken"))
     assertTrue(registry.contains("states[client] !== expectedState"))
-    assertTrue(effects.contains("video_client_queue_drop"))
-    assertTrue(effects.contains("video_client_sequence_gap"))
+    assertTrue(effects.contains("video_client_frame_drop"))
+    assertTrue(effects.contains("video_client_unexpected_delta"))
     assertTrue(cached.contains("cached.sequence == sourceTail.second"))
     assertTrue(cached.contains("cached.epoch == sourceTail.first"))
-    assertTrue(service.contains("VIDEO_CLIENT_PENDING_MAX_FRAMES = 12"))
-    assertTrue(service.contains("VIDEO_CLIENT_PENDING_MAX_BYTES = 5 * 1024 * 1024"))
+    assertTrue(service.contains("VIDEO_CLIENT_MAX_FRAME_BYTES = 5 * 1024 * 1024"))
+    assertFalse(service.contains("VIDEO_CLIENT_PENDING_MAX_FRAMES"))
+    assertFalse(service.contains("VIDEO_CLIENT_PENDING_MAX_AGE"))
   }
 
   @Test
@@ -1713,7 +1713,7 @@ class TicketStreamServiceSourceTest {
       "private suspend fun observeTicketDetailForWakeWithRoot"
     )
     val envelope = body(service, "private fun broadcastFrame", "private fun sendVideoFrame")
-    val initialDeltaGuard = receive.indexOf("if (!frame.keyFrame && latestKeyFrame == null)")
+    val initialDeltaGuard = receive.indexOf("if (!frame.keyFrame)")
     val initialDeltaReturn = receive.indexOf("return", initialDeltaGuard)
     val acceptedBroadcast = receive.indexOf("broadcastFrame(")
 
@@ -1819,10 +1819,10 @@ class TicketStreamServiceSourceTest {
     val commands = body(service, "internal suspend fun handleTicketSpacetimeCommand", "internal suspend fun handleTicketSpacetimeDesiredActive")
     listOf(
       "\"start\" ->", "\"activity\" ->", "\"keyframe\" ->", "\"recover_stream\" ->",
-      "\"stream_cadence\" ->",
       "\"ticket_action_v3\" ->", "\"generate_control_code\" ->",
       "\"control_code_browser_capture\" ->", "\"control_exit\" ->"
     ).forEach { assertTrue("missing retained Spacetime command $it", commands.contains(it)) }
+    assertFalse(commands.contains("\"stream_cadence\" ->"))
     assertTrue(commands.contains("spacetime_command_unsupported"))
   }
 
@@ -1876,22 +1876,18 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun relayCadenceDemandUsesOnlySupportedTiersAndKeepsTheCodecAlive() {
+  fun expiredRelayCadenceCompatibilityIsRemovedAfterTheDrain() {
     val commands = body(service, "internal suspend fun handleTicketSpacetimeCommand", "internal suspend fun handleTicketSpacetimeDesiredActive")
-    val cadence = commands.substringAfter("\"stream_cadence\" ->").substringBefore("\"recover_stream\" ->")
-    assertTrue(cadence.contains("payload?.stringValue(\"demand\")"))
-    assertTrue(cadence.contains("payload?.longValue(\"maxFps\")"))
-    assertTrue(cadence.contains("TicketCaptureCadenceScheduler.isSupportedFps(targetFps)"))
-    assertTrue(cadence.contains("rootHardwareH264CaptureEngine.requestCadence("))
-    assertTrue(cadence.contains("keyframe_only"))
-    assertFalse(cadence.contains("rootHardwareH264CaptureEngine.restart"))
-    assertFalse(cadence.contains("rootHardwareH264CaptureEngine.stop"))
+    assertFalse(commands.contains("\"stream_cadence\" ->"))
+    assertFalse(h264Engine.contains("requestCadence"))
+    assertFalse(h264Main.contains("cmd.startsWith(\"cadence:\")"))
+    assertFalse(h264Main.contains("isLegacyCommandFps"))
   }
 
   @Test
   fun durableKeyframeAlwaysReachesTheCoalescedEncoderRequestPath() {
     val commands = body(service, "internal suspend fun handleTicketSpacetimeCommand", "internal suspend fun handleTicketSpacetimeDesiredActive")
-    val keyframe = commands.substringAfter("\"keyframe\" ->").substringBefore("\"stream_cadence\" ->")
+    val keyframe = commands.substringAfter("\"keyframe\" ->").substringBefore("\"recover_stream\" ->")
 
     assertTrue(keyframe.contains("requestKeyFrame(reason.ifBlank { \"spacetime_keyframe\" })"))
     assertTrue(keyframe.contains("reason = \"keyframe_requested\""))
@@ -2283,30 +2279,31 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun streamRunsOneFpsIdleAndTenFpsDuringControlDispatch() {
-    assertTrue(config.contains("const val ROOT_HARDWARE_H264_STEADY_FPS = 1"))
-    assertTrue(config.contains("const val ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS = ROOT_HARDWARE_H264_ACTIVE_FPS"))
-    assertTrue(h264Engine.contains("controlCodeRequestFpsTarget = TicketScreenConfig.ROOT_HARDWARE_H264_CONTROL_CODE_REQUEST_FPS"))
-    assertTrue(service.contains("targetFps = TicketScreenConfig.ROOT_HARDWARE_H264_STEADY_FPS"))
+  fun streamRunsOneFpsAllIntraDuringIdleAndControlDispatch() {
+    assertTrue(config.contains("const val ROOT_HARDWARE_H264_FPS = 1"))
+    assertTrue(config.contains("const val ROOT_HARDWARE_H264_FRAME_DEPENDENCY_MODE = \"all_intra\""))
+    assertTrue(h264Engine.contains("--fps ${'$'}{TicketScreenConfig.ROOT_HARDWARE_H264_FPS}"))
+    assertFalse(h264Engine.contains("targetFps"))
+    assertTrue(service.contains("val keyframeIntervalFrames = 1"))
   }
 
   @Test
-  fun tenFpsBurstBeginsAtBrowserDispatchBeforePhoneOwnershipWait() {
+  fun oneShotRefreshBeginsAtBrowserDispatchBeforePhoneOwnershipWait() {
     val generate = body(service, "private suspend fun handleGenerateControlCode", "private suspend fun handleGenerateRigasSatiksmeMonthlyTicketQr")
-    val burst = "startControlCodeRequestBurst(\"control_code_browser_dispatch\")"
-    assertTrue(generate.contains(burst))
-    assertTrue(generate.indexOf(burst) < generate.indexOf("controlCodePhoneMutationLane.withOwnership"))
-    assertTrue(generate.contains("capture_burst_started"))
+    val refresh = "requestImmediateRefresh(\"control_code_browser_dispatch\")"
+    assertTrue(generate.contains(refresh))
+    assertTrue(generate.indexOf(refresh) < generate.indexOf("controlCodePhoneMutationLane.withOwnership"))
+    assertTrue(generate.contains("capture_refresh_requested"))
   }
 
   @Test
-  fun tenFpsBurstStopsOnBrowserAckTimeoutAndFinally() {
+  fun browserAckWaitDoesNotOwnAContinuousCaptureBurst() {
     val wait = body(service, "private suspend fun waitForControlCodeBrowserCapture", "private suspend fun ensureTicketSessionForControlCodeRequest")
     val generate = body(service, "private suspend fun handleGenerateControlCode", "private suspend fun handleGenerateRigasSatiksmeMonthlyTicketQr")
-    assertTrue(wait.contains("stopControlCodeRequestBurst(\"browser_capture_acknowledged\")"))
-    assertTrue(wait.contains("stopControlCodeRequestBurst(reason)"))
     assertTrue(wait.contains("control_code_browser_capture_ack_timeout"))
-    assertTrue(generate.contains("stopControlCodeRequestBurst(\"control_code_request_finally\")"))
+    assertFalse(wait.contains("stopControlCodeRequestBurst"))
+    assertFalse(generate.contains("startControlCodeRequestBurst"))
+    assertFalse(generate.contains("stopControlCodeRequestBurst"))
     assertTrue(service.contains("CONTROL_CODE_BROWSER_CAPTURE_ACK_TIMEOUT_MILLIS = 20_000L"))
   }
 
@@ -2595,7 +2592,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(stable.contains("CONTROL_CODE_GENERATED_CLOSE_PROBE_WAIT_MILLIS"))
     assertTrue(stable.contains("minOf(CONTROL_CODE_GENERATED_CLOSE_PROBE_WAIT_MILLIS, remainingMillis)"))
     assertFalse(stable.contains("CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS"))
-    assertTrue(service.contains("CONTROL_CODE_GENERATED_CLOSE_PROBE_WAIT_MILLIS = 700L"))
+    assertTrue(service.contains("CONTROL_CODE_GENERATED_CLOSE_PROBE_WAIT_MILLIS = 1_250L"))
     assertTrue(service.contains("CONTROL_CODE_GENERATED_CLOSE_PROOF_TIMEOUT_MILLIS = 3_200L"))
     assertFalse(stable.contains("visualSignature =="))
     assertTrue(clean.contains("val proofResult = visualProbe.result"))
@@ -2605,7 +2602,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(clean.contains("CONTROL_CODE_CLEAN_SURFACE_PROBE_WAIT_MILLIS"))
     assertTrue(clean.contains("minOf(CONTROL_CODE_CLEAN_SURFACE_PROBE_WAIT_MILLIS, remainingMillis)"))
     assertFalse(clean.contains("minOf(CONTROL_CODE_VISUAL_STATE_PROBE_WAIT_MILLIS, remainingMillis)"))
-    assertTrue(service.contains("CONTROL_CODE_CLEAN_SURFACE_PROBE_WAIT_MILLIS = 700L"))
+    assertTrue(service.contains("CONTROL_CODE_CLEAN_SURFACE_PROBE_WAIT_MILLIS = 1_250L"))
     assertTrue(service.contains("CONTROL_CODE_FAST_CLEANUP_VERIFY_TIMEOUT_MILLIS = 3_200L"))
     assertTrue(clean.contains("TicketControlCodeCleanupVisualProof(CONTROL_CODE_FAST_CLEANUP_RAW_VISUAL_PROOF_COUNT)"))
     assertTrue(service.contains("CONTROL_CODE_FAST_CLEANUP_RAW_VISUAL_PROOF_COUNT = 2"))
@@ -2760,7 +2757,7 @@ class TicketStreamServiceSourceTest {
 
   @Test
   fun fastCleanupProofBudgetStaysBoundedWhileAllowingMultiFrameProbeReplies() {
-    assertTrue(service.contains("CONTROL_CODE_CLEAN_SURFACE_PROBE_WAIT_MILLIS = 700L"))
+    assertTrue(service.contains("CONTROL_CODE_CLEAN_SURFACE_PROBE_WAIT_MILLIS = 1_250L"))
     assertTrue(service.contains("CONTROL_CODE_FAST_CLEANUP_VERIFY_TIMEOUT_MILLIS = 3_200L"))
     assertTrue(service.contains("CONTROL_CODE_FAST_CLEANUP_POLL_MILLIS = 75L"))
     assertTrue(service.contains("CONTROL_CODE_FAST_CLEANUP_VISUAL_SAMPLE_GAP_MILLIS = 200L"))
@@ -2960,7 +2957,10 @@ class TicketStreamServiceSourceTest {
     assertTrue(service.contains("prepareViviForRootHardwareH264FastOpen"))
     assertTrue(service.contains("requireUnactivatedRegistration = requireUnactivatedRegistration"))
     assertTrue(service.contains("ticketDetailReturnToListActionForHierarchy"))
-    assertTrue(service.contains("TICKET_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS = 2_000L"))
+    assertTrue(service.contains("TICKET_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS = 3_000L"))
+    assertTrue(service.contains("TICKET_SLIDER_PROOF_TIMEOUT_MILLIS = 3_000L"))
+    assertTrue(service.contains("CONTROL_CODE_RECENT_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS = 3_000L"))
+    assertTrue(service.contains("STREAM_STALE_ENGINE_RESTART_MILLIS = 3_000L"))
     assertFalse(service.contains("fastWakeReadyFromRecentTicketDetail(reason, wakeStartedAtMillis)"))
   }
 

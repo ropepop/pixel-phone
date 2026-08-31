@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.ServiceCompat
@@ -106,7 +107,7 @@ class SupervisorService : Service() {
   private var prerequisiteMonitorJob: Job? = null
   private var ticketServiceMonitorJob: Job? = null
   private var portraitLockMaintenanceJob: Job? = null
-  private var superuserLogMaintenanceJob: Job? = null
+  private var frequentMaintenanceJob: Job? = null
   private val ticketServiceEnsureMutex = Mutex()
   private val ticketReadinessRootExecutor = SuRootExecutor()
   private var deferredTouchBrightnessResumeRequested: Boolean = false
@@ -160,7 +161,7 @@ class SupervisorService : Service() {
       promoteToForeground()
       val cleanupSchedule = WeeklyCleanupScheduler(this).scheduleNext(reason = "service_create")
       startGeneralTelemetry(cleanupSchedule)
-      startSuperuserLogMaintenance(AppGraph.facade(this))
+      startFrequentMaintenance(AppGraph.facade(this))
       reschedulePhoneAutomationWake(reason = "service_create", force = true)
       syncPhoneAutomation(trigger = "service_create")
       syncCpuFrequency(trigger = "service_create")
@@ -206,16 +207,8 @@ class SupervisorService : Service() {
     val wakeToken = intent?.getStringExtra(EXTRA_PHONE_AUTOMATION_WAKE_TOKEN).orEmpty()
     val facade = AppGraph.facade(this)
     val resultAction = commandAction.ifBlank { OrchestratorShellCommand.fromSupervisorAction(action).orEmpty() }
-    val actionStartedAtMillis = System.currentTimeMillis()
+    val actionStartedAtMillis = SystemClock.elapsedRealtime()
     val telemetryComponent = telemetryComponent(action, component)
-    OrchestratorTelemetryRuntime.enqueueIfReady(
-      OrchestratorTelemetryDraft(
-        eventType = telemetryEventType(action),
-        component = telemetryComponent,
-        status = OrchestratorTelemetryStatus.RUNNING,
-        priority = telemetryPriority(action)
-      )
-    )
     val ignorePhoneAutomationWake = action == ACTION_PHONE_AUTOMATION_WAKE &&
       shouldIgnorePhoneAutomationWake(
         wakeReason = wakeReason,
@@ -371,7 +364,7 @@ class SupervisorService : Service() {
 
       Log.i(
         TAG,
-        "action=$action command_action=$resultAction component=$component success=${result.success} message=${result.message}"
+        "action=$action command_action=$resultAction component=$component run_id=$pixelRunId success=${result.success} message=${result.message}"
       )
       result.healthSnapshot?.let { health ->
         Log.i(
@@ -400,10 +393,10 @@ class SupervisorService : Service() {
     prerequisiteMonitorJob?.cancel()
     ticketServiceMonitorJob?.cancel()
     portraitLockMaintenanceJob?.cancel()
-    superuserLogMaintenanceJob?.cancel()
+    frequentMaintenanceJob?.cancel()
     ticketServiceMonitorJob = null
     portraitLockMaintenanceJob = null
-    superuserLogMaintenanceJob = null
+    frequentMaintenanceJob = null
     if (this::cpuFrequencyRuntime.isInitialized) {
       cpuFrequencyRuntime.stop(
         reason = "service_destroyed",
@@ -433,18 +426,31 @@ class SupervisorService : Service() {
 
   override fun onBind(intent: Intent?): IBinder? = null
 
-  private fun startSuperuserLogMaintenance(facade: OrchestratorFacade) {
-    superuserLogMaintenanceJob?.cancel()
-    superuserLogMaintenanceJob = serviceScope.launch(Dispatchers.IO) {
+  private fun startFrequentMaintenance(facade: OrchestratorFacade) {
+    frequentMaintenanceJob?.cancel()
+    frequentMaintenanceJob = serviceScope.launch(Dispatchers.IO) {
+      // Give an explicit foreground-service command first ownership of the mutation lane.
+      delay(FREQUENT_MAINTENANCE_STARTUP_GRACE_MILLIS)
       while (isActive) {
-        delay(SUPERUSER_LOG_MAINTENANCE_INTERVAL_MILLIS)
-        runCatching { facade.maintainSuperuserLogDb() }
+        val first = runCatching { facade.runFrequentMaintenance() }
           .onSuccess { result ->
-            Log.i(TAG, "superuser_log_maintenance success=${result.success}")
+            Log.i(TAG, "frequent_maintenance success=${result.success} deferred=${result.deferred}")
           }
           .onFailure {
-            Log.w(TAG, "superuser_log_maintenance_failed")
+            Log.w(TAG, "frequent_maintenance_failed")
           }
+          .getOrNull()
+        if (first?.deferred == true) {
+          delay(FREQUENT_MAINTENANCE_DEFERRED_RETRY_MILLIS)
+          runCatching { facade.runFrequentMaintenance() }
+            .onSuccess { result ->
+              Log.i(TAG, "frequent_maintenance_retry success=${result.success} deferred=${result.deferred}")
+            }
+            .onFailure {
+              Log.w(TAG, "frequent_maintenance_retry_failed")
+            }
+        }
+        delay(FREQUENT_MAINTENANCE_INTERVAL_MILLIS)
       }
     }
   }
@@ -476,8 +482,10 @@ class SupervisorService : Service() {
     }
   }
 
-  private fun telemetryEventType(action: String?): OrchestratorTelemetryEventType {
+  private fun telemetryEventType(action: String?): OrchestratorTelemetryEventType? {
     return when (action) {
+      null,
+      ACTION_PHONE_AUTOMATION_WAKE -> null
       ACTION_START_COMPONENT,
       ACTION_STOP_COMPONENT,
       ACTION_RESTART_COMPONENT,
@@ -575,26 +583,28 @@ class SupervisorService : Service() {
     result: FacadeOperationResult,
     startedAtMillis: Long
   ) {
-    val durationMillis = (System.currentTimeMillis() - startedAtMillis)
+    val durationMillis = (SystemClock.elapsedRealtime() - startedAtMillis)
       .coerceIn(0L, MAX_TELEMETRY_DURATION_MILLIS)
-    OrchestratorTelemetryRuntime.enqueueIfReady(
-      OrchestratorTelemetryDraft(
-        eventType = telemetryEventType(action),
-        component = component,
-        status = if (result.success) {
-          OrchestratorTelemetryStatus.COMPLETED
-        } else {
-          OrchestratorTelemetryStatus.FAILED
-        },
-        result = if (result.success) {
-          OrchestratorTelemetryResult.OK
-        } else {
-          OrchestratorTelemetryResult.FAILED
-        },
-        priority = telemetryPriority(action),
-        durationMillis = durationMillis
+    telemetryEventType(action)?.let { eventType ->
+      OrchestratorTelemetryRuntime.enqueueIfReady(
+        OrchestratorTelemetryDraft(
+          eventType = eventType,
+          component = component,
+          status = if (result.success) {
+            OrchestratorTelemetryStatus.COMPLETED
+          } else {
+            OrchestratorTelemetryStatus.FAILED
+          },
+          result = if (result.success) {
+            OrchestratorTelemetryResult.OK
+          } else {
+            OrchestratorTelemetryResult.FAILED
+          },
+          priority = telemetryPriority(action),
+          durationMillis = durationMillis
+        )
       )
-    )
+    }
     result.healthSnapshot?.let {
       OrchestratorTelemetryRuntime.enqueueIfReady(
         OrchestratorTelemetryDraft(
@@ -703,7 +713,9 @@ class SupervisorService : Service() {
     private const val CONNECTION_DROP_DEBOUNCE_MILLIS = 2_000L
     private const val DEFERRED_TOUCH_BRIGHTNESS_RESUME_TRIGGER = "deferred_touch_brightness_resume"
     private const val PORTRAIT_LOCK_MAINTENANCE_INTERVAL_MILLIS = 10_000L
-    private const val SUPERUSER_LOG_MAINTENANCE_INTERVAL_MILLIS = 60L * 60L * 1_000L
+    private const val FREQUENT_MAINTENANCE_INTERVAL_MILLIS = 60L * 60L * 1_000L
+    private const val FREQUENT_MAINTENANCE_STARTUP_GRACE_MILLIS = 1_000L
+    private const val FREQUENT_MAINTENANCE_DEFERRED_RETRY_MILLIS = 60_000L
     private const val TICKET_SERVICE_COMPONENT = "ticket_screen"
     private const val TICKET_SERVICE_MONITOR_INTERVAL_MILLIS = 30_000L
     private const val TICKET_SERVICE_STABLE_RECHECK_MILLIS = 2 * 60 * 1_000L

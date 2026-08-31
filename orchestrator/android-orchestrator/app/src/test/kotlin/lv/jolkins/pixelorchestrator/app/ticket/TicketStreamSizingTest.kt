@@ -1,6 +1,7 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.roundToInt
 
@@ -9,8 +10,8 @@ class TicketStreamSizingTest {
   fun rootHardwareStreamRemovesStatusStripAndNativeDisplayEdgePixels() {
     val size = TicketStreamSizing.rootHardwareH264(sourceWidth = 1080, sourceHeight = 2424)
 
-    assertEquals(720, size.width)
-    assertEquals(1482, size.height)
+    assertEquals(994, size.width)
+    assertEquals(2_046, size.height)
     assertEquals(4, size.sourceLeftCrop)
     assertEquals(200, size.sourceTopCrop)
     assertEquals(3, size.sourceRightCrop)
@@ -23,6 +24,15 @@ class TicketStreamSizingTest {
     assertEquals(200, size.sourceY(0))
     assertEquals(1077, size.sourceX(size.width))
     assertEquals(2421, size.sourceY(size.height))
+    val codedWidth = ((size.width + 15) / 16) * 16
+    val codedHeight = ((size.height + 15) / 16) * 16
+    val macroblocks = (codedWidth / 16) * (codedHeight / 16)
+    assertEquals(1_008, codedWidth)
+    assertEquals(2_048, codedHeight)
+    assertEquals(8_064, macroblocks)
+    assertEquals(2_064_384, codedWidth * codedHeight)
+    assertTrue(codedWidth * codedHeight <= TicketScreenConfig.MAX_EQUIVALENT_PIXELS)
+    assertTrue(macroblocks <= 8_192)
   }
 
   @Test

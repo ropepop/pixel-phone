@@ -28,31 +28,76 @@ internal class NightlyCleanupSupport(
   private val assetProvider: AssetProvider,
   private val json: Json
 ) {
-  suspend fun runSuperuserLogMaintenance(): FacadeOperationResult {
-    val protectedListPath = "${StackPaths.RUN}/cleanup-protected-superuser-${System.currentTimeMillis()}.txt"
-    writeRootFile(protectedListPath, "\n", mode = "0600")
-    return try {
-      val command = buildString {
-        append(singleQuote(CLEANUP_SCRIPT_PATH))
-        append(" --protected-list ")
-        append(singleQuote(protectedListPath))
-        append(" --superuser-only")
+  suspend fun runFrequentMaintenance(): FacadeOperationResult {
+    val startedAt = Instant.now()
+    return runCatching {
+      val syncResult = runtimeInstaller.syncBundledRuntimeAssets(assetProvider, component = CLEANUP_ASSET_SCOPE)
+      if (!syncResult.success) {
+        return@runCatching persistFrequentMaintenanceReport(
+          buildFrequentMaintenanceReport(
+            startedAt = startedAt,
+            status = CleanupReportStatus.FAILED,
+            failureReason = "runtime asset sync failed"
+          )
+        )
       }
-      val result = rootExecutor.runScript(command)
-      val output = parseScriptOutput(result.stdout)
-      val success = result.ok && output.failures.isEmpty()
-      FacadeOperationResult(
-        success = success,
-        message = when {
-          !result.ok -> "Root-command history inspection failed"
-          output.failures.isNotEmpty() -> "Root-command history rotation failed safely"
-          output.deletedPaths.isNotEmpty() -> "Root-command history rotated and root access rechecked"
-          else -> "Root-command history remains within its size limit"
-        }
+
+      val protectedListPath = "${StackPaths.RUN}/cleanup-protected-frequent-${System.currentTimeMillis()}.txt"
+      writeRootFile(protectedListPath, "\n", mode = "0600")
+      try {
+        val cleanupCommand =
+          buildString {
+            append(singleQuote(CLEANUP_SCRIPT_PATH))
+            append(" --protected-list ")
+            append(singleQuote(protectedListPath))
+            append(" --frequent")
+          }
+        val result = rootExecutor.runScript(
+          runInMountMaster(cleanupCommand)
+        )
+        val output = parseScriptOutput(result.stdout)
+        val failures =
+          if (result.ok) {
+            output.failures
+          } else {
+            output.failures + CleanupPathRecord(
+              category = "cleanup_script",
+              path = CLEANUP_SCRIPT_PATH,
+              detail = "frequent maintenance command failed"
+            )
+          }
+        persistFrequentMaintenanceReport(
+          buildFrequentMaintenanceReport(
+            startedAt = startedAt,
+            status = if (failures.isEmpty()) CleanupReportStatus.COMPLETED else CleanupReportStatus.FAILED,
+            output = output.copy(failures = failures),
+            failureReason = failures.firstOrNull()?.detail.orEmpty()
+          )
+        )
+      } finally {
+        deleteRootPath(protectedListPath)
+      }
+    }.getOrElse {
+      persistFrequentMaintenanceReport(
+        buildFrequentMaintenanceReport(
+          startedAt = startedAt,
+          status = CleanupReportStatus.FAILED,
+          failureReason = "frequent maintenance exception"
+        )
       )
-    } finally {
-      deleteRootPath(protectedListPath)
     }
+  }
+
+  suspend fun buildFrequentMaintenanceDeferredResult(reason: String): FacadeOperationResult {
+    val startedAt = Instant.now()
+    return persistFrequentMaintenanceReport(
+      buildFrequentMaintenanceReport(
+        startedAt = startedAt,
+        status = CleanupReportStatus.SKIPPED,
+        deferred = true,
+        failureReason = reason
+      )
+    )
   }
 
   suspend fun run(trigger: CleanupTrigger, dryRun: Boolean): FacadeOperationResult {
@@ -198,6 +243,55 @@ internal class NightlyCleanupSupport(
       message = buildMessage(report),
       outputPath = outputPath,
       cleanupSummary = report.summary
+    )
+  }
+
+  private fun buildFrequentMaintenanceReport(
+    startedAt: Instant,
+    status: CleanupReportStatus,
+    deferred: Boolean = false,
+    failureReason: String = "",
+    output: CleanupScriptOutput = CleanupScriptOutput()
+  ): FrequentMaintenanceReport {
+    val summary = summarize(
+      protectedPaths = emptyList(),
+      candidates = output.candidates,
+      deletedPaths = output.deletedPaths,
+      skippedPaths = output.skippedPaths,
+      failurePaths = output.failures
+    )
+    return FrequentMaintenanceReport(
+      startedAt = startedAt.toString(),
+      finishedAt = Instant.now().toString(),
+      status = status.wireValue(),
+      deferred = deferred,
+      failureReason = failureReason,
+      rootHistoryBytes = output.observations["superuser_log_db"] ?: 0L,
+      stackLogBytes = output.observations["runtime_log_total"] ?: 0L,
+      summary = summary
+    )
+  }
+
+  private suspend fun persistFrequentMaintenanceReport(
+    report: FrequentMaintenanceReport
+  ): FacadeOperationResult {
+    writeRootFile(
+      path = FREQUENT_MAINTENANCE_REPORT_PATH,
+      body = json.encodeToString(FrequentMaintenanceReport.serializer(), report),
+      mode = "0600"
+    )
+    return FacadeOperationResult(
+      success = report.status != CleanupReportStatus.FAILED.wireValue(),
+      message = when {
+        report.deferred -> "Frequent maintenance deferred while another runtime mutation is active"
+        report.status == CleanupReportStatus.FAILED.wireValue() -> "Frequent maintenance failed safely"
+        report.summary.deletedCount > 0 ->
+          "Frequent maintenance removed ${report.summary.deletedCount} expired or oversized items"
+        else -> "Frequent maintenance limits are satisfied"
+      },
+      outputPath = FREQUENT_MAINTENANCE_REPORT_PATH,
+      cleanupSummary = report.summary,
+      deferred = report.deferred
     )
   }
 
@@ -507,7 +601,7 @@ internal class NightlyCleanupSupport(
   private fun buildCleanupCommand(protectedListPath: String, dryRun: Boolean, retiredDns: Boolean): String {
     val dryRunArg = if (dryRun) " --dry-run" else ""
     val retiredDnsArg = if (retiredDns) " --retired-dns" else ""
-    return buildString {
+    val cleanupCommand = buildString {
       append(singleQuote(CLEANUP_SCRIPT_PATH))
       append(" --protected-list ")
       append(singleQuote(protectedListPath))
@@ -524,6 +618,14 @@ internal class NightlyCleanupSupport(
       append(retiredDnsArg)
       append(dryRunArg)
     }
+    return runInMountMaster(cleanupCommand)
+  }
+
+  private fun runInMountMaster(command: String): String {
+    // Android app-data isolation hides other packages even after a normal su.
+    // A second, narrow Magisk invocation exposes only the cleanup command to
+    // the global mount namespace where the root-history and Termux paths live.
+    return "su -M -c ${singleQuote(command)}"
   }
 
   private suspend fun writeCleanupReport(config: StackConfigV1, report: CleanupReport): String {
@@ -595,6 +697,7 @@ internal class NightlyCleanupSupport(
     val deleted = mutableListOf<CleanupPathRecord>()
     val skipped = mutableListOf<CleanupPathRecord>()
     val failures = mutableListOf<CleanupPathRecord>()
+    val observations = mutableMapOf<String, Long>()
 
     stdout.lineSequence().map { it.trimEnd() }.filter { it.isNotBlank() }.forEach { line ->
       val parts = line.split('\t', limit = 5)
@@ -612,6 +715,7 @@ internal class NightlyCleanupSupport(
         "DELETE" -> deleted += record
         "SKIP" -> skipped += record
         "FAIL" -> failures += record
+        "OBSERVE" -> observations[category] = bytes
       }
     }
 
@@ -619,7 +723,8 @@ internal class NightlyCleanupSupport(
       candidates = candidates,
       deletedPaths = deleted,
       skippedPaths = skipped,
-      failures = failures
+      failures = failures,
+      observations = observations
     )
   }
 
@@ -662,10 +767,11 @@ internal class NightlyCleanupSupport(
   )
 
   private data class CleanupScriptOutput(
-    val candidates: List<CleanupPathRecord>,
-    val deletedPaths: List<CleanupPathRecord>,
-    val skippedPaths: List<CleanupPathRecord>,
-    val failures: List<CleanupPathRecord>
+    val candidates: List<CleanupPathRecord> = emptyList(),
+    val deletedPaths: List<CleanupPathRecord> = emptyList(),
+    val skippedPaths: List<CleanupPathRecord> = emptyList(),
+    val failures: List<CleanupPathRecord> = emptyList(),
+    val observations: Map<String, Long> = emptyMap()
   )
 
   private companion object {
@@ -674,6 +780,8 @@ internal class NightlyCleanupSupport(
     const val CLEANUP_ASSET_SCOPE = "runtime_cleanup"
     const val DEFAULT_EVENT_OUTPUT_DIR = "${StackPaths.LOG}/events"
     const val CLEANUP_SCRIPT_PATH = "${StackPaths.BIN}/pixel-runtime-cleanup.sh"
+    const val FREQUENT_MAINTENANCE_REPORT_PATH =
+      "${StackPaths.RUN}/runtime-maintenance-latest.json"
     const val MUTATION_LOCK_PATH = "${StackPaths.RUN}/orchestrator-mutation.lock"
     const val ORCHESTRATOR_CACHE_DIR = "/data/user/0/lv.jolkins.pixelorchestrator/cache"
     const val TERMUX_HOME = "/data/user/0/com.termux/files/home"

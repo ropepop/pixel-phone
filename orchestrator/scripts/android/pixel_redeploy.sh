@@ -96,6 +96,8 @@ SATIKSME_BOT_RECOVERY_COMMAND=""
 SITE_NOTIFIER_RECOVERY_COMMAND=""
 SUBSCRIPTION_BOT_RECOVERY_COMMAND=""
 LAST_DEPLOY_RESULT_SOURCE="none"
+LAST_DEPLOY_OPERATION_ID=""
+DEPLOY_OPERATION_SEQUENCE=0
 
 BOOTSTRAP_NEEDED=0
 ROOTED_STALE=0
@@ -529,8 +531,9 @@ component_live_release_path() {
 action_result_remote_path() {
   local action="$1"
   local component="$2"
+  local operation_id="${3:-${PIXEL_RUN_ID}}"
   local component_key="${component:-all}"
-  printf '/data/local/pixel-stack/run/orchestrator-action-results/%s--%s--%s.json\n' "${PIXEL_RUN_ID}" "${action}" "${component_key}"
+  printf '/data/local/pixel-stack/run/orchestrator-action-results/%s--%s--%s.json\n' "${operation_id}" "${action}" "${component_key}"
 }
 
 json_field() {
@@ -667,6 +670,7 @@ run_deploy() {
   local previous=""
   local phase_name=""
   local started_ms=""
+  local operation_id=""
   while IFS= read -r line; do
     [[ -n "${line}" ]] && cmd+=("${line}")
   done < <(runtime_freshness_args)
@@ -684,11 +688,15 @@ run_deploy() {
     previous="${line}"
   done
   phase_name="deploy_${action}${component:+_${component}}"
+  DEPLOY_OPERATION_SEQUENCE=$((DEPLOY_OPERATION_SEQUENCE + 1))
+  operation_id="${PIXEL_RUN_ID}-${DEPLOY_OPERATION_SEQUENCE}-${action}${component:+-${component}}"
+  operation_id="$(printf '%s' "${operation_id}" | tr -c 'A-Za-z0-9._-' '-')"
+  LAST_DEPLOY_OPERATION_ID="${operation_id}"
   log "Running orchestrator deploy: ${cmd[*]}"
   capture_file="$(mktemp "${REPORT_DIR}/run-deploy.XXXXXX")"
   started_ms="$(now_ms)"
   set +e
-  "${cmd[@]}" 2>&1 | tee "${capture_file}"
+  env PIXEL_RUN_ID="${operation_id}" "${cmd[@]}" 2>&1 | tee "${capture_file}"
   rc=${PIPESTATUS[0]}
   set -e
   record_phase_timing "${phase_name}" "${started_ms}"
@@ -1235,7 +1243,7 @@ run_component_redeploy() {
     rc=$?
   fi
 
-  action_result_path="$(action_result_remote_path "redeploy_component" "${component}")"
+  action_result_path="$(action_result_remote_path "redeploy_component" "${component}" "${LAST_DEPLOY_OPERATION_ID}")"
   if action_result_json="$(load_remote_json_file "${action_result_path}")" && json_payload_valid "${action_result_json}"; then
     LAST_DEPLOY_RESULT_SOURCE="artifact"
     if [[ "$(json_field "${action_result_json}" "success")" != "true" ]]; then
@@ -1569,6 +1577,24 @@ maybe_recover_remote_frontend() {
 }
 
 validate_scope_health() {
+  if scope_is_ticket_screen_only; then
+    if [[ "${MODE}" == "validate-only" ]]; then
+      if ! run_deploy_health_check "ticket_screen_health" run_deploy --action health_component --component ticket_screen; then
+        echo "Ticket screen health validation failed" >&2
+        exit 1
+      fi
+    elif [[ "${LAST_DEPLOY_RESULT_SOURCE}" == "artifact" ]]; then
+      record_validation "ticket_screen_health" "embedded"
+    else
+      log "Ticket deploy result was ${LAST_DEPLOY_RESULT_SOURCE}; confirming targeted health"
+      if ! run_deploy_health_check "ticket_screen_health" run_deploy --action health_component --component ticket_screen; then
+        echo "Ticket screen health validation failed after an unverified deploy result" >&2
+        exit 1
+      fi
+    fi
+    return 0
+  fi
+
   if scope_includes_platform; then
     if scope_is_dns_only; then
       if ! run_deploy_health_check "dns_health" run_deploy --action health_component --component dns; then
