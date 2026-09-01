@@ -19,7 +19,7 @@ class PhonePortraitLockSourceTest {
       Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhonePortraitLock.kt")
     )
     val force = source.substringBetween("suspend fun force", "suspend fun verify")
-    val verify = source.substringBetween("suspend fun verify", "\n}")
+    val verify = source.substringBetween("suspend fun verify", "private const val OUTCOME_PREFIX")
 
     assertTrue(force.contains("cmd window user-rotation lock 0"))
     assertTrue(force.contains("cmd window fixed-to-user-rotation enabled"))
@@ -34,53 +34,59 @@ class PhonePortraitLockSourceTest {
     assertFalse(source.contains("USER_ROTATION_FREE"))
     assertFalse(source.contains("accelerometer_rotation 1"))
     assertFalse(source.contains("set-ignore-orientation-request false"))
+    assertTrue(source.contains("# phone_portrait_lock_ensure_verified"))
+    assertTrue(source.contains("portrait_lock_outcome="))
   }
 
   @Test
   fun alreadyVerifiedPortraitSkipsMutationAndUsesOneRootScript() = runTest {
     val executor = ScriptedRootExecutor(
-      ArrayDeque(listOf(rootResult(exitCode = 0, stdout = "ok\n")))
+      ArrayDeque(listOf(rootResult(exitCode = 0, stdout = "portrait_lock_outcome=already_verified\n")))
     )
 
-    assertTrue(PhonePortraitLock.ensureVerified(executor))
+    val result = PhonePortraitLock.ensureVerifiedResult(executor)
+    assertTrue(result.verified)
+    assertEquals("already_verified", result.outcome)
     assertEquals(1, executor.scripts.size)
-    assertEquals(1, executor.scripts.single().windowManagerDumpCount())
-    assertFalse(executor.scripts.single().contains("settings put system"))
+    assertTrue(executor.scripts.single().contains("if portrait_lock_verified"))
+    assertTrue(executor.scripts.single().contains("settings put system"))
   }
 
   @Test
-  fun failedInitialVerificationForcesAndRequiresSecondLiveVerification() = runTest {
+  fun failedInitialVerificationRepairsAndRequiresProofInTheSameRootScript() = runTest {
     val executor = ScriptedRootExecutor(
-      ArrayDeque(
-        listOf(
-          rootResult(exitCode = 0, stdout = ""),
-          rootResult(exitCode = 1, stdout = ""),
-          rootResult(exitCode = 0, stdout = "ok\n")
-        )
-      )
+      ArrayDeque(listOf(rootResult(exitCode = 0, stdout = "portrait_lock_outcome=repaired\n")))
     )
 
-    assertTrue(PhonePortraitLock.ensureVerified(executor))
-    assertEquals(3, executor.scripts.size)
-    assertEquals(executor.scripts.first(), executor.scripts.last())
-    assertTrue(executor.scripts[1].contains("cmd window user-rotation lock 0"))
-    assertTrue(executor.scripts[1].contains("settings put system accelerometer_rotation 0"))
+    val result = PhonePortraitLock.ensureVerifiedResult(executor)
+    assertTrue(result.verified)
+    assertEquals("repaired", result.outcome)
+    assertEquals(1, executor.scripts.size)
+    assertTrue(executor.scripts.single().contains("cmd window user-rotation lock 0"))
+    assertTrue(executor.scripts.single().contains("settings put system accelerometer_rotation 0"))
+    assertEquals(1, executor.scripts.single().windowManagerDumpCount())
   }
 
   @Test
   fun failedRepairVerificationFailsClosed() = runTest {
     val executor = ScriptedRootExecutor(
-      ArrayDeque(
-        listOf(
-          rootResult(exitCode = 0, stdout = ""),
-          rootResult(exitCode = 0, stdout = ""),
-          rootResult(exitCode = 0, stdout = "")
-        )
-      )
+      ArrayDeque(listOf(rootResult(exitCode = 41, stdout = "portrait_lock_outcome=failed\n")))
+    )
+
+    val result = PhonePortraitLock.ensureVerifiedResult(executor)
+    assertFalse(result.verified)
+    assertEquals("failed", result.outcome)
+    assertEquals(1, executor.scripts.size)
+  }
+
+  @Test
+  fun ambiguousSuccessOutputFailsClosed() = runTest {
+    val executor = ScriptedRootExecutor(
+      ArrayDeque(listOf(rootResult(exitCode = 0, stdout = "ok but not the proof marker\n")))
     )
 
     assertFalse(PhonePortraitLock.ensureVerified(executor))
-    assertEquals(3, executor.scripts.size)
+    assertEquals(1, executor.scripts.size)
   }
 
   private fun String.windowManagerDumpCount(): Int =

@@ -64,6 +64,36 @@ class TicketCaptureCadenceSourceTest {
   }
 
   @Test
+  fun startupGateClosesOnlyAfterTheFirstSteadySurfacePostAndDrain() {
+    val steadyBranchStart = helper.indexOf(
+      "boolean closeStartupPrimerAfterDrain ="
+    )
+    val steadyBranchEnd = helper.indexOf(
+      "TicketEncoderDrainProgress drainProgress = encoderRun.drainProgress;",
+      steadyBranchStart
+    )
+    assertTrue(steadyBranchStart >= 0)
+    assertTrue(steadyBranchEnd > steadyBranchStart)
+    val steadyBranch = helper.substring(steadyBranchStart, steadyBranchEnd)
+
+    val surfacePost = steadyBranch.indexOf(
+      "drawBitmap(inputSurface, source.bitmap, sourceCrop, destination, paint);"
+    )
+    val boundaryDrainStart = steadyBranch.indexOf("startupPrimer.beginBoundaryDrain();")
+    val gatedDrain = steadyBranch.indexOf(
+      "startupPrimer.finished() ? null : startupPrimer"
+    )
+    val gateClose = steadyBranch.indexOf("startupPrimer.finish();")
+
+    assertTrue(boundaryDrainStart >= 0)
+    assertTrue(surfacePost > boundaryDrainStart)
+    assertTrue(surfacePost >= 0)
+    assertTrue(gatedDrain > surfacePost)
+    assertTrue(gateClose > gatedDrain)
+    assertTrue(steadyBranch.contains("expose exactly"))
+  }
+
+  @Test
   fun pixelDropsUnexpectedDeltasAndRequestsTheNextSyncFrame() {
     assertTrue(engine.contains("if (!keyFrame)"))
     assertTrue(engine.contains("unexpectedDeltaFrames += 1L"))

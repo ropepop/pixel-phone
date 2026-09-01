@@ -21,6 +21,12 @@ internal data class TicketSecureWindowCaptureBypassLease(
   val generation: Long
 )
 
+internal data class TicketSecureWindowCaptureBypassEnsureResult(
+  val lease: TicketSecureWindowCaptureBypassLease? = null,
+  val outcome: String,
+  val acquiredLease: Boolean = false
+)
+
 internal data class TicketSecureWindowCaptureBypassReleaseResult(
   val secureWindowsRestored: Boolean,
   val debuggableRestored: Boolean,
@@ -90,82 +96,117 @@ internal class TicketSecureWindowCaptureBypassOwner(
     acceptingOwnership = false
   }
 
-  suspend fun ensure(reason: String): TicketSecureWindowCaptureBypassLease? = mutex.withLock {
+  suspend fun ensure(reason: String): TicketSecureWindowCaptureBypassLease? =
+    ensureWithResult(reason).lease
+
+  /**
+   * Performs read, durable original-state save, enable, and final proof in one idempotent root
+   * transaction. Session-start callers may preserve an existing lease; they still perform the
+   * fresh live proof, but can never replace or release another in-flight owner's lease.
+   */
+  suspend fun ensureWithResult(
+    reason: String,
+    preserveExistingLease: Boolean = false
+  ): TicketSecureWindowCaptureBypassEnsureResult = mutex.withLock {
     if (!acceptingOwnership) {
       state = state.copy(lastFailure = "ownership_admission_closed")
       onEvent("secure_window_capture_bypass_admission_closed", reason)
-      return@withLock null
+      return@withLock TicketSecureWindowCaptureBypassEnsureResult(outcome = "admission_closed")
     }
-    var rollbackRequired = state.cleanupRequired
+    val preservedLease = activeLease.takeIf { preserveExistingLease }
+    val rollbackRequired = preservedLease == null
     try {
-      var before = readbackUnlocked()
-      rollbackRequired = rollbackRequired || before.stateFilePresent || before.liveActive
-      if (!before.ok) {
-        return@withLock failEnsure(reason, "readback_unavailable", rollbackRequired)
-      }
-      if (before.liveActive && !before.savedOriginalValid) {
-        val ownership = runWithFallback(ESTABLISH_ACTIVE_OWNERSHIP_SCRIPT)
-        val established = if (ownership.ok) readbackUnlocked() else null
-        if (ownership.ok && established?.liveActive == true && established.savedOriginalValid) {
-          before = established
-          rollbackRequired = true
-        } else {
-          val failure = if (!ownership.ok) {
-            "active_ownership_establish_failed_${failureSummary(ownership)}"
-          } else {
-            "active_ownership_establish_unproved"
-          }
-          return@withLock failEnsure(reason, failure, rollbackRequired = true)
+      val acquire = runWithFallback(ACQUIRE_SCRIPT)
+      val after = if (acquire.ok) readbackFromResult(acquire) else null
+      val acquireOutcome = acquire.stdout.lineSequence()
+        .firstOrNull { it.startsWith(ACQUIRE_OUTCOME_PREFIX) }
+        ?.removePrefix(ACQUIRE_OUTCOME_PREFIX)
+        .orEmpty()
+      if (
+        acquire.ok &&
+        after?.liveActive == true &&
+        after.savedOriginalValid &&
+        acquireOutcome in SUCCESSFUL_ACQUIRE_OUTCOMES
+      ) {
+        state = TicketSecureWindowCaptureBypassSnapshot(
+          active = true,
+          cleanupRequired = true,
+          message = "Secure-window capture bypass is active"
+        )
+        if (preservedLease != null) {
+          onEvent("secure_window_capture_bypass_existing_owner_preserved", reason)
+          return@withLock TicketSecureWindowCaptureBypassEnsureResult(
+            outcome = "ownership_busy",
+            acquiredLease = false
+          )
         }
-      }
-      if (before.liveActive) {
-        state = TicketSecureWindowCaptureBypassSnapshot(
-          active = true,
-          cleanupRequired = true,
-          message = "Secure-window capture bypass is active"
-        )
         val lease = admitLeaseUnlocked()
-        onEvent("secure_window_capture_bypass_verified", reason)
-        return@withLock lease
-      }
-      if (!before.liveInactive && !before.savedOriginalValid) {
-        return@withLock failEnsure(reason, "unowned_partial_state", rollbackRequired = true)
-      }
-
-      // The enable script may have changed either setting before it is cancelled or reports a
-      // failure, so rollback becomes mandatory before dispatching it.
-      rollbackRequired = true
-      val enabled = runWithFallback(ENABLE_SCRIPT)
-      val after = if (enabled.ok) readbackUnlocked() else null
-      if (enabled.ok && after?.liveActive == true && after.savedOriginalValid) {
-        state = TicketSecureWindowCaptureBypassSnapshot(
-          active = true,
-          cleanupRequired = true,
-          message = "Secure-window capture bypass is active"
+        onEvent(
+          if (acquireOutcome == "verified") {
+            "secure_window_capture_bypass_verified"
+          } else {
+            "secure_window_capture_bypass_enabled"
+          },
+          reason
         )
-        val lease = admitLeaseUnlocked()
-        onEvent("secure_window_capture_bypass_enabled", reason)
-        return@withLock lease
+        return@withLock TicketSecureWindowCaptureBypassEnsureResult(
+          lease = lease,
+          outcome = acquireOutcome,
+          acquiredLease = true
+        )
       }
 
       val failure = when {
-        !enabled.ok -> "enable_failed_${failureSummary(enabled)}"
+        !acquire.ok -> "acquire_failed_${failureSummary(acquire)}"
         after?.savedOriginalValid != true -> "saved_original_unproved"
-        else -> "enable_readback_unproved"
+        after?.liveActive != true -> "enable_readback_unproved"
+        else -> "acquire_outcome_unproved"
       }
-      failEnsure(reason, failure, rollbackRequired = true)
+      if (preservedLease != null) {
+        return@withLock failEnsurePreservingCurrentOwner(reason, failure)
+      }
+      failEnsure(reason, failure, rollbackRequired)
+      TicketSecureWindowCaptureBypassEnsureResult(outcome = "failed")
     } catch (cancelled: CancellationException) {
       if (rollbackRequired) {
         withContext(NonCancellable) {
           invalidateLeaseUnlocked()
           restoreUnlocked("ensure_cancelled:$reason")
         }
+      } else {
+        markExistingOwnerUnproved(reason, "ensure_cancelled")
       }
       throw cancelled
     } catch (error: Throwable) {
       val failure = "ensure_exception_${error::class.java.simpleName.take(48)}"
-      failEnsure(reason, failure, rollbackRequired)
+      if (preservedLease != null) {
+        failEnsurePreservingCurrentOwner(reason, failure)
+      } else {
+        failEnsure(reason, failure, rollbackRequired)
+        TicketSecureWindowCaptureBypassEnsureResult(outcome = "failed")
+      }
     }
+  }
+
+  private fun failEnsurePreservingCurrentOwner(
+    reason: String,
+    failure: String
+  ): TicketSecureWindowCaptureBypassEnsureResult {
+    markExistingOwnerUnproved(reason, failure)
+    return TicketSecureWindowCaptureBypassEnsureResult(outcome = "ownership_unproved")
+  }
+
+  private fun markExistingOwnerUnproved(reason: String, failure: String) {
+    state = TicketSecureWindowCaptureBypassSnapshot(
+      active = false,
+      cleanupRequired = true,
+      message = "Existing secure-window capture ownership is unproved",
+      lastFailure = failure
+    )
+    onEvent(
+      "secure_window_capture_bypass_existing_owner_unproved",
+      "reason=$reason failure=$failure existing_owner_preserved=true"
+    )
   }
 
   suspend fun release(reason: String): TicketSecureWindowCaptureBypassReleaseResult =
@@ -175,6 +216,20 @@ internal class TicketSecureWindowCaptureBypassOwner(
         restoreUnlocked(reason)
       }
     }
+
+  suspend fun releaseAcquiredLease(
+    lease: TicketSecureWindowCaptureBypassLease,
+    reason: String
+  ): TicketSecureWindowCaptureBypassReleaseResult? = withContext(NonCancellable) {
+    mutex.withLock {
+      if (activeLease != lease) {
+        onEvent("secure_window_capture_bypass_release_superseded", reason)
+        return@withLock null
+      }
+      invalidateLeaseUnlocked()
+      restoreUnlocked(reason)
+    }
+  }
 
   suspend fun <T> runRetainingOnSuccess(
     lease: TicketSecureWindowCaptureBypassLease,
@@ -443,6 +498,10 @@ internal class TicketSecureWindowCaptureBypassOwner(
         detail = failureSummary(result)
       )
     }
+    return readbackFromResult(result)
+  }
+
+  private fun readbackFromResult(result: RootResult): TicketSecureWindowCaptureBypassReadback {
     val values = result.stdout.lineSequence().mapNotNull { line ->
       val separator = line.indexOf('=')
       if (separator <= 0) null else line.substring(0, separator).trim() to line.substring(separator + 1).trim()
@@ -491,6 +550,8 @@ internal class TicketSecureWindowCaptureBypassOwner(
     const val STATE_FILE = "/data/local/pixel-stack/apps/ticket-screen/state/ro-debuggable-before-ticket"
     const val SAFE_DEBUGGABLE_VALUE = "0"
     const val SAFE_SECURE_WINDOWS_VALUE = "0"
+    const val ACQUIRE_OUTCOME_PREFIX = "acquire_outcome="
+    val SUCCESSFUL_ACQUIRE_OUTCOMES = setOf("verified", "enabled", "ownership_established")
 
     const val RESET_DEBUGGABLE_FUNCTION = """
 reset_debuggable() {
@@ -527,22 +588,23 @@ printf 'saved_debuggable=%s\n' "${'$'}saved_debuggable"
 printf 'saved_disable_secure_windows=%s\n' "${'$'}saved_disable_secure_windows"
 """
 
-    const val ENABLE_SCRIPT = """
-# ticket_secure_capture_enable
+    const val ACQUIRE_SCRIPT = """
+# ticket_secure_capture_acquire
 $RESET_DEBUGGABLE_FUNCTION
 state_dir="/data/local/pixel-stack/apps/ticket-screen/state"
 state_file="$STATE_FILE"
 mkdir -p "${'$'}state_dir" || exit 20
-if [ ! -f "${'$'}state_file" ]; then
-  original_debuggable="${'$'}(getprop ro.debuggable 2>/dev/null | tr -d '\r')"
-  original_disable_secure_windows="${'$'}(settings get secure disable_secure_windows 2>/dev/null | tr -d '\r')"
-  case "${'$'}original_debuggable" in 0|1) ;; *) exit 21 ;; esac
-  case "${'$'}original_disable_secure_windows" in 0|1|null) ;; *) exit 21 ;; esac
-  temporary_state="${STATE_FILE}.tmp.${'$'}${'$'}"
-  printf '%s\n%s\n' "${'$'}original_debuggable" "${'$'}original_disable_secure_windows" > "${'$'}temporary_state" || exit 21
-  chmod 600 "${'$'}temporary_state" >/dev/null 2>&1 || true
-  mv "${'$'}temporary_state" "${'$'}state_file" || exit 21
-else
+
+debuggable="${'$'}(getprop ro.debuggable 2>/dev/null | tr -d '\r')"
+disable_secure_windows="${'$'}(settings get secure disable_secure_windows 2>/dev/null | tr -d '\r')"
+case "${'$'}debuggable" in 0|1) ;; *) exit 21 ;; esac
+case "${'$'}disable_secure_windows" in 0|1|null) ;; *) exit 21 ;; esac
+
+state_file_present=0
+saved_debuggable=""
+saved_disable_secure_windows=""
+if [ -r "${'$'}state_file" ]; then
+  state_file_present=1
   saved_debuggable="${'$'}(sed -n '1p' "${'$'}state_file" 2>/dev/null | tr -d '\r')"
   saved_disable_secure_windows="${'$'}(sed -n '2p' "${'$'}state_file" 2>/dev/null | tr -d '\r')"
   case "${'$'}saved_debuggable" in 0|1) ;; *) exit 21 ;; esac
@@ -555,8 +617,55 @@ else
     case "${'$'}saved_disable_secure_windows" in 0|1|null) ;; *) exit 21 ;; esac
   fi
 fi
-reset_debuggable 1 || exit 22
-settings put secure disable_secure_windows 1 || exit 23
+
+acquire_outcome=verified
+if [ "${'$'}debuggable" = "1" ] && [ "${'$'}disable_secure_windows" = "1" ]; then
+  if [ "${'$'}state_file_present" != "1" ]; then
+    # The already-active values cannot be treated as their own originals. Establish conservative,
+    # recoverable ownership exactly as the former active-ownership transaction did.
+    saved_debuggable=0
+    saved_disable_secure_windows=0
+    temporary_state="${STATE_FILE}.tmp.${'$'}${'$'}"
+    printf '%s\n%s\n' "${'$'}saved_debuggable" "${'$'}saved_disable_secure_windows" > "${'$'}temporary_state" || exit 26
+    chmod 600 "${'$'}temporary_state" >/dev/null 2>&1 || true
+    mv "${'$'}temporary_state" "${'$'}state_file" || exit 26
+    state_file_present=1
+    acquire_outcome=ownership_established
+  fi
+else
+  if [ "${'$'}state_file_present" != "1" ]; then
+    # disable_secure_windows=1 without debuggable=1 is an unowned partial override. It has no
+    # trustworthy original to save and must fail closed for Kotlin's safe-default restoration.
+    [ "${'$'}disable_secure_windows" != "1" ] || exit 27
+    saved_debuggable="${'$'}debuggable"
+    saved_disable_secure_windows="${'$'}disable_secure_windows"
+    temporary_state="${STATE_FILE}.tmp.${'$'}${'$'}"
+    printf '%s\n%s\n' "${'$'}saved_debuggable" "${'$'}saved_disable_secure_windows" > "${'$'}temporary_state" || exit 21
+    chmod 600 "${'$'}temporary_state" >/dev/null 2>&1 || true
+    mv "${'$'}temporary_state" "${'$'}state_file" || exit 21
+    state_file_present=1
+  fi
+  reset_debuggable 1 || exit 22
+  settings put secure disable_secure_windows 1 || exit 23
+  acquire_outcome=enabled
+fi
+
+# Final live proof is part of this same transaction. Kotlin validates these exact values and the
+# saved original before admitting an ownership generation.
+debuggable="${'$'}(getprop ro.debuggable 2>/dev/null | tr -d '\r')"
+disable_secure_windows="${'$'}(settings get secure disable_secure_windows 2>/dev/null | tr -d '\r')"
+saved_debuggable="${'$'}(sed -n '1p' "${'$'}state_file" 2>/dev/null | tr -d '\r')"
+saved_disable_secure_windows="${'$'}(sed -n '2p' "${'$'}state_file" 2>/dev/null | tr -d '\r')"
+case "${'$'}debuggable" in 1) ;; *) exit 28 ;; esac
+case "${'$'}disable_secure_windows" in 1) ;; *) exit 28 ;; esac
+case "${'$'}saved_debuggable" in 0|1) ;; *) exit 28 ;; esac
+case "${'$'}saved_disable_secure_windows" in 0|1|null) ;; *) exit 28 ;; esac
+printf 'acquire_outcome=%s\n' "${'$'}acquire_outcome"
+printf 'debuggable=%s\n' "${'$'}debuggable"
+printf 'disable_secure_windows=%s\n' "${'$'}disable_secure_windows"
+printf 'state_file_present=1\n'
+printf 'saved_debuggable=%s\n' "${'$'}saved_debuggable"
+printf 'saved_disable_secure_windows=%s\n' "${'$'}saved_disable_secure_windows"
 """
 
     const val ESTABLISH_ACTIVE_OWNERSHIP_SCRIPT = """

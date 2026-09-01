@@ -68,4 +68,20 @@ class TicketCaptureCadenceSchedulerTest {
     assertEquals(1_000L, scheduler.waitMillis(20_050L))
     assertFalse(scheduler.beginCapture(21_050L).immediate)
   }
+
+  @Test
+  fun steadyPeriodRestartsFromFirstExposedPrimerPicture() {
+    val scheduler = TicketCaptureCadenceScheduler(30_000L)
+    scheduler.beginCapture(30_000L)
+
+    scheduler.restartPeriodFrom(30_275L)
+
+    assertEquals(1_000L, scheduler.waitMillis(30_275L))
+    assertFalse(scheduler.requestImmediateCapture(30_300L))
+    assertFalse(scheduler.hasImmediateCapturePending())
+    assertEquals(975L, scheduler.waitMillis(30_300L))
+    assertTrue(scheduler.requestImmediateCapture(31_275L))
+    assertTrue(scheduler.beginCapture(31_275L).immediate)
+    assertEquals(1_000L, scheduler.waitMillis(31_275L))
+  }
 }

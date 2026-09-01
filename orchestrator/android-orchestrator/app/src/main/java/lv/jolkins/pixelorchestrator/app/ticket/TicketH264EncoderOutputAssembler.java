@@ -116,7 +116,13 @@ final class TicketH264EncoderOutputAssembler {
     byte[] payload = endsWith(annexB, ACCESS_UNIT_DELIMITER)
       ? annexB
       : append(annexB, ACCESS_UNIT_DELIMITER);
-    return new EmittedAccessUnit(payload, codecConfig, keyFrame);
+    return new EmittedAccessUnit(
+      payload,
+      codecConfig,
+      keyFrame,
+      containsNalTypeInRange(annexB, 1, 5),
+      containsNalTypeInRange(annexB, 5, 5)
+    );
   }
 
   private static FramingMode detectCodecConfigFraming(byte[] data) {
@@ -196,6 +202,30 @@ final class TicketH264EncoderOutputAssembler {
     return found;
   }
 
+  private static boolean containsNalTypeInRange(byte[] annexB, int minimumNalType, int maximumNalType) {
+    int offset = 0;
+    while (offset < annexB.length) {
+      int startCodeLength = startCodeLengthAt(annexB, offset);
+      if (startCodeLength == 0) {
+        return false;
+      }
+      int nalOffset = offset + startCodeLength;
+      if (nalOffset >= annexB.length) {
+        return false;
+      }
+      int nalType = annexB[nalOffset] & 0x1f;
+      if (nalType >= minimumNalType && nalType <= maximumNalType) {
+        return true;
+      }
+      int next = findStartCode(annexB, nalOffset + 1);
+      if (next < 0) {
+        return false;
+      }
+      offset = next;
+    }
+    return false;
+  }
+
   private static int findStartCode(byte[] data, int from) {
     for (int offset = Math.max(0, from); offset <= data.length - 3; offset += 1) {
       if (startCodeLengthAt(data, offset) > 0) {
@@ -255,11 +285,21 @@ final class TicketH264EncoderOutputAssembler {
     final byte[] payload;
     final boolean codecConfig;
     final boolean keyFrame;
+    final boolean containsVcl;
+    final boolean idrKeyFrame;
 
-    EmittedAccessUnit(byte[] payload, boolean codecConfig, boolean keyFrame) {
+    EmittedAccessUnit(
+      byte[] payload,
+      boolean codecConfig,
+      boolean keyFrame,
+      boolean containsVcl,
+      boolean idrKeyFrame
+    ) {
       this.payload = payload;
       this.codecConfig = codecConfig;
       this.keyFrame = keyFrame;
+      this.containsVcl = containsVcl;
+      this.idrKeyFrame = idrKeyFrame;
     }
   }
 }

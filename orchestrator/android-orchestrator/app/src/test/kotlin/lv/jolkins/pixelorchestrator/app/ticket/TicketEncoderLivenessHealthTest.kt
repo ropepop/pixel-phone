@@ -33,6 +33,11 @@ class TicketEncoderLivenessHealthTest {
           "keyframe_interval_frames=1 frame_dependency_mode=all_intra",
         nowMillis = 1_000L
       )
+      engine.ingestStderrLine(
+        "ENCODER_STARTUP_PRIMER state=complete result=keyframe input_posts=2 " +
+          "media_outputs=2 suppressed_outputs=1 first_keyframe_ms=127",
+        nowMillis = 1_025L
+      )
       val health = engine.snapshot(nowMillis = 1_450L)
 
       assertEquals("c2.google.avc.encoder", health.encoderName)
@@ -44,7 +49,14 @@ class TicketEncoderLivenessHealthTest {
       assertEquals("fixed_all_intra", health.intervalMode)
       assertEquals(1_000L, health.currentIntervalMillis)
       assertEquals(0L, health.unexpectedDeltaFrames)
+      assertEquals("complete", health.startupPrimerState)
+      assertEquals("keyframe", health.startupPrimerResult)
+      assertEquals(2, health.startupPrimerInputPosts)
+      assertEquals(2, health.startupPrimerMediaOutputs)
+      assertEquals(1, health.startupPrimerSuppressedOutputs)
+      assertEquals(127L, health.startupPrimerFirstKeyFrameMillis)
       assertFalse(health.stderrTail.contains("ENCODER_CONFIG"))
+      assertFalse(health.stderrTail.contains("ENCODER_STARTUP_PRIMER"))
       val healthJson = Json.encodeToString(health)
       assertFalse(healthJson.contains("steadyFpsTarget"))
       assertFalse(healthJson.contains("burstFpsTarget"))
@@ -57,8 +69,15 @@ class TicketEncoderLivenessHealthTest {
         nowMillis = 1_525L,
         sourceGeneration = staleGeneration
       )
+      engine.ingestStderrLine(
+        "ENCODER_STARTUP_PRIMER state=complete result=fallback_keyframe input_posts=3 " +
+          "media_outputs=3 suppressed_outputs=2 first_keyframe_ms=900",
+        nowMillis = 1_530L,
+        sourceGeneration = staleGeneration
+      )
       val afterStaleDiagnostics = engine.snapshot(nowMillis = 1_550L)
       assertNull(afterStaleDiagnostics.lastCaptureDurationMillis)
+      assertEquals("keyframe", afterStaleDiagnostics.startupPrimerResult)
     } finally {
       scope.cancel()
     }

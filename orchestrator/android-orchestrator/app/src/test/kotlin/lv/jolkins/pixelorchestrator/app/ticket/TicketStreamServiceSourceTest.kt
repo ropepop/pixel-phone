@@ -800,9 +800,7 @@ class TicketStreamServiceSourceTest {
       "private suspend fun startTicketSessionLocked",
       "private fun tryReuseActiveHardwareStreamBeforePreflight"
     )
-    val sessionBypass = sessionStart.indexOf(
-      "val captureLease = ensureSecureWindowCaptureBypassForProtectedPixels(\"session_start\")"
-    )
+    val sessionBypass = sessionStart.indexOf("val safetyPreflight = runSessionStartSafetyPreflight()")
     assertTrue(sessionBypass >= 0)
     assertTrue(sessionBypass < sessionStart.indexOf("rootHardwareH264CaptureEngine.snapshot()"))
     assertTrue(sessionBypass < sessionStart.indexOf("awaitRootHardwareH264StartupReadiness"))
@@ -849,10 +847,16 @@ class TicketStreamServiceSourceTest {
       "suspend fun ensure(reason: String)",
       "suspend fun release(reason: String)"
     )
-    assertTrue(ensure.indexOf("var before = readbackUnlocked()") < ensure.indexOf("if (before.liveActive"))
+    assertTrue(ensure.contains("val acquire = runWithFallback(ACQUIRE_SCRIPT)"))
+    assertTrue(ensure.contains("readbackFromResult(acquire)"))
+    assertTrue(ensure.contains("after?.liveActive == true"))
+    assertTrue(ensure.contains("after.savedOriginalValid"))
     assertFalse(ensure.contains("if (state.active)"))
-    assertTrue(ensure.indexOf("ESTABLISH_ACTIVE_OWNERSHIP_SCRIPT") <
-      ensure.indexOf("if (before.liveActive) {"))
+    assertTrue(secureCaptureBypassOwner.contains("# ticket_secure_capture_acquire"))
+    assertTrue(secureCaptureBypassOwner.contains("acquire_outcome=ownership_established"))
+    assertTrue(secureCaptureBypassOwner.contains("Final live proof is part of this same transaction"))
+    assertTrue(ensure.contains("preserveExistingLease"))
+    assertTrue(ensure.contains("failEnsurePreservingCurrentOwner"))
     assertTrue(ensure.contains("withContext(NonCancellable)"))
     assertTrue(secureCaptureBypassOwner.contains("primaryRootExecutor.runScript(script, commandTimeout)"))
     assertTrue(secureCaptureBypassOwner.contains("fallbackRootExecutor.runScript(script, commandTimeout)"))
@@ -1177,7 +1181,7 @@ class TicketStreamServiceSourceTest {
     assertFalse(action.contains("UiAutomator"))
     assertFalse(action.contains("dumpViviHierarchy"))
     assertTrue(service.contains(
-      "ticket-stream-2026-08-31-all-intra-clarity-v328"
+      "ticket-stream-2026-09-01-armed-cold-start-v330"
     ))
     assertFalse(service.contains(
       "ticket-stream-2026-08-25-native-edge-action-clamp-proof-v320"
@@ -2387,7 +2391,11 @@ class TicketStreamServiceSourceTest {
 
   @Test
   fun restartedRootEncoderDropsFramesFromThePreviousProcess() {
-    val stop = body(h264Engine, "private fun stopProcesses()", "private fun consumeCleanStopForFastStart")
+    val stop = body(
+      h264Engine,
+      "private fun stopProcesses(generation: Long)",
+      "private fun destroyProcessAndWait"
+    )
     assertTrue(h264Engine.contains("private val captureGeneration = AtomicLong(0L)"))
     assertTrue(h264Engine.contains("val parserGeneration = advanceCaptureGeneration()"))
     assertTrue(h264Engine.contains("if (parserGeneration == captureGeneration.get())"))
@@ -3056,21 +3064,45 @@ class TicketStreamServiceSourceTest {
     val start = body(service, "private suspend fun startTicketSessionLocked", "private fun tryReuseActiveHardwareStreamBeforePreflight")
     val reuse = body(service, "private fun tryReuseActiveHardwareStreamBeforePreflight", "private fun reuseActiveHardwareStream")
     assertTrue(start.contains("tryReuseActiveHardwareStreamBeforePreflight()?.let { return it }"))
-    assertTrue(start.indexOf("tryReuseActiveHardwareStreamBeforePreflight") < start.indexOf("PhonePortraitLock.ensureVerified"))
+    assertTrue(start.indexOf("tryReuseActiveHardwareStreamBeforePreflight") < start.indexOf("runSessionStartSafetyPreflight"))
     assertTrue(reuse.contains("canReuseActiveHardwareStreamWithoutRootRevalidation"))
   }
 
   @Test
-  fun coldStartUsesOneFailClosedPortraitEnsureBeforeSessionWork() {
+  fun coldStartRunsFreshSafetyChecksTogetherAfterThePackageCheck() {
     val start = body(service, "private suspend fun startTicketSessionLocked", "private fun tryReuseActiveHardwareStreamBeforePreflight")
-    val ensure = "PhonePortraitLock.ensureVerified(inputRootExecutor)"
+    val preflight = body(
+      service,
+      "private suspend fun runSessionStartSafetyPreflight",
+      "private fun startupPreflightOutcome"
+    )
 
-    assertEquals(1, start.windowed(ensure.length, 1).count { it == ensure })
-    assertTrue(start.contains("if (!$ensure)"))
+    val call = "val safetyPreflight = runSessionStartSafetyPreflight()"
+    assertEquals(1, start.windowed(call.length, 1).count { it == call })
+    assertTrue(start.indexOf("TicketPackageSupport.isInstalled") < start.indexOf("runSessionStartSafetyPreflight()"))
+    assertTrue(preflight.contains("runTicketSessionStartPreflight("))
+    assertTrue(preflight.contains("PhonePortraitLock.ensureVerifiedResult(inputRootExecutor)"))
+    assertTrue(preflight.contains("ensureSecureWindowCaptureBypassResultForSessionStart(\"session_start\")"))
+    assertTrue(preflight.contains("AtomicReference<TicketSecureWindowCaptureBypassLease?>"))
+    assertTrue(preflight.contains("session_start_preflight_cancelled"))
+    assertTrue(preflight.contains("lastStartupPreflight = TicketSessionStartPreflightHealth("))
+    assertTrue(preflight.contains("totalMillis = totalDurationMillis"))
+    assertTrue(preflight.contains("portraitMillis = portrait.second"))
+    assertTrue(preflight.contains("secureCaptureMillis = secureCapture.second"))
+    assertTrue(service.contains("startupPreflightOutcome = startupPreflight.outcome"))
+    assertTrue(service.contains("preserveExistingLease = true"))
+    assertTrue(start.contains("secureWindowCaptureBypassOwner.releaseAcquiredLease("))
+    assertTrue(start.contains("shouldReleaseSessionStartSecureLease(false, safetyPreflight.secureCapture)"))
+    assertTrue(start.contains("safetyPreflight.secureCapture.outcome == \"ownership_busy\""))
+    assertTrue(start.contains("safetyPreflight.secureCapture.outcome == \"ownership_unproved\""))
+    assertTrue(start.contains("state = \"secure_capture_ownership_unproved\""))
+    assertTrue(start.contains("streamStartAdmission.claimCount() > 0L"))
+    assertTrue(start.contains("ticketSpacetimeControlCodeRequestActive()"))
+    assertTrue(start.contains("state = \"secure_capture_ownership_busy\""))
+    assertTrue(start.contains("broadcastStatus()"))
     assertFalse(start.contains("PhonePortraitLock.force("))
     assertFalse(start.contains("PhonePortraitLock.verify("))
-    assertTrue(start.indexOf(ensure) < start.indexOf("TicketPackageSupport.isInstalled"))
-    assertTrue(start.indexOf(ensure) < start.indexOf("currentDisplaySize()"))
+    assertTrue(start.indexOf("runSessionStartSafetyPreflight()") < start.indexOf("currentDisplaySize()"))
     assertTrue(start.contains("recordStartupTracePhase(\"portrait_lock_failed\""))
     assertTrue(start.contains("state = \"portrait_lock_failed\""))
   }
@@ -3127,16 +3159,18 @@ class TicketStreamServiceSourceTest {
     )
     val commandLoop = cycle.substring(cycle.indexOf("for (scannedCommand in commands)"))
     val revalidate = commandLoop.indexOf("client.pendingCommandIsDispatchable(config, command.id)")
-    val receipt = commandLoop.indexOf("service.noteStartupStartCommandReceived(")
-    val dispatch = commandLoop.indexOf("service.handleTicketSpacetimeCommand(command)")
+    val handoff = commandLoop.indexOf("subscribedCommandHandoff.fromPoll(command.id) {")
+    val receipt = commandLoop.indexOf("noteDurableStartCommandReceipt(", handoff)
+    val dispatch = commandLoop.indexOf("service.handleTicketSpacetimeCommand(command)", handoff)
     val ack = commandLoop.indexOf("client.ack(")
 
     assertTrue(revalidate >= 0)
-    assertTrue(receipt > revalidate)
+    assertTrue(handoff > revalidate)
+    assertTrue(receipt > handoff)
     assertTrue(dispatch > receipt)
     assertTrue(ack > dispatch)
-    assertTrue(commandLoop.substring(revalidate, receipt).contains("continue"))
-    assertTrue(commandLoop.substring(revalidate, receipt).contains("Instant.now()"))
+    assertTrue(commandLoop.substring(revalidate, handoff).contains("continue"))
+    assertTrue(commandLoop.substring(revalidate, handoff).contains("Instant.now()"))
     assertTrue(cycle.contains("!staleStartCommandSkipped"))
   }
 

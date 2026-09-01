@@ -33,12 +33,130 @@ class TicketSecureWindowCaptureBypassOwnerTest {
     device.savedDisableSecureWindows = ""
 
     assertTrue(owner.ensure("stale_hint") != null)
-    assertTrue(device.readbackCalls >= readsAfterFirstAcquire + 2)
+    assertEquals(readsAfterFirstAcquire, device.readbackCalls)
+    assertEquals(2, device.acquireCalls)
     assertEquals(2, device.enableCalls)
     assertEquals("1", device.debuggable)
     assertEquals("1", device.disableSecureWindows)
     assertTrue(device.stateFilePresent)
     assertTrue(owner.snapshot().cleanupRequired)
+  }
+
+  @Test
+  fun commonInactiveAcquireUsesOneSelfVerifyingRootTransaction() = runTest {
+    val device = StatefulRootExecutor()
+    val owner = owner(device)
+
+    val result = owner.ensureWithResult("cold_start")
+
+    assertTrue(result.lease != null)
+    assertTrue(result.acquiredLease)
+    assertEquals("enabled", result.outcome)
+    assertEquals(1, device.acquireCalls)
+    assertEquals(0, device.readbackCalls)
+    assertEquals("0", device.savedDebuggable)
+    assertEquals("0", device.savedDisableSecureWindows)
+  }
+
+  @Test
+  fun fallbackRerunsAcquireIdempotentlyAfterPartialPrimaryMutation() = runTest {
+    val device = StatefulRootExecutor(failEnableAttemptsRemaining = 1)
+    val owner = TicketSecureWindowCaptureBypassOwner(
+      primaryRootExecutor = device,
+      fallbackRootExecutor = device,
+      commandTimeout = 3.seconds
+    )
+
+    val result = owner.ensureWithResult("fallback_after_partial")
+
+    assertTrue(result.lease != null)
+    assertEquals("enabled", result.outcome)
+    assertEquals(2, device.acquireCalls)
+    assertEquals("0", device.savedDebuggable)
+    assertEquals("0", device.savedDisableSecureWindows)
+    assertEquals("1", device.debuggable)
+    assertEquals("1", device.disableSecureWindows)
+  }
+
+  @Test
+  fun interruptedOwnedStateReusesOriginalValuesAndRestoresNullExactly() = runTest {
+    val device = StatefulRootExecutor().apply {
+      debuggable = "1"
+      disableSecureWindows = "0"
+      stateFilePresent = true
+      savedDebuggable = "0"
+      savedDisableSecureWindows = "null"
+    }
+    val owner = owner(device)
+
+    assertTrue(owner.ensure("interrupted") != null)
+    assertEquals("1", device.disableSecureWindows)
+    assertTrue(owner.release("interrupted_release").ok)
+    assertEquals("0", device.debuggable)
+    assertEquals("null", device.disableSecureWindows)
+    assertFalse(device.stateFilePresent)
+  }
+
+  @Test
+  fun unownedPartialSecureOverrideFailsClosedAndNormalizesToSafeDefaults() = runTest {
+    val device = StatefulRootExecutor().apply {
+      debuggable = "0"
+      disableSecureWindows = "1"
+    }
+    val owner = owner(device)
+
+    assertTrue(owner.ensure("unowned_partial") == null)
+    assertEquals("0", device.debuggable)
+    assertEquals("0", device.disableSecureWindows)
+    assertFalse(device.stateFilePresent)
+    assertFalse(owner.snapshot().cleanupRequired)
+  }
+
+  @Test
+  fun sessionProofPreservesExistingLeaseInsteadOfReplacingOrReleasingIt() = runTest {
+    val device = StatefulRootExecutor()
+    val owner = owner(device)
+    val existing = requireNotNull(owner.ensure("existing_owner"))
+
+    val result = owner.ensureWithResult(
+      reason = "parallel_session_preflight",
+      preserveExistingLease = true
+    )
+
+    assertEquals("ownership_busy", result.outcome)
+    assertFalse(result.acquiredLease)
+    assertTrue(result.lease == null)
+    assertEquals(existing, owner.currentLease())
+    assertEquals("1", device.disableSecureWindows)
+    assertTrue(device.stateFilePresent)
+  }
+
+  @Test
+  fun failedSessionReproofNeverInvalidatesOrRestoresTheExistingOwner() = runTest {
+    val device = StatefulRootExecutor()
+    val owner = owner(device)
+    val existing = requireNotNull(owner.ensure("existing_owner"))
+    device.debuggable = "0"
+    device.disableSecureWindows = "0"
+    device.failEnable = true
+
+    val result = owner.ensureWithResult(
+      reason = "failed_parallel_reproof",
+      preserveExistingLease = true
+    )
+
+    assertEquals("ownership_unproved", result.outcome)
+    assertEquals(existing, owner.currentLease())
+    assertEquals(0, device.restoreSecureCalls)
+    assertEquals(0, device.restoreDebuggableCalls)
+    assertTrue(device.stateFilePresent)
+    assertFalse(owner.snapshot().active)
+    assertTrue(owner.snapshot().cleanupRequired)
+
+    device.failEnable = false
+    assertTrue(owner.release("existing_owner_release").ok)
+    assertEquals("0", device.debuggable)
+    assertEquals("0", device.disableSecureWindows)
   }
 
   @Test
@@ -370,7 +488,8 @@ class TicketSecureWindowCaptureBypassOwnerTest {
   private class StatefulRootExecutor(
     var failEnable: Boolean = false,
     var holdEnableUntilCancelled: Boolean = false,
-    var enableFailureExitCode: Int = 23
+    var enableFailureExitCode: Int = 23,
+    var failEnableAttemptsRemaining: Int = 0
   ) : RootExecutor {
     var debuggable: String = "0"
     var disableSecureWindows: String = "0"
@@ -381,6 +500,7 @@ class TicketSecureWindowCaptureBypassOwnerTest {
     var failRestoreDebuggable: Boolean = false
     var failClearState: Boolean = false
     var readbackCalls: Int = 0
+    var acquireCalls: Int = 0
     var enableCalls: Int = 0
     var restoreSecureCalls: Int = 0
     var restoreDebuggableCalls: Int = 0
@@ -397,6 +517,70 @@ class TicketSecureWindowCaptureBypassOwnerTest {
     override suspend fun runScript(script: String, timeout: Duration): RootResult {
       timeouts += timeout
       return when {
+        script.contains("ticket_secure_capture_acquire") -> {
+          acquireCalls += 1
+          var establishedThisCall = false
+          if (debuggable !in setOf("0", "1") || disableSecureWindows !in setOf("0", "1", "null")) {
+            return failure(script, 21)
+          }
+          val liveActive = debuggable == "1" && disableSecureWindows == "1"
+          if (stateFilePresent) {
+            if (savedDebuggable !in setOf("0", "1")) {
+              return failure(script, 21)
+            }
+            if (savedDisableSecureWindows.isEmpty()) {
+              establishOwnershipCalls += 1
+              savedDisableSecureWindows = "0"
+              establishedThisCall = true
+            } else if (savedDisableSecureWindows !in setOf("0", "1", "null")) {
+              return failure(script, 21)
+            }
+          } else if (liveActive) {
+            establishOwnershipCalls += 1
+            establishedThisCall = true
+            stateFilePresent = true
+            savedDebuggable = "0"
+            savedDisableSecureWindows = "0"
+          } else {
+            if (disableSecureWindows == "1") {
+              return failure(script, 27)
+            }
+            stateFilePresent = true
+            savedDebuggable = debuggable
+            savedDisableSecureWindows = disableSecureWindows
+          }
+
+          val outcome = when {
+            liveActive && establishedThisCall -> "ownership_established"
+            liveActive -> "verified"
+            else -> "enabled"
+          }
+          if (!liveActive) {
+            enableCalls += 1
+            debuggable = "1"
+            if (holdEnableUntilCancelled) {
+              enableStarted.complete(Unit)
+              disableSecureWindows = "1"
+              awaitCancellation()
+            }
+            if (failEnable || failEnableAttemptsRemaining > 0) {
+              if (failEnableAttemptsRemaining > 0) failEnableAttemptsRemaining -= 1
+              return failure(script, enableFailureExitCode)
+            }
+            disableSecureWindows = "1"
+          }
+          success(
+            script,
+            buildString {
+              appendLine("acquire_outcome=$outcome")
+              appendLine("debuggable=$debuggable")
+              appendLine("disable_secure_windows=$disableSecureWindows")
+              appendLine("state_file_present=1")
+              appendLine("saved_debuggable=$savedDebuggable")
+              appendLine("saved_disable_secure_windows=$savedDisableSecureWindows")
+            }
+          )
+        }
         script.contains("ticket_secure_capture_readback") -> {
           readbackCalls += 1
           success(
@@ -427,26 +611,6 @@ class TicketSecureWindowCaptureBypassOwnerTest {
             stateFilePresent = true
             savedDebuggable = "0"
             savedDisableSecureWindows = "0"
-            success(script)
-          }
-        }
-        script.contains("ticket_secure_capture_enable") -> {
-          enableCalls += 1
-          if (!stateFilePresent) {
-            stateFilePresent = true
-            savedDebuggable = debuggable
-            savedDisableSecureWindows = disableSecureWindows
-          }
-          debuggable = "1"
-          if (holdEnableUntilCancelled) {
-            enableStarted.complete(Unit)
-            disableSecureWindows = "1"
-            awaitCancellation()
-          }
-          if (failEnable) {
-            failure(script, enableFailureExitCode)
-          } else {
-            disableSecureWindows = "1"
             success(script)
           }
         }

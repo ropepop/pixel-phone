@@ -30,6 +30,17 @@ final class TicketEncoderDrainProgress {
     );
   }
 
+  static TicketEncoderDrainProgress fromDequeuedAccessUnit(
+    int dequeuedSize,
+    int emittedSize,
+    boolean emittedContainsVcl
+  ) {
+    return new TicketEncoderDrainProgress(
+      emittedSize > 0 && emittedContainsVcl ? 1 : 0,
+      dequeuedSize > 0
+    );
+  }
+
   TicketEncoderDrainProgress plus(TicketEncoderDrainProgress other) {
     if (other == null) {
       return this;

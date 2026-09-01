@@ -71,6 +71,7 @@ import java.util.ArrayDeque
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.roundToInt
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -87,6 +88,23 @@ private data class TicketCachedKeyFrame(
   val envelope: ByteArray,
   val cachedAtMillis: Long,
   val timestampUs: Long
+)
+
+private data class TicketSessionStartSafetyPreflight(
+  val portrait: PhonePortraitLock.EnsureResult,
+  val portraitDurationMillis: Long,
+  val secureCapture: TicketSecureWindowCaptureBypassEnsureResult,
+  val secureCaptureDurationMillis: Long,
+  val totalDurationMillis: Long,
+  val armHandle: TicketHardwareH264ArmHandle? = null
+)
+
+private data class TicketSessionStartPreflightHealth(
+  val outcome: String = "not_run",
+  val totalMillis: Long? = null,
+  val portraitMillis: Long? = null,
+  val secureCaptureMillis: Long? = null,
+  val completedAtMillis: Long = 0L
 )
 
 private data class TicketVideoConfigSnapshot(
@@ -425,6 +443,7 @@ class TicketStreamService : Service() {
   private val startupTracePhaseLock = Any()
   private val startupTraceOncePhases = mutableSetOf<String>()
   private val startupTraceCorrelation = TicketStartupTraceCorrelation()
+  @Volatile private var lastStartupPreflight = TicketSessionStartPreflightHealth()
   private val serverMutex = Mutex()
   private val controlClients = Collections.synchronizedSet(mutableSetOf<TicketWebSocket>())
   private val protectedControlClients = Collections.synchronizedSet(mutableSetOf<TicketWebSocket>())
@@ -881,8 +900,7 @@ class TicketStreamService : Service() {
       PhoneAutomationServiceBridge.setRemoteScreenBrightnessState(null)
     }
     PhoneAutomationServiceBridge.setBlackoutOverlaySuppressed(false)
-    rootHardwareH264CaptureEngine.stop("service_destroyed")
-    runCatching { runBlocking { rootHardwareH264CaptureEngine.cleanupStaleProcesses() } }
+    runCatching { runBlocking { rootHardwareH264CaptureEngine.stopAndJoin("service_destroyed") } }
     closeAllClients("service_destroyed")
     val finalBypassRelease = runCatching {
       runBlocking {
@@ -3638,8 +3656,7 @@ class TicketStreamService : Service() {
     streamWatchdogJob?.cancel()
     streamWatchdogJob = null
     streamWatchdogStage = "idle"
-    rootHardwareH264CaptureEngine.stop("spacetime_desired_recovery:$reason")
-    rootHardwareH264CaptureEngine.cleanupStaleProcesses()
+    rootHardwareH264CaptureEngine.stopAndJoin("spacetime_desired_recovery:$reason")
 
     val captureLease = ensureSecureWindowCaptureBypassForProtectedPixels("spacetime_desired_recovery")
     if (captureLease == null) {
@@ -3863,15 +3880,6 @@ class TicketStreamService : Service() {
       return TicketSessionResponse(ok = true, state = "starting", message = lastMessage)
     }
     beginStartupTrace("session_start")
-    if (!PhonePortraitLock.ensureVerified(inputRootExecutor)) {
-      recordTicketEvent("phone_portrait_lock_unverified", "session_start")
-      recordStartupTracePhase("portrait_lock_failed", "session_start", complete = true)
-      return TicketSessionResponse(
-        ok = false,
-        state = "portrait_lock_failed",
-        message = "Phone portrait lock could not be verified"
-      )
-    }
     if (!TicketPackageSupport.isInstalled(this, TicketScreenConfig.VIVI_PACKAGE)) {
       recordStartupTracePhase("vivi_missing", "package=${TicketScreenConfig.VIVI_PACKAGE}", complete = true)
       return TicketSessionResponse(
@@ -3880,8 +3888,85 @@ class TicketStreamService : Service() {
         message = "ViVi is not installed from a local Pixel app store yet"
       )
     }
-    val captureLease = ensureSecureWindowCaptureBypassForProtectedPixels("session_start")
+    val safetyPreflight = runSessionStartSafetyPreflight()
+    var preflightArm = safetyPreflight.armHandle
+    suspend fun cancelPreflightArm(reason: String) {
+      preflightArm?.let { rootHardwareH264CaptureEngine.cancelArmedAndJoin(it, reason) }
+      preflightArm = null
+    }
+    val captureLease = safetyPreflight.secureCapture.lease
+    if (!safetyPreflight.portrait.verified) {
+      cancelPreflightArm("portrait_unverified")
+      if (shouldReleaseSessionStartSecureLease(false, safetyPreflight.secureCapture)) {
+        val released = secureWindowCaptureBypassOwner.releaseAcquiredLease(
+          requireNotNull(captureLease),
+          "portrait_lock_failed:session_start"
+        )
+        if (released != null && !released.ok) {
+          recordStartupTracePhase(
+            "secure_capture_cleanup_failed",
+            "duration_ms=${safetyPreflight.totalDurationMillis}",
+            once = true
+          )
+        }
+      }
+      recordTicketEvent("phone_portrait_lock_unverified", "session_start")
+      recordStartupTracePhase("portrait_lock_failed", "session_start", complete = true)
+      return TicketSessionResponse(
+        ok = false,
+        state = "portrait_lock_failed",
+        message = "Phone portrait lock could not be verified"
+      )
+    }
+    if (safetyPreflight.secureCapture.outcome == "ownership_unproved") {
+      cancelPreflightArm("secure_capture_ownership_unproved")
+      recordStartupTracePhase(
+        "secure_capture_ownership_unproved",
+        "duration_ms=${safetyPreflight.secureCaptureDurationMillis}",
+        once = true,
+        complete = true
+      )
+      return TicketSessionResponse(
+        ok = false,
+        state = "secure_capture_ownership_unproved",
+        message = "Secure capture could not be freshly verified; the existing owner was preserved"
+      )
+    }
+    if (safetyPreflight.secureCapture.outcome == "ownership_busy") {
+      cancelPreflightArm("secure_capture_ownership_busy")
+      tryReuseActiveHardwareStreamBeforePreflight()?.let { return it }
+      val controlOwnershipActive = controlCodeOwnsStart ||
+        streamStartAdmission.claimCount() > 0L ||
+        ticketSpacetimeControlCodeRequestActive()
+      recordStartupTracePhase(
+        "secure_capture_ownership_busy",
+        "duration_ms=${safetyPreflight.secureCaptureDurationMillis} active=$controlOwnershipActive",
+        once = true
+      )
+      if (!controlOwnershipActive) {
+        recordStartupTracePhase(
+          "secure_capture_ownership_retry",
+          "duration_ms=${safetyPreflight.secureCaptureDurationMillis}",
+          once = true,
+          complete = true
+        )
+        return TicketSessionResponse(
+          ok = false,
+          state = "secure_capture_ownership_busy",
+          message = "Secure capture ownership changed; retry the stream start"
+        )
+      }
+      lastMessage = "Another Ticket operation is preparing secure capture"
+      markViewerInput("session_start_secure_capture_ownership_busy")
+      broadcastStatus()
+      return TicketSessionResponse(
+        ok = true,
+        state = "starting",
+        message = lastMessage
+      )
+    }
     if (captureLease == null) {
+      cancelPreflightArm("secure_capture_unavailable")
       fallbackReason = "secure_capture_bypass_unavailable"
       cancelInactivityTimer()
       updateTicketSessionState(TICKET_SESSION_UNAVAILABLE, "secure_capture_bypass_unavailable")
@@ -3906,9 +3991,13 @@ class TicketStreamService : Service() {
       },
       retainIfCurrent = {
         streamActive && activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264
+      },
+      beforeConditionalRelease = {
+        cancelPreflightArm("session_start_not_retained")
       }
     ) session@{
     if (streamActive) {
+      cancelPreflightArm("stream_became_active")
       if (canReuseActiveHardwareStreamWithoutRootRevalidation("session_start_already_active")) {
         return@session reuseActiveHardwareStream(
           reason = "session_start_already_active",
@@ -3954,10 +4043,11 @@ class TicketStreamService : Service() {
         awaitRootHardwareH264StartupReadiness("session_start")
       }
     }
-    hardwareCapture = refreshHardwareReliabilityIfProbePasses(sourceSize.first, sourceSize.second, hardwareCapture)
+    // A dimensions-aware reliability probe captures one real frame. Keep it on the admitted side
+    // of streamStartAdmission so a blocked background start cannot acquire protected pixels.
+    val reliabilityProbeRequired = hardwareMarkedUnreliable()
     val hardwareUnavailableReason = when {
       !hardwareCapture.available -> "hardware_h264_unavailable:${hardwareCapture.state}"
-      hardwareMarkedUnreliable() -> hardwareUnreliableReason ?: "hardware_h264_unreliable"
       else -> null
     }
     val effectiveHardwareUnavailableReason = hardwareUnavailableReason
@@ -3969,6 +4059,7 @@ class TicketStreamService : Service() {
     )
     lastSessionStopReason = null
     if (effectiveHardwareUnavailableReason != null) {
+      cancelPreflightArm("hardware_unavailable")
       fallbackReason = effectiveHardwareUnavailableReason
       cancelInactivityTimer()
       disableNotificationLockdown("capture_unavailable")
@@ -3987,7 +4078,11 @@ class TicketStreamService : Service() {
         message = lastMessage
       )
     }
-    streamStartAdmission.admit(
+    var armConsumedByAdmission = false
+    var scheduleAfterArmCleanup = false
+    var admissionGranted = false
+    var scheduleAfterReliabilityProbe = false
+    val admissionResponse = streamStartAdmission.admit(
       controlCodeOwnsStart = controlCodeOwnsStart,
       additionalControlOwnershipActive = ::ticketSpacetimeControlCodeRequestActive,
       blocked = {
@@ -3999,11 +4094,25 @@ class TicketStreamService : Service() {
         )
       },
       admitted = {
+        admissionGranted = true
         fallbackReason = null
         streamActive = true
         hardwareCaptureVerified = false
         hardwareFrameBroadcastAllowed = false
         activeCaptureMode = CAPTURE_MODE_ROOT_HARDWARE_H264
+        preflightArm?.let { handle ->
+          val source = currentDisplaySize()
+          val size = TicketStreamSizing.rootHardwareH264(source.first, source.second)
+          armConsumedByAdmission = rootHardwareH264CaptureEngine.activateArmed(
+            handle,
+            source.first,
+            source.second,
+            size.width,
+            size.height,
+            TicketScreenConfig.ROOT_HARDWARE_H264_BITRATE
+          )
+          if (armConsumedByAdmission) preflightArm = null
+        }
         val modeLabel = "root_hardware_h264"
         updateTicketSessionState(TICKET_SESSION_STARTING, "session_start_${modeLabel}_prepare")
         markViewerInput("session_start_${modeLabel}_prepare")
@@ -4012,8 +4121,12 @@ class TicketStreamService : Service() {
         recordStartupTracePhase("capture_mode_selected", "mode=$activeCaptureMode", once = true)
         recordTicketEvent("session_started", "mode=$activeCaptureMode")
         startForegroundGuard()
-        if (scheduleCaptureStart) {
+        if (scheduleCaptureStart && reliabilityProbeRequired) {
+          scheduleAfterReliabilityProbe = true
+        } else if (scheduleCaptureStart && (preflightArm == null || armConsumedByAdmission)) {
           scheduleRootHardwareH264CaptureStart("session_start_root_hardware_h264_capture", suppressBlackout = false)
+        } else if (scheduleCaptureStart) {
+          scheduleAfterArmCleanup = true
         } else {
           recordTicketEvent("root_hardware_h264_prepare_owned", "session_start_root_hardware_h264_capture")
         }
@@ -4021,7 +4134,153 @@ class TicketStreamService : Service() {
         TicketSessionResponse(ok = true, state = "starting", message = lastMessage)
       }
     )
+    if (!armConsumedByAdmission) cancelPreflightArm("session_start_not_admitted")
+    if (admissionGranted && reliabilityProbeRequired) {
+      hardwareCapture = refreshHardwareReliabilityIfProbePasses(
+        sourceSize.first,
+        sourceSize.second,
+        hardwareCapture
+      )
+      if (!hardwareCapture.available || hardwareMarkedUnreliable()) {
+        val reliabilityFailure = hardwareUnreliableReason ?: "hardware_h264_unreliable"
+        fallbackReason = reliabilityFailure
+        streamActive = false
+        hardwareCaptureVerified = false
+        hardwareFrameBroadcastAllowed = false
+        activeCaptureMode = CAPTURE_MODE_IDLE
+        cancelForegroundGuard()
+        releaseBlackoutOverlaySuppression()
+        lastMessage = "Hardware H.264 ticket stream is unreliable; stream was not started"
+        updateTicketSessionState(TICKET_SESSION_UNAVAILABLE, "hardware_h264_unreliable")
+        recordTicketEvent("session_unavailable", reliabilityFailure)
+        recordStartupTracePhase("hardware_h264_unreliable", reliabilityFailure, complete = true)
+        return@session TicketSessionResponse(
+          ok = false,
+          state = "hardware_h264_unavailable",
+          message = lastMessage
+        )
+      }
+      if (scheduleAfterReliabilityProbe) {
+        scheduleRootHardwareH264CaptureStart(
+          "session_start_root_hardware_h264_capture_reliability_recovered",
+          suppressBlackout = false
+        )
+      }
     }
+    if (scheduleAfterArmCleanup) {
+      scheduleRootHardwareH264CaptureStart("session_start_root_hardware_h264_capture_fallback", suppressBlackout = false)
+    }
+    return@session admissionResponse
+    }
+  }
+
+  private suspend fun runSessionStartSafetyPreflight(): TicketSessionStartSafetyPreflight {
+    val totalStartedAtMillis = SystemClock.elapsedRealtime()
+    val acquiredLease = AtomicReference<TicketSecureWindowCaptureBypassLease?>(null)
+    val armedHandle = AtomicReference<TicketHardwareH264ArmHandle?>(null)
+    val results = runTicketSessionStartPreflight(
+      portrait = {
+        val startedAtMillis = SystemClock.elapsedRealtime()
+        val result = try {
+          PhonePortraitLock.ensureVerifiedResult(inputRootExecutor)
+        } catch (cancelled: CancellationException) {
+          throw cancelled
+        } catch (_: Throwable) {
+          PhonePortraitLock.EnsureResult(
+            verified = false,
+            outcome = "exception",
+            durationMillis = 0L
+          )
+        }
+        result to (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+      },
+      secureCapture = {
+        val startedAtMillis = SystemClock.elapsedRealtime()
+        val result = ensureSecureWindowCaptureBypassResultForSessionStart("session_start")
+        if (result.acquiredLease) acquiredLease.set(result.lease)
+        result to (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
+      },
+      onPortraitComplete = { result ->
+        val portrait = result.getOrNull()?.first
+        if (portrait?.verified == true && armedHandle.get() == null) {
+          val source = currentDisplaySize()
+          val size = TicketStreamSizing.rootHardwareH264(source.first, source.second)
+          val health = rootHardwareH264CaptureEngine.snapshot()
+          if (health.available && !hardwareMarkedUnreliable()) {
+            armedHandle.compareAndSet(
+              null,
+              rootHardwareH264CaptureEngine.arm(
+                source.first,
+                source.second,
+                size.width,
+                size.height,
+                TicketScreenConfig.ROOT_HARDWARE_H264_BITRATE
+              )
+            )
+          }
+        }
+      },
+      onCancelled = {
+        armedHandle.getAndSet(null)?.let { handle ->
+          rootHardwareH264CaptureEngine.cancelArmedAndJoin(handle, "session_start_preflight_cancelled")
+        }
+        acquiredLease.getAndSet(null)?.let { lease ->
+          secureWindowCaptureBypassOwner.releaseAcquiredLease(
+            lease,
+            "session_start_preflight_cancelled"
+          )
+        }
+      }
+    )
+    val portrait = results.portrait.getOrElse {
+      PhonePortraitLock.EnsureResult(false, "exception", 0L) to 0L
+    }
+    val secureCapture = results.secureCapture.getOrElse {
+      TicketSecureWindowCaptureBypassEnsureResult(outcome = "exception") to 0L
+    }
+    val totalDurationMillis = (SystemClock.elapsedRealtime() - totalStartedAtMillis).coerceAtLeast(0L)
+    val healthOutcome = when {
+      !portrait.first.verified -> "portrait_${startupPreflightOutcome(portrait.first.outcome)}"
+      secureCapture.first.lease != null -> "ready"
+      else -> startupPreflightOutcome(secureCapture.first.outcome)
+    }
+    lastStartupPreflight = TicketSessionStartPreflightHealth(
+      outcome = healthOutcome,
+      totalMillis = totalDurationMillis,
+      portraitMillis = portrait.second,
+      secureCaptureMillis = secureCapture.second,
+      completedAtMillis = SystemClock.elapsedRealtime()
+    )
+    recordStartupTracePhase(
+      "portrait_lock_${startupPreflightOutcome(portrait.first.outcome)}",
+      "duration_ms=${portrait.second}",
+      once = true
+    )
+    recordStartupTracePhase(
+      "secure_capture_${startupPreflightOutcome(secureCapture.first.outcome)}",
+      "duration_ms=${secureCapture.second}",
+      once = true
+    )
+    recordStartupTracePhase(
+      "session_preflight_complete",
+      "preflight_ms=$totalDurationMillis portrait_ms=${portrait.second} secure_capture_ms=${secureCapture.second}",
+      once = true
+    )
+    return TicketSessionStartSafetyPreflight(
+      portrait = portrait.first,
+      portraitDurationMillis = portrait.second,
+      secureCapture = secureCapture.first,
+      secureCaptureDurationMillis = secureCapture.second,
+      totalDurationMillis = totalDurationMillis,
+      armHandle = armedHandle.get()
+    )
+  }
+
+  private fun startupPreflightOutcome(value: String): String = when (value) {
+    "already_verified", "repaired", "failed", "exception", "verified", "enabled",
+    "ownership_established", "ownership_busy", "ownership_unproved", "admission_closed",
+    "admission_blocked" -> value
+    else -> "failed"
   }
 
   private fun tryReuseActiveHardwareStreamBeforePreflight(): TicketSessionResponse? {
@@ -4250,8 +4509,7 @@ class TicketStreamService : Service() {
       resetFrameEpoch("client_detached_$reason", active = false)
       cancelInactivityTimer()
       cancelForegroundGuard()
-      rootHardwareH264CaptureEngine.stop(reason)
-      rootHardwareH264CaptureEngine.cleanupStaleProcesses()
+      rootHardwareH264CaptureEngine.stopAndJoin(reason)
       val bypassRelease = disableSecureWindowCaptureBypass("client_detached:$reason")
       disableNotificationLockdown(reason)
       scheduleTicketBrightnessGuard("client_detached:$reason")
@@ -4334,8 +4592,7 @@ class TicketStreamService : Service() {
     resetFrameEpoch("session_stop_$reason", active = false)
     cancelInactivityTimer()
     cancelForegroundGuard()
-    rootHardwareH264CaptureEngine.stop(reason)
-    rootHardwareH264CaptureEngine.cleanupStaleProcesses()
+    rootHardwareH264CaptureEngine.stopAndJoin(reason)
     val bypassRelease = disableSecureWindowCaptureBypass("session_stop:$reason")
     disableNotificationLockdown(reason)
     resetControlCodeMode("session_stop_$reason", broadcast = false)
@@ -5469,6 +5726,22 @@ class TicketStreamService : Service() {
     return secureWindowCaptureBypassOwner.ensure(reason)
   }
 
+  private suspend fun ensureSecureWindowCaptureBypassResultForSessionStart(
+    reason: String
+  ): TicketSecureWindowCaptureBypassEnsureResult {
+    if (serviceLifecycleStopping || !secureCaptureStartupReady) {
+      recordTicketEvent(
+        "secure_window_capture_bypass_admission_blocked",
+        "reason=$reason stopping=$serviceLifecycleStopping startup_ready=$secureCaptureStartupReady"
+      )
+      return TicketSecureWindowCaptureBypassEnsureResult(outcome = "admission_blocked")
+    }
+    return secureWindowCaptureBypassOwner.ensureWithResult(
+      reason = reason,
+      preserveExistingLease = true
+    )
+  }
+
   private suspend fun disableSecureWindowCaptureBypass(
     reason: String = "ticket_session_release"
   ): TicketSecureWindowCaptureBypassReleaseResult {
@@ -6323,8 +6596,7 @@ class TicketStreamService : Service() {
       lastStreamRecoveryFailureReason = "secure_capture_blocked"
       lastStreamRecoveryAtMillis = SystemClock.elapsedRealtime()
       recordTicketEvent("stream_recovery_failed", "reason=$reason failure=secure_capture_blocked clients=${videoClients.size}")
-      rootHardwareH264CaptureEngine.stop("secure_capture_blocked:$reason")
-      rootHardwareH264CaptureEngine.cleanupStaleProcesses()
+      rootHardwareH264CaptureEngine.stopAndJoin("secure_capture_blocked:$reason")
       streamActive = false
       hardwareCaptureVerified = false
       hardwareFrameBroadcastAllowed = false
@@ -6679,6 +6951,7 @@ class TicketStreamService : Service() {
   private fun streamPipelineSnapshot(nowMillis: Long): TicketStreamPipeline {
     val hardwareCapture = rootHardwareH264CaptureEngine.snapshot(nowMillis)
     val secureCaptureBypass = secureWindowCaptureBypassOwner.snapshot()
+    val startupPreflight = lastStartupPreflight
     return TicketStreamPipeline(
       controlClients = controlClients.size,
       videoClients = videoClients.size,
@@ -6749,6 +7022,11 @@ class TicketStreamService : Service() {
       clients = clientConnectionSnapshot(),
       secureWindowCaptureBypassActive = secureCaptureBypass.active,
       secureWindowCaptureBypassMessage = secureCaptureBypass.message,
+      startupPreflightOutcome = startupPreflight.outcome,
+      startupPreflightTotalMillis = startupPreflight.totalMillis,
+      startupPreflightPortraitMillis = startupPreflight.portraitMillis,
+      startupPreflightSecureCaptureMillis = startupPreflight.secureCaptureMillis,
+      lastStartupPreflightAgoMillis = ageMillis(startupPreflight.completedAtMillis, nowMillis),
       rootH264BlankProbeResult = lastRootH264BlankProbeResult,
       rootH264BlankProbeRecoveries = rootH264BlankProbeRecoveries,
       rootH264BlankProbeFailures = rootH264BlankProbeFailures,
@@ -8266,8 +8544,7 @@ class TicketStreamService : Service() {
       return@prepare false
     }
     if (!prepareResult.success) {
-      rootHardwareH264CaptureEngine.stop("phone_not_ready:$reason")
-      rootHardwareH264CaptureEngine.cleanupStaleProcesses()
+      rootHardwareH264CaptureEngine.stopAndJoin("phone_not_ready:$reason")
       streamActive = false
       hardwareCaptureVerified = false
       hardwareFrameBroadcastAllowed = false
@@ -14184,7 +14461,7 @@ class TicketStreamService : Service() {
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
     private const val SESSION_START_TIMEOUT_MILLIS = 70_000L
     private const val SERVICE_DESTROY_JOIN_TIMEOUT_MILLIS = 12_000L
-    const val SERVER_VERSION = "ticket-stream-2026-08-31-all-intra-clarity-v328"
+    const val SERVER_VERSION = "ticket-stream-2026-09-01-armed-cold-start-v330"
     private const val CONTROL_CODE_MARKER_RESULT_HIERARCHY = "__marker_control_code_result__"
     private const val FRAME_ENVELOPE_VERSION = "tsf2"
     private const val FRAME_ENVELOPE_MAGIC = 0x54534632

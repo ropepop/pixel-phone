@@ -52,6 +52,16 @@ public final class TicketCaptureCadenceScheduler {
   }
 
   /**
+   * Starts the steady one-second period from the first picture actually exposed to the viewer.
+   * Internal encoder priming does not become part of the externally visible cadence.
+   */
+  public synchronized void restartPeriodFrom(long presentedAtMillis) {
+    nextDeadlineMillis = presentedAtMillis + intervalMillis();
+    immediateCaptureBlockedUntilMillis = nextDeadlineMillis;
+    immediateCapturePending = false;
+  }
+
+  /**
    * Advances the schedule and grants one capture at or after the current deadline.
    * The returned decision is never a request for more than one capture.
    */

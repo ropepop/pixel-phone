@@ -57,4 +57,20 @@ class TicketEncoderDrainProgressTest {
 
     assertEquals(2, first.plus(second).encodedFrameOutputs)
   }
+
+  @Test
+  fun assembledNonVclMetadataIsProgressButNotAPicture() {
+    val progress = TicketEncoderDrainProgress.fromDequeuedAccessUnit(128, 128, false)
+
+    assertTrue(progress.madeCodecProgress)
+    assertEquals(0, progress.encodedFrameOutputs)
+  }
+
+  @Test
+  fun assembledVclCountsAsPictureRegardlessOfCodecFlags() {
+    val progress = TicketEncoderDrainProgress.fromDequeuedAccessUnit(128, 128, true)
+
+    assertTrue(progress.madeCodecProgress)
+    assertEquals(1, progress.encodedFrameOutputs)
+  }
 }

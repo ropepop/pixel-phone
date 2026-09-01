@@ -7,6 +7,19 @@ import org.junit.Test
 
 class TicketTracePrivacyTest {
   @Test
+  fun startupPreflightTimingFieldsRemainBoundedAndContentFree() {
+    val fields = TicketTracePrivacy.allowlistedFields(
+      "preflight_ms=1510 portrait_ms=1509 secure_capture_ms=211 outcome=repaired raw=secret"
+    )
+
+    assertEquals("1510", fields["preflight_ms"])
+    assertEquals("1509", fields["portrait_ms"])
+    assertEquals("211", fields["secure_capture_ms"])
+    assertFalse(fields.containsKey("outcome"))
+    assertFalse(fields.containsKey("raw"))
+  }
+
+  @Test
   fun keepsOnlyBoundedNumericAndBooleanFields() {
     val fields = TicketTracePrivacy.allowlistedFields(
       "viewer=account-42 reason=/data/local/private output=secret generation=9 ok=true duration_ms=250 " +
