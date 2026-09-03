@@ -10,6 +10,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Files
@@ -114,6 +115,40 @@ class PhoneAutomationBridgeTest {
         request.endY == request.startY &&
         request.durationMillis == 800L
     })
+    PhoneAutomationServiceBridge.unbindAccessibilityService(host)
+  }
+
+  @Test
+  fun stableTicketInputFenceIsInvalidatedBeforeTheHostCanReceiveAStroke() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    val host = FakeAccessibilityHost().apply {
+      focusedInputWindow = PhoneAutomationFocusedInputWindow("com.pv.vivi", 17)
+      ticketSliderFullStrokeResult = TicketSliderGestureDispatchResult.COMPLETED
+    }
+    PhoneAutomationServiceBridge.bindAccessibilityService(host)
+
+    val fence = PhoneAutomationServiceBridge.awaitStableTicketInputFence(
+      expectedPackageName = "com.pv.vivi",
+      timeoutMillis = 100L,
+      stableMillis = 1L,
+      elapsedRealtimeMillis = { testScheduler.currentTime }
+    )
+    assertNotNull(fence)
+    assertTrue(PhoneAutomationServiceBridge.ticketInputFenceIsCurrent(requireNotNull(fence)))
+
+    PhoneAutomationServiceBridge.recordTouchInteractionStarted(observedAtMillis = 10L)
+    PhoneAutomationServiceBridge.recordTouchInteractionEnded(observedAtMillis = 11L)
+
+    assertFalse(PhoneAutomationServiceBridge.ticketInputFenceIsCurrent(fence))
+    assertEquals(
+      TicketSliderGestureDispatchResult.REJECTED,
+      PhoneAutomationServiceBridge.performTicketSliderFullStroke(
+        "com.pv.vivi",
+        10, 20, 90, 20, 800L, 10L,
+        expectedInputFence = fence
+      )
+    )
+    assertEquals(0, host.ticketSliderFullStrokeCalls)
     PhoneAutomationServiceBridge.unbindAccessibilityService(host)
   }
 
@@ -698,7 +733,15 @@ class PhoneAutomationBridgeTest {
     assertTrue(fullStroke.contains("TicketSliderGestureDispatchResult.REJECTED"))
     assertTrue(fullStroke.contains("ticketSliderBrightnessShieldSuspended = true"))
     assertTrue(fullStroke.contains("ticketSliderBrightnessShieldSuspended = false"))
-    assertTrue(fullStroke.contains("isExpectedPackageFocusedForTicketSlider(expectedPackageName)"))
+    assertTrue(fullStroke.contains("focusedInputWindow(expectedPackageName)"))
+    assertTrue(fullStroke.contains("ticketInputFenceGenerationsAreCurrent("))
+    assertTrue(fullStroke.contains("focusedWindow.windowId != expectedWindowId"))
+    val focusedWindow = source.substringAfter(
+      "private fun focusedInputWindow(expectedPackageName: String)"
+    ).substringBefore("private fun fastRootForPackage")
+    assertTrue(focusedWindow.contains("window.isFocused"))
+    assertTrue(focusedWindow.contains("focused.singleOrNull()"))
+    assertFalse(focusedWindow.contains("rootInActiveWindow"))
     assertTrue(fullStroke.contains("PhoneAutomationServiceBridge.isPanelSleepBrightnessShieldRequested()"))
     assertTrue(fullStroke.contains("hidePanelSleepBrightnessShield()"))
     assertTrue(fullStroke.contains("showPanelSleepBrightnessShield()"))
@@ -739,7 +782,9 @@ class PhoneAutomationBridgeTest {
 
     assertTrue(fullStroke.contains("timeoutMillis.accessibilityCallTimeoutMillis()"))
     assertTrue(fullStroke.contains("TicketSliderGestureDispatchResult.UNKNOWN"))
-    assertEquals(1, Regex("service\\.performTicketSliderFullStroke\\(").findAll(fullStroke).count())
+    assertEquals(1, Regex("service\\.performTicketSliderFullStrokeFenced\\(").findAll(fullStroke).count())
+    assertTrue(fullStroke.contains("expectedInputFence?.accessibilityGeneration"))
+    assertTrue(fullStroke.contains("expectedInputFence?.touchGeneration"))
     assertFalse(bridge.contains("terminalGestureCallTimeoutMillis"))
     assertFalse(fullStroke.contains("* 2L"))
     assertTrue(source.contains("private const val TICKET_SLIDER_DIAGNOSTIC_TAG = \"PixelTicketSlider\""))
@@ -830,6 +875,7 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
   var ticketSliderFullStrokeNeverReturns = false
   var ticketSliderFullStrokeCalls = 0
   val ticketSliderFullStrokeRequests = mutableListOf<RecordedTicketSliderFullStroke>()
+  var focusedInputWindow: PhoneAutomationFocusedInputWindow? = null
 
   override fun syncBlackoutOverlayVisibility(visible: Boolean): Boolean {
     syncedVisibility += visible
@@ -874,6 +920,10 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
   override suspend fun snapshotVisibleNodes(expectedPackageName: String): List<PhoneAutomationVisibleNode> {
     return visibleNodes
   }
+
+  override suspend fun snapshotFocusedInputWindow(
+    expectedPackageName: String
+  ): PhoneAutomationFocusedInputWindow? = focusedInputWindow
 
   override suspend fun setTextInFocusedInput(
     expectedPackageName: String,

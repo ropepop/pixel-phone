@@ -2,6 +2,7 @@ package lv.jolkins.pixelorchestrator.app.ticket
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -18,12 +19,14 @@ class TicketVisualActionClassifierTest {
   }
 
   @Test
-  fun routePlanningHomeProvesOnlyTheTicketsTabInBothProbeSizes() {
+  fun selectedHomeBottomNavigationProvesOnlyTheTicketsTabInBothProbeSizes() {
     listOf(DARK to LIGHT, LIGHT to DARK).forEach { (background, neutral) ->
       val frame = viviHomeFrame(background, neutral)
       val sample = TicketVisualActionClassifier.classify(frame)
       val current = TicketVisualActionClassifier.classifyCurrent(frame)
       val highResolution = TicketVisualActionClassifier.classify(upscaleToProbe(frame))
+      assertEquals("home", TicketVisualActionClassifier.selectedBottomNavigationTab(frame))
+      assertEquals("home", TicketVisualActionClassifier.selectedBottomNavigationTab(upscaleToProbe(frame)))
 
       for (result in listOf(sample, current, highResolution)) {
         assertEquals("vivi_home", result.state)
@@ -40,7 +43,69 @@ class TicketVisualActionClassifierTest {
   }
 
   @Test
-  fun currentRouteRootWithoutWideActionUsesTheCompleteBottomNavigationInBothThemes() {
+  fun selectedProfileBottomNavigationIgnoresBodyAndRejectsASelectedPeer() {
+    listOf(DARK to LIGHT, LIGHT to DARK).forEach { (background, neutral) ->
+      val frame = viviProfileFrame(background, neutral).also { pixels ->
+        // Dynamic account body colors are irrelevant to the lower-tab authority.
+        fill(pixels, 12, 40, 180, 220, MID, TicketVisualActionClassifier.SAMPLE_WIDTH)
+      }
+      assertEquals("profile", TicketVisualActionClassifier.selectedBottomNavigationTab(frame))
+      for (result in listOf(
+        TicketVisualActionClassifier.classify(frame),
+        TicketVisualActionClassifier.classifyCurrent(frame),
+        TicketVisualActionClassifier.classify(upscaleToProbe(frame))
+      )) {
+        assertEquals("vivi_profile", result.state)
+        assertTrue(result.ticketsTabBounds == null)
+        assertTrue(result.sliderBounds == null)
+        assertTrue(result.cards.isEmpty())
+      }
+
+      val peerSelected = frame.copyOf().also(::drawCurrentSelectedHome)
+      assertEquals("unknown", TicketVisualActionClassifier.classifyCurrent(peerSelected).state)
+      assertEquals("", TicketVisualActionClassifier.selectedBottomNavigationTab(peerSelected))
+    }
+  }
+
+  @Test
+  fun selectedTicketsAndMenuBottomNavigationProveOnlyAProfileRouteAuthority() {
+    listOf(DARK to LIGHT, LIGHT to DARK).forEach { (background, neutral) ->
+      listOf(true, false).forEach { ticketsSelected ->
+        val frame = viviOtherTabFrame(background, neutral, ticketsSelected).also { pixels ->
+          // Page content is intentionally arbitrary: only the four lower glyphs are authority.
+          fill(pixels, 12, 40, 180, 220, MID, TicketVisualActionClassifier.SAMPLE_WIDTH)
+        }
+        assertEquals(
+          if (ticketsSelected) "tickets" else "menu",
+          TicketVisualActionClassifier.selectedBottomNavigationTab(frame)
+        )
+        for (result in listOf(
+          TicketVisualActionClassifier.classify(frame),
+          TicketVisualActionClassifier.classifyCurrent(frame),
+          TicketVisualActionClassifier.classify(upscaleToProbe(frame))
+        )) {
+          assertEquals(
+            "ticketsSelected=$ticketsSelected",
+            if (ticketsSelected) "unknown" else "vivi_other_tab",
+            result.state
+          )
+          assertTrue(result.ticketsTabBounds == null)
+          assertTrue(result.sliderBounds == null)
+          assertTrue(result.cards.isEmpty())
+        }
+
+        val peerSelected = frame.copyOf().also { pixels ->
+          fill(pixels, 115, 264, 127, 278, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+          fill(pixels, 117, 266, 125, 276, background, TicketVisualActionClassifier.SAMPLE_WIDTH)
+        }
+        assertEquals("unknown", TicketVisualActionClassifier.classifyCurrent(peerSelected).state)
+        assertEquals("", TicketVisualActionClassifier.selectedBottomNavigationTab(peerSelected))
+      }
+    }
+  }
+
+  @Test
+  fun homeProofDoesNotRequireAnyPageBodyActionInBothThemes() {
     listOf(DARK to LIGHT, LIGHT to DARK).forEach { (background, neutral) ->
       val frame = viviRootHomeFrame(background, neutral)
       val sample = TicketVisualActionClassifier.classify(frame)
@@ -72,8 +137,8 @@ class TicketVisualActionClassifierTest {
   }
 
   @Test
-  fun livePixelRouteRootKeepsTheThinSelectedHomeProofAfterProbeReduction() {
-    val frame = livePixelRouteRootFrame()
+  fun currentPixelBottomNavigationKeepsTheThinSelectedHomeProofAfterProbeReduction() {
+    val frame = livePixelBottomNavigationHomeFrame()
     val sample = TicketVisualActionClassifier.classifyCurrent(frame)
     val highResolution = TicketVisualActionClassifier.classifyCurrent(upscaleToProbe(frame))
 
@@ -104,11 +169,41 @@ class TicketVisualActionClassifierTest {
   }
 
   @Test
-  fun sparseSelectedHomeNeverAuthorizesWithoutTheIndependentRouteAction() {
-    val frame = livePixelRouteRootFrame()
-    fill(frame, 14, 218, 178, 249, DARK, TicketVisualActionClassifier.SAMPLE_WIDTH)
+  fun dynamicPageBodyAndSeparatorDoNotChangeBottomNavigationAuthority() {
+    val bodyCleared = livePixelBottomNavigationHomeFrame().also {
+      fill(it, 0, 0, 192, 258, MID, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    }
+    val bannerAndRouteBody = livePixelBottomNavigationHomeFrame().also {
+      fill(it, 0, 33, 144, 34, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+      fill(it, 40, 34, 73, 35, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+      fill(it, 50, 35, 74, 38, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+      fill(it, 10, 38, 112, 39, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+      fill(it, 0, 39, 144, 40, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+      fill(it, 0, 40, 127, 41, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+      fill(it, 14, 180, 178, 224, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+      fill(it, 0, 250, 192, 258, DARK, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    }
 
-    assertEquals("unknown", TicketVisualActionClassifier.classifyCurrent(frame).state)
+    listOf("cleared" to bodyCleared, "banner" to bannerAndRouteBody).forEach { (variant, frame) ->
+      assertEquals(variant, "vivi_home", TicketVisualActionClassifier.classifyCurrent(frame).state)
+      assertEquals(variant, "proved_bottom_navigation", homeDiagnostic(frame))
+    }
+  }
+
+  @Test
+  fun sparseOrSolidSelectedHomeCannotAuthorizeTheBottomNavigation() {
+    val sparse = livePixelBottomNavigationHomeFrame()
+    fill(sparse, 8, 258, 38, 283, DARK, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    listOf(22 to 266, 25 to 266, 21 to 267, 27 to 267, 19 to 268).forEach { (x, y) ->
+      sparse[y * TicketVisualActionClassifier.SAMPLE_WIDTH + x] = YELLOW
+    }
+    assertEquals("unknown", TicketVisualActionClassifier.classifyCurrent(sparse).state)
+    assertEquals("reject_selected_home_sparse", homeDiagnostic(sparse))
+
+    val solid = livePixelBottomNavigationHomeFrame()
+    fill(solid, 12, 262, 32, 280, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    assertEquals("unknown", TicketVisualActionClassifier.classifyCurrent(solid).state)
+    assertEquals("reject_selected_home_shape", homeDiagnostic(solid))
   }
 
   @Test
@@ -121,9 +216,23 @@ class TicketVisualActionClassifierTest {
     fill(missingMenu, 152, 258, 186, 283, DARK, TicketVisualActionClassifier.SAMPLE_WIDTH)
     assertEquals("unknown", TicketVisualActionClassifier.classifyCurrent(missingMenu).state)
 
-    val ticketSelected = viviRootHomeFrame(DARK, LIGHT)
-    fill(ticketSelected, 60, 263, 82, 278, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    val ticketSelected = livePixelBottomNavigationHomeFrame()
+    listOf(64 to 266, 65 to 266, 66 to 266, 67 to 266).forEach { (x, y) ->
+      ticketSelected[y * TicketVisualActionClassifier.SAMPLE_WIDTH + x] = YELLOW
+    }
     assertEquals("unknown", TicketVisualActionClassifier.classifyCurrent(ticketSelected).state)
+
+    val profileSelected = livePixelBottomNavigationHomeFrame()
+    listOf(116 to 267, 117 to 267, 118 to 267, 119 to 267).forEach { (x, y) ->
+      profileSelected[y * TicketVisualActionClassifier.SAMPLE_WIDTH + x] = YELLOW
+    }
+    assertEquals("unknown", TicketVisualActionClassifier.classifyCurrent(profileSelected).state)
+
+    val menuSelected = livePixelBottomNavigationHomeFrame()
+    listOf(163 to 265, 164 to 265, 165 to 265, 166 to 265).forEach { (x, y) ->
+      menuSelected[y * TicketVisualActionClassifier.SAMPLE_WIDTH + x] = YELLOW
+    }
+    assertEquals("unknown", TicketVisualActionClassifier.classifyCurrent(menuSelected).state)
 
     val shiftedTicket = viviRootHomeFrame(DARK, LIGHT)
     fill(shiftedTicket, 46, 258, 84, 283, DARK, TicketVisualActionClassifier.SAMPLE_WIDTH)
@@ -142,10 +251,6 @@ class TicketVisualActionClassifierTest {
     fill(ticketSelected, 50, 260, 74, 280, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
     assertEquals("unknown", TicketVisualActionClassifier.classifyCurrent(ticketSelected).state)
 
-    val missingSeparator = viviHomeFrame(DARK, LIGHT)
-    fill(missingSeparator, 0, 250, 192, 261, DARK, TicketVisualActionClassifier.SAMPLE_WIDTH)
-    assertEquals("unknown", TicketVisualActionClassifier.classifyCurrent(missingSeparator).state)
-
     val missingTicketGlyph = viviHomeFrame(DARK, LIGHT)
     fill(missingTicketGlyph, 46, 258, 82, 283, DARK, TicketVisualActionClassifier.SAMPLE_WIDTH)
     assertEquals("unknown", TicketVisualActionClassifier.classifyCurrent(missingTicketGlyph).state)
@@ -153,28 +258,23 @@ class TicketVisualActionClassifierTest {
 
   @Test
   fun currentDiagnosticNamesTheExactHomeProofGateWithoutContentOrCoordinates() {
-    val proved = livePixelRouteRootFrame()
-    assertEquals("proved", homeDiagnostic(proved))
+    val proved = livePixelBottomNavigationHomeFrame()
+    assertEquals("proved_bottom_navigation", homeDiagnostic(proved))
 
-    val missingSeparator = viviRootHomeFrame(DARK, LIGHT)
-    fill(missingSeparator, 0, 250, 192, 262, DARK, TicketVisualActionClassifier.SAMPLE_WIDTH)
-    assertEquals("reject_separator_unproved", homeDiagnostic(missingSeparator))
-
-    val sparseSelectedHome = livePixelRouteRootFrame()
+    val sparseSelectedHome = livePixelBottomNavigationHomeFrame()
     fill(sparseSelectedHome, 8, 258, 38, 283, DARK, TicketVisualActionClassifier.SAMPLE_WIDTH)
-    assertEquals("reject_selected_home_sparse_route", homeDiagnostic(sparseSelectedHome))
+    assertEquals("reject_selected_home_sparse", homeDiagnostic(sparseSelectedHome))
 
-    val selectedTicket = livePixelRouteRootFrame()
+    val selectedTicket = livePixelBottomNavigationHomeFrame()
     fill(selectedTicket, 60, 263, 82, 278, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
     assertEquals("reject_selected_ticket_conflict", homeDiagnostic(selectedTicket))
 
-    val missingTicketGlyph = livePixelRouteRootFrame()
+    val missingTicketGlyph = livePixelBottomNavigationHomeFrame()
     fill(missingTicketGlyph, 46, 258, 82, 283, DARK, TicketVisualActionClassifier.SAMPLE_WIDTH)
     assertEquals("reject_ticket_components_missing", homeDiagnostic(missingTicketGlyph))
 
     listOf(
       proved,
-      missingSeparator,
       sparseSelectedHome,
       selectedTicket,
       missingTicketGlyph
@@ -185,10 +285,11 @@ class TicketVisualActionClassifierTest {
   }
 
   @Test
-  fun actionlessHomeDiagnosticSeparatesPeerShellRejections() {
-    val peerTabConflict = viviRootHomeFrame(DARK, LIGHT)
-    fill(peerTabConflict, 12, 35, 42, 37, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
-    assertEquals("reject_peer_tab_conflict", homeDiagnostic(peerTabConflict))
+  fun homeDiagnosticIgnoresPageBodyAndSeparatesPeerShellRejections() {
+    val dynamicBody = viviRootHomeFrame(DARK, LIGHT)
+    fill(dynamicBody, 12, 35, 42, 37, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(dynamicBody, 8, 45, 184, 60, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    assertEquals("proved_bottom_navigation", homeDiagnostic(dynamicBody))
 
     val missingProfile = viviRootHomeFrame(DARK, LIGHT)
     fill(missingProfile, 106, 258, 140, 283, DARK, TicketVisualActionClassifier.SAMPLE_WIDTH)
@@ -200,9 +301,9 @@ class TicketVisualActionClassifierTest {
   }
 
   @Test
-  fun strongShellFallbackSurvivesAnOddPhaseLostSeparatorInBothThemes() {
+  fun bottomNavigationProofSurvivesAnOddPhaseLostSeparatorInBothThemes() {
     listOf(DARK to LIGHT, LIGHT to DARK).forEach { (background, neutral) ->
-      val probe = lostSeparatorStrongShellProbeFrame(background, neutral)
+      val probe = lostSeparatorBottomNavigationProbeFrame(background, neutral)
       val result = TicketVisualActionClassifier.classifyCurrent(probe)
 
       assertEquals("background=$background", "vivi_home", result.state)
@@ -210,14 +311,14 @@ class TicketVisualActionClassifierTest {
       assertBoundsInSampleSpace(result.ticketsTabBounds!!)
       assertTrue(result.sliderBounds == null)
       assertTrue(result.cards.isEmpty())
-      assertEquals("proved_strong_shell_fallback", homeDiagnostic(probe))
+      assertEquals("proved_bottom_navigation", homeDiagnostic(probe))
     }
   }
 
   @Test
-  fun strongShellFallbackDoesNotMistakeTheTallFragmentedNewsBannerForATabUnderline() {
+  fun bottomNavigationProofIgnoresTheTallFragmentedNewsBanner() {
     listOf(DARK to LIGHT, LIGHT to DARK).forEach { (background, neutral) ->
-      val probe = lostSeparatorStrongShellProbeFrame(background, neutral)
+      val probe = lostSeparatorBottomNavigationProbeFrame(background, neutral)
       // Sanitized aggregate geometry from the live Home banner. It crosses the bounded tab rows,
       // but it is tall and fragmented: five short qualifying rows sit between wider orange rows.
       // No text or live pixels are retained in this fixture.
@@ -231,71 +332,108 @@ class TicketVisualActionClassifierTest {
       val result = TicketVisualActionClassifier.classifyCurrent(probe)
       assertEquals("background=$background", "vivi_home", result.state)
       assertTrue(result.ticketsTabBounds != null)
-      assertEquals("proved_strong_shell_fallback", homeDiagnostic(probe))
+      assertEquals("proved_bottom_navigation", homeDiagnostic(probe))
     }
   }
 
   @Test
-  fun strongShellFallbackRejectsThreeHomeSamplesAndEveryMissingIndependentCue() {
+  fun bottomNavigationProofRejectsFiveHomeSamplesAndEveryMissingOrSelectedPeer() {
     val background = DARK
     val neutral = LIGHT
-    val missingRoute = lostSeparatorStrongShellProbeFrame(background, neutral).also {
-      fill(it, 28, 436, 356, 498, background, TicketVisualActionClassifier.PROBE_WIDTH)
-    }
-    val threeHomeSamples = lostSeparatorStrongShellProbeFrame(
+    val fiveHomeSamples = lostSeparatorBottomNavigationProbeFrame(
       background,
       neutral,
-      selectedHomeSamples = 3
+      selectedHomeSamples = 5
     )
-    val missingTicket = lostSeparatorStrongShellProbeFrame(background, neutral).also {
+    val missingTicket = lostSeparatorBottomNavigationProbeFrame(background, neutral).also {
       fill(it, 92, 516, 164, 566, background, TicketVisualActionClassifier.PROBE_WIDTH)
     }
-    val missingProfile = lostSeparatorStrongShellProbeFrame(background, neutral).also {
+    val missingProfile = lostSeparatorBottomNavigationProbeFrame(background, neutral).also {
       fill(it, 212, 516, 280, 566, background, TicketVisualActionClassifier.PROBE_WIDTH)
     }
-    val missingMenu = lostSeparatorStrongShellProbeFrame(background, neutral).also {
+    val missingMenu = lostSeparatorBottomNavigationProbeFrame(background, neutral).also {
       fill(it, 304, 516, 372, 566, background, TicketVisualActionClassifier.PROBE_WIDTH)
     }
-    val ticketsUnderline = lostSeparatorStrongShellProbeFrame(background, neutral).also {
-      fill(it, 24, 70, 84, 74, YELLOW, TicketVisualActionClassifier.PROBE_WIDTH)
+    val competingSelectedIcon = lostSeparatorBottomNavigationProbeFrame(background, neutral).also {
+      listOf(232 to 534, 234 to 534, 236 to 534, 238 to 534).forEach { (x, y) ->
+        fill(it, x, y, x + 1, y + 1, YELLOW, TicketVisualActionClassifier.PROBE_WIDTH)
+      }
     }
-    val competingSelectedIcon = lostSeparatorStrongShellProbeFrame(background, neutral).also {
-      fill(it, 212, 516, 280, 566, YELLOW, TicketVisualActionClassifier.PROBE_WIDTH)
-    }
-    val navigationOverlay = lostSeparatorStrongShellProbeFrame(background, neutral).also {
+    val navigationOverlay = lostSeparatorBottomNavigationProbeFrame(background, neutral).also {
       fill(it, 0, 500, 384, 576, MID, TicketVisualActionClassifier.PROBE_WIDTH)
     }
 
     listOf(
-      "route" to missingRoute,
-      "home" to threeHomeSamples,
+      "home" to fiveHomeSamples,
       "ticket" to missingTicket,
       "profile" to missingProfile,
       "menu" to missingMenu,
-      "underline" to ticketsUnderline,
       "selected_peer" to competingSelectedIcon,
       "overlay" to navigationOverlay
     ).forEach { (cue, probe) ->
       assertEquals("cue=$cue diagnostic=${homeDiagnostic(probe)}", "unknown",
         TicketVisualActionClassifier.classifyCurrent(probe).state)
     }
-    assertEquals("reject_selected_home_sparse_fallback", homeDiagnostic(threeHomeSamples))
-    assertEquals("reject_peer_tab_conflict", homeDiagnostic(ticketsUnderline))
+    assertEquals("reject_selected_home_sparse", homeDiagnostic(fiveHomeSamples))
+    assertEquals("reject_peer_selected_conflict", homeDiagnostic(competingSelectedIcon))
   }
 
   @Test
-  fun strongShellFallbackNeverOverridesARecognizedBlockerOrExistingView() {
+  fun bottomNavigationSideChannelNeverOverridesARecognizedBlockerOrExistingView() {
     val blockedLow = rawTicketFrame()
     fill(blockedLow, 8, 30, 40, 45, LIGHT)
     fill(blockedLow, 13, 39, 36, 40, DARK)
     fill(blockedLow, 31, 39, 42, 44, ORANGE)
-    val blockedWithShell = lostSeparatorStrongShellProbeFrame(
+    val blockedWithShell = lostSeparatorBottomNavigationProbeFrame(
       DARK,
       LIGHT,
       base = scale(blockedLow)
     )
     assertEquals("blocked", TicketVisualActionClassifier.classifyCurrent(blockedWithShell).state)
-    assertEquals("reject_strong_shell_blocked", homeDiagnostic(blockedWithShell))
+    assertEquals("reject_blocked_surface", homeDiagnostic(blockedWithShell))
+    assertEquals("home", TicketVisualActionClassifier.selectedBottomNavigationTab(blockedWithShell))
+
+    listOf(
+      "profile" to viviProfileFrame(DARK, LIGHT),
+      "tickets" to viviOtherTabFrame(DARK, LIGHT, ticketsSelected = true),
+      "menu" to viviOtherTabFrame(DARK, LIGHT, ticketsSelected = false)
+    ).forEach { (expectedTab, shell) ->
+      val blockerBody = scale(blockedLow)
+      for (y in 0 until 255) {
+        for (x in 0 until TicketVisualActionClassifier.SAMPLE_WIDTH) {
+          shell[y * TicketVisualActionClassifier.SAMPLE_WIDTH + x] =
+            blockerBody[y * TicketVisualActionClassifier.SAMPLE_WIDTH + x]
+        }
+      }
+      assertEquals("tab=$expectedTab", "blocked", TicketVisualActionClassifier.classifyCurrent(shell).state)
+      assertEquals(expectedTab, TicketVisualActionClassifier.selectedBottomNavigationTab(shell))
+    }
+
+    val detailWithNavigation = lostSeparatorBottomNavigationProbeFrame(
+      DARK,
+      LIGHT,
+      base = unactivatedDetailFrame()
+    )
+    assertEquals(
+      "unactivated_detail",
+      TicketVisualActionClassifier.classifyCurrent(detailWithNavigation).state
+    )
+    assertEquals("reject_blocked_surface", homeDiagnostic(detailWithNavigation))
+    assertEquals("home", TicketVisualActionClassifier.selectedBottomNavigationTab(detailWithNavigation))
+
+    val login = IntArray(
+      TicketVisualActionClassifier.SAMPLE_WIDTH * TicketVisualActionClassifier.SAMPLE_HEIGHT
+    ) { DARK }
+    fill(login, 30, 105, 162, 170, LIGHT, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(login, 35, 185, 157, 205, BLUE, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    val loginWithNavigation = lostSeparatorBottomNavigationProbeFrame(
+      DARK,
+      LIGHT,
+      base = login
+    )
+    assertEquals("login_required", TicketVisualActionClassifier.classifyCurrent(loginWithNavigation).state)
+    assertEquals("reject_blocked_surface", homeDiagnostic(loginWithNavigation))
+    assertEquals("home", TicketVisualActionClassifier.selectedBottomNavigationTab(loginWithNavigation))
 
     val today = LocalDate.now()
     val existingViews = listOf(
@@ -350,11 +488,55 @@ class TicketVisualActionClassifierTest {
   }
 
   @Test
-  fun selectedTimeTabWrongBottomSelectionAndNonemptyOrRedesignedShellFailClosed() {
-    val timeSelected = emptySingleUseTicketsFrame(DARK, LIGHT, MID)
-    fill(timeSelected, 5, 33, 187, 41, DARK, TicketVisualActionClassifier.SAMPLE_WIDTH)
-    fill(timeSelected, 96, 36, 181, 38, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
-    assertEquals("unknown", TicketVisualActionClassifier.classifyCurrent(timeSelected).state)
+  fun selectedTimeTabEmptyShellHasItsOwnExactTypedStateAndSingleUseTarget() {
+    listOf(
+      Triple(DARK, LIGHT, MID),
+      Triple(LIGHT, DARK, MID)
+    ).forEach { (background, foreground, muted) ->
+      val timeSelected = emptySingleUseTicketsFrame(background, foreground, muted)
+      fill(timeSelected, 5, 33, 187, 41, background, TicketVisualActionClassifier.SAMPLE_WIDTH)
+      fill(timeSelected, 96, 36, 181, 38, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+      listOf(
+        "sample" to TicketVisualActionClassifier.classify(timeSelected),
+        "current" to TicketVisualActionClassifier.classifyCurrent(timeSelected),
+        "probe" to TicketVisualActionClassifier.classify(upscaleToProbe(timeSelected))
+      ).forEach { (source, result) ->
+        assertEquals("background=$background source=$source", "tickets_time_empty", result.state)
+        assertNull(result.timeTicketsTabBounds)
+        assertTrue(result.ticketsTabBounds != null)
+        assertBoundsInSampleSpace(result.ticketsTabBounds!!)
+        assertNull(result.sliderBounds)
+        assertTrue(result.cards.isEmpty())
+      }
+      assertBoundsNear(
+        TicketVisualActionClassifier.classify(timeSelected).ticketsTabBounds!!,
+        TicketVisualActionClassifier.classify(upscaleToProbe(timeSelected)).ticketsTabBounds!!
+      )
+
+      val target = TicketVisualActionClassifier.classify(timeSelected).ticketsTabBounds!!
+      val mapped = TicketCaptureGeometry.mapProbeBoundsToDevice(
+        TicketVisualProbeBounds(target.left, target.top, target.right, target.bottom),
+        TicketVisualActionClassifier.SAMPLE_WIDTH,
+        TicketVisualActionClassifier.SAMPLE_HEIGHT,
+        1080,
+        2424
+      )
+      val centerX = (mapped.left + mapped.right) / 2
+      val centerY = (mapped.top + mapped.bottom) / 2
+      assertTrue(centerX in 56..562)
+      assertTrue(centerY in 349..475)
+    }
+  }
+
+  @Test
+  fun wrongTabSelectionAndNonemptyOrRedesignedEmptyShellFailClosed() {
+    val bothTabsSelected = emptySingleUseTicketsFrame(DARK, LIGHT, MID)
+    fill(bothTabsSelected, 96, 36, 181, 38, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    assertEquals("unknown", TicketVisualActionClassifier.classifyCurrent(bothTabsSelected).state)
+
+    val neitherTabSelected = emptySingleUseTicketsFrame(DARK, LIGHT, MID)
+    fill(neitherTabSelected, 5, 33, 187, 41, DARK, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    assertEquals("unknown", TicketVisualActionClassifier.classifyCurrent(neitherTabSelected).state)
 
     val shiftedUnderline = emptySingleUseTicketsFrame(DARK, LIGHT, MID)
     fill(shiftedUnderline, 5, 33, 100, 41, DARK, TicketVisualActionClassifier.SAMPLE_WIDTH)
@@ -890,6 +1072,42 @@ class TicketVisualActionClassifierTest {
   }
 
   @Test
+  fun currentDarkLoginRequiresLogoNeutralFormAndFullWidthGuestBar() {
+    val background = rgb(47, 54, 57)
+    val form = rgb(33, 40, 43)
+    val login = IntArray(TicketVisualActionClassifier.SAMPLE_WIDTH * TicketVisualActionClassifier.SAMPLE_HEIGHT) { background }
+    // Production renders the logo as a thin outlined mark rather than a solid rectangle.
+    fill(login, 56, 55, 133, 57, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(login, 56, 68, 133, 70, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(login, 56, 57, 61, 68, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(login, 128, 57, 133, 68, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(login, 10, 90, 182, 175, form, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(login, 0, 257, 192, 281, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+
+    assertEquals("login_required", TicketVisualActionClassifier.classify(login).state)
+    assertEquals("login_required", TicketVisualActionClassifier.classify(upscaleToProbe(login)).state)
+
+    val missingLogo = login.copyOf()
+    fill(missingLogo, 38, 55, 158, 102, background, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    assertEquals("unknown", TicketVisualActionClassifier.classify(missingLogo).state)
+
+    val tooSparseLogo = login.copyOf()
+    fill(tooSparseLogo, 38, 55, 158, 102, background, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(tooSparseLogo, 56, 55, 61, 70, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(tooSparseLogo, 128, 55, 133, 70, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    assertEquals("unknown", TicketVisualActionClassifier.classify(tooSparseLogo).state)
+
+    val missingNeutralForm = login.copyOf()
+    fill(missingNeutralForm, 10, 90, 182, 175, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    assertTrue(TicketVisualActionClassifier.classify(missingNeutralForm).state != "login_required")
+
+    val insetGuestAction = login.copyOf()
+    fill(insetGuestAction, 0, 240, 192, 283, background, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(insetGuestAction, 20, 257, 172, 281, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    assertEquals("unknown", TicketVisualActionClassifier.classify(insetGuestAction).state)
+  }
+
+  @Test
   fun latestSelectionIgnoresExpiredAndNonRegistrationCardsAcrossMidnight() {
     val today = LocalDate.now()
     val expired = today.minusDays(2) to today.minusDays(1)
@@ -1074,13 +1292,63 @@ class TicketVisualActionClassifierTest {
     val pixels = IntArray(
       TicketVisualActionClassifier.SAMPLE_WIDTH * TicketVisualActionClassifier.SAMPLE_HEIGHT
     ) { background }
-    // Sanitized route-home chrome only: wide Search action, bottom separator, selected Home
-    // mark, and the neutral Tickets glyph. It contains no app text, journey, or ticket data.
+    // Sanitized route-home chrome only: dynamic Search action plus the complete bottom navigation.
+    // It contains no app text, journey, or ticket data.
     fill(pixels, 14, 180, 178, 204, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
     fill(pixels, 0, 255, 192, 257, MID, TicketVisualActionClassifier.SAMPLE_WIDTH)
-    fill(pixels, 12, 262, 30, 279, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    drawCurrentSelectedHome(pixels)
     fill(pixels, 64, 266, 80, 274, neutral, TicketVisualActionClassifier.SAMPLE_WIDTH)
     fill(pixels, 65, 267, 79, 273, background, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(pixels, 115, 264, 127, 278, neutral, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(pixels, 117, 266, 125, 276, background, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(pixels, 163, 264, 179, 266, neutral, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(pixels, 163, 269, 179, 271, neutral, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(pixels, 163, 274, 179, 276, neutral, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    return pixels
+  }
+
+  private fun viviProfileFrame(background: Int, neutral: Int): IntArray {
+    val pixels = IntArray(
+      TicketVisualActionClassifier.SAMPLE_WIDTH * TicketVisualActionClassifier.SAMPLE_HEIGHT
+    ) { background }
+    fill(pixels, 0, 255, 192, 257, MID, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    drawCurrentHome(pixels, neutral)
+    fill(pixels, 64, 265, 81, 274, neutral, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(pixels, 65, 266, 80, 273, background, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(pixels, 115, 264, 127, 278, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(pixels, 117, 266, 125, 276, background, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(pixels, 163, 264, 179, 266, neutral, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(pixels, 163, 269, 179, 271, neutral, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(pixels, 163, 274, 179, 276, neutral, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    return pixels
+  }
+
+  private fun viviOtherTabFrame(
+    background: Int,
+    neutral: Int,
+    ticketsSelected: Boolean
+  ): IntArray {
+    val pixels = IntArray(
+      TicketVisualActionClassifier.SAMPLE_WIDTH * TicketVisualActionClassifier.SAMPLE_HEIGHT
+    ) { background }
+    fill(pixels, 0, 255, 192, 257, MID, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    drawCurrentHome(pixels, neutral)
+    fill(
+      pixels,
+      64,
+      265,
+      81,
+      274,
+      if (ticketsSelected) YELLOW else neutral,
+      TicketVisualActionClassifier.SAMPLE_WIDTH
+    )
+    fill(pixels, 65, 266, 80, 273, background, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(pixels, 115, 264, 127, 278, neutral, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(pixels, 117, 266, 125, 276, background, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    val menuColor = if (ticketsSelected) neutral else YELLOW
+    fill(pixels, 163, 264, 179, 266, menuColor, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(pixels, 163, 269, 179, 271, menuColor, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    fill(pixels, 163, 274, 179, 276, menuColor, TicketVisualActionClassifier.SAMPLE_WIDTH)
     return pixels
   }
 
@@ -1094,7 +1362,7 @@ class TicketVisualActionClassifierTest {
     // Sanitized current route-root chrome. There is deliberately no route text or wide action:
     // authority comes from the full separator and four stable bottom-navigation silhouettes.
     fill(pixels, 0, 255, 192, 257, MID, TicketVisualActionClassifier.SAMPLE_WIDTH)
-    fill(pixels, 12, 262, 30, 279, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    drawCurrentSelectedHome(pixels)
     fill(pixels, 64, 266, 80, 274, neutral, TicketVisualActionClassifier.SAMPLE_WIDTH)
     fill(pixels, 65, 267, 79, 273, background, TicketVisualActionClassifier.SAMPLE_WIDTH)
     fill(pixels, 115, 264, 127, 278, neutral, TicketVisualActionClassifier.SAMPLE_WIDTH)
@@ -1105,28 +1373,16 @@ class TicketVisualActionClassifierTest {
     return pixels
   }
 
-  private fun livePixelRouteRootFrame(): IntArray {
+  private fun livePixelBottomNavigationHomeFrame(): IntArray {
     val pixels = IntArray(
       TicketVisualActionClassifier.SAMPLE_WIDTH * TicketVisualActionClassifier.SAMPLE_HEIGHT
     ) { DARK }
-    // Sanitized from the current rooted route-planning frame after the production 4/200/3/3
-    // crop and bounded probe reduction. Content and text are omitted; only the route-action and
-    // four bottom-navigation silhouettes needed for semantic proof remain.
-    // Seven rows intersect the bounded route-action scan, matching the current reduced frame.
-    fill(pixels, 14, 218, 178, 249, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    // Sanitized from the current rooted route-planning frame after the production 4/200/3/3 crop
+    // and bounded probe reduction. Content and text are omitted; only the four bottom-navigation
+    // silhouettes needed for semantic proof remain.
     fill(pixels, 0, 260, 192, 261, MID, TicketVisualActionClassifier.SAMPLE_WIDTH)
 
-    // The live anti-aliased selected Home outline retains eight orange samples at 192x288.
-    listOf(
-      18 to 271,
-      19 to 270,
-      20 to 269,
-      21 to 268,
-      22 to 269,
-      23 to 270,
-      24 to 271,
-      18 to 272
-    ).forEach { (x, y) -> pixels[y * TicketVisualActionClassifier.SAMPLE_WIDTH + x] = YELLOW }
+    drawCurrentSelectedHome(pixels)
 
     fill(pixels, 64, 265, 81, 274, LIGHT, TicketVisualActionClassifier.SAMPLE_WIDTH)
     fill(pixels, 65, 266, 80, 273, DARK, TicketVisualActionClassifier.SAMPLE_WIDTH)
@@ -1138,10 +1394,10 @@ class TicketVisualActionClassifierTest {
     return pixels
   }
 
-  private fun lostSeparatorStrongShellProbeFrame(
+  private fun lostSeparatorBottomNavigationProbeFrame(
     background: Int,
     neutral: Int,
-    selectedHomeSamples: Int = 4,
+    selectedHomeSamples: Int = 6,
     base: IntArray? = null
   ): IntArray {
     val sample = base?.copyOf() ?: IntArray(
@@ -1149,15 +1405,25 @@ class TicketVisualActionClassifierTest {
     ) { background }
     require(sample.size == TicketVisualActionClassifier.SAMPLE_WIDTH * TicketVisualActionClassifier.SAMPLE_HEIGHT)
 
-    // Sanitized shell-only fixture. The divider exists only on an odd native-probe row, so the
-    // production 384-to-192 point reduction intentionally loses it. No live pixels are retained.
-    fill(sample, 14, 218, 178, 249, YELLOW, TicketVisualActionClassifier.SAMPLE_WIDTH)
+    // Sanitized bottom-navigation-only fixture. The divider exists only on an odd native-probe
+    // row, so the production 384-to-192 point reduction intentionally loses it. No live pixels are
+    // retained.
     fill(sample, 0, 250, 192, 288, background, TicketVisualActionClassifier.SAMPLE_WIDTH)
     val homeOutline = listOf(
-      18 to 271,
-      19 to 270,
-      20 to 269,
-      21 to 268
+      22 to 266,
+      25 to 266,
+      21 to 267,
+      27 to 267,
+      28 to 267,
+      19 to 268,
+      28 to 268,
+      28 to 269,
+      23 to 270,
+      24 to 270,
+      28 to 270,
+      28 to 271,
+      25 to 272,
+      28 to 272
     )
     homeOutline.take(selectedHomeSamples.coerceIn(0, homeOutline.size)).forEach { (x, y) ->
       sample[y * TicketVisualActionClassifier.SAMPLE_WIDTH + x] = YELLOW
@@ -1180,6 +1446,31 @@ class TicketVisualActionClassifierTest {
         MID,
         TicketVisualActionClassifier.PROBE_WIDTH
       )
+    }
+  }
+
+  private fun drawCurrentSelectedHome(pixels: IntArray) = drawCurrentHome(pixels, YELLOW)
+
+  private fun drawCurrentHome(pixels: IntArray, color: Int) {
+    // The current cropped/reduced frame retains fourteen orange samples spanning the Home outline.
+    // Only these content-free coordinates are retained; no live page pixels or text are fixtures.
+    listOf(
+      22 to 266,
+      25 to 266,
+      21 to 267,
+      27 to 267,
+      28 to 267,
+      19 to 268,
+      28 to 268,
+      28 to 269,
+      23 to 270,
+      24 to 270,
+      28 to 270,
+      28 to 271,
+      25 to 272,
+      28 to 272
+    ).forEach { (x, y) ->
+      pixels[y * TicketVisualActionClassifier.SAMPLE_WIDTH + x] = color
     }
   }
 

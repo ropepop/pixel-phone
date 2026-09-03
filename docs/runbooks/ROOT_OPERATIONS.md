@@ -37,6 +37,7 @@ This repository manages rooted Pixel runtime ownership for:
 - Remote endpoint runtime checks (`remote`)
 - Train bot (`train_bot`)
 - Site notifier (`site_notifier`)
+- Ticket screen automation and stream (`ticket_screen`)
 
 Ownership is centralized in the Android app orchestrator and managed root scripts under `/data/local/pixel-stack`.
 
@@ -96,6 +97,20 @@ bash orchestrator/scripts/android/deploy_orchestrator_apk.sh \
 bash orchestrator/scripts/android/deploy_orchestrator_apk.sh --transport ssh --ssh-host "${PIXEL_SSH_HOST}" --action health_component --component "${COMPONENT_ID}" --skip-build
 bash orchestrator/scripts/android/deploy_orchestrator_apk.sh --transport ssh --ssh-host "${PIXEL_SSH_HOST}" --action health --skip-build
 ```
+
+`ticket_screen` is bundled with the orchestrator and does not use an external
+component release directory. Prefer the scoped wrapper:
+
+```bash
+bash tools/pixel/redeploy.sh \
+  --scope ticket_screen \
+  --profile standard \
+  --transport ssh \
+  --ssh-host "${PIXEL_SSH_HOST}"
+```
+
+If the wrapper itself is unavailable, run `redeploy_component` without
+`--component-release-dir`.
 
 Use `bootstrap` only for first install, clean-room reprovisioning, or intentional shared-platform changes. Use `restart_component` only for runtime control on the already deployed release.
 
@@ -535,7 +550,7 @@ Supported actions:
 - owned one-shot job execution: `sync_ddns`
 
 Supported components:
-- `dns`, `ssh`, `vpn`, `ddns`, `remote`, `train_bot`, `site_notifier`
+- `dns`, `ssh`, `vpn`, `ddns`, `remote`, `train_bot`, `site_notifier`, `ticket_screen`
 
 Operational notes:
 - `deploy_orchestrator_apk.sh` now emits advisory runtime-asset hash mismatch warnings (host APK assets vs on-device staged assets) before action launch.
@@ -545,6 +560,7 @@ Operational notes:
 - In tokenized/dual mode, DNS runtime startup is fail-closed for identity sidecar startup/health failures.
 - `remote` is not independently isolated. Treat it as a DNS-owned derived surface for redeploy and health gating.
 - `train_bot` and `site_notifier` are expected to deploy immutable releases and switch `current` atomically rather than mutating the active release in place.
+- `ticket_screen` uses the same component-scoped deployment boundary; update it without bootstrapping or restarting unrelated phone components.
 
 Examples:
 
@@ -555,12 +571,14 @@ bash orchestrator/scripts/android/deploy_orchestrator_apk.sh --device "<adb-seri
 
 bash orchestrator/scripts/android/deploy_orchestrator_apk.sh --device "<adb-serial>" --component-release-dir ".artifacts/component-releases/train_bot-<release-id>" --action redeploy_component --component train_bot
 bash orchestrator/scripts/android/deploy_orchestrator_apk.sh --device "<adb-serial>" --component-release-dir ".artifacts/component-releases/site_notifier-<release-id>" --action redeploy_component --component site_notifier
+bash orchestrator/scripts/android/deploy_orchestrator_apk.sh --device "<adb-serial>" --action redeploy_component --component ticket_screen
 bash orchestrator/scripts/android/deploy_orchestrator_apk.sh --device "<adb-serial>" --component-release-dir ".artifacts/component-releases/dns-<release-id>" --action redeploy_component --component remote
 
 bash orchestrator/scripts/android/deploy_orchestrator_apk.sh --device "<adb-serial>" --action restart_component --component ssh --skip-build
 bash orchestrator/scripts/android/deploy_orchestrator_apk.sh --device "<adb-serial>" --action restart_component --component vpn --skip-build
 bash orchestrator/scripts/android/deploy_orchestrator_apk.sh --device "<adb-serial>" --action restart_component --component train_bot --skip-build
 bash orchestrator/scripts/android/deploy_orchestrator_apk.sh --device "<adb-serial>" --action restart_component --component site_notifier --skip-build
+bash orchestrator/scripts/android/deploy_orchestrator_apk.sh --device "<adb-serial>" --action restart_component --component ticket_screen --skip-build
 ```
 
 <a id="hard-cutover"></a>

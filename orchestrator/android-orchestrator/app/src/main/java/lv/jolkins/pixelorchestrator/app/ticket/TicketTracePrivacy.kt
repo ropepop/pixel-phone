@@ -81,7 +81,8 @@ internal object TicketTracePrivacy {
     "wake_", "fast_public_open_", "root_"
   )
   private val exactEvents = setOf(
-    "ticket_state_event", "ticket_slider_start_unknown", "vivi_hard_reset", "secure_capture_blocked"
+    "ticket_state_event", "ticket_slider_start_unknown", "vivi_hard_reset",
+    "vivi_reauth_package_clear", "secure_capture_blocked"
   )
   private val fixedValues = mapOf(
     "level" to setOf("info", "warn", "error"),

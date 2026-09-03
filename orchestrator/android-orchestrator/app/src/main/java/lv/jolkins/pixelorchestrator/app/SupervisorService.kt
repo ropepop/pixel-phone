@@ -714,7 +714,13 @@ class SupervisorService : Service() {
     private const val DEFERRED_TOUCH_BRIGHTNESS_RESUME_TRIGGER = "deferred_touch_brightness_resume"
     private const val PORTRAIT_LOCK_MAINTENANCE_INTERVAL_MILLIS = 10_000L
     private const val FREQUENT_MAINTENANCE_INTERVAL_MILLIS = 60L * 60L * 1_000L
-    private const val FREQUENT_MAINTENANCE_STARTUP_GRACE_MILLIS = 1_000L
+    // A standard foreground deploy force-stops this process, restores its service permissions,
+    // and only then dispatches the explicit mutation. Keep maintenance outside that bounded
+    // pre-dispatch window so redeploy/bootstrap always gets first ownership of the mutation lock.
+    private const val STANDARD_DEPLOY_PRE_DISPATCH_BUDGET_MILLIS = 10_000L
+    private const val FREQUENT_MAINTENANCE_STARTUP_MARGIN_MILLIS = 5_000L
+    private const val FREQUENT_MAINTENANCE_STARTUP_GRACE_MILLIS =
+      STANDARD_DEPLOY_PRE_DISPATCH_BUDGET_MILLIS + FREQUENT_MAINTENANCE_STARTUP_MARGIN_MILLIS
     private const val FREQUENT_MAINTENANCE_DEFERRED_RETRY_MILLIS = 60_000L
     private const val TICKET_SERVICE_COMPONENT = "ticket_screen"
     private const val TICKET_SERVICE_MONITOR_INTERVAL_MILLIS = 30_000L

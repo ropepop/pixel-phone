@@ -77,6 +77,7 @@ data class TicketStreamHealth(
   val ticketState: TicketControlStateHealth = TicketControlStateHealth(),
   val streamPipeline: TicketStreamPipeline,
   val controlCodeRequest: TicketControlCodeRequestHealth = TicketControlCodeRequestHealth(),
+  val viviReauth: TicketViviReauthHealth = TicketViviReauthHealth(),
   val rigasSatiksmeBatch: TicketRigasSatiksmeBatchHealth = TicketRigasSatiksmeBatchHealth(),
   val brightnessGuard: TicketBrightnessGuardHealth = TicketBrightnessGuardHealth(),
   val actionPanelDarkLease: TicketActionPanelDarkLeaseHealth = TicketActionPanelDarkLeaseHealth(),

@@ -66,9 +66,24 @@ class TicketTracePrivacyTest {
       "ticket_slider_start_unknown",
       TicketTracePrivacy.eventName("ticket_slider_start_unknown")
     )
+    assertEquals(
+      "vivi_reauth_package_clear",
+      TicketTracePrivacy.eventName("vivi_reauth_package_clear")
+    )
+    assertNull(TicketTracePrivacy.eventName("vivi_reauth_package_clear_extra"))
     assertNull(TicketTracePrivacy.eventName("ticket_slider_start_failed"))
     assertNull(TicketTracePrivacy.eventName("viewer_account_42"))
     assertNull(TicketTracePrivacy.eventName("stream_started token=abc"))
+  }
+
+  @Test
+  fun fullResetTraceKeepsOnlyBoundedClearMetadata() {
+    assertEquals(
+      mapOf("ok" to "true", "duration_ms" to "250"),
+      TicketTracePrivacy.allowlistedFields(
+        "ok=true duration_ms=250 exit_code=0 stdout=Success package=com.pv.vivi"
+      )
+    )
   }
 
   @Test

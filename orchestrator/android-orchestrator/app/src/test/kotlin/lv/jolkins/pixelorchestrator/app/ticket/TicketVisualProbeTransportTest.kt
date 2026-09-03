@@ -71,6 +71,47 @@ class TicketVisualProbeTransportTest {
   }
 
   @Test
+  fun parsesTheDistinctEmptyTimeTicketsStateWithOnlyTheSingleUseTarget() = withEngine { engine ->
+    engine.ingestStderrLine(
+      "CONTROL_CODE_VISUAL result=tickets_time_empty reason=ticket_action probe_id=86 " +
+        "method=ticket_action_visual_probe tickets=24,22,84,33",
+      nowMillis = 4_500L
+    )
+
+    val observation = engine.recentControlCodeVisualProbeAfter(86L, 4_400L)
+      ?.ticketActionObservation
+    assertEquals(TicketVisualPhoneState.TICKETS_TIME_EMPTY, observation?.state)
+    assertNull(observation?.timeTicketsTabBounds)
+    assertEquals(TicketVisualProbeBounds(24, 22, 84, 33), observation?.ticketsTabBounds)
+    assertNull(observation?.sliderBounds)
+    assertTrue(observation?.cards?.isEmpty() == true)
+  }
+
+  @Test
+  fun rejectsEmptyTabStatesWithoutTheirExactOppositeTabTarget() = withEngine { engine ->
+    engine.ingestStderrLine(
+      "CONTROL_CODE_VISUAL result=tickets_time_empty reason=ticket_action probe_id=87 " +
+        "method=ticket_action_visual_probe",
+      nowMillis = 4_600L
+    )
+    assertNull(engine.recentControlCodeVisualProbeAfter(87L, 4_500L)?.ticketActionObservation)
+
+    engine.ingestStderrLine(
+      "CONTROL_CODE_VISUAL result=tickets_time_empty reason=ticket_action probe_id=88 " +
+        "method=ticket_action_visual_probe tickets=24,22,84,33 time=114,22,164,33",
+      nowMillis = 4_700L
+    )
+    assertNull(engine.recentControlCodeVisualProbeAfter(88L, 4_600L)?.ticketActionObservation)
+
+    engine.ingestStderrLine(
+      "CONTROL_CODE_VISUAL result=tickets_single_use_empty reason=ticket_action probe_id=89 " +
+        "method=ticket_action_visual_probe tickets=24,22,84,33 time=114,22,164,33",
+      nowMillis = 4_800L
+    )
+    assertNull(engine.recentControlCodeVisualProbeAfter(89L, 4_700L)?.ticketActionObservation)
+  }
+
+  @Test
   fun rejectsWrongProbeIdAndPreRequestObservation() = withEngine { engine ->
     engine.ingestStderrLine(
       "CONTROL_CODE_VISUAL result=unactivated_detail reason=ticket_action probe_id=82 " +

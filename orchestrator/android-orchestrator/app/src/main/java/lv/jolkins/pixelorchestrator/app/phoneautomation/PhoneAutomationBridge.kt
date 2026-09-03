@@ -19,8 +19,10 @@ import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
+import java.util.concurrent.atomic.AtomicLong
 
 data class PhoneAutomationObservedNotification(
   val key: String,
@@ -88,6 +90,18 @@ data class PhoneAutomationRootPhysicalTouchState(
   val observedAtUptimeMillis: Long = 0L
 )
 
+data class PhoneAutomationFocusedInputWindow(
+  val packageName: String,
+  val windowId: Int
+)
+
+data class PhoneAutomationTicketInputFence(
+  val packageName: String,
+  val windowId: Int,
+  val accessibilityGeneration: Long,
+  val touchGeneration: Long
+)
+
 @Serializable
 data class PhoneAutomationVisibleNode(
   val text: String,
@@ -100,7 +114,8 @@ data class PhoneAutomationVisibleNode(
   val focused: Boolean = false,
   val editable: Boolean = false,
   val focusable: Boolean = false,
-  val hint: String = ""
+  val hint: String = "",
+  val password: Boolean = false
 )
 
 internal interface PhoneAutomationAccessibilityHost {
@@ -147,6 +162,10 @@ internal interface PhoneAutomationAccessibilityHost {
     expectedPackageName: String
   ): List<PhoneAutomationVisibleNode> = emptyList()
 
+  suspend fun snapshotFocusedInputWindow(
+    expectedPackageName: String
+  ): PhoneAutomationFocusedInputWindow? = null
+
   suspend fun setTextInFocusedInput(
     expectedPackageName: String,
     text: String,
@@ -163,6 +182,36 @@ internal interface PhoneAutomationAccessibilityHost {
     text: String,
     timeoutMillis: Long
   ): Boolean
+
+  suspend fun setViviLoginFieldText(
+    expectedPackageName: String,
+    field: PhoneAutomationViviLoginField,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean = false
+
+  suspend fun submitViviLogin(
+    expectedPackageName: String,
+    timeoutMillis: Long
+  ): Boolean = false
+
+  suspend fun classifyViviAuthSurface(
+    expectedPackageName: String
+  ): PhoneAutomationViviAuthSurface = PhoneAutomationViviAuthSurface.UNKNOWN
+
+  suspend fun classifyViviLogoutSurface(
+    expectedPackageName: String
+  ): PhoneAutomationViviLogoutSurface = PhoneAutomationViviLogoutSurface.UNKNOWN
+
+  suspend fun clickViviLogoutRouteTarget(
+    expectedPackageName: String,
+    target: PhoneAutomationViviLogoutClickTarget,
+    timeoutMillis: Long
+  ): Boolean = false
+
+  suspend fun scrollViviAccountDetailsOnce(
+    expectedPackageName: String
+  ): Boolean = false
 
   suspend fun setViviControlCodeTextWithoutKeyboard(
     expectedPackageName: String,
@@ -205,6 +254,27 @@ internal interface PhoneAutomationAccessibilityHost {
     timeoutMillis: Long
   ): TicketSliderGestureDispatchResult = TicketSliderGestureDispatchResult.REJECTED
 
+  suspend fun performTicketSliderFullStrokeFenced(
+    expectedPackageName: String,
+    expectedWindowId: Int,
+    expectedAccessibilityGeneration: Long = -1L,
+    expectedTouchGeneration: Long = -1L,
+    startX: Int,
+    startY: Int,
+    endX: Int,
+    endY: Int,
+    durationMillis: Long,
+    timeoutMillis: Long
+  ): TicketSliderGestureDispatchResult = performTicketSliderFullStroke(
+    expectedPackageName,
+    startX,
+    startY,
+    endX,
+    endY,
+    durationMillis,
+    timeoutMillis
+  )
+
   suspend fun performBack(): Boolean
 }
 
@@ -218,6 +288,8 @@ object PhoneAutomationServiceBridge {
   }
 
   private val accessibilityService = MutableStateFlow<PhoneAutomationAccessibilityHost?>(null)
+  private val accessibilityGeneration = AtomicLong(0L)
+  private val accessibilityTouchGeneration = AtomicLong(0L)
   private val notificationListenerConnected = MutableStateFlow(false)
   private val notificationSnapshotReady = MutableStateFlow(false)
   private val foregroundPackage = MutableStateFlow<String?>(null)
@@ -252,6 +324,7 @@ object PhoneAutomationServiceBridge {
   val notificationListenerAvailability: Flow<Boolean> = notificationListenerConnected
 
   internal fun bindAccessibilityService(service: PhoneAutomationAccessibilityHost) {
+    accessibilityGeneration.incrementAndGet()
     accessibilityService.value = service
     service.syncBlackoutOverlayVisibility(blackoutOverlayRequested.value && !blackoutOverlaySuppressed.value)
     service.syncPanelSleepBrightnessShieldVisibility(panelSleepBrightnessShieldRequested.value)
@@ -259,6 +332,7 @@ object PhoneAutomationServiceBridge {
 
   internal fun unbindAccessibilityService(service: PhoneAutomationAccessibilityHost) {
     if (accessibilityService.value === service) {
+      accessibilityGeneration.incrementAndGet()
       accessibilityService.value = null
     }
     foregroundPackage.value = null
@@ -313,11 +387,13 @@ object PhoneAutomationServiceBridge {
   }
 
   fun recordTouchInteractionStarted(observedAtMillis: Long = System.currentTimeMillis()) {
+    accessibilityTouchGeneration.incrementAndGet()
     touchInteractionActive.value = true
     rawTouchEvents.tryEmit(PhoneAutomationTouchEvent.Started(observedAtMillis))
   }
 
   fun recordTouchInteractionEnded(observedAtMillis: Long = System.currentTimeMillis()) {
+    accessibilityTouchGeneration.incrementAndGet()
     touchInteractionActive.value = false
     rawTouchEvents.tryEmit(PhoneAutomationTouchEvent.Ended(observedAtMillis))
   }
@@ -574,6 +650,63 @@ object PhoneAutomationServiceBridge {
     }.orEmpty()
   }
 
+  suspend fun awaitStableTicketInputFence(
+    expectedPackageName: String,
+    timeoutMillis: Long,
+    stableMillis: Long = 120L,
+    elapsedRealtimeMillis: () -> Long = SystemClock::elapsedRealtime
+  ): PhoneAutomationTicketInputFence? {
+    val deadline = elapsedRealtimeMillis() + timeoutMillis.coerceAtLeast(1L)
+    var previous: PhoneAutomationTicketInputFence? = null
+    while (elapsedRealtimeMillis() < deadline) {
+      val current = captureTicketInputFence(expectedPackageName)
+      if (current != null && current == previous) return current
+      previous = current
+      delay(minOf(stableMillis.coerceAtLeast(1L), (deadline - elapsedRealtimeMillis()).coerceAtLeast(1L)))
+    }
+    return null
+  }
+
+  suspend fun ticketInputFenceIsCurrent(fence: PhoneAutomationTicketInputFence): Boolean {
+    return captureTicketInputFence(fence.packageName) == fence
+  }
+
+  private suspend fun captureTicketInputFence(
+    expectedPackageName: String
+  ): PhoneAutomationTicketInputFence? {
+    if (expectedPackageName.isBlank() || touchInteractionActive.value) return null
+    val service = accessibilityService.value ?: return null
+    val connectionGeneration = accessibilityGeneration.get()
+    val touchGeneration = accessibilityTouchGeneration.get()
+    val window = withTimeoutOrNull(ACCESSIBILITY_SNAPSHOT_TIMEOUT_MILLIS) {
+      service.snapshotFocusedInputWindow(expectedPackageName)
+    } ?: return null
+    if (
+      accessibilityService.value !== service ||
+      accessibilityGeneration.get() != connectionGeneration ||
+      accessibilityTouchGeneration.get() != touchGeneration ||
+      touchInteractionActive.value ||
+      window.packageName != expectedPackageName ||
+      window.windowId < 0
+    ) return null
+    return PhoneAutomationTicketInputFence(
+      packageName = expectedPackageName,
+      windowId = window.windowId,
+      accessibilityGeneration = connectionGeneration,
+      touchGeneration = touchGeneration
+    )
+  }
+
+  internal fun ticketInputFenceGenerationsAreCurrent(
+    expectedPackageName: String,
+    expectedAccessibilityGeneration: Long,
+    expectedTouchGeneration: Long
+  ): Boolean = expectedPackageName.isNotBlank() &&
+    accessibilityService.value != null &&
+    accessibilityGeneration.get() == expectedAccessibilityGeneration &&
+    accessibilityTouchGeneration.get() == expectedTouchGeneration &&
+    !touchInteractionActive.value
+
   suspend fun setTextInFocusedInput(
     expectedPackageName: String,
     text: String,
@@ -603,6 +736,61 @@ object PhoneAutomationServiceBridge {
     val service = accessibilityService.value ?: return false
     return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
       service.setTextInFirstEditableInput(expectedPackageName, text, timeoutMillis)
+    } ?: false
+  }
+
+  suspend fun setViviLoginFieldText(
+    expectedPackageName: String,
+    field: PhoneAutomationViviLoginField,
+    text: String,
+    timeoutMillis: Long
+  ): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
+      service.setViviLoginFieldText(expectedPackageName, field, text, timeoutMillis)
+    } ?: false
+  }
+
+  suspend fun submitViviLogin(expectedPackageName: String, timeoutMillis: Long): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
+      service.submitViviLogin(expectedPackageName, timeoutMillis)
+    } ?: false
+  }
+
+  suspend fun classifyViviAuthSurface(
+    expectedPackageName: String
+  ): PhoneAutomationViviAuthSurface {
+    val service = accessibilityService.value ?: return PhoneAutomationViviAuthSurface.UNKNOWN
+    return withTimeoutOrNull(ACCESSIBILITY_SNAPSHOT_TIMEOUT_MILLIS) {
+      service.classifyViviAuthSurface(expectedPackageName)
+    } ?: PhoneAutomationViviAuthSurface.UNKNOWN
+  }
+
+  suspend fun classifyViviLogoutSurface(
+    expectedPackageName: String
+  ): PhoneAutomationViviLogoutSurface {
+    val service = accessibilityService.value ?: return PhoneAutomationViviLogoutSurface.UNKNOWN
+    return withTimeoutOrNull(ACCESSIBILITY_SNAPSHOT_TIMEOUT_MILLIS) {
+      service.classifyViviLogoutSurface(expectedPackageName)
+    } ?: PhoneAutomationViviLogoutSurface.UNKNOWN
+  }
+
+  suspend fun clickViviLogoutRouteTarget(
+    expectedPackageName: String,
+    target: PhoneAutomationViviLogoutClickTarget,
+    timeoutMillis: Long
+  ): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
+      service.clickViviLogoutRouteTarget(expectedPackageName, target, timeoutMillis)
+    } ?: false
+  }
+
+  suspend fun scrollViviAccountDetailsOnce(expectedPackageName: String): Boolean {
+    val service = accessibilityService.value ?: return false
+    return withTimeoutOrNull(ACCESSIBILITY_SNAPSHOT_TIMEOUT_MILLIS) {
+      service.scrollViviAccountDetailsOnce(expectedPackageName)
     } ?: false
   }
 
@@ -668,13 +856,24 @@ object PhoneAutomationServiceBridge {
     endX: Int,
     endY: Int,
     durationMillis: Long,
-    timeoutMillis: Long
+    timeoutMillis: Long,
+    expectedInputFence: PhoneAutomationTicketInputFence? = null
   ): TicketSliderGestureDispatchResult {
     val service = accessibilityService.value
       ?: return TicketSliderGestureDispatchResult.REJECTED
+    if (expectedInputFence != null) {
+      if (accessibilityGeneration.get() != expectedInputFence.accessibilityGeneration ||
+        accessibilityTouchGeneration.get() != expectedInputFence.touchGeneration ||
+        touchInteractionActive.value ||
+        expectedInputFence.packageName != expectedPackageName
+      ) return TicketSliderGestureDispatchResult.REJECTED
+    }
     return withTimeoutOrNull(timeoutMillis.accessibilityCallTimeoutMillis()) {
-      service.performTicketSliderFullStroke(
+      service.performTicketSliderFullStrokeFenced(
         expectedPackageName,
+        expectedInputFence?.windowId ?: -1,
+        expectedInputFence?.accessibilityGeneration ?: -1L,
+        expectedInputFence?.touchGeneration ?: -1L,
         startX,
         startY,
         endX,

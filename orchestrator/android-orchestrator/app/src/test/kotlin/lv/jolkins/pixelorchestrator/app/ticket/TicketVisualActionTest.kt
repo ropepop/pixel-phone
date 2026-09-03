@@ -39,25 +39,17 @@ class TicketVisualActionTest {
   }
 
   @Test
-  fun acceptsOnlyTheExactSpacetimeNoTransitionRetryChild() {
+  fun rejectsServerRetryChildrenAndKeepsRetryInsideTheSameAction() {
     val parent = "register-parent"
     val child = "$parent-retry-1"
-    val valid = """{"version":3,"actionId":"$child","target":"register_current","attemptId":"$parent","expectedInteractionRevision":"revision-7","parentActionId":"$parent","rootActionId":"$parent","retryOrdinal":1,"retryProofStreamEpoch":"41","retryProofFrameSequence":"52"}"""
-    val parsed = parse(valid)
+    val childPayload = """{"version":3,"actionId":"$child","target":"register_current","attemptId":"$parent","expectedInteractionRevision":"revision-7","parentActionId":"$parent","retryOrdinal":1}"""
+    assertNull(parse(childPayload))
 
-    assertEquals(child, parsed?.actionId)
-    assertEquals(parent, parsed?.attemptId)
-    assertEquals(TicketVisualActionTarget.REGISTER_CURRENT, parsed?.target)
-
-    listOf(
-      valid.replace("\"retryOrdinal\":1", "\"retryOrdinal\":2"),
-      valid.replace("\"parentActionId\":\"$parent\"", "\"parentActionId\":\"other\""),
-      valid.replace("\"rootActionId\":\"$parent\"", "\"rootActionId\":\"other\""),
-      valid.replace("\"actionId\":\"$child\"", "\"actionId\":\"$parent-arbitrary\""),
-      valid.replace("\"retryProofStreamEpoch\":\"41\"", "\"retryProofStreamEpoch\":\"0\""),
-      valid.replace("\"retryProofFrameSequence\":\"52\"", "\"retryProofFrameSequence\":\"missing\""),
-      valid.replace("\"target\":\"register_current\"", "\"target\":\"open_latest_and_register\"")
-    ).forEach { rejected -> assertNull(parse(rejected)) }
+    val sameAction = parse(
+      """{"version":3,"actionId":"$parent","target":"register_current","attemptId":"$parent","expectedInteractionRevision":"revision-7"}"""
+    )
+    assertEquals(parent, sameAction?.actionId)
+    assertEquals(parent, sameAction?.attemptId)
   }
 
   @Test
@@ -430,6 +422,35 @@ class TicketVisualActionTest {
   }
 
   @Test
+  fun freshRouteAgreementCannotCombineDifferentSelectedBottomTabs() {
+    val first = TicketVisualActionObservation(
+      probeId = 1,
+      state = TicketVisualPhoneState.VIVI_OTHER_TAB,
+      bottomTab = TicketViviBottomTab.TICKETS
+    )
+    val second = first.copy(probeId = 2)
+
+    assertTrue(ticketVisualObservationsAgree(first, second))
+    assertFalse(
+      ticketVisualObservationsAgree(
+        first,
+        second.copy(bottomTab = TicketViviBottomTab.MENU)
+      )
+    )
+    val detail = first.copy(
+      state = TicketVisualPhoneState.UNACTIVATED_DETAIL,
+      currentAnchor = "detail-a",
+      sliderBounds = TicketVisualProbeBounds(10, 20, 180, 42)
+    )
+    assertTrue(
+      ticketVisualObservationsAgree(
+        detail,
+        detail.copy(bottomTab = TicketViviBottomTab.MENU)
+      )
+    )
+  }
+
+  @Test
   fun viviHomeAgreementRequiresTheSameTicketsTabGeometry() {
     val first = TicketVisualActionObservation(
       probeId = 1,
@@ -497,6 +518,46 @@ class TicketVisualActionTest {
   }
 
   @Test
+  fun emptyTimeTicketsShellAllowsOnlyRedetectionToRecheckSingleUse() {
+    val bounds = TicketVisualProbeBounds(24, 22, 84, 33)
+    val observation = TicketVisualActionObservation(
+      probeId = 1,
+      state = TicketVisualPhoneState.TICKETS_TIME_EMPTY,
+      ticketsTabBounds = bounds
+    )
+
+    TicketVisualActionTarget.entries.forEach { target ->
+      assertEquals(
+        if (target == TicketVisualActionTarget.REDETECT_LATEST) bounds else null,
+        observation.singleUseTicketsNavigationBoundsFor(target)
+      )
+    }
+    assertNull(observation.copy(state = TicketVisualPhoneState.UNKNOWN)
+      .singleUseTicketsNavigationBoundsFor(TicketVisualActionTarget.REDETECT_LATEST))
+  }
+
+  @Test
+  fun emptyTimeTicketsAgreementRequiresTheSameSingleUseTabGeometry() {
+    val bounds = TicketVisualProbeBounds(24, 22, 84, 33)
+    val first = TicketVisualActionObservation(
+      probeId = 1,
+      state = TicketVisualPhoneState.TICKETS_TIME_EMPTY,
+      ticketsTabBounds = bounds
+    )
+    val settled = first.copy(
+      probeId = 2,
+      ticketsTabBounds = TicketVisualProbeBounds(23, 23, 85, 32)
+    )
+
+    assertTrue(ticketVisualObservationsAgree(first, settled))
+    assertFalse(ticketVisualObservationsAgree(
+      first,
+      settled.copy(ticketsTabBounds = TicketVisualProbeBounds(40, 23, 100, 32))
+    ))
+    assertFalse(ticketVisualObservationsAgree(first, settled.copy(ticketsTabBounds = null)))
+  }
+
+  @Test
   fun ticketListAgreementRequiresTheSameAnchorsLatestChoiceAndGeometry() {
     val card = TicketVisualCardAnchor(
       anchor = "opaque-latest",
@@ -549,6 +610,31 @@ class TicketVisualActionTest {
     assertEquals(
       12L,
       consensus.offer(first.copy(probeId = 12))?.probeId
+    )
+  }
+
+  @Test
+  fun observationConsensusIgnoresTransientUnknownBeforeLoginProof() {
+    val consensus = TicketVisualObservationConsensus()
+
+    assertNull(consensus.offer(
+      TicketVisualActionObservation(1, TicketVisualPhoneState.UNKNOWN),
+      allowUnknown = false
+    ))
+    assertNull(consensus.offer(
+      TicketVisualActionObservation(2, TicketVisualPhoneState.UNKNOWN),
+      allowUnknown = false
+    ))
+    assertNull(consensus.offer(
+      TicketVisualActionObservation(3, TicketVisualPhoneState.LOGIN_REQUIRED),
+      allowUnknown = false
+    ))
+    assertEquals(
+      TicketVisualPhoneState.LOGIN_REQUIRED,
+      consensus.offer(
+        TicketVisualActionObservation(4, TicketVisualPhoneState.LOGIN_REQUIRED),
+        allowUnknown = false
+      )?.state
     )
   }
 
@@ -696,15 +782,14 @@ class TicketVisualActionTest {
       probeId = 11,
       state = TicketVisualPhoneState.UNACTIVATED_DETAIL,
       currentAnchor = "detail-a",
-      sliderBounds = TicketVisualProbeBounds(10, 20, 180, 42)
+      sliderBounds = TicketVisualProbeBounds(10, 20, 180, 42),
+      bottomTab = TicketViviBottomTab.TICKETS
     )
 
     val admitted = ticketRegistrationProofForCurrentVisualAction(
       proof,
       request,
-      currentDetail,
-      currentStreamEpoch = 7,
-      currentFrameSequence = 12
+      currentDetail
     )
     assertEquals(proof, admitted.proof)
     assertNull(admitted.failureReason)
@@ -713,9 +798,7 @@ class TicketVisualActionTest {
     val admittedScheduledProof = ticketRegistrationProofForCurrentVisualAction(
       scheduledProof,
       request,
-      currentDetail,
-      currentStreamEpoch = 7,
-      currentFrameSequence = 12
+      currentDetail
     )
     assertEquals(proof, admittedScheduledProof.proof)
     assertNull(admittedScheduledProof.failureReason)
@@ -737,9 +820,7 @@ class TicketVisualActionTest {
       val rejected = ticketRegistrationProofForCurrentVisualAction(
         proof.copy(interactionRevision = rejectedRevision),
         request,
-        currentDetail,
-        currentStreamEpoch = 7,
-        currentFrameSequence = 12
+        currentDetail
       )
       assertNull(rejectedRevision, rejected.proof)
       assertEquals(
@@ -752,9 +833,7 @@ class TicketVisualActionTest {
     val changedIdentity = ticketRegistrationProofForCurrentVisualAction(
       proof,
       request,
-      currentDetail.copy(currentAnchor = "different-detail"),
-      7,
-      12
+      currentDetail.copy(currentAnchor = "different-detail")
     )
     assertNull(changedIdentity.proof)
     assertEquals("ticket_action_detail_identity_conflict", changedIdentity.failureReason)
@@ -762,9 +841,7 @@ class TicketVisualActionTest {
     val blankIdentity = ticketRegistrationProofForCurrentVisualAction(
       proof,
       request,
-      currentDetail.copy(currentAnchor = ""),
-      7,
-      12
+      currentDetail.copy(currentAnchor = "")
     )
     assertNull(blankIdentity.proof)
     assertEquals("ticket_action_detail_identity_conflict", blankIdentity.failureReason)
@@ -775,16 +852,24 @@ class TicketVisualActionTest {
     assertEquals(idleIdentityProof, ticketRegistrationProofForCurrentVisualAction(
       idleIdentityProof,
       request,
-      currentDetail,
-      7,
-      12
+      currentDetail
+    ).proof)
+    // Ticket detail is a full-screen overlay with no bottom navigation. A guessed yellow region
+    // must not decide whether the exact browser-authorized ticket can reach the preparation fence.
+    assertEquals(proof, ticketRegistrationProofForCurrentVisualAction(
+      proof,
+      request,
+      currentDetail.copy(bottomTab = TicketViviBottomTab.NONE)
+    ).proof)
+    assertEquals(proof, ticketRegistrationProofForCurrentVisualAction(
+      proof,
+      request,
+      currentDetail.copy(bottomTab = TicketViviBottomTab.HOME)
     ).proof)
     val invalidWatermark = ticketRegistrationProofForCurrentVisualAction(
       proof.copy(streamEpoch = 0, frameSequence = 0),
       request,
-      currentDetail,
-      7,
-      12
+      currentDetail
     )
     assertNull(invalidWatermark.proof)
     assertEquals("ticket_action_interaction_revision_unproved", invalidWatermark.failureReason)
@@ -983,16 +1068,38 @@ class TicketVisualActionTest {
       request,
       TicketVisualActionObservation(6, TicketVisualPhoneState.UNKNOWN)
     ))
+
+    val redetect = parse(
+      """{"version":3,"actionId":"a","target":"redetect_latest","source":"test","reason":"test","attemptId":""}"""
+    )!!
+    assertTrue(ticketVisualJournalReconciled(
+      journal.copy(target = redetect.target.wireName),
+      redetect,
+      TicketVisualActionObservation(
+        probeId = 7,
+        state = TicketVisualPhoneState.TICKETS_TIME_EMPTY,
+        ticketsTabBounds = TicketVisualProbeBounds(24, 22, 84, 33)
+      )
+    ))
+    assertFalse(ticketVisualJournalReconciled(
+      journal,
+      request,
+      TicketVisualActionObservation(
+        probeId = 8,
+        state = TicketVisualPhoneState.TICKETS_TIME_EMPTY,
+        ticketsTabBounds = TicketVisualProbeBounds(24, 22, 84, 33)
+      )
+    ))
   }
 
   @Test
-  fun restartJournalRequiresARealTicketListAfterTheTimeTabTap() {
+  fun restartJournalAcceptsOnlyTheDistinctEmptyTimeTabForRedetection() {
     val request = parse(
-      """{"version":3,"actionId":"a","target":"open_latest_unactivated","source":"test","reason":"test","attemptId":""}"""
+      """{"version":3,"actionId":"a","target":"redetect_latest","source":"test","reason":"test","attemptId":""}"""
     )!!
     val journal = TicketVisualActionJournalState(
       actionId = "a",
-      target = "open_latest_unactivated",
+      target = "redetect_latest",
       phase = "navigation_dispatched",
       navigationFromState = "tickets_single_use_empty",
       navigationToState = "ticket_list"
@@ -1008,6 +1115,240 @@ class TicketVisualActionTest {
       request,
       TicketVisualActionObservation(4, TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY)
     ))
+    assertTrue(ticketVisualJournalReconciled(
+      journal,
+      request,
+      TicketVisualActionObservation(5, TicketVisualPhoneState.TICKETS_TIME_EMPTY)
+    ))
+
+    val openRequest = parse(
+      """{"version":3,"actionId":"a","target":"open_latest_unactivated","source":"test","reason":"test","attemptId":""}"""
+    )!!
+    assertFalse(ticketVisualJournalReconciled(
+      journal.copy(target = "open_latest_unactivated"),
+      openRequest,
+      TicketVisualActionObservation(6, TicketVisualPhoneState.TICKETS_TIME_EMPTY)
+    ))
+  }
+
+  @Test
+  fun repeatedRedetectionReprovesBothTabsAndCrashReconcilesEachTap() {
+    val request = parse(
+      """{"version":3,"actionId":"repeat","target":"redetect_latest","source":"test","reason":"test","attemptId":""}"""
+    )!!
+    val backToSingleUse = TicketVisualActionJournalState(
+      actionId = "repeat",
+      target = "redetect_latest",
+      phase = "navigation_dispatched",
+      navigationFromState = "tickets_time_empty",
+      navigationToState = "ticket_list"
+    )
+    assertTrue(ticketVisualJournalReconciled(
+      backToSingleUse,
+      request,
+      TicketVisualActionObservation(
+        probeId = 3,
+        state = TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY,
+        timeTicketsTabBounds = TicketVisualProbeBounds(114, 22, 164, 33)
+      )
+    ))
+    // If a Single-use ticket appeared since the last cycle, the same owned tap may instead prove
+    // a non-empty list and normal latest-card discovery resumes.
+    assertTrue(ticketVisualJournalReconciled(
+      backToSingleUse,
+      request,
+      TicketVisualActionObservation(4, TicketVisualPhoneState.TICKET_LIST)
+    ))
+    assertFalse(ticketVisualJournalReconciled(
+      backToSingleUse,
+      request,
+      TicketVisualActionObservation(
+        probeId = 5,
+        state = TicketVisualPhoneState.TICKETS_TIME_EMPTY,
+        ticketsTabBounds = TicketVisualProbeBounds(24, 22, 84, 33)
+      )
+    ))
+
+    val forwardToTime = backToSingleUse.copy(
+      navigationFromState = "tickets_single_use_empty"
+    )
+    val emptyTime = TicketVisualActionObservation(
+      probeId = 6,
+      state = TicketVisualPhoneState.TICKETS_TIME_EMPTY,
+      ticketsTabBounds = TicketVisualProbeBounds(24, 22, 84, 33)
+    )
+    assertTrue(ticketVisualJournalReconciled(forwardToTime, request, emptyTime))
+    assertTrue(ticketVisualRedetectLatestNotDetectedObservation(
+      request.target,
+      TicketVisualPhoneState.fromWireName(forwardToTime.navigationFromState),
+      emptyTime
+    ))
+
+    val otherRequest = parse(
+      """{"version":3,"actionId":"repeat","target":"open_latest_unactivated","source":"test","reason":"test","attemptId":""}"""
+    )!!
+    assertFalse(ticketVisualJournalReconciled(
+      backToSingleUse.copy(target = otherRequest.target.wireName),
+      otherRequest,
+      TicketVisualActionObservation(
+        probeId = 7,
+        state = TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY,
+        timeTicketsTabBounds = TicketVisualProbeBounds(114, 22, 164, 33)
+      )
+    ))
+  }
+
+  @Test
+  fun latestNotDetectedProofRequiresOwnedTimeTabTransitionExactEmptyStateAndWatermark() {
+    val emptyTime = TicketVisualActionObservation(
+      probeId = 9,
+      state = TicketVisualPhoneState.TICKETS_TIME_EMPTY,
+      ticketsTabBounds = TicketVisualProbeBounds(24, 22, 84, 33)
+    )
+    assertTrue(ticketVisualRedetectLatestNotDetectedObservation(
+      TicketVisualActionTarget.REDETECT_LATEST,
+      TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY,
+      emptyTime
+    ))
+    assertTrue(ticketVisualRedetectLatestNotDetectedProof(
+      TicketVisualActionTarget.REDETECT_LATEST,
+      TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY,
+      emptyTime,
+      streamEpoch = 4,
+      frameSequence = 12
+    ))
+    assertFalse(ticketVisualRedetectLatestNotDetectedProof(
+      TicketVisualActionTarget.REDETECT_LATEST,
+      TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY,
+      emptyTime,
+      streamEpoch = 0,
+      frameSequence = 12
+    ))
+    assertFalse(ticketVisualRedetectLatestNotDetectedObservation(
+      TicketVisualActionTarget.REDETECT_LATEST,
+      TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY,
+      emptyTime.copy(state = TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY)
+    ))
+    assertFalse(ticketVisualRedetectLatestNotDetectedObservation(
+      TicketVisualActionTarget.OPEN_LATEST_UNACTIVATED,
+      TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY,
+      emptyTime
+    ))
+    assertFalse(ticketVisualRedetectLatestNotDetectedObservation(
+      TicketVisualActionTarget.REDETECT_LATEST,
+      TicketVisualPhoneState.VIVI_HOME,
+      emptyTime
+    ))
+    assertFalse(ticketVisualRedetectLatestNotDetectedObservation(
+      TicketVisualActionTarget.REDETECT_LATEST,
+      TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY,
+      emptyTime.copy(cards = listOf(TicketVisualCardAnchor(
+        anchor = "opaque",
+        bounds = TicketVisualProbeBounds(8, 40, 184, 120),
+        latest = true
+      )))
+    ))
+    val conflictingBounds = TicketVisualProbeBounds(10, 10, 20, 20)
+    listOf(
+      emptyTime.copy(controlCodeBounds = conflictingBounds),
+      emptyTime.copy(backBounds = conflictingBounds),
+      emptyTime.copy(ticketsTabBounds = null),
+      emptyTime.copy(timeTicketsTabBounds = conflictingBounds),
+      emptyTime.copy(sliderBounds = conflictingBounds)
+    ).forEach { conflict ->
+      assertFalse(ticketVisualRedetectLatestNotDetectedObservation(
+        TicketVisualActionTarget.REDETECT_LATEST,
+        TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY,
+        conflict
+      ))
+    }
+  }
+
+  @Test
+  fun latestNotDetectedTerminalProofShapeRejectsEveryAdjacentTerminal() {
+    val valid = TicketVisualActionSnapshot(
+      actionId = "redetect-1",
+      target = TicketVisualActionTarget.REDETECT_LATEST.wireName,
+      status = "failed",
+      phase = "failed",
+      currentView = TicketVisualActionView.UNKNOWN,
+      streamEpoch = 4,
+      frameSequence = 12,
+      reason = "ticket_action_latest_not_detected",
+      terminal = true,
+      ok = false
+    )
+    assertTrue(ticketVisualLatestNotDetectedTerminalHasBoundProof(valid))
+    listOf(
+      valid.copy(ok = true),
+      valid.copy(terminal = false),
+      valid.copy(status = "needs_attention"),
+      valid.copy(phase = "needs_attention"),
+      valid.copy(target = TicketVisualActionTarget.OPEN_LATEST_UNACTIVATED.wireName),
+      valid.copy(currentView = TicketVisualActionView.LATEST_UNACTIVATED),
+      valid.copy(reason = "ticket_action_visual_unproved"),
+      valid.copy(streamEpoch = 0),
+      valid.copy(frameSequence = 0),
+      valid.copy(sliderRegion = TicketSliderRegionV3(
+        proofActionId = "redetect-1",
+        streamEpoch = 4,
+        frameSequence = 12,
+        leftBasisPoints = 100,
+        topBasisPoints = 100,
+        rightBasisPoints = 200,
+        bottomBasisPoints = 200
+      ))
+    ).forEach { adjacent ->
+      assertFalse(adjacent.toString(), ticketVisualLatestNotDetectedTerminalHasBoundProof(adjacent))
+    }
+  }
+
+  @Test
+  fun retainedLatestNotDetectedNeverBackfillsOrReplaysMissingProof() {
+    val request = parse(
+      """{"version":3,"actionId":"redetect-1","target":"redetect_latest","source":"test","reason":"test","attemptId":""}"""
+    )!!
+    val valid = TicketVisualActionJournalState(
+      actionId = "redetect-1",
+      target = TicketVisualActionTarget.REDETECT_LATEST.wireName,
+      phase = "terminal",
+      streamEpoch = 4,
+      frameSequence = 12,
+      terminalStatus = "failed",
+      terminalReason = "ticket_action_latest_not_detected",
+      terminalView = TicketVisualActionView.UNKNOWN.wireName,
+      completedAt = "2026-09-02T00:00:00Z",
+      terminalOk = false
+    )
+    assertTrue(ticketVisualLatestNotDetectedJournalHasBoundProof(valid))
+    val replay = retainedTicketVisualTerminalSnapshot(valid, request, 9, 99)!!
+    assertFalse(replay.ok)
+    assertEquals("failed", replay.status)
+    assertEquals("failed", replay.phase)
+    assertEquals("ticket_action_latest_not_detected", replay.reason)
+    assertEquals(4L, replay.streamEpoch)
+    assertEquals(12L, replay.frameSequence)
+    assertFalse(replay.switchAvailable)
+
+    val invalid = listOf(
+      valid.copy(streamEpoch = 0),
+      valid.copy(frameSequence = 0),
+      valid.copy(terminalStatus = "needs_attention"),
+      valid.copy(terminalView = TicketVisualActionView.LATEST_UNACTIVATED.wireName),
+      valid.copy(terminalOk = true),
+      valid.copy(sliderLeftBasisPoints = 100)
+    )
+    invalid.forEach { journal ->
+      assertFalse(journal.toString(), ticketVisualLatestNotDetectedJournalHasBoundProof(journal))
+      val rejected = retainedTicketVisualTerminalSnapshot(journal, request, 9, 99)!!
+      assertFalse(rejected.ok)
+      assertEquals("needs_attention", rejected.status)
+      assertEquals("needs_attention", rejected.phase)
+      assertEquals("ticket_action_frame_watermark_unproved", rejected.reason)
+      assertEquals(0L, rejected.streamEpoch)
+      assertEquals(0L, rejected.frameSequence)
+      assertFalse(rejected.switchAvailable)
+    }
   }
 
   @Test
@@ -1051,6 +1392,82 @@ class TicketVisualActionTest {
     assertTrue(replay.switchAvailable)
     assertEquals("2026-08-25T02:00:00Z", replay.switchExpiresAt)
     assertFalse(retained.navigationDispatchUncertain)
+  }
+
+  @Test
+  fun terminalJournalRebuildsTheExactIdempotentFinalizerEnvelope() {
+    val journal = TicketVisualActionJournalState(
+      commandId = "ticket:pixel:action-a",
+      commandRevision = "command-revision",
+      actionId = "action-a",
+      target = TicketVisualActionTarget.REGISTER_CURRENT.wireName,
+      phase = "terminal",
+      streamEpoch = 9,
+      frameSequence = 12,
+      terminalStatus = "needs_attention",
+      terminalPhase = "outcome_unknown",
+      terminalReason = "ticket_action_gesture_completion_uncertain",
+      terminalView = TicketVisualActionView.UNKNOWN.wireName,
+      activationRevision = "must-not-replay-on-failure",
+      activationAttemptId = "action-a",
+      completedAt = "2026-08-24T00:00:00Z",
+      terminalOk = false
+    )
+
+    val envelope = requireNotNull(ticketActionFinalizationEnvelope(journal))
+    assertEquals("ticket:pixel:action-a", envelope.commandId)
+    assertEquals("command-revision", envelope.commandRevision)
+    assertEquals("outcome_unknown", envelope.action.phase)
+    assertEquals("action-a", envelope.action.activationAttemptId)
+    assertEquals("", envelope.action.activationRevision)
+    assertFalse(envelope.action.ok)
+  }
+
+  @Test
+  fun terminalWithoutAStableCompletionTimeCannotBypassRestaging() {
+    val journal = TicketVisualActionJournalState(
+      commandId = "ticket:pixel:action-a",
+      commandRevision = "command-revision",
+      actionId = "action-a",
+      target = TicketVisualActionTarget.REGISTER_CURRENT.wireName,
+      phase = "terminal",
+      terminalStatus = "needs_attention",
+      terminalPhase = "not_dispatched",
+      terminalReason = "ticket_action_visual_unproved",
+      terminalView = TicketVisualActionView.UNKNOWN.wireName,
+      activationAttemptId = "action-a",
+      completedAt = ""
+    )
+
+    assertEquals(null, ticketActionFinalizationEnvelope(journal))
+  }
+
+  @Test
+  fun activationExpiryRefreshCorrelationSurvivesTerminalNetworkLoss() {
+    val journal = TicketVisualActionJournalState(
+      commandId = "ticket:pixel:refresh-a",
+      commandRevision = "schedule:refresh-a",
+      flow = "activation_expiry_reset",
+      refreshActivationAttemptId = "activation-a",
+      refreshActivationRevision = "activation-revision-a",
+      actionId = "refresh-a",
+      target = TicketVisualActionTarget.OPEN_LATEST_UNACTIVATED.wireName,
+      phase = "terminal",
+      streamEpoch = 9,
+      frameSequence = 12,
+      terminalStatus = "succeeded",
+      terminalPhase = "complete",
+      terminalReason = "ticket_action_target_visible",
+      terminalView = TicketVisualActionView.LATEST_UNACTIVATED.wireName,
+      completedAt = "2026-08-24T00:00:00Z",
+      terminalOk = true
+    )
+
+    val envelope = requireNotNull(ticketActionFinalizationEnvelope(journal))
+    assertEquals("activation_expiry_reset", envelope.flow)
+    assertEquals("activation-a", envelope.refreshActivationAttemptId)
+    assertEquals("activation-revision-a", envelope.refreshActivationRevision)
+    assertEquals("schedule:refresh-a", envelope.commandRevision)
   }
 
   @Test
@@ -1290,15 +1707,15 @@ class TicketVisualActionTest {
     val original = TicketVisualSwitchAnchors(
       recentActivatedAnchor = "activated-original"
     )
-    val differentUnused = TicketVisualActionObservation(
+    val differentActivated = TicketVisualActionObservation(
       probeId = 4,
-      state = TicketVisualPhoneState.UNACTIVATED_DETAIL,
-      currentAnchor = "unused-different"
+      state = TicketVisualPhoneState.ACTIVATED_DETAIL,
+      currentAnchor = "activated-different"
     )
-    assertFalse(ticketVisualCheckpointMatchesActivatedAnchor(differentUnused, original))
+    assertFalse(ticketVisualCheckpointMatchesActivatedAnchor(differentActivated, original))
     assertEquals("activated-original", original.recentActivatedAnchor)
     assertTrue(ticketVisualCheckpointMatchesActivatedAnchor(
-      differentUnused.copy(state = TicketVisualPhoneState.ACTIVATED_DETAIL, currentAnchor = "activated-original"),
+      differentActivated.copy(currentAnchor = "activated-original"),
       original
     ))
   }

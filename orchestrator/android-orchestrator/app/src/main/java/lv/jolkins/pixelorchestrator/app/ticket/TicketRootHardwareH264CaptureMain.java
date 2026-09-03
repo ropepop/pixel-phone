@@ -1087,7 +1087,10 @@ public final class TicketRootHardwareH264CaptureMain {
         TicketVisualActionClassifier.Result result = ticketCurrentOnly
           ? TicketVisualActionClassifier.classifyCurrent(pixels)
           : TicketVisualActionClassifier.classify(pixels);
-        String wire = result.wire();
+        String selectedBottomTab =
+          TicketVisualActionClassifier.selectedBottomNavigationTab(pixels);
+        String wire = result.wire() +
+          (selectedBottomTab.isEmpty() ? "" : " bottom_tab=" + selectedBottomTab);
         long registrationCards = result.cards.stream()
           .filter(card -> card.registrationBounds != null)
           .count();

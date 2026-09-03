@@ -29,10 +29,17 @@ internal object TicketFastOpenVisualReadinessPolicy {
       recoveryState = TicketViviRecoveryState.TICKET_LIST_EMPTY,
       step = "fast_open_current_visual_tickets_single_use_empty_ready"
     )
-    TicketVisualPhoneState.VIVI_HOME -> TicketFastOpenVisualReadinessDecision(
+    TicketVisualPhoneState.TICKETS_TIME_EMPTY -> TicketFastOpenVisualReadinessDecision(
+      success = true,
+      recoveryState = TicketViviRecoveryState.TICKET_LIST_EMPTY,
+      step = "fast_open_current_visual_tickets_time_empty_ready"
+    )
+    TicketVisualPhoneState.VIVI_HOME,
+    TicketVisualPhoneState.VIVI_PROFILE,
+    TicketVisualPhoneState.VIVI_OTHER_TAB -> TicketFastOpenVisualReadinessDecision(
       success = true,
       recoveryState = TicketViviRecoveryState.OTHER_VIVI_TAB,
-      step = "fast_open_current_visual_vivi_home_ready"
+      step = "fast_open_current_visual_vivi_navigation_ready"
     )
     TicketVisualPhoneState.LOGIN_REQUIRED -> TicketFastOpenVisualReadinessDecision(
       success = true,

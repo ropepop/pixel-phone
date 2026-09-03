@@ -30,13 +30,22 @@ public final class TicketVisualActionClassifier {
     String wire() { return left + "," + top + "," + right + "," + bottom; }
   }
 
-  private static final class EmptySingleUseTicketsDetection {
+  private static final class EmptyTicketsDetection {
+    final Bounds singleUseTabTarget;
     final Bounds timeTabTarget;
     final Bounds timeLabelGlyph;
+    final boolean timeTicketsSelected;
 
-    EmptySingleUseTicketsDetection(Bounds timeTabTarget, Bounds timeLabelGlyph) {
+    EmptyTicketsDetection(
+      Bounds singleUseTabTarget,
+      Bounds timeTabTarget,
+      Bounds timeLabelGlyph,
+      boolean timeTicketsSelected
+    ) {
+      this.singleUseTabTarget = singleUseTabTarget;
       this.timeTabTarget = timeTabTarget;
       this.timeLabelGlyph = timeLabelGlyph;
+      this.timeTicketsSelected = timeTicketsSelected;
     }
   }
 
@@ -119,13 +128,50 @@ public final class TicketVisualActionClassifier {
   private static final class ViviHomeDetection {
     final Bounds ticketsTabBounds;
     final String diagnostic;
-    final boolean strongShellFallback;
 
-    ViviHomeDetection(Bounds ticketsTabBounds, String diagnostic, boolean strongShellFallback) {
+    ViviHomeDetection(Bounds ticketsTabBounds, String diagnostic) {
       this.ticketsTabBounds = ticketsTabBounds;
       this.diagnostic = diagnostic;
-      this.strongShellFallback = strongShellFallback;
     }
+  }
+
+  private static final class ViviProfileDetection {
+    final boolean proved;
+    final String diagnostic;
+
+    ViviProfileDetection(boolean proved, String diagnostic) {
+      this.proved = proved;
+      this.diagnostic = diagnostic;
+    }
+  }
+
+  private static final class ViviOtherTabDetection {
+    final boolean proved;
+
+    ViviOtherTabDetection(boolean proved) {
+      this.proved = proved;
+    }
+  }
+
+  private static final class NavigationGlyphStats {
+    int pixels = 0;
+    int left = SAMPLE_WIDTH;
+    int top = SAMPLE_HEIGHT;
+    int right = -1;
+    int bottom = -1;
+
+    void add(int x, int y) {
+      pixels += 1;
+      left = Math.min(left, x);
+      top = Math.min(top, y);
+      right = Math.max(right, x + 1);
+      bottom = Math.max(bottom, y + 1);
+    }
+
+    int width() { return right - left; }
+    int height() { return bottom - top; }
+    int area() { return width() * height(); }
+    boolean present() { return right > left && bottom > top; }
   }
 
   private TicketVisualActionClassifier() {}
@@ -137,6 +183,24 @@ public final class TicketVisualActionClassifier {
   /** Detail-only proof path: deliberately skips ticket-list glyph/date recognition. */
   public static Result classifyCurrent(int[] pixels) {
     return classify(pixels, false);
+  }
+
+  /**
+   * Returns the one proved selected ViVi bottom tab without consulting any page-body pixels.
+   *
+   * <p>Exactly one lower glyph must be orange and the other three must independently retain
+   * their neutral silhouettes. This route-only result is carried beside the richer Ticket view
+   * classification so changing news, cards, headers, and account content cannot redirect the
+   * non-destructive account flow.</p>
+   */
+  public static String selectedBottomNavigationTab(int[] pixels) {
+    int[] geometryPixels = geometryPixels(pixels);
+    if (geometryPixels == null) return "";
+    if (detectViviHome(geometryPixels).ticketsTabBounds != null) return "home";
+    if (detectViviProfile(geometryPixels).proved) return "profile";
+    if (detectViviOtherBottomTab(geometryPixels, false).proved) return "menu";
+    if (detectViviOtherBottomTab(geometryPixels, true).proved) return "tickets";
+    return "";
   }
 
   private static Result classify(int[] pixels, boolean resolveTicketList) {
@@ -168,6 +232,29 @@ public final class TicketVisualActionClassifier {
     boolean hasTicketDetailBase = activated.equals(TicketControlCodeVisualClassifier.RAW_TICKET);
     boolean hasStrongDetailChrome = hasTicketDetailBase || back != null;
 
+    // Preserve the primary classifier's blocker-sensitive precedence for every existing Ticket
+    // action. The body-independent route authority is exposed separately by
+    // selectedBottomNavigationTab() and must never turn a popup, login, or detail view into a
+    // generic navigation state.
+    ViviHomeDetection home = detectViviHome(geometryPixels);
+    boolean homeBlocked = home.ticketsTabBounds != null && blocksViviHomeProof(
+      ordinary,
+      activated,
+      slider,
+      geometryPixels
+    );
+    if (home.ticketsTabBounds != null && !homeBlocked) {
+      return new Result(
+        "vivi_home",
+        "",
+        null,
+        null,
+        null,
+        home.ticketsTabBounds,
+        new ArrayList<>()
+      );
+    }
+
     // The current list can contain a large ticket card whose orange action button and nearby dark
     // marker resemble the detail slider after reduction. Prove the separated tab underline and
     // card-header bands first, then keep all list-shaped frames out of the detail fallback.
@@ -193,51 +280,31 @@ public final class TicketVisualActionClassifier {
       return unknown();
     }
 
-    EmptySingleUseTicketsDetection emptySingleUseTickets =
-      detectEmptySingleUseTicketsTimeTab(geometryPixels);
-    Bounds timeTicketsTab = emptySingleUseTickets == null
+    EmptyTicketsDetection emptyTickets = detectEmptyTicketsTabs(geometryPixels);
+    Bounds timeTicketsTab = emptyTickets == null
       ? null
-      : emptySingleUseTickets.timeTabTarget;
+      : emptyTickets.timeTabTarget;
     // The right Time-tickets label can resemble the compact detail X after the high-resolution
     // header contrast pass. Suppress that conflict only when the candidate's centre stays inside
     // the unpadded label glyph and no native sample phase proves a real X. A genuine X at the same
     // location or elsewhere remains a blocker, as do popup, result, login, slider, and every shell
     // conflict.
     boolean closeIsAbsentOrTimeLabelAlias = back == null ||
-      isTimeTicketsLabelCloseAlias(pixels, back, emptySingleUseTickets);
-    if (timeTicketsTab != null && slider.isEmpty() && !hasTicketDetailBase &&
+      isTimeTicketsLabelCloseAlias(pixels, back, emptyTickets);
+    if (emptyTickets != null && slider.isEmpty() && !hasTicketDetailBase &&
       closeIsAbsentOrTimeLabelAlias &&
       !looksLikeLogin(geometryPixels) &&
       !ordinary.equals(TicketControlCodeVisualClassifier.CONTROL_POPUP) &&
       !ordinary.equals(TicketControlCodeVisualClassifier.GENERATED)
     ) {
       return new Result(
-        "tickets_single_use_empty",
+        emptyTickets.timeTicketsSelected ? "tickets_time_empty" : "tickets_single_use_empty",
         "",
         null,
         null,
         null,
-        null,
-        timeTicketsTab,
-        new ArrayList<>()
-      );
-    }
-
-    ViviHomeDetection home = detectViviHome(geometryPixels);
-    boolean homeFallbackBlocked = home.strongShellFallback && blocksViviHomeStrongShellFallback(
-      ordinary,
-      activated,
-      slider,
-      geometryPixels
-    );
-    if (home.ticketsTabBounds != null && !homeFallbackBlocked) {
-      return new Result(
-        "vivi_home",
-        "",
-        null,
-        null,
-        null,
-        home.ticketsTabBounds,
+        emptyTickets.timeTicketsSelected ? emptyTickets.singleUseTabTarget : null,
+        emptyTickets.timeTicketsSelected ? null : timeTicketsTab,
         new ArrayList<>()
       );
     }
@@ -274,6 +341,12 @@ public final class TicketVisualActionClassifier {
     if (ordinary.equals(TicketControlCodeVisualClassifier.CONTROL_POPUP) ||
       ordinary.equals(TicketControlCodeVisualClassifier.GENERATED)) {
       return new Result("blocked", "", null, null, null, new ArrayList<>());
+    }
+    if (detectViviProfile(geometryPixels).proved) {
+      return new Result("vivi_profile", "", null, null, null, new ArrayList<>());
+    }
+    if (detectViviOtherBottomTab(geometryPixels, false).proved) {
+      return new Result("vivi_other_tab", "", null, null, null, new ArrayList<>());
     }
     return unknown();
   }
@@ -332,12 +405,12 @@ public final class TicketVisualActionClassifier {
       TicketControlCodeVisualClassifier.SAMPLE_HEIGHT
     );
     ViviHomeDetection home = detectViviHome(geometryPixels);
-    String homeDiagnostic = home.strongShellFallback && blocksViviHomeStrongShellFallback(
+    String homeDiagnostic = home.ticketsTabBounds != null && blocksViviHomeProof(
       TicketControlCodeVisualClassifier.classify(compact),
       TicketControlCodeVisualClassifier.classifyForActivatedTicket(compact),
       TicketControlCodeVisualClassifier.registrationSliderBounds(compact),
       geometryPixels
-    ) ? "reject_strong_shell_blocked" : home.diagnostic;
+    ) ? "reject_blocked_surface" : home.diagnostic;
     return TicketControlCodeVisualClassifier.registrationSliderDiagnostic(compact) +
       "_date_probe_disabled_registration_bands_" + Math.min(yellowBands(geometryPixels).size(), 9) +
       "_vivi_home_gate_" + homeDiagnostic;
@@ -729,18 +802,20 @@ public final class TicketVisualActionClassifier {
   }
 
   /**
-   * Proves the current empty Single-use Tickets shell and returns only the Time-tickets tab.
+   * Proves an empty Tickets shell and distinguishes the selected tab.
    *
-   * <p>This is a bounded chrome/silhouette proof, not text recognition. It requires the left-only
-   * selected underline, both tab-label silhouettes, the short wide empty-state silhouette, the
+   * <p>This is a bounded chrome/silhouette proof, not text recognition. It requires exactly one
+   * selected tab underline, both tab-label silhouettes, the short wide empty-state silhouette, the
    * lower navigation shell, and the selected Tickets glyph. The ordinary path proves the full
    * lower separator. If source-to-probe sampling loses only that one-pixel divider, a narrow
    * fallback additionally requires the neutral Home, Profile, and Menu glyphs with no competing
-   * selected glyph. Any card/action color below the tabs, a selected Time tab, a selected Home tab,
-   * an overlay, or redesigned geometry fails closed. The returned bounds are centred on the proved
-   * unselected right-tab label.</p>
+   * selected glyph. Any card/action color below the tabs, a selected Home tab, an overlay, or
+   * redesigned geometry fails closed. The returned target is centred on the proved unselected
+   * opposite label: Time-tickets from the Single-use state, or Single-use from the distinct
+   * {@code tickets_time_empty} state. The caller still gates each direction by typed state and
+   * command target.</p>
    */
-  private static EmptySingleUseTicketsDetection detectEmptySingleUseTicketsTimeTab(int[] pixels) {
+  private static EmptyTicketsDetection detectEmptyTicketsTabs(int[] pixels) {
     if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT) return null;
 
     int[] backgroundLuminances = new int[SAMPLE_WIDTH * 24];
@@ -754,7 +829,7 @@ public final class TicketVisualActionClassifier {
     int background = backgroundLuminances[backgroundLuminances.length / 2];
 
     int selectedSingleUseRows = 0;
-    int selectedTimePixels = 0;
+    int selectedTimeRows = 0;
     for (int y = 33; y <= 40; y++) {
       int longestLeftRun = 0;
       int longestLeftRunStart = -1;
@@ -778,11 +853,32 @@ public final class TicketVisualActionClassifier {
         longestLeftRunStart >= 8 && longestLeftRunStart <= 18 &&
         longestLeftRunEnd >= 90 && longestLeftRunEnd <= 102
       ) selectedSingleUseRows += 1;
-      for (int x = 100; x < SAMPLE_WIDTH - 5; x++) {
-        if (isRegistrationColor(pixels[y * SAMPLE_WIDTH + x])) selectedTimePixels += 1;
+      int longestRightRun = 0;
+      int longestRightRunStart = -1;
+      int currentRightRun = 0;
+      int currentRightRunStart = -1;
+      for (int x = 90; x < SAMPLE_WIDTH - 5; x++) {
+        if (isRegistrationColor(pixels[y * SAMPLE_WIDTH + x])) {
+          if (currentRightRun == 0) currentRightRunStart = x;
+          currentRightRun += 1;
+          if (currentRightRun > longestRightRun) {
+            longestRightRun = currentRightRun;
+            longestRightRunStart = currentRightRunStart;
+          }
+        } else {
+          currentRightRun = 0;
+          currentRightRunStart = -1;
+        }
       }
+      int longestRightRunEnd = longestRightRunStart + longestRightRun;
+      if (longestRightRun >= 60 && longestRightRun <= 95 &&
+        longestRightRunStart >= 90 && longestRightRunStart <= 110 &&
+        longestRightRunEnd >= 175 && longestRightRunEnd <= 187
+      ) selectedTimeRows += 1;
     }
-    if (selectedSingleUseRows < 1 || selectedSingleUseRows > 4 || selectedTimePixels > 8) {
+    boolean singleUseSelected = selectedSingleUseRows >= 1 && selectedSingleUseRows <= 4;
+    boolean timeTicketsSelected = selectedTimeRows >= 1 && selectedTimeRows <= 4;
+    if (singleUseSelected == timeTicketsSelected) {
       return null;
     }
 
@@ -930,26 +1026,33 @@ public final class TicketVisualActionClassifier {
       timeLabelRight,
       timeLabelBottom
     );
-    return new EmptySingleUseTicketsDetection(
-      new Bounds(
-        Math.max(100, timeLabelLeft - 4),
-        Math.max(18, timeLabelTop - 4),
-        Math.min(184, timeLabelRight + 4),
-        Math.min(34, timeLabelBottom + 4)
-      ),
-      timeLabelGlyph
+    return new EmptyTicketsDetection(
+      timeTicketsSelected ? new Bounds(
+          Math.max(10, leftLabelLeft - 4),
+          Math.max(18, leftLabelTop - 4),
+          Math.min(100, leftLabelRight + 4),
+          Math.min(34, leftLabelBottom + 4)
+        ) : null,
+      timeTicketsSelected ? null : new Bounds(
+          Math.max(100, timeLabelLeft - 4),
+          Math.max(18, timeLabelTop - 4),
+          Math.min(184, timeLabelRight + 4),
+          Math.min(34, timeLabelBottom + 4)
+        ),
+      timeLabelGlyph,
+      timeTicketsSelected
     );
   }
 
   private static boolean isTimeTicketsLabelCloseAlias(
     int[] originalPixels,
     Bounds close,
-    EmptySingleUseTicketsDetection emptySingleUseTickets
+    EmptyTicketsDetection emptyTickets
   ) {
     if (originalPixels == null || originalPixels.length != PROBE_WIDTH * PROBE_HEIGHT ||
-      close == null || emptySingleUseTickets == null
+      close == null || emptyTickets == null
     ) return false;
-    Bounds timeLabel = emptySingleUseTickets.timeLabelGlyph;
+    Bounds timeLabel = emptyTickets.timeLabelGlyph;
     int centerX = (close.left + close.right - 1) / 2;
     int centerY = (close.top + close.bottom - 1) / 2;
     if (centerX < timeLabel.left || centerX >= timeLabel.right ||
@@ -986,26 +1089,17 @@ public final class TicketVisualActionClassifier {
   /**
    * Proves the current ViVi route-planning home and returns only the bottom Tickets-tab target.
    *
-   * <p>The proof is deliberately independent of text. Its ordinary path requires the full-width
-   * lower navigation separator, a selected orange Home glyph, and a separate neutral Tickets
-   * glyph. When source-to-probe scaling loses only that thin separator, the fallback additionally
-   * requires the wide route-search action plus the neutral Profile and Menu glyphs. A selected
-   * Tickets tab, partial redraw, overlay, or arbitrary orange content band therefore cannot
-   * authorize this navigation tap. The returned diagnostic is one bounded gate code with no
-   * pixels, text, coordinates, or ticket data.</p>
+   * <p>The proof deliberately ignores all dynamic page content above the bottom navigation. It
+   * requires the orange selected Home glyph plus separate neutral Tickets, Profile, and Menu
+   * glyphs in their fixed bottom-navigation regions. A selected peer tab, missing or ambiguous
+   * peer, navigation overlay, login, or blocker therefore cannot authorize this navigation tap.
+   * The returned diagnostic is one bounded gate code with no pixels, text, coordinates, or ticket
+   * data.</p>
    */
   private static ViviHomeDetection detectViviHome(int[] pixels) {
     if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT) {
       return rejectViviHome("invalid_probe");
     }
-
-    int wideRouteActionRows = 0;
-    for (int y = 160; y <= 224; y++) {
-      if (longestRegistrationRun(pixels, y) >= SAMPLE_WIDTH * 3 / 5) {
-        wideRouteActionRows += 1;
-      }
-    }
-    boolean hasWideRouteAction = wideRouteActionRows >= 6;
 
     int[] bottomLuminances = new int[SAMPLE_WIDTH * 22];
     int bottomIndex = 0;
@@ -1017,48 +1111,42 @@ public final class TicketVisualActionClassifier {
     Arrays.sort(bottomLuminances);
     int navigationBackground = bottomLuminances[bottomLuminances.length / 2];
 
-    int separatorRow = -1;
-    for (int y = 250; y <= 260; y++) {
-      int contrastingNeutral = 0;
-      for (int x = 2; x < SAMPLE_WIDTH - 2; x++) {
-        int pixel = pixels[y * SAMPLE_WIDTH + x];
-        if (saturation(pixel) <= 64 &&
-          Math.abs(luminance(pixel) - navigationBackground) >= 24
-        ) {
-          contrastingNeutral += 1;
-        }
-      }
-      if (contrastingNeutral >= SAMPLE_WIDTH * 3 / 4) {
-        separatorRow = y;
-      }
-    }
-    boolean separatorProved = separatorRow >= 0;
-    if (!separatorProved && !hasWideRouteAction) {
-      return rejectViviHome("separator_unproved");
-    }
-
     int selectedHomePixels = 0;
+    int selectedHomeLeft = 38;
+    int selectedHomeTop = 283;
+    int selectedHomeRight = -1;
+    int selectedHomeBottom = -1;
     for (int y = 258; y < 283; y++) {
       for (int x = 8; x < 38; x++) {
-        if (isRegistrationColor(pixels[y * SAMPLE_WIDTH + x])) selectedHomePixels += 1;
+        if (!isRegistrationColor(pixels[y * SAMPLE_WIDTH + x])) continue;
+        selectedHomePixels += 1;
+        selectedHomeLeft = Math.min(selectedHomeLeft, x);
+        selectedHomeTop = Math.min(selectedHomeTop, y);
+        selectedHomeRight = Math.max(selectedHomeRight, x + 1);
+        selectedHomeBottom = Math.max(selectedHomeBottom, y + 1);
       }
     }
-    // The current Pixel route root renders the selected Home control as a thin anti-aliased
-    // outline. After the shared source crop is bilinearly reduced to the 384x576 action probe and
-    // then bounded to 192x288, a live frame can retain only a few orange samples. Four are accepted
-    // only when the separator itself was lost and the independently proved wide route action plus
-    // all neutral peer-navigation glyphs survive. The ordinary strong-route and action-less paths
-    // keep their existing six- and twelve-sample thresholds respectively.
-    int minimumSelectedHomePixels = !separatorProved ? 4 : hasWideRouteAction ? 6 : 12;
-    if (selectedHomePixels < minimumSelectedHomePixels) {
-      return rejectViviHome(
-        !separatorProved
-          ? "selected_home_sparse_fallback"
-          : hasWideRouteAction ? "selected_home_sparse_route" : "selected_home_sparse_shell"
-      );
+    // The current selected Home outline retains fourteen orange samples after the two bounded
+    // production reductions. Six retain margin for antialiasing drift while still requiring all
+    // three peer-navigation glyphs below to be independently present and neutral.
+    if (selectedHomePixels < 6) {
+      return rejectViviHome("selected_home_sparse");
+    }
+    int selectedHomeWidth = selectedHomeRight - selectedHomeLeft;
+    int selectedHomeHeight = selectedHomeBottom - selectedHomeTop;
+    int selectedHomeArea = selectedHomeWidth * selectedHomeHeight;
+    if (selectedHomePixels > 96 ||
+      selectedHomeWidth < 4 || selectedHomeWidth > 24 ||
+      selectedHomeHeight < 3 || selectedHomeHeight > 20 ||
+      selectedHomeArea < 20 ||
+      selectedHomePixels * 100 > selectedHomeArea * 65
+    ) {
+      return rejectViviHome("selected_home_shape");
     }
 
-    int ticketTop = separatorProved ? Math.max(258, separatorRow + 2) : 258;
+    // Peer glyphs begin below the optional separator. Starting at 262 ignores that thin dynamic
+    // edge without requiring it to exist or measuring any content above navigation.
+    int ticketTop = 262;
     int selectedTicketPixels = 0;
     boolean[] neutralTicket = new boolean[SAMPLE_WIDTH * SAMPLE_HEIGHT];
     for (int y = ticketTop; y < 283; y++) {
@@ -1072,7 +1160,7 @@ public final class TicketVisualActionClassifier {
         }
       }
     }
-    if (selectedTicketPixels > 6) return rejectViviHome("selected_ticket_conflict");
+    if (selectedTicketPixels >= 4) return rejectViviHome("selected_ticket_conflict");
 
     boolean[] visited = new boolean[neutralTicket.length];
     boolean[] ticketGlyph = new boolean[neutralTicket.length];
@@ -1168,63 +1256,256 @@ public final class TicketVisualActionClassifier {
     if (leftThirdInk < 3) return rejectViviHome("ticket_left_edge_sparse");
     if (rightThirdInk < 3) return rejectViviHome("ticket_right_edge_sparse");
 
-    // Require the remaining two neutral navigation glyphs when either the wide action is absent
-    // or its thin separator was lost. One Home/Tickets-like pair is not sufficient authority for
-    // either compatibility path.
-    if (!hasWideRouteAction || !separatorProved) {
-      // A malformed Tickets shell can also show Home selected and all neutral peer glyphs. Its
-      // bounded tab underline remains visible near the top and must never be reinterpreted as the
-      // route root merely because the selected bottom icon changed during a partial redraw.
-      if (hasTicketTabUnderlineConflict(pixels)) {
-        return rejectViviHome("peer_tab_conflict");
-      }
-      String peerRejection = neutralProfileAndMenuRejection(
-        pixels,
-        navigationBackground,
-        ticketTop
-      );
-      if (!peerRejection.isEmpty()) return rejectViviHome(peerRejection);
-    }
+    String peerRejection = neutralProfileAndMenuRejection(
+      pixels,
+      navigationBackground,
+      ticketTop
+    );
+    if (!peerRejection.isEmpty()) return rejectViviHome(peerRejection);
 
     // Input uses the box centre. Returning the proved silhouette rather than the whole tab keeps
     // the mapped device tap centred on the live Tickets glyph (about x=405 on the current Pixel).
     return new ViviHomeDetection(
       new Bounds(glyphLeft, glyphTop, glyphRight, glyphBottom),
-      separatorProved ? "proved" : "proved_strong_shell_fallback",
-      !separatorProved
+      "proved_bottom_navigation"
     );
   }
 
   private static ViviHomeDetection rejectViviHome(String diagnostic) {
-    return new ViviHomeDetection(null, "reject_" + diagnostic, false);
+    return new ViviHomeDetection(null, "reject_" + diagnostic);
   }
 
   /**
-   * Separates the thin, stable selected Tickets-tab underline from the current tall news banner.
-   * The banner crosses the same bounded rows but contains five or more fragmented orange rows with
-   * sharply different run lengths. Only a short consecutive band with stable width is a conflict.
+   * Proves that Profile is the one selected ViVi bottom tab.
+   *
+   * <p>Only the fixed lower navigation participates. The profile glyph must be orange while Home,
+   * Tickets, and Menu remain separately present and neutral; the page body is deliberately ignored.
+   * This is the logout workflow's authority to inspect account controls, not generic Ticket tap
+   * authority.</p>
    */
-  private static boolean hasTicketTabUnderlineConflict(int[] pixels) {
-    int qualifyingRows = 0;
-    int firstRow = -1;
-    int lastRow = -1;
-    int minimumRun = Integer.MAX_VALUE;
-    int maximumRun = 0;
-    for (int y = 33; y <= 40; y++) {
-      int run = longestRegistrationRun(pixels, y);
-      if (run < 10 || run > 112) continue;
-      if (firstRow < 0) firstRow = y;
-      lastRow = y;
-      qualifyingRows += 1;
-      minimumRun = Math.min(minimumRun, run);
-      maximumRun = Math.max(maximumRun, run);
+  private static ViviProfileDetection detectViviProfile(int[] pixels) {
+    if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT) {
+      return rejectViviProfile("invalid_probe");
     }
-    return qualifyingRows >= 1 && qualifyingRows <= 4 &&
-      lastRow - firstRow + 1 == qualifyingRows &&
-      maximumRun - minimumRun <= 12;
+    int navigationTop = 262;
+    int[] bottomLuminances = new int[SAMPLE_WIDTH * 22];
+    int bottomIndex = 0;
+    for (int y = navigationTop; y < 284; y++) {
+      for (int x = 0; x < SAMPLE_WIDTH; x++) {
+        bottomLuminances[bottomIndex++] = luminance(pixels[y * SAMPLE_WIDTH + x]);
+      }
+    }
+    Arrays.sort(bottomLuminances);
+    int navigationBackground = bottomLuminances[bottomLuminances.length / 2];
+
+    NavigationGlyphStats selectedProfile = navigationGlyphStats(
+      pixels,
+      navigationBackground,
+      navigationTop,
+      106,
+      140,
+      true
+    );
+    if (!selectedProfile.present() || selectedProfile.pixels < 8 ||
+      selectedProfile.pixels > 180 || selectedProfile.width() < 7 ||
+      selectedProfile.width() > 24 || selectedProfile.height() < 7 ||
+      selectedProfile.height() > 22 || selectedProfile.area() < 49 ||
+      selectedProfile.pixels * 100 > selectedProfile.area() * 70
+    ) return rejectViviProfile("selected_profile_shape");
+
+    int selectedPeerPixels = selectedNavigationPixels(pixels, navigationTop, 8, 40) +
+      selectedNavigationPixels(pixels, navigationTop, 46, 84) +
+      selectedNavigationPixels(pixels, navigationTop, 152, 186);
+    if (selectedPeerPixels >= 4) return rejectViviProfile("peer_selected_conflict");
+
+    NavigationGlyphStats home = navigationGlyphStats(
+      pixels,
+      navigationBackground,
+      navigationTop,
+      8,
+      40,
+      false
+    );
+    if (!home.present() || home.pixels < 6 || home.pixels > 96 ||
+      home.width() < 4 || home.width() > 24 || home.height() < 3 || home.height() > 20 ||
+      home.area() < 20 || home.pixels * 100 > home.area() * 65
+    ) return rejectViviProfile("peer_home_shape");
+
+    NavigationGlyphStats tickets = navigationGlyphStats(
+      pixels,
+      navigationBackground,
+      navigationTop,
+      46,
+      84,
+      false
+    );
+    if (!tickets.present() || tickets.pixels < 12 || tickets.pixels > 180 ||
+      tickets.width() < 14 || tickets.width() > 30 || tickets.height() < 5 ||
+      tickets.height() > 14 || tickets.area() < 70 ||
+      tickets.pixels * 100 < tickets.area() * 8 ||
+      tickets.pixels * 100 > tickets.area() * 65
+    ) return rejectViviProfile("peer_ticket_shape");
+
+    int menuRows = 0;
+    NavigationGlyphStats menu = new NavigationGlyphStats();
+    for (int y = navigationTop; y < 283; y++) {
+      int run = 0;
+      int longestRun = 0;
+      for (int x = 152; x < 186; x++) {
+        int pixel = pixels[y * SAMPLE_WIDTH + x];
+        if (isNeutralNavigationInk(pixel, navigationBackground)) {
+          run += 1;
+          longestRun = Math.max(longestRun, run);
+          menu.add(x, y);
+        } else {
+          run = 0;
+        }
+      }
+      if (longestRun >= 10) menuRows += 1;
+    }
+    if (!menu.present() || menuRows < 2 || menuRows > 8 || menu.pixels < 20 ||
+      menu.width() < 10 || menu.width() > 30
+    ) return rejectViviProfile("peer_menu_shape");
+    return new ViviProfileDetection(true, "proved_bottom_navigation");
   }
 
-  private static boolean blocksViviHomeStrongShellFallback(
+  private static ViviProfileDetection rejectViviProfile(String diagnostic) {
+    return new ViviProfileDetection(false, "reject_" + diagnostic);
+  }
+
+  /**
+   * Proves either the Tickets or Menu lower tab as selected while the other three glyphs remain
+   * neutral. The two routes deliberately share one state: re-authentication only needs proof that
+   * it may select Profile, and no Ticket action is authorized from this generic state.
+   */
+  private static ViviOtherTabDetection detectViviOtherBottomTab(
+    int[] pixels,
+    boolean ticketsSelected
+  ) {
+    if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT) {
+      return new ViviOtherTabDetection(false);
+    }
+    int navigationTop = 262;
+    int[] bottomLuminances = new int[SAMPLE_WIDTH * 22];
+    int bottomIndex = 0;
+    for (int y = navigationTop; y < 284; y++) {
+      for (int x = 0; x < SAMPLE_WIDTH; x++) {
+        bottomLuminances[bottomIndex++] = luminance(pixels[y * SAMPLE_WIDTH + x]);
+      }
+    }
+    Arrays.sort(bottomLuminances);
+    int navigationBackground = bottomLuminances[bottomLuminances.length / 2];
+
+    NavigationGlyphStats home = navigationGlyphStats(
+      pixels, navigationBackground, navigationTop, 8, 40, false
+    );
+    NavigationGlyphStats tickets = navigationGlyphStats(
+      pixels, navigationBackground, navigationTop, 46, 84, ticketsSelected
+    );
+    NavigationGlyphStats profile = navigationGlyphStats(
+      pixels, navigationBackground, navigationTop, 106, 140, false
+    );
+    NavigationGlyphStats menu = navigationGlyphStats(
+      pixels, navigationBackground, navigationTop, 152, 186, !ticketsSelected
+    );
+    if (!validHomeNavigationGlyph(home) || !validTicketNavigationGlyph(tickets) ||
+      !validProfileNavigationGlyph(profile) ||
+      !validMenuNavigationGlyph(pixels, menu, navigationBackground, navigationTop, !ticketsSelected)
+    ) return new ViviOtherTabDetection(false);
+
+    int selectedPeers = selectedNavigationPixels(pixels, navigationTop, 8, 40) +
+      selectedNavigationPixels(pixels, navigationTop, 106, 140) +
+      (ticketsSelected
+        ? selectedNavigationPixels(pixels, navigationTop, 152, 186)
+        : selectedNavigationPixels(pixels, navigationTop, 46, 84));
+    return new ViviOtherTabDetection(selectedPeers < 4);
+  }
+
+  private static boolean validHomeNavigationGlyph(NavigationGlyphStats value) {
+    return value.present() && value.pixels >= 6 && value.pixels <= 96 &&
+      value.width() >= 4 && value.width() <= 24 && value.height() >= 3 &&
+      value.height() <= 20 && value.area() >= 20 &&
+      value.pixels * 100 <= value.area() * 65;
+  }
+
+  private static boolean validTicketNavigationGlyph(NavigationGlyphStats value) {
+    return value.present() && value.pixels >= 12 && value.pixels <= 180 &&
+      value.width() >= 14 && value.width() <= 30 && value.height() >= 5 &&
+      value.height() <= 14 && value.area() >= 70 &&
+      value.pixels * 100 >= value.area() * 8 && value.pixels * 100 <= value.area() * 70;
+  }
+
+  private static boolean validProfileNavigationGlyph(NavigationGlyphStats value) {
+    return value.present() && value.pixels >= 10 && value.pixels <= 180 &&
+      value.width() >= 7 && value.width() <= 24 && value.height() >= 7 &&
+      value.height() <= 22;
+  }
+
+  private static boolean validMenuNavigationGlyph(
+    int[] pixels,
+    NavigationGlyphStats value,
+    int navigationBackground,
+    int navigationTop,
+    boolean selected
+  ) {
+    int rows = 0;
+    for (int y = navigationTop; y < 283; y++) {
+      int run = 0;
+      int longestRun = 0;
+      for (int x = 152; x < 186; x++) {
+        int pixel = pixels[y * SAMPLE_WIDTH + x];
+        boolean ink = selected
+          ? isRegistrationColor(pixel)
+          : isNeutralNavigationInk(pixel, navigationBackground);
+        if (ink) {
+          run += 1;
+          longestRun = Math.max(longestRun, run);
+        } else {
+          run = 0;
+        }
+      }
+      if (longestRun >= 10) rows += 1;
+    }
+    return value.present() && rows >= 2 && rows <= 8 && value.pixels >= 20 &&
+      value.width() >= 10 && value.width() <= 30;
+  }
+
+  private static NavigationGlyphStats navigationGlyphStats(
+    int[] pixels,
+    int navigationBackground,
+    int navigationTop,
+    int left,
+    int right,
+    boolean selected
+  ) {
+    NavigationGlyphStats stats = new NavigationGlyphStats();
+    for (int y = navigationTop; y < 283; y++) {
+      for (int x = left; x < right; x++) {
+        int pixel = pixels[y * SAMPLE_WIDTH + x];
+        if (selected ? isRegistrationColor(pixel) :
+          isNeutralNavigationInk(pixel, navigationBackground)
+        ) stats.add(x, y);
+      }
+    }
+    return stats;
+  }
+
+  private static int selectedNavigationPixels(
+    int[] pixels,
+    int navigationTop,
+    int left,
+    int right
+  ) {
+    int selected = 0;
+    for (int y = navigationTop; y < 283; y++) {
+      for (int x = left; x < right; x++) {
+        if (isRegistrationColor(pixels[y * SAMPLE_WIDTH + x])) selected += 1;
+      }
+    }
+    return selected;
+  }
+
+  private static boolean blocksViviHomeProof(
     String ordinary,
     String activated,
     String slider,
@@ -1264,8 +1545,8 @@ public final class TicketVisualActionClassifier {
         if (isRegistrationColor(pixels[y * SAMPLE_WIDTH + x])) selectedOtherPixels += 1;
       }
     }
-    if (selectedOtherPixels > 6 || profileRight <= profileLeft || profileBottom <= profileTop) {
-      return selectedOtherPixels > 6 ? "peer_selected_conflict" : "peer_profile_missing";
+    if (selectedOtherPixels >= 4 || profileRight <= profileLeft || profileBottom <= profileTop) {
+      return selectedOtherPixels >= 4 ? "peer_selected_conflict" : "peer_profile_missing";
     }
     int profileWidth = profileRight - profileLeft;
     int profileHeight = profileBottom - profileTop;
@@ -1709,7 +1990,61 @@ public final class TicketVisualActionClassifier {
         if (blue > 125 && blue - red > 30 && blue - green > 15) blueButton += 1;
       }
     }
-    return editableWhite > 2_000 && blueButton > 300;
+    if (editableWhite > 2_000 && blueButton > 300) return true;
+    return looksLikeCurrentDarkLogin(pixels);
+  }
+
+  /**
+   * Proves ViVi 1.0.99's current dark login layout without reading rendered text.
+   *
+   * <p>The screen combines three independently bounded shapes which do not occur together on a
+   * ticket: the compact orange ViVi mark, a large neutral two-field panel with almost no orange,
+   * and the edge-to-edge orange guest bar above the system navigation area. Requiring all three
+   * keeps a ticket card, registration slider, or route-home navigation from becoming login proof.</p>
+   */
+  private static boolean looksLikeCurrentDarkLogin(int[] pixels) {
+    int logoOrange = 0;
+    int logoOrangeRows = 0;
+    for (int y = 55; y < 102; y++) {
+      int rowOrange = 0;
+      for (int x = 38; x < 158; x++) {
+        if (isRegistrationColor(pixels[y * SAMPLE_WIDTH + x])) {
+          logoOrange += 1;
+          rowOrange += 1;
+        }
+      }
+      if (rowOrange >= 10) logoOrangeRows += 1;
+    }
+
+    int neutralDarkForm = 0;
+    int formOrange = 0;
+    for (int y = 90; y < 175; y++) {
+      for (int x = 10; x < 182; x++) {
+        int pixel = pixels[y * SAMPLE_WIDTH + x];
+        int lightness = luminance(pixel);
+        if (saturation(pixel) <= 48 && lightness >= 20 && lightness <= 100) {
+          neutralDarkForm += 1;
+        }
+        if (isRegistrationColor(pixel)) formOrange += 1;
+      }
+    }
+
+    int bottomOrange = 0;
+    int bottomWideRows = 0;
+    for (int y = 240; y < 283; y++) {
+      int rowOrange = 0;
+      for (int x = 0; x < SAMPLE_WIDTH; x++) {
+        if (isRegistrationColor(pixels[y * SAMPLE_WIDTH + x])) {
+          bottomOrange += 1;
+          rowOrange += 1;
+        }
+      }
+      if (rowOrange >= 180) bottomWideRows += 1;
+    }
+
+    return logoOrange >= 400 && logoOrange <= 2_000 && logoOrangeRows >= 10 &&
+      neutralDarkForm >= 11_000 && formOrange <= 200 &&
+      bottomOrange >= 3_200 && bottomWideRows >= 16;
   }
 
   private static Bounds scaleBounds(String wire) {

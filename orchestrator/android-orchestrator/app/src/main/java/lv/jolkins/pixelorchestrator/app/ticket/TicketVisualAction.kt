@@ -40,10 +40,18 @@ internal data class TicketVisualActionRequest(
   /** Opaque Spacetime policy revision that admitted a context-switch command. */
   val policyRevision: String,
   /** Spacetime-owned business deadline. Pixel echoes it but never derives a local window. */
-  val switchExpiresAt: String
+  val switchExpiresAt: String,
+  val flow: String = "",
+  val refreshActivationAttemptId: String = "",
+  val refreshActivationRevision: String = "",
+  val commandId: String = "",
+  val commandRevision: String = ""
 ) {
   val hasSpacetimeSwitchAuthority: Boolean
     get() = policyRevision.isNotBlank() && switchExpiresAt.isNotBlank()
+
+  val isActivationExpiryRefresh: Boolean
+    get() = flow == "activation_expiry_reset"
 }
 
 internal data class TicketVisualActionSnapshot(
@@ -76,6 +84,16 @@ internal data class TicketSliderRegionV3(
   val bottomBasisPoints: Int
 )
 
+/** Durable phone-local handoff for one idempotent server settlement. */
+internal data class TicketActionFinalizationEnvelope(
+  val commandId: String,
+  val commandRevision: String,
+  val flow: String,
+  val refreshActivationAttemptId: String,
+  val refreshActivationRevision: String,
+  val action: TicketVisualActionSnapshot
+)
+
 internal data class TicketVisualSwitchAnchors(
   val recentActivatedAnchor: String = "",
   val latestUnactivatedAnchor: String = ""
@@ -86,6 +104,11 @@ internal data class TicketVisualSwitchAnchors(
 }
 
 internal data class TicketVisualActionJournalState(
+  val commandId: String = "",
+  val commandRevision: String = "",
+  val flow: String = "",
+  val refreshActivationAttemptId: String = "",
+  val refreshActivationRevision: String = "",
   val actionId: String = "",
   val target: String = "",
   val phase: String = "",
@@ -99,6 +122,7 @@ internal data class TicketVisualActionJournalState(
   val streamEpoch: Long = 0L,
   val frameSequence: Long = 0L,
   val terminalStatus: String = "",
+  val terminalPhase: String = "",
   val terminalReason: String = "",
   val terminalView: String = "",
   val interactionRevision: String = "",
@@ -155,7 +179,12 @@ internal fun retainedTicketVisualTerminalSnapshot(
   if (!journal.hasRetainedTerminal || journal.actionId != request.actionId ||
     journal.target != request.target.wireName
   ) return null
-  val successfulWatermarkValid = !journal.terminalOk ||
+  val expectedNegativeCandidate = journal.target == TicketVisualActionTarget.REDETECT_LATEST.wireName &&
+    journal.terminalReason == "ticket_action_latest_not_detected"
+  val expectedNegativeValid = !expectedNegativeCandidate ||
+    ticketVisualLatestNotDetectedJournalHasBoundProof(journal)
+  val storedWatermarkRequired = journal.terminalOk || expectedNegativeCandidate
+  val successfulWatermarkValid = !storedWatermarkRequired ||
     journal.streamEpoch > 0L && journal.frameSequence > 0L
   val retainedView = TicketVisualActionView.entries.firstOrNull {
     it.wireName == journal.terminalView
@@ -164,12 +193,31 @@ internal fun retainedTicketVisualTerminalSnapshot(
   // retained success needs the target/view compatibility gate.
   val successfulViewValid = !journal.terminalOk ||
     ticketVisualTerminalViewCompatible(request.target, retainedView)
-  val retainedTerminalValid = successfulWatermarkValid && successfulViewValid
+  val retainedTerminalValid = successfulWatermarkValid && successfulViewValid &&
+    expectedNegativeValid
+  val retainedStreamEpoch = if (expectedNegativeCandidate && !expectedNegativeValid) {
+    0L
+  } else {
+    journal.streamEpoch.takeIf { it > 0L } ?: streamEpoch
+  }
+  val retainedFrameSequence = if (expectedNegativeCandidate && !expectedNegativeValid) {
+    0L
+  } else {
+    journal.frameSequence.takeIf { it > 0L } ?: frameSequence
+  }
   return TicketVisualActionSnapshot(
     actionId = journal.actionId,
     target = journal.target,
-    status = if (retainedTerminalValid) journal.terminalStatus else "needs_attention",
-    phase = if (journal.terminalOk && retainedTerminalValid) {
+    status = when {
+      !retainedTerminalValid -> "needs_attention"
+      request.target.activatesTicket && !journal.terminalOk -> "needs_attention"
+      else -> journal.terminalStatus
+    },
+    phase = if (retainedTerminalValid && journal.terminalPhase.isNotBlank()) {
+      journal.terminalPhase
+    } else if (retainedTerminalValid && request.target.activatesTicket) {
+      if (journal.terminalOk) "activation_proven" else "outcome_unknown"
+    } else if (journal.terminalOk && retainedTerminalValid) {
       "complete"
     } else if (retainedTerminalValid) {
       journal.terminalStatus
@@ -177,15 +225,20 @@ internal fun retainedTicketVisualTerminalSnapshot(
       "needs_attention"
     },
     currentView = retainedView,
-    streamEpoch = journal.streamEpoch.takeIf { it > 0L } ?: streamEpoch,
-    frameSequence = journal.frameSequence.takeIf { it > 0L } ?: frameSequence,
-    switchAvailable = retainedTerminalValid && request.hasSpacetimeSwitchAuthority,
-    switchExpiresAt = if (retainedTerminalValid && request.hasSpacetimeSwitchAuthority) {
+    streamEpoch = retainedStreamEpoch,
+    frameSequence = retainedFrameSequence,
+    switchAvailable = journal.terminalOk && retainedTerminalValid &&
+      request.hasSpacetimeSwitchAuthority,
+    switchExpiresAt = if (journal.terminalOk && retainedTerminalValid &&
+      request.hasSpacetimeSwitchAuthority
+    ) {
       request.switchExpiresAt
     } else {
       ""
     },
     reason = when {
+      expectedNegativeCandidate && !expectedNegativeValid ->
+        "ticket_action_frame_watermark_unproved"
       !successfulWatermarkValid -> "ticket_action_frame_watermark_unproved"
       !successfulViewValid -> "ticket_action_terminal_view_unproved"
       else -> journal.terminalReason
@@ -200,7 +253,18 @@ internal fun retainedTicketVisualTerminalSnapshot(
   )
 }
 
-private fun TicketVisualActionJournalState.retainedSliderRegionOrNull(): TicketSliderRegionV3? {
+internal fun ticketVisualLatestNotDetectedJournalHasBoundProof(
+  journal: TicketVisualActionJournalState
+): Boolean = journal.actionId.isNotBlank() && journal.hasRetainedTerminal &&
+  journal.target == TicketVisualActionTarget.REDETECT_LATEST.wireName &&
+  journal.terminalStatus == "failed" &&
+  journal.terminalReason == "ticket_action_latest_not_detected" &&
+  journal.terminalView == TicketVisualActionView.UNKNOWN.wireName &&
+  !journal.terminalOk && journal.streamEpoch > 0L && journal.frameSequence > 0L &&
+  journal.sliderLeftBasisPoints == -1 && journal.sliderTopBasisPoints == -1 &&
+  journal.sliderRightBasisPoints == -1 && journal.sliderBottomBasisPoints == -1
+
+internal fun TicketVisualActionJournalState.retainedSliderRegionOrNull(): TicketSliderRegionV3? {
   if (!terminalOk || terminalView != TicketVisualActionView.LATEST_UNACTIVATED.wireName ||
     target !in setOf(
       TicketVisualActionTarget.PROVE_CURRENT.wireName,
@@ -224,6 +288,54 @@ private fun TicketVisualActionJournalState.retainedSliderRegionOrNull(): TicketS
   )
 }
 
+internal fun ticketActionFinalizationEnvelope(
+  journal: TicketVisualActionJournalState
+): TicketActionFinalizationEnvelope? {
+  if (!journal.hasRetainedTerminal || journal.commandId.isBlank() ||
+    journal.commandRevision.isBlank() || journal.completedAt.isBlank()
+  ) return null
+  val view = TicketVisualActionView.entries.firstOrNull {
+    it.wireName == journal.terminalView
+  } ?: TicketVisualActionView.UNKNOWN
+  val activatesTicket = journal.target == TicketVisualActionTarget.REGISTER_CURRENT.wireName ||
+    journal.target == TicketVisualActionTarget.OPEN_LATEST_AND_REGISTER.wireName
+  return TicketActionFinalizationEnvelope(
+    commandId = journal.commandId,
+    commandRevision = journal.commandRevision,
+    flow = journal.flow,
+    refreshActivationAttemptId = journal.refreshActivationAttemptId,
+    refreshActivationRevision = journal.refreshActivationRevision,
+    action = TicketVisualActionSnapshot(
+      actionId = journal.actionId,
+      target = journal.target,
+      status = if (activatesTicket && !journal.terminalOk) {
+        "needs_attention"
+      } else {
+        journal.terminalStatus
+      },
+      phase = journal.terminalPhase.ifBlank {
+        when {
+          activatesTicket && journal.terminalOk -> "activation_proven"
+          activatesTicket -> "outcome_unknown"
+          journal.terminalOk -> "complete"
+          else -> journal.terminalStatus
+        }
+      },
+      currentView = view,
+      streamEpoch = journal.streamEpoch,
+      frameSequence = journal.frameSequence,
+      reason = journal.terminalReason,
+      completedAt = journal.completedAt,
+      interactionRevision = journal.interactionRevision,
+      activationRevision = journal.activationRevision.takeIf { journal.terminalOk }.orEmpty(),
+      activationAttemptId = journal.activationAttemptId,
+      sliderRegion = journal.retainedSliderRegionOrNull(),
+      terminal = true,
+      ok = journal.terminalOk
+    )
+  )
+}
+
 internal fun ticketVisualJournalReconciled(
   journal: TicketVisualActionJournalState,
   request: TicketVisualActionRequest,
@@ -236,6 +348,21 @@ internal fun ticketVisualJournalReconciled(
   if (recordedToState != TicketVisualPhoneState.UNKNOWN) {
     if (recordedToState == TicketVisualPhoneState.TICKET_LIST &&
       journal.navigationFromState == TicketVisualPhoneState.VIVI_HOME.wireName &&
+      observation.state == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY
+    ) return true
+    if (recordedToState == TicketVisualPhoneState.TICKET_LIST &&
+      journal.navigationFromState == TicketVisualPhoneState.VIVI_HOME.wireName &&
+      request.target == TicketVisualActionTarget.REDETECT_LATEST &&
+      observation.state == TicketVisualPhoneState.TICKETS_TIME_EMPTY
+    ) return true
+    if (recordedToState == TicketVisualPhoneState.TICKET_LIST &&
+      journal.navigationFromState == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY.wireName &&
+      request.target == TicketVisualActionTarget.REDETECT_LATEST &&
+      observation.state == TicketVisualPhoneState.TICKETS_TIME_EMPTY
+    ) return true
+    if (recordedToState == TicketVisualPhoneState.TICKET_LIST &&
+      journal.navigationFromState == TicketVisualPhoneState.TICKETS_TIME_EMPTY.wireName &&
+      request.target == TicketVisualActionTarget.REDETECT_LATEST &&
       observation.state == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY
     ) return true
     if (observation.state != recordedToState) return false
@@ -293,18 +420,11 @@ internal fun parseTicketVisualActionRequest(payload: JsonObject): TicketVisualAc
   val expectedRevision = payload.string("expectedInteractionRevision").trim()
   val policyRevision = payload.string("policyRevision").trim()
   val switchExpiresAt = payload.string("switchExpiresAt").trim()
+  val flow = payload.string("flow").trim()
+  val refreshActivationAttemptId = payload.string("activationAttemptId").trim()
+  val refreshActivationRevision = payload.string("activationRevision").trim()
   if (actionId.isBlank() || actionId.length > 128) return null
-  if (target.activatesTicket && !ticketVisualActivationAttemptMatchesPayload(
-      actionId = actionId,
-      target = target,
-      attemptId = attemptId,
-      retryOrdinal = payload["retryOrdinal"]?.jsonPrimitive?.intOrNull ?: 0,
-      parentActionId = payload.string("parentActionId").trim(),
-      rootActionId = payload.string("rootActionId").trim(),
-      retryProofStreamEpoch = payload.string("retryProofStreamEpoch").trim(),
-      retryProofFrameSequence = payload.string("retryProofFrameSequence").trim()
-    )
-  ) return null
+  if (target.activatesTicket && attemptId != actionId) return null
   if (target == TicketVisualActionTarget.REGISTER_CURRENT && expectedRevision.isBlank()) return null
   val switchesView = target in setOf(
     TicketVisualActionTarget.SHOW_RECENT_ACTIVATED,
@@ -313,6 +433,14 @@ internal fun parseTicketVisualActionRequest(payload: JsonObject): TicketVisualAc
   if (switchesView && (policyRevision.isBlank() || switchExpiresAt.isBlank())) return null
   if (policyRevision.length > 128 || switchExpiresAt.length > 64) return null
   if (switchExpiresAt.isNotBlank() && runCatching { Instant.parse(switchExpiresAt) }.isFailure) return null
+  if (flow.length > 64 || refreshActivationAttemptId.length > 128 ||
+    refreshActivationRevision.length > 128
+  ) return null
+  if (flow == "activation_expiry_reset" && (
+      target != TicketVisualActionTarget.OPEN_LATEST_UNACTIVATED ||
+        refreshActivationAttemptId.isBlank() || refreshActivationRevision.isBlank()
+    )
+  ) return null
   return TicketVisualActionRequest(
     actionId = actionId,
     target = target,
@@ -322,36 +450,11 @@ internal fun parseTicketVisualActionRequest(payload: JsonObject): TicketVisualAc
     expectedInteractionRevision = expectedRevision.take(128),
     scheduleId = payload.string("scheduleId").take(128),
     policyRevision = policyRevision,
-    switchExpiresAt = switchExpiresAt
+    switchExpiresAt = switchExpiresAt,
+    flow = flow,
+    refreshActivationAttemptId = refreshActivationAttemptId,
+    refreshActivationRevision = refreshActivationRevision
   )
-}
-
-/**
- * The ordinary activation identity remains exact. The only exception is the deterministic
- * Spacetime child admitted after a completed stroke freshly proved no visual transition. The
- * child keeps the original admitted attempt but must carry its exact parent/root identity and a
- * positive parent proof watermark; it receives no general prefix or arbitrary retry authority.
- */
-internal fun ticketVisualActivationAttemptMatchesPayload(
-  actionId: String,
-  target: TicketVisualActionTarget,
-  attemptId: String,
-  retryOrdinal: Int,
-  parentActionId: String,
-  rootActionId: String,
-  retryProofStreamEpoch: String,
-  retryProofFrameSequence: String
-): Boolean {
-  if (attemptId == actionId) return true
-  fun positiveOrdinal(value: String): Boolean =
-    value.isNotBlank() && value.all(Char::isDigit) && value.any { it != '0' }
-  return target == TicketVisualActionTarget.REGISTER_CURRENT &&
-    retryOrdinal == 1 &&
-    parentActionId == attemptId &&
-    rootActionId == attemptId &&
-    actionId == "$parentActionId-retry-1" &&
-    positiveOrdinal(retryProofStreamEpoch) &&
-    positiveOrdinal(retryProofFrameSequence)
 }
 
 private fun JsonObject.string(key: String): String =
@@ -393,7 +496,10 @@ internal enum class TicketVisualPhoneState(val wireName: String) {
   UNACTIVATED_DETAIL("unactivated_detail"),
   TICKET_LIST("ticket_list"),
   TICKETS_SINGLE_USE_EMPTY("tickets_single_use_empty"),
+  TICKETS_TIME_EMPTY("tickets_time_empty"),
   VIVI_HOME("vivi_home"),
+  VIVI_PROFILE("vivi_profile"),
+  VIVI_OTHER_TAB("vivi_other_tab"),
   LOGIN_REQUIRED("login_required"),
   BLOCKED("blocked"),
   UNKNOWN("unknown");
@@ -402,6 +508,20 @@ internal enum class TicketVisualPhoneState(val wireName: String) {
     fun fromWireName(value: String): TicketVisualPhoneState = entries.firstOrNull {
       it.wireName == value
     } ?: UNKNOWN
+  }
+}
+
+internal enum class TicketViviBottomTab(val wireName: String) {
+  HOME("home"),
+  TICKETS("tickets"),
+  PROFILE("profile"),
+  MENU("menu"),
+  NONE("");
+
+  companion object {
+    fun fromWireName(value: String): TicketViviBottomTab = entries.firstOrNull {
+      it.wireName == value
+    } ?: NONE
   }
 }
 
@@ -414,6 +534,7 @@ internal data class TicketVisualActionObservation(
   val backBounds: TicketVisualProbeBounds? = null,
   val ticketsTabBounds: TicketVisualProbeBounds? = null,
   val timeTicketsTabBounds: TicketVisualProbeBounds? = null,
+  val bottomTab: TicketViviBottomTab = TicketViviBottomTab.NONE,
   val cards: List<TicketVisualCardAnchor> = emptyList(),
   val atMillis: Long = 0L
 ) {
@@ -426,6 +547,17 @@ internal data class TicketVisualActionObservation(
         TicketVisualActionTarget.RETURN_TO_LATEST_UNACTIVATED,
         TicketVisualActionTarget.REDETECT_LATEST
       )
+    }
+
+  /**
+   * A repeated redetection can begin on the Time-tickets tab left selected by the prior cycle.
+   * Only redetection may use the separately proved opposite-tab target to re-check Single-use
+   * before returning to Time-tickets; no other action inherits this extra navigation authority.
+   */
+  fun singleUseTicketsNavigationBoundsFor(target: TicketVisualActionTarget): TicketVisualProbeBounds? =
+    ticketsTabBounds.takeIf {
+      state == TicketVisualPhoneState.TICKETS_TIME_EMPTY &&
+        target == TicketVisualActionTarget.REDETECT_LATEST
     }
 
   fun cardFor(target: TicketVisualActionTarget, anchors: TicketVisualSwitchAnchors): TicketVisualCardAnchor? {
@@ -486,13 +618,18 @@ internal fun ticketVisualObservationsAgree(
   geometryTolerance: Int = 3
 ): Boolean {
   if (first.state != second.state) return false
+  val detailOverlay = first.state == TicketVisualPhoneState.UNACTIVATED_DETAIL ||
+    first.state == TicketVisualPhoneState.ACTIVATED_DETAIL
+  if (!detailOverlay && first.bottomTab != second.bottomTab) return false
   val anchorsAgree = first.currentAnchor == second.currentAnchor
   if (!anchorsAgree) return false
   if (!boundsAgree(first.sliderBounds, second.sliderBounds, geometryTolerance) ||
     !boundsAgree(first.controlCodeBounds, second.controlCodeBounds, geometryTolerance) ||
     !boundsAgree(first.backBounds, second.backBounds, geometryTolerance) ||
-    !boundsAgree(first.ticketsTabBounds, second.ticketsTabBounds, geometryTolerance) ||
-    !boundsAgree(first.timeTicketsTabBounds, second.timeTicketsTabBounds, geometryTolerance)
+    !detailOverlay && (
+      !boundsAgree(first.ticketsTabBounds, second.ticketsTabBounds, geometryTolerance) ||
+        !boundsAgree(first.timeTicketsTabBounds, second.timeTicketsTabBounds, geometryTolerance)
+      )
   ) return false
   val firstCards = first.cards.sortedWith(compareBy<TicketVisualCardAnchor> { it.anchor }
     .thenBy { it.bounds.top })
@@ -562,6 +699,49 @@ internal fun ticketVisualResultView(
   else -> TicketVisualActionView.UNKNOWN
 }
 
+/**
+ * The expected negative redetection result is valid only after this command moved from the proved
+ * empty Single-use tab to a separately proved empty Time-tickets tab. Its public view remains
+ * unknown so no caller can mistake absence for a latest-unactivated ticket.
+ */
+internal fun ticketVisualRedetectLatestNotDetectedObservation(
+  target: TicketVisualActionTarget,
+  navigationFromState: TicketVisualPhoneState,
+  observation: TicketVisualActionObservation
+): Boolean = target == TicketVisualActionTarget.REDETECT_LATEST &&
+  navigationFromState == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY &&
+  observation.state == TicketVisualPhoneState.TICKETS_TIME_EMPTY &&
+  observation.currentAnchor.isBlank() &&
+  observation.sliderBounds == null &&
+  observation.controlCodeBounds == null &&
+  observation.backBounds == null &&
+  observation.ticketsTabBounds != null &&
+  observation.timeTicketsTabBounds == null &&
+  observation.cards.isEmpty()
+
+internal fun ticketVisualRedetectLatestNotDetectedProof(
+  target: TicketVisualActionTarget,
+  navigationFromState: TicketVisualPhoneState,
+  observation: TicketVisualActionObservation,
+  streamEpoch: Long,
+  frameSequence: Long
+): Boolean = ticketVisualRedetectLatestNotDetectedObservation(
+  target,
+  navigationFromState,
+  observation
+) &&
+  streamEpoch > 0L && frameSequence > 0L
+
+internal fun ticketVisualLatestNotDetectedTerminalHasBoundProof(
+  snapshot: TicketVisualActionSnapshot
+): Boolean = !snapshot.ok && snapshot.terminal &&
+  snapshot.target == TicketVisualActionTarget.REDETECT_LATEST.wireName &&
+  snapshot.status == "failed" && snapshot.phase == "failed" &&
+  snapshot.currentView == TicketVisualActionView.UNKNOWN &&
+  snapshot.reason == "ticket_action_latest_not_detected" &&
+  snapshot.streamEpoch > 0L && snapshot.frameSequence > 0L &&
+  snapshot.sliderRegion == null
+
 internal fun ticketRegistrationProofMatchesVisualAnchor(
   proof: TicketRegistrationProof,
   visualAnchor: String
@@ -629,9 +809,7 @@ internal fun ticketVisualProvenTicketAnchor(
 internal fun ticketRegistrationProofForCurrentVisualAction(
   proof: TicketRegistrationProof?,
   request: TicketVisualActionRequest,
-  observation: TicketVisualActionObservation,
-  currentStreamEpoch: Long,
-  currentFrameSequence: Long
+  observation: TicketVisualActionObservation
 ): TicketRegistrationProofGateResult {
   val genericFailure = TicketRegistrationProofGateResult(
     proof = null,
@@ -650,9 +828,7 @@ internal fun ticketRegistrationProofForCurrentVisualAction(
       it.status == "unactivated_ready" &&
       it.ticketAnchor.isNotBlank() &&
       it.streamEpoch > 0L &&
-      it.frameSequence > 0L &&
-      it.streamEpoch == currentStreamEpoch &&
-      it.frameSequence <= currentFrameSequence
+      it.frameSequence > 0L
   } ?: return genericFailure
   if (!ticketRegistrationProofMatchesVisualDetail(candidate, observation.currentAnchor)) {
     return TicketRegistrationProofGateResult(
