@@ -103,19 +103,166 @@ class PhoneAutomationViviLogoutContractTest {
   }
 
   @Test
+  fun tinyLiveVerticalRoundingVarianceStillSelectsOnlyTheGuardedLogoutButton() {
+    val liveRoundedBounds = accountAfterScroll().map { node ->
+      when (node.contentDescription) {
+        "Pievienot papildu e-pastu" -> node.copy(bounds = "[79,1722][1001,1843]")
+        "Iziet" -> node.copy(bounds = "[456,1922][624,2048]")
+        "Dzēst kontu" -> node.copy(bounds = "[270,2087][810,2208]")
+        else -> node
+      }
+    }
+
+    assertEquals(
+      PhoneAutomationViviLogoutSurface.ACCOUNT_DETAILS_AFTER_SCROLL,
+      PhoneAutomationViviLogoutContract.surface(liveRoundedBounds)
+    )
+    assertEquals(
+      5,
+      PhoneAutomationViviLogoutContract.clickIndex(
+        liveRoundedBounds,
+        PhoneAutomationViviLogoutClickTarget.LOGOUT
+      )
+    )
+  }
+
+  @Test
+  fun postScrollGeometryOutsideTheTightVerticalWindowFailsClosed() {
+    val variants = listOf(
+      accountAfterScroll().map { node ->
+        if (node.contentDescription == "Pievienot papildu e-pastu") {
+          node.copy(bounds = "[79,1724][1001,1845]")
+        } else node
+      },
+      accountAfterScroll().map { node ->
+        if (node.contentDescription == "Iziet") {
+          node.copy(bounds = "[456,1923][624,2049]")
+        } else node
+      },
+      accountAfterScroll().map { node ->
+        if (node.contentDescription == "Dzēst kontu") {
+          node.copy(bounds = "[270,2089][810,2211]")
+        } else node
+      },
+      accountAfterScroll().map { node ->
+        if (node.contentDescription == "Iziet") {
+          node.copy(bounds = "[457,1920][625,2046]")
+        } else node
+      },
+      accountAfterScroll().map { node ->
+        if (node.contentDescription == "Iziet") {
+          node.copy(bounds = "[456,1918][624,2048]")
+        } else node
+      },
+      accountAfterScroll().map { node ->
+        if (node.contentDescription == "Pievienot papildu e-pastu") {
+          node.copy(bounds = "[79,-2147481927][1001,-2147481806]")
+        } else node
+      }
+    )
+
+    variants.forEach { nodes ->
+      assertEquals(
+        PhoneAutomationViviLogoutSurface.UNKNOWN,
+        PhoneAutomationViviLogoutContract.surface(nodes)
+      )
+      assertNull(
+        PhoneAutomationViviLogoutContract.clickIndex(
+          nodes,
+          PhoneAutomationViviLogoutClickTarget.LOGOUT
+        )
+      )
+    }
+  }
+
+  @Test
+  fun nonFullDisplayCoordinatesCannotAuthorizeAnAccessibilityLogout() {
+    val offsetCoordinates = accountAfterScroll().map { node ->
+      when (node.contentDescription) {
+        "Pievienot papildu e-pastu" -> node.copy(bounds = "[79,1449][1001,1570]")
+        "Iziet" -> node.copy(bounds = "[456,1649][624,1775]")
+        "Dzēst kontu" -> node.copy(bounds = "[270,1814][810,1945]")
+        else -> node
+      }
+    }
+
+    assertEquals(
+      PhoneAutomationViviLogoutSurface.UNKNOWN,
+      PhoneAutomationViviLogoutContract.surface(offsetCoordinates)
+    )
+    assertNull(
+      PhoneAutomationViviLogoutContract.clickIndex(
+        offsetCoordinates,
+        PhoneAutomationViviLogoutClickTarget.LOGOUT
+      )
+    )
+  }
+
+  @Test
   fun accountDeleteCanNeverBecomeTheLogoutTarget() {
     val withoutLogout = accountAfterScroll().filterNot { it.contentDescription == "Iziet" }
     val deleteAtLogoutBounds = accountAfterScroll().map { node ->
-      if (node.contentDescription == "Dzēst kontu") node.copy(bounds = "[456,1649][624,1775]") else node
+      if (node.contentDescription == "Dzēst kontu") node.copy(bounds = "[456,1920][624,2046]") else node
     }
     val duplicateLogout = accountAfterScroll() + node(
       contentDescription = "Iziet",
       className = "android.widget.Button",
-      bounds = "[456,1649][624,1775]",
+      bounds = "[456,1920][624,2046]",
       clickable = true
     )
 
     listOf(withoutLogout, deleteAtLogoutBounds, duplicateLogout).forEach { nodes ->
+      assertNull(
+        PhoneAutomationViviLogoutContract.clickIndex(
+          nodes,
+          PhoneAutomationViviLogoutClickTarget.LOGOUT
+        )
+      )
+      assertEquals(
+        PhoneAutomationViviLogoutSurface.UNKNOWN,
+        PhoneAutomationViviLogoutContract.surface(nodes)
+      )
+    }
+  }
+
+  @Test
+  fun logoutAndDeleteRemainDistinctExactSingletonButtonsAboveNavigation() {
+    val variants = listOf(
+      accountAfterScroll().filterNot { it.contentDescription == "Dzēst kontu" },
+      accountAfterScroll() + node(
+        contentDescription = "Dzēst kontu",
+        className = "android.widget.Button",
+        bounds = "[270,2086][810,2208]",
+        clickable = true
+      ),
+      accountAfterScroll().map { node ->
+        if (node.contentDescription == "Dzēst kontu") {
+          node.copy(className = "android.view.View")
+        } else node
+      },
+      accountAfterScroll().map { node ->
+        if (node.contentDescription == "Dzēst kontu") {
+          node.copy(contentDescription = "Dzēst profilu")
+        } else node
+      },
+      accountAfterScroll().map { node ->
+        if (node.contentDescription == "Iziet") {
+          node.copy(className = "android.view.View")
+        } else node
+      },
+      accountAfterScroll().map { node ->
+        if (node.contentDescription == "Iziet") {
+          node.copy(contentDescription = "Iziet no konta")
+        } else node
+      },
+      accountAfterScroll().map { node ->
+        if (node.contentDescription == "Dzēst kontu") {
+          node.copy(bounds = "[270,2087][810,2209]")
+        } else node
+      }
+    )
+
+    variants.forEach { nodes ->
       assertNull(
         PhoneAutomationViviLogoutContract.clickIndex(
           nodes,
@@ -167,19 +314,19 @@ class PhoneAutomationViviLogoutContractTest {
   private fun accountAfterScroll(): List<PhoneAutomationVisibleNode> = bottomTabs() + listOf(
     node(
       contentDescription = "Pievienot papildu e-pastu",
-      bounds = "[79,1449][1001,1570]",
+      bounds = "[79,1721][1001,1842]",
       clickable = true
     ),
     node(
       contentDescription = "Iziet",
       className = "android.widget.Button",
-      bounds = "[456,1649][624,1775]",
+      bounds = "[456,1920][624,2046]",
       clickable = true
     ),
     node(
       contentDescription = "Dzēst kontu",
       className = "android.widget.Button",
-      bounds = "[270,1814][810,1945]",
+      bounds = "[270,2086][810,2208]",
       clickable = true
     )
   )

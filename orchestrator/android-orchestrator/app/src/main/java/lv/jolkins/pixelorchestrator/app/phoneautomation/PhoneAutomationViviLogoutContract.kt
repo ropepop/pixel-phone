@@ -72,17 +72,17 @@ internal object PhoneAutomationViviLogoutContract {
   }
 
   private fun logoutIndex(nodes: List<PhoneAutomationVisibleNode>): Int? {
-    if (!hasExactClickableAnchor(
+    if (!hasGuardedPostScrollAnchor(
         nodes,
         "pievienot papildu e-pastu",
         ADD_ADDITIONAL_EMAIL_BOUNDS
       )
     ) return null
     val logout = nodes.withIndex().filter { (_, node) ->
-      exactEnabledButton(node, "iziet", LOGOUT_BOUNDS)
+      guardedPostScrollButton(node, "iziet", LOGOUT_BOUNDS)
     }
     val delete = nodes.withIndex().filter { (_, node) ->
-      exactEnabledButton(node, "dzest kontu", DELETE_ACCOUNT_BOUNDS)
+      guardedPostScrollButton(node, "dzest kontu", DELETE_ACCOUNT_BOUNDS)
     }
     if (logout.size != 1 || delete.size != 1) return null
     val logoutCandidate = logout.single()
@@ -90,17 +90,39 @@ internal object PhoneAutomationViviLogoutContract {
     if (logoutCandidate.index == deleteCandidate.index) return null
     val logoutBounds = bounds(logoutCandidate.value.bounds) ?: return null
     val deleteBounds = bounds(deleteCandidate.value.bounds) ?: return null
-    if (logoutBounds.bottom >= deleteBounds.top || logoutBounds.overlaps(deleteBounds)) return null
+    if (logoutBounds.bottom >= deleteBounds.top || logoutBounds.overlaps(deleteBounds) ||
+      deleteBounds.bottom >= BOTTOM_NAV_VISIBLE_TOP
+    ) return null
     return logoutCandidate.index
   }
 
-  private fun exactEnabledButton(
+  private fun guardedPostScrollButton(
     node: PhoneAutomationVisibleNode,
     expectedLabel: String,
     expectedBounds: Bounds
   ): Boolean = node.enabled && node.clickable &&
     node.className == "android.widget.Button" &&
-    hasExactVisibleLabel(node, expectedLabel) && bounds(node.bounds) == expectedBounds
+    hasExactVisibleLabel(node, expectedLabel) &&
+    matchesGuardedPostScrollBounds(node.bounds, expectedBounds)
+
+  private fun hasGuardedPostScrollAnchor(
+    nodes: List<PhoneAutomationVisibleNode>,
+    expectedLabel: String,
+    expectedBounds: Bounds
+  ): Boolean = nodes.count { node ->
+    node.enabled && node.clickable && hasExactVisibleLabel(node, expectedLabel) &&
+      matchesGuardedPostScrollBounds(node.bounds, expectedBounds)
+  } == 1
+
+  private fun matchesGuardedPostScrollBounds(value: String, expected: Bounds): Boolean {
+    val actual = bounds(value) ?: return false
+    val topDelta = actual.top.toLong() - expected.top.toLong()
+    val bottomDelta = actual.bottom.toLong() - expected.bottom.toLong()
+    return actual.left == expected.left && actual.right == expected.right &&
+      kotlin.math.abs(topDelta) <= POST_SCROLL_VERTICAL_TOLERANCE_PIXELS &&
+      kotlin.math.abs(bottomDelta) <= POST_SCROLL_VERTICAL_TOLERANCE_PIXELS &&
+      kotlin.math.abs(topDelta - bottomDelta) <= POST_SCROLL_HEIGHT_TOLERANCE_PIXELS
+  }
 
   private fun hasExactClickableAnchor(
     nodes: List<PhoneAutomationVisibleNode>,
@@ -173,6 +195,9 @@ internal object PhoneAutomationViviLogoutContract {
 
   private val BOUNDS_REGEX = Regex("""\[(-?\d+),(-?\d+)]\[(-?\d+),(-?\d+)]""")
   private const val BOTTOM_NAV_TOP = 2100
+  private const val BOTTOM_NAV_VISIBLE_TOP = 2209
+  private const val POST_SCROLL_VERTICAL_TOLERANCE_PIXELS = 2
+  private const val POST_SCROLL_HEIGHT_TOLERANCE_PIXELS = 1
   private val HOME_TAB_BOUNDS = Bounds(0, 2209, 270, 2361)
   private val TICKETS_TAB_BOUNDS = Bounds(270, 2209, 540, 2361)
   private val PROFILE_TAB_BOUNDS = Bounds(540, 2209, 810, 2361)
@@ -180,7 +205,9 @@ internal object PhoneAutomationViviLogoutContract {
   private val PROFILE_ACCOUNT_BUTTON_BOUNDS = Bounds(414, 1054, 666, 1306)
   private val ADD_CARD_BOUNDS = Bounds(79, 604, 1001, 724)
   private val ENTER_DISCOUNT_CARD_BOUNDS = Bounds(79, 1916, 1001, 2037)
-  private val ADD_ADDITIONAL_EMAIL_BOUNDS = Bounds(79, 1449, 1001, 1570)
-  private val LOGOUT_BOUNDS = Bounds(456, 1649, 624, 1775)
-  private val DELETE_ACCOUNT_BOUNDS = Bounds(270, 1814, 810, 1945)
+  // Accessibility reports full-display coordinates. Offset or cropped-frame coordinates must
+  // never be used for these account-detail targets.
+  private val ADD_ADDITIONAL_EMAIL_BOUNDS = Bounds(79, 1721, 1001, 1842)
+  private val LOGOUT_BOUNDS = Bounds(456, 1920, 624, 2046)
+  private val DELETE_ACCOUNT_BOUNDS = Bounds(270, 2086, 810, 2208)
 }

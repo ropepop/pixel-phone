@@ -471,7 +471,9 @@ class TicketStreamService : Service() {
   private val controlCodePhoneMutationLane = ControlCodePhoneMutationLane()
   @Volatile private var lastTicketRegistrationProof: TicketRegistrationProof? = null
   @Volatile private var currentTicketRegistrationProof: TicketRegistrationProof? = null
+  @Volatile private var ticketVisualActionJobOwnershipActive: Boolean = false
   @Volatile private var ticketVisualActionCaptureLeaseActive: Boolean = false
+  @Volatile private var viviReauthCaptureLeaseActive: Boolean = false
   @Volatile private var ticketActionV3CleanupCheckpointRecoveryActive: Boolean = false
   @Volatile private var ticketActionPanelDarkLeaseSnapshot = TicketActionPanelDarkLeaseSnapshot()
   private val ticketActionPanelDarkLeaseFailures = AtomicLong(0L)
@@ -571,6 +573,7 @@ class TicketStreamService : Service() {
   @Volatile private var ticketSessionStateChangedAtMillis: Long = SystemClock.elapsedRealtime()
   @Volatile private var ticketSessionStateReason: String = "init"
   @Volatile private var streamActive: Boolean = false
+  @Volatile private var ticketSessionGeneration: Long = 0L
   @Volatile private var hardwareCaptureVerified: Boolean = false
   @Volatile private var hardwareFrameBroadcastAllowed: Boolean = false
   @Volatile private var activeCaptureMode: String = CAPTURE_MODE_IDLE
@@ -1470,14 +1473,16 @@ class TicketStreamService : Service() {
   ): TicketSpacetimeCommandResult? {
     val request = ticketViviReauthRequest(command) ?: return null
     val journal = loadViviReauthJournal()
+    if (ticketViviReauthRequestIdHasSemanticMismatch(journal, request)) {
+      return viviReauthCommandResult(
+        reauthSnapshot(request, "failed", "complete", "internal_failure")
+      )
+    }
     retainedTicketViviReauthSnapshot(journal, request)?.let { retained ->
       viviReauthSnapshot = retained
       return viviReauthCommandResult(retained)
     }
-    if (journal.requestId == request.requestId &&
-      journal.credentialRevision == request.credentialRevision &&
-      journal.resetAppData == request.resetAppData &&
-      journal.logoutInApp == request.logoutInApp &&
+    if (ticketViviReauthJournalMatchesRequest(journal, request) &&
       !journal.terminal && journal.requestId.isNotBlank()
     ) {
       val status = if (journal.mutationMayHaveDispatched) "needs_attention" else "failed"
@@ -1508,14 +1513,25 @@ class TicketStreamService : Service() {
     )
     activeTicketActionPanelDarkLease = panelLease
     var acquired = false
+    var commandStartedProofSessionGeneration: Long? = null
     var provisional = reauthSnapshot(request, "failed", "complete", "internal_failure")
     var finalization: TicketActionPanelDarkLeaseFinalization? = null
+    sessionMutex.withLock {
+      viviReauthCaptureLeaseActive = true
+    }
     try {
       acquired = panelLease.acquire()
       provisional = if (!acquired) {
         reauthSnapshot(request, "failed", "complete", "visual_proof_failed")
       } else {
-        executeViviReauthAttempt(request, credentials, panelLease)
+        executeViviReauthAttempt(
+          request,
+          credentials,
+          panelLease,
+          onNewSessionAdmitted = { generation ->
+            commandStartedProofSessionGeneration = generation
+          }
+        )
       }
     } finally {
       withContext(NonCancellable) {
@@ -1528,6 +1544,15 @@ class TicketStreamService : Service() {
         PhoneAutomationServiceBridge.clearNonTouchInputTailForBrowserCriticalAction(
           "ticket:vivi_reauth:${request.requestId.takeLast(24)}:released"
         )
+        sessionMutex.withLock {
+          viviReauthCaptureLeaseActive = false
+          commandStartedProofSessionGeneration?.let { generation ->
+            scheduleCommandStartedProofStreamCleanupLocked(
+              expectedSessionGeneration = generation,
+              reason = "vivi_reauth_proof_stream_idle"
+            )
+          }
+        }
       }
     }
     val safe = finalization?.safe == true
@@ -1542,7 +1567,8 @@ class TicketStreamService : Service() {
   private suspend fun executeViviReauthAttempt(
     request: TicketViviReauthRequest,
     credentials: TicketSpacetimeViviCredentials,
-    panelLease: TicketActionPanelDarkLease
+    panelLease: TicketActionPanelDarkLease,
+    onNewSessionAdmitted: (Long) -> Unit
   ): TicketViviReauthSnapshot {
     updateViviReauthPhase(request, "running", "opening_vivi", "running")
     if (!persistViviReauthPhase(request, "opening_vivi") || !panelLease.beforeMutationAllowed()) {
@@ -1554,7 +1580,10 @@ class TicketStreamService : Service() {
       !hardwareCaptureVerified ||
       !hardwareFrameBroadcastAllowed
     if (preparedViviDuringSessionStart) {
-      val started = startTicketSession(prepareCaptureWithCurrentPhoneMutationOwnership = true)
+      val started = startTicketSession(
+        prepareCaptureWithCurrentPhoneMutationOwnership = true,
+        onNewSessionAdmitted = onNewSessionAdmitted
+      )
       if (!started.ok || !streamActive ||
         activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264 ||
         !hardwareCaptureVerified ||
@@ -1652,9 +1681,12 @@ class TicketStreamService : Service() {
         TicketScreenConfig.VIVI_PACKAGE
       )
     }
+    var logoutReturnTarget: TicketViviReauthReturnTarget? = null
     val signedOutByV3Logout = if (request.logoutInApp &&
       ticketViviLogoutLoginStartObservation(login)
     ) {
+      logoutReturnTarget = ticketViviReauthReturnTarget(login)
+        ?: return reauthSnapshot(request, "failed", "complete", "visual_proof_failed")
       val logoutFailure = performViviInAppLogout(request, login!!, panelLease)
       if (logoutFailure != null) {
         return reauthSnapshot(request, "needs_attention", "complete", logoutFailure)
@@ -1713,7 +1745,7 @@ class TicketStreamService : Service() {
       return reauthSnapshot(request, "needs_attention", "complete", "visual_proof_failed")
     }
     updateViviReauthPhase(request, "running", "verifying_signed_in", "running")
-    return verifyViviReauthResult(request)
+    return verifyViviReauthResult(request, panelLease, logoutReturnTarget)
   }
 
   /**
@@ -1739,61 +1771,72 @@ class TicketStreamService : Service() {
         !panelLease.beforeMutationAllowed()
       ) return "logout_action_uncertain"
       panelLease.markMutationMayHaveDispatched()
-      if (!tapTicketVisualProbeBounds(detailClose, "vivi_reauth_close_ticket_detail")) {
-        return "logout_action_uncertain"
-      }
-      rootHardwareH264CaptureEngine.requestImmediateRefresh("vivi_reauth_detail_closed")
-      routeObservation = awaitStableTicketVisualActionObservation(
-        reason = "vivi_reauth_detail_closed",
-        timeoutMillis = VIVI_REAUTH_LOGIN_PROOF_TIMEOUT_MILLIS,
-        allowUnknown = true
+      routeObservation = ticketViviReauthDispatchOnceThenProve(
+        dispatch = {
+          tapTicketVisualProbeBounds(detailClose, "vivi_reauth_close_ticket_detail")
+        },
+        observeSuccessor = {
+          rootHardwareH264CaptureEngine.requestImmediateRefresh("vivi_reauth_detail_closed")
+          awaitStableTicketVisualActionObservation(
+            reason = "vivi_reauth_detail_closed",
+            timeoutMillis = VIVI_REAUTH_LOGIN_PROOF_TIMEOUT_MILLIS,
+            allowUnknown = true
+          )
+        },
+        successorProven = { ticketViviLogoutBottomRouteObservation(it) }
       ) ?: return "logout_action_uncertain"
-      if (!ticketViviLogoutBottomRouteObservation(routeObservation)) {
-        return "logout_action_uncertain"
-      }
     }
+
+    val profileSurfaces = setOf(
+      PhoneAutomationViviLogoutSurface.PROFILE_LANDING,
+      PhoneAutomationViviLogoutSurface.ACCOUNT_DETAILS_BEFORE_SCROLL,
+      PhoneAutomationViviLogoutSurface.ACCOUNT_DETAILS_AFTER_SCROLL
+    )
+    var accountSurface: PhoneAutomationViviLogoutSurface
     if (routeObservation.bottomTab != TicketViviBottomTab.PROFILE) {
       if (!persistViviReauthPhase(request, "profile_tab_dispatching") ||
         !panelLease.beforeMutationAllowed()
       ) return "logout_action_uncertain"
       panelLease.markMutationMayHaveDispatched()
-      if (!PhoneAutomationServiceBridge.clickViviLogoutRouteTarget(
-          TicketScreenConfig.VIVI_PACKAGE,
-          PhoneAutomationViviLogoutClickTarget.PROFILE_TAB,
-          VIVI_REAUTH_ACCESSIBILITY_TIMEOUT_MILLIS
-        )
-      ) return "logout_action_uncertain"
-      rootHardwareH264CaptureEngine.requestImmediateRefresh("vivi_reauth_profile_open")
-      if (!awaitViviProfileRouteProof("vivi_reauth_profile_open")) {
-        return "logout_action_uncertain"
-      }
+      accountSurface = ticketViviReauthDispatchOnceThenProve(
+        dispatch = {
+          PhoneAutomationServiceBridge.clickViviLogoutRouteTarget(
+            TicketScreenConfig.VIVI_PACKAGE,
+            PhoneAutomationViviLogoutClickTarget.PROFILE_TAB,
+            VIVI_REAUTH_ACCESSIBILITY_TIMEOUT_MILLIS
+          )
+        },
+        observeSuccessor = {
+          rootHardwareH264CaptureEngine.requestImmediateRefresh("vivi_reauth_profile_open")
+          awaitViviLogoutSurface(profileSurfaces)
+        },
+        successorProven = profileSurfaces::contains
+      ) ?: return "logout_action_uncertain"
+    } else {
+      accountSurface = awaitViviLogoutSurface(profileSurfaces)
     }
 
-    var accountSurface = awaitViviLogoutSurface(
-      setOf(
-        PhoneAutomationViviLogoutSurface.PROFILE_LANDING,
-        PhoneAutomationViviLogoutSurface.ACCOUNT_DETAILS_BEFORE_SCROLL,
-        PhoneAutomationViviLogoutSurface.ACCOUNT_DETAILS_AFTER_SCROLL
-      )
-    )
     if (accountSurface == PhoneAutomationViviLogoutSurface.PROFILE_LANDING) {
       if (!awaitViviProfileRouteProof("vivi_reauth_profile_landing") ||
         !persistViviReauthPhase(request, "account_controls_dispatching") ||
         !panelLease.beforeMutationAllowed()
       ) return "logout_action_uncertain"
       panelLease.markMutationMayHaveDispatched()
-      if (!PhoneAutomationServiceBridge.clickViviLogoutRouteTarget(
-          TicketScreenConfig.VIVI_PACKAGE,
-          PhoneAutomationViviLogoutClickTarget.ACCOUNT_CONTROLS,
-          VIVI_REAUTH_ACCESSIBILITY_TIMEOUT_MILLIS
-        )
-      ) return "logout_action_uncertain"
-      accountSurface = awaitViviLogoutSurface(
-        setOf(
-          PhoneAutomationViviLogoutSurface.ACCOUNT_DETAILS_BEFORE_SCROLL,
-          PhoneAutomationViviLogoutSurface.ACCOUNT_DETAILS_AFTER_SCROLL
-        )
+      val accountDetailSurfaces = setOf(
+        PhoneAutomationViviLogoutSurface.ACCOUNT_DETAILS_BEFORE_SCROLL,
+        PhoneAutomationViviLogoutSurface.ACCOUNT_DETAILS_AFTER_SCROLL
       )
+      accountSurface = ticketViviReauthDispatchOnceThenProve(
+        dispatch = {
+          PhoneAutomationServiceBridge.clickViviLogoutRouteTarget(
+            TicketScreenConfig.VIVI_PACKAGE,
+            PhoneAutomationViviLogoutClickTarget.ACCOUNT_CONTROLS,
+            VIVI_REAUTH_ACCESSIBILITY_TIMEOUT_MILLIS
+          )
+        },
+        observeSuccessor = { awaitViviLogoutSurface(accountDetailSurfaces) },
+        successorProven = accountDetailSurfaces::contains
+      ) ?: return "logout_action_uncertain"
     }
     if (accountSurface == PhoneAutomationViviLogoutSurface.ACCOUNT_DETAILS_BEFORE_SCROLL) {
       if (!awaitViviProfileRouteProof("vivi_reauth_account_before_scroll") ||
@@ -1801,13 +1844,21 @@ class TicketStreamService : Service() {
         !panelLease.beforeMutationAllowed()
       ) return "logout_action_uncertain"
       panelLease.markMutationMayHaveDispatched()
-      if (!PhoneAutomationServiceBridge.scrollViviAccountDetailsOnce(
-          TicketScreenConfig.VIVI_PACKAGE
-        )
-      ) return "logout_action_uncertain"
-      accountSurface = awaitViviLogoutSurface(
-        setOf(PhoneAutomationViviLogoutSurface.ACCOUNT_DETAILS_AFTER_SCROLL)
-      )
+      accountSurface = ticketViviReauthDispatchOnceThenProve(
+        dispatch = {
+          PhoneAutomationServiceBridge.scrollViviAccountDetailsOnce(
+            TicketScreenConfig.VIVI_PACKAGE
+          )
+        },
+        observeSuccessor = {
+          awaitViviLogoutSurface(
+            setOf(PhoneAutomationViviLogoutSurface.ACCOUNT_DETAILS_AFTER_SCROLL)
+          )
+        },
+        successorProven = {
+          it == PhoneAutomationViviLogoutSurface.ACCOUNT_DETAILS_AFTER_SCROLL
+        }
+      ) ?: return "logout_action_uncertain"
     }
     if (accountSurface != PhoneAutomationViviLogoutSurface.ACCOUNT_DETAILS_AFTER_SCROLL) {
       return "logout_control_not_detected"
@@ -1821,12 +1872,11 @@ class TicketStreamService : Service() {
       !panelLease.beforeMutationAllowed()
     ) return "logout_action_uncertain"
     panelLease.markMutationMayHaveDispatched()
-    if (!PhoneAutomationServiceBridge.clickViviLogoutRouteTarget(
-        TicketScreenConfig.VIVI_PACKAGE,
-        PhoneAutomationViviLogoutClickTarget.LOGOUT,
-        VIVI_REAUTH_ACCESSIBILITY_TIMEOUT_MILLIS
-      )
-    ) return "logout_action_uncertain"
+    PhoneAutomationServiceBridge.clickViviLogoutRouteTarget(
+      TicketScreenConfig.VIVI_PACKAGE,
+      PhoneAutomationViviLogoutClickTarget.LOGOUT,
+      VIVI_REAUTH_ACCESSIBILITY_TIMEOUT_MILLIS
+    )
     if (!persistViviReauthPhase(request, "verifying_signed_out")) {
       return "logout_action_uncertain"
     }
@@ -1835,14 +1885,21 @@ class TicketStreamService : Service() {
   }
 
   private suspend fun awaitViviProfileRouteProof(reason: String): Boolean {
-    rootHardwareH264CaptureEngine.requestImmediateRefresh(reason)
-    return awaitStableTicketVisualActionObservation(
-      reason = reason,
-      timeoutMillis = VIVI_REAUTH_LOGIN_PROOF_TIMEOUT_MILLIS,
-      allowUnknown = true
-    ).let { observation ->
-      ticketViviLogoutBottomRouteObservation(observation, TicketViviBottomTab.PROFILE)
+    val deadline = SystemClock.elapsedRealtime() + VIVI_REAUTH_LOGIN_PROOF_TIMEOUT_MILLIS
+    while (SystemClock.elapsedRealtime() < deadline) {
+      rootHardwareH264CaptureEngine.requestImmediateRefresh(reason)
+      val remaining = (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1L)
+      val observation = awaitStableTicketVisualActionObservation(
+        reason = reason,
+        timeoutMillis = minOf(VIVI_REAUTH_VERIFY_SLICE_MILLIS, remaining),
+        allowUnknown = true
+      )
+      if (ticketViviLogoutBottomRouteObservation(observation, TicketViviBottomTab.PROFILE)) {
+        return true
+      }
+      delay(VIVI_REAUTH_LOGOUT_POLL_MILLIS)
     }
+    return false
   }
 
   private suspend fun awaitViviLogoutSurface(
@@ -1880,8 +1937,15 @@ class TicketStreamService : Service() {
   }
 
   private suspend fun provenSignedInViviReauthSnapshot(
-    request: TicketViviReauthRequest
+    request: TicketViviReauthRequest,
+    requiredReturnTarget: TicketViviReauthReturnTarget? = null,
+    terminalObservation: TicketVisualActionObservation? = null
   ): TicketViviReauthSnapshot {
+    if (requiredReturnTarget != null &&
+      !ticketViviReauthRestoredTarget(requiredReturnTarget, terminalObservation)
+    ) {
+      return reauthSnapshot(request, "needs_attention", "complete", "visual_proof_failed")
+    }
     val watermark = awaitTicketVisualActionFrameWatermark("vivi_reauth_signed_in_proof")
       ?: return reauthSnapshot(
         request,
@@ -1902,7 +1966,9 @@ class TicketStreamService : Service() {
   }
 
   private suspend fun verifyViviReauthResult(
-    request: TicketViviReauthRequest
+    request: TicketViviReauthRequest,
+    panelLease: TicketActionPanelDarkLease,
+    requiredReturnTarget: TicketViviReauthReturnTarget?
   ): TicketViviReauthSnapshot {
     val deadline = SystemClock.elapsedRealtime() + VIVI_REAUTH_VERIFY_TIMEOUT_MILLIS
     var lastState = TicketVisualPhoneState.UNKNOWN
@@ -1916,7 +1982,32 @@ class TicketStreamService : Service() {
       )
       if (observed != null) lastState = observed.state
       if (ticketViviReauthPostSubmitSignedInObservation(observed)) {
-        return provenSignedInViviReauthSnapshot(request)
+        if (request.redetectAfterLogin) {
+          return restoreOrRedetectViviTicketAfterReauth(
+            request,
+            requiredReturnTarget,
+            observed ?: continue,
+            panelLease
+          )
+        }
+        if (requiredReturnTarget == null) return provenSignedInViviReauthSnapshot(request)
+        val signedInObservation = observed ?: continue
+        if (ticketViviReauthRestoredTarget(requiredReturnTarget, signedInObservation) ||
+          ticketViviReauthRestoreTarget(requiredReturnTarget, signedInObservation) != null
+        ) {
+          val terminalObservation = restoreViviTicketAfterReauth(
+            request,
+            requiredReturnTarget,
+            signedInObservation,
+            panelLease
+          )
+            ?: return reauthSnapshot(request, "needs_attention", "complete", "visual_proof_failed")
+          return provenSignedInViviReauthSnapshot(
+            request,
+            requiredReturnTarget,
+            terminalObservation
+          )
+        }
       }
       when (PhoneAutomationServiceBridge.classifyViviAuthSurface(TicketScreenConfig.VIVI_PACKAGE)) {
         PhoneAutomationViviAuthSurface.ADDITIONAL_VERIFICATION ->
@@ -1938,6 +2029,435 @@ class TicketStreamService : Service() {
     } else {
       reauthAttentionOrFailure(request, "visual_proof_failed")
     }
+  }
+
+  private enum class TicketViviReauthOriginalRestoreDisposition {
+    RESTORED,
+    NO_TICKET_PROVEN,
+    FALLBACK_SAFE,
+    UNCERTAIN
+  }
+
+  private data class TicketViviReauthOriginalRestoreResult(
+    val disposition: TicketViviReauthOriginalRestoreDisposition,
+    val observation: TicketVisualActionObservation
+  )
+
+  /**
+   * Version 4 remains inside the re-authentication lease. It first gives the retained private
+   * detail identity one bounded restoration attempt, then uses the existing latest-ticket visual
+   * route only after that identity is absent or unavailable. No child Ticket action is enqueued.
+   */
+  private suspend fun restoreOrRedetectViviTicketAfterReauth(
+    request: TicketViviReauthRequest,
+    originalTarget: TicketViviReauthReturnTarget?,
+    initialObservation: TicketVisualActionObservation,
+    panelLease: TicketActionPanelDarkLease
+  ): TicketViviReauthSnapshot {
+    updateViviReauthPhase(request, "running", "redetecting_latest_ticket", "running")
+    var observation = initialObservation
+    if (originalTarget != null) {
+      val original = attemptViviOriginalTicketRestoreBeforeRedetect(
+        request,
+        originalTarget,
+        observation,
+        panelLease
+      )
+      observation = original.observation
+      when (original.disposition) {
+        TicketViviReauthOriginalRestoreDisposition.RESTORED ->
+          return provenViviReauthV4TicketSnapshot(
+            request,
+            "saved_credentials_original_ticket_restored",
+            observation,
+            expectedAnchor = originalTarget.detailAnchor,
+            expectedState = originalTarget.state
+          )
+        TicketViviReauthOriginalRestoreDisposition.NO_TICKET_PROVEN ->
+          return provenViviReauthV4NoTicketSnapshot(
+            request,
+            TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY,
+            observation
+          )
+        TicketViviReauthOriginalRestoreDisposition.UNCERTAIN ->
+          return reauthSnapshot(request, "needs_attention", "complete", "visual_proof_failed")
+        TicketViviReauthOriginalRestoreDisposition.FALLBACK_SAFE -> Unit
+      }
+    }
+    return redetectLatestViviTicketAfterReauth(request, observation, panelLease)
+  }
+
+  private suspend fun attemptViviOriginalTicketRestoreBeforeRedetect(
+    request: TicketViviReauthRequest,
+    originalTarget: TicketViviReauthReturnTarget,
+    initialObservation: TicketVisualActionObservation,
+    panelLease: TicketActionPanelDarkLease
+  ): TicketViviReauthOriginalRestoreResult {
+    var observation = initialObservation
+    val dispatchedKinds = mutableSetOf<TicketViviReauthRestoreTargetKind>()
+    repeat(VIVI_REAUTH_TICKET_RESTORE_MAX_MUTATIONS) { mutationIndex ->
+      if (ticketViviReauthRestoredTarget(originalTarget, observation)) {
+        return TicketViviReauthOriginalRestoreResult(
+          TicketViviReauthOriginalRestoreDisposition.RESTORED,
+          observation
+        )
+      }
+      if (observation.state in setOf(
+          TicketVisualPhoneState.ACTIVATED_DETAIL,
+          TicketVisualPhoneState.UNACTIVATED_DETAIL
+        )
+      ) {
+        return TicketViviReauthOriginalRestoreResult(
+          TicketViviReauthOriginalRestoreDisposition.FALLBACK_SAFE,
+          observation
+        )
+      }
+      val target = ticketViviReauthV4OriginalRestoreTarget(originalTarget, observation)
+      if (target == null) {
+        val safeFallback = ticketViviReauthOriginalTargetVisuallyAbsent(
+          originalTarget,
+          observation
+        )
+        return TicketViviReauthOriginalRestoreResult(
+          if (safeFallback) TicketViviReauthOriginalRestoreDisposition.FALLBACK_SAFE
+          else TicketViviReauthOriginalRestoreDisposition.UNCERTAIN,
+          observation
+        )
+      }
+      if (!dispatchedKinds.add(target.kind) ||
+        !persistViviReauthPhase(request, target.kind.journalPhase) ||
+        !panelLease.beforeMutationAllowed()
+      ) {
+        return TicketViviReauthOriginalRestoreResult(
+          TicketViviReauthOriginalRestoreDisposition.UNCERTAIN,
+          observation
+        )
+      }
+      panelLease.markMutationMayHaveDispatched()
+      val before = observation
+      tapTicketVisualProbeBounds(
+        target.bounds,
+        "vivi_reauth_v4_original_${target.kind.name.lowercase()}"
+      )
+      val after = awaitViviReauthV4OriginalTransition(
+        originalTarget,
+        target.kind,
+        before,
+        "vivi_reauth_v4_original_${mutationIndex + 1}"
+      ) ?: return TicketViviReauthOriginalRestoreResult(
+        TicketViviReauthOriginalRestoreDisposition.UNCERTAIN,
+        observation
+      )
+      observation = after
+      if (target.kind == TicketViviReauthRestoreTargetKind.TIME_TICKETS_TAB &&
+        before.state == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY &&
+        observation.state == TicketVisualPhoneState.TICKETS_TIME_EMPTY
+      ) {
+        return TicketViviReauthOriginalRestoreResult(
+          TicketViviReauthOriginalRestoreDisposition.NO_TICKET_PROVEN,
+          observation
+        )
+      }
+    }
+    return TicketViviReauthOriginalRestoreResult(
+      if (ticketViviReauthRestoredTarget(originalTarget, observation)) {
+        TicketViviReauthOriginalRestoreDisposition.RESTORED
+      } else {
+        TicketViviReauthOriginalRestoreDisposition.UNCERTAIN
+      },
+      observation
+    )
+  }
+
+  private suspend fun awaitViviReauthV4OriginalTransition(
+    originalTarget: TicketViviReauthReturnTarget,
+    dispatchedKind: TicketViviReauthRestoreTargetKind,
+    before: TicketVisualActionObservation,
+    reason: String
+  ): TicketVisualActionObservation? {
+    val deadline = SystemClock.elapsedRealtime() + VIVI_REAUTH_LOGIN_PROOF_TIMEOUT_MILLIS
+    while (SystemClock.elapsedRealtime() < deadline) {
+      rootHardwareH264CaptureEngine.requestImmediateRefresh(reason)
+      val remaining = (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1L)
+      val observed = awaitStableTicketVisualActionObservation(
+        reason = reason,
+        timeoutMillis = minOf(VIVI_REAUTH_VERIFY_SLICE_MILLIS, remaining),
+        allowUnknown = true
+      )
+      if (observed == null || observed.probeId <= before.probeId ||
+        observed.state == TicketVisualPhoneState.UNKNOWN
+      ) {
+        delay(VIVI_REAUTH_VERIFY_POLL_MILLIS)
+        continue
+      }
+      if (observed.state == before.state && observed.currentAnchor == before.currentAnchor) {
+        delay(VIVI_REAUTH_VERIFY_POLL_MILLIS)
+        continue
+      }
+      if (ticketViviReauthRestoredTarget(originalTarget, observed)) return observed
+      val accepted = when (dispatchedKind) {
+        TicketViviReauthRestoreTargetKind.TICKETS_TAB ->
+          ticketViviLogoutBottomRouteObservation(before) && observed.state in setOf(
+            TicketVisualPhoneState.TICKET_LIST,
+            TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY,
+            TicketVisualPhoneState.TICKETS_TIME_EMPTY
+          )
+        TicketViviReauthRestoreTargetKind.SINGLE_USE_TICKETS_TAB ->
+          before.state == TicketVisualPhoneState.TICKETS_TIME_EMPTY && observed.state in setOf(
+            TicketVisualPhoneState.TICKET_LIST,
+            TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY
+          )
+        TicketViviReauthRestoreTargetKind.TIME_TICKETS_TAB ->
+          before.state == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY && observed.state in setOf(
+            TicketVisualPhoneState.TICKET_LIST,
+            TicketVisualPhoneState.TICKETS_TIME_EMPTY
+          )
+        TicketViviReauthRestoreTargetKind.LATEST_UNACTIVATED_DETAIL,
+        TicketViviReauthRestoreTargetKind.UNIQUE_ACTIVATED_DETAIL ->
+          before.state == TicketVisualPhoneState.TICKET_LIST && observed.state in setOf(
+            TicketVisualPhoneState.ACTIVATED_DETAIL,
+            TicketVisualPhoneState.UNACTIVATED_DETAIL
+          ) && ticketViviReauthTerminalReadyObservation(observed)
+      }
+      return observed.takeIf { accepted }
+    }
+    return null
+  }
+
+  private suspend fun redetectLatestViviTicketAfterReauth(
+    request: TicketViviReauthRequest,
+    initialObservation: TicketVisualActionObservation,
+    panelLease: TicketActionPanelDarkLease
+  ): TicketViviReauthSnapshot {
+    var observation = initialObservation
+    val dispatchedKinds = mutableSetOf<TicketViviReauthRedetectTargetKind>()
+    repeat(VIVI_REAUTH_TICKET_REDETECT_MAX_MUTATIONS) { mutationIndex ->
+      if (observation.state == TicketVisualPhoneState.LOGIN_REQUIRED ||
+        observation.state == TicketVisualPhoneState.BLOCKED ||
+        observation.state == TicketVisualPhoneState.UNKNOWN &&
+          !ticketViviLogoutBottomRouteObservation(observation)
+      ) return reauthSnapshot(request, "needs_attention", "complete", "visual_proof_failed")
+      val target = ticketViviReauthRedetectTarget(observation)
+        ?: return reauthSnapshot(request, "needs_attention", "complete", "visual_proof_failed")
+      if (!dispatchedKinds.add(target.kind) ||
+        !persistViviReauthPhase(request, target.kind.journalPhase) ||
+        !panelLease.beforeMutationAllowed()
+      ) return reauthSnapshot(request, "needs_attention", "complete", "visual_proof_failed")
+      val before = observation
+      panelLease.markMutationMayHaveDispatched()
+      tapTicketVisualProbeBounds(
+        target.bounds,
+        "vivi_reauth_v4_redetect_${target.kind.name.lowercase()}"
+      )
+      observation = awaitViviReauthV4RedetectTransition(
+        target,
+        before,
+        "vivi_reauth_v4_redetect_${mutationIndex + 1}"
+      ) ?: return reauthSnapshot(request, "needs_attention", "complete", "visual_proof_failed")
+
+      if (target.kind == TicketViviReauthRedetectTargetKind.LATEST_UNACTIVATED_DETAIL) {
+        if (!ticketViviReauthRedetectedLatest(before, target.selectedAnchor, observation)) {
+          return reauthSnapshot(request, "needs_attention", "complete", "visual_proof_failed")
+        }
+        val selectedObservation = ticketVisualObservationAfterCardSelection(
+          observation,
+          target.selectedAnchor
+        )
+        return provenViviReauthV4TicketSnapshot(
+          request,
+          "saved_credentials_latest_ticket_redetected",
+          selectedObservation,
+          expectedAnchor = target.selectedAnchor,
+          expectedState = TicketVisualPhoneState.UNACTIVATED_DETAIL
+        )
+      }
+      if (target.kind == TicketViviReauthRedetectTargetKind.TIME_TICKETS_TAB &&
+        before.state == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY &&
+        observation.state == TicketVisualPhoneState.TICKETS_TIME_EMPTY
+      ) {
+        return provenViviReauthV4NoTicketSnapshot(request, before.state, observation)
+      }
+    }
+    return reauthSnapshot(request, "needs_attention", "complete", "visual_proof_failed")
+  }
+
+  private suspend fun awaitViviReauthV4RedetectTransition(
+    target: TicketViviReauthRedetectTarget,
+    before: TicketVisualActionObservation,
+    reason: String
+  ): TicketVisualActionObservation? {
+    val deadline = SystemClock.elapsedRealtime() + VIVI_REAUTH_LOGIN_PROOF_TIMEOUT_MILLIS
+    while (SystemClock.elapsedRealtime() < deadline) {
+      rootHardwareH264CaptureEngine.requestImmediateRefresh(reason)
+      val remaining = (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1L)
+      val observed = awaitStableTicketVisualActionObservation(
+        reason = reason,
+        timeoutMillis = minOf(VIVI_REAUTH_VERIFY_SLICE_MILLIS, remaining),
+        allowUnknown = true
+      )
+      if (observed == null || observed.probeId <= before.probeId ||
+        observed.state == TicketVisualPhoneState.UNKNOWN
+      ) {
+        delay(VIVI_REAUTH_VERIFY_POLL_MILLIS)
+        continue
+      }
+      if (observed.state == before.state && observed.currentAnchor == before.currentAnchor) {
+        delay(VIVI_REAUTH_VERIFY_POLL_MILLIS)
+        continue
+      }
+      val accepted = when (target.kind) {
+        TicketViviReauthRedetectTargetKind.CLOSE_WRONG_DETAIL ->
+          before.state in setOf(
+            TicketVisualPhoneState.ACTIVATED_DETAIL,
+            TicketVisualPhoneState.UNACTIVATED_DETAIL
+          ) && ticketViviLogoutBottomRouteObservation(observed)
+        TicketViviReauthRedetectTargetKind.TICKETS_TAB ->
+          ticketViviLogoutBottomRouteObservation(before) && observed.state in setOf(
+            TicketVisualPhoneState.TICKET_LIST,
+            TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY,
+            TicketVisualPhoneState.TICKETS_TIME_EMPTY
+          )
+        TicketViviReauthRedetectTargetKind.SINGLE_USE_TICKETS_TAB ->
+          before.state == TicketVisualPhoneState.TICKETS_TIME_EMPTY && observed.state in setOf(
+            TicketVisualPhoneState.TICKET_LIST,
+            TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY
+          )
+        TicketViviReauthRedetectTargetKind.TIME_TICKETS_TAB ->
+          before.state == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY && observed.state in setOf(
+            TicketVisualPhoneState.TICKET_LIST,
+            TicketVisualPhoneState.TICKETS_TIME_EMPTY
+          )
+        TicketViviReauthRedetectTargetKind.LATEST_UNACTIVATED_DETAIL ->
+          ticketViviReauthRedetectedLatest(before, target.selectedAnchor, observed)
+      }
+      return observed.takeIf { accepted }
+    }
+    return null
+  }
+
+  private suspend fun provenViviReauthV4TicketSnapshot(
+    request: TicketViviReauthRequest,
+    reason: String,
+    observation: TicketVisualActionObservation,
+    expectedAnchor: String,
+    expectedState: TicketVisualPhoneState
+  ): TicketViviReauthSnapshot {
+    val exactTarget = expectedAnchor.isNotBlank() && observation.state == expectedState &&
+      observation.currentAnchor == expectedAnchor &&
+      if (expectedState == TicketVisualPhoneState.UNACTIVATED_DETAIL) {
+        observation.sliderBounds != null && observation.backBounds != null
+      } else {
+        expectedState == TicketVisualPhoneState.ACTIVATED_DETAIL &&
+          observation.sliderBounds == null && observation.backBounds != null
+      }
+    if (!exactTarget) {
+      return reauthSnapshot(request, "needs_attention", "complete", "visual_proof_failed")
+    }
+    val watermark = awaitTicketVisualActionFrameWatermark("vivi_reauth_v4_ticket_proof")
+      ?: return reauthSnapshot(request, "needs_attention", "complete", "visual_proof_failed")
+    return reauthSnapshot(
+      request,
+      "succeeded",
+      "complete",
+      reason,
+      proofSource = "phone_visual",
+      streamEpoch = watermark.first,
+      frameSequence = watermark.second,
+      ok = true
+    )
+  }
+
+  private suspend fun provenViviReauthV4NoTicketSnapshot(
+    request: TicketViviReauthRequest,
+    navigationFromState: TicketVisualPhoneState,
+    observation: TicketVisualActionObservation
+  ): TicketViviReauthSnapshot {
+    val watermark = awaitTicketVisualActionFrameWatermark("vivi_reauth_v4_no_ticket_proof")
+      ?: return reauthSnapshot(request, "needs_attention", "complete", "visual_proof_failed")
+    if (!ticketViviReauthNoTicketProven(
+        navigationFromState,
+        observation,
+        watermark.first,
+        watermark.second
+      )
+    ) return reauthSnapshot(request, "needs_attention", "complete", "visual_proof_failed")
+    return reauthSnapshot(
+      request,
+      "succeeded",
+      "complete",
+      "saved_credentials_no_ticket_proven",
+      proofSource = "phone_visual",
+      streamEpoch = watermark.first,
+      frameSequence = watermark.second,
+      ok = true
+    )
+  }
+
+  /**
+   * A normal account switch must return the shared viewer to a real ticket before succeeding.
+   * Every transition is visually typed, journaled, and fenced by the existing re-auth lease. A
+   * dispatched transition is observed once and is never replayed after an ambiguous result.
+   */
+  private suspend fun restoreViviTicketAfterReauth(
+    request: TicketViviReauthRequest,
+    returnTarget: TicketViviReauthReturnTarget,
+    initialObservation: TicketVisualActionObservation,
+    panelLease: TicketActionPanelDarkLease
+  ): TicketVisualActionObservation? {
+    var observation = initialObservation
+    val dispatchedKinds = mutableSetOf<TicketViviReauthRestoreTargetKind>()
+    repeat(VIVI_REAUTH_TICKET_RESTORE_MAX_MUTATIONS) { mutationIndex ->
+      if (ticketViviReauthRestoredTarget(returnTarget, observation)) return observation
+      val target = ticketViviReauthRestoreTarget(returnTarget, observation) ?: return null
+      if (!dispatchedKinds.add(target.kind) ||
+        !persistViviReauthPhase(request, target.kind.journalPhase) ||
+        !panelLease.beforeMutationAllowed()
+      ) return null
+      panelLease.markMutationMayHaveDispatched()
+      // A failed shell result can still follow a dispatched tap. Observe and reconcile the exact
+      // successor either way; never repeat this target kind.
+      tapTicketVisualProbeBounds(
+        target.bounds,
+        "vivi_reauth_ticket_restore_${target.kind.name.lowercase()}"
+      )
+      observation = awaitViviReauthRestoreTransition(
+        returnTarget = returnTarget,
+        dispatchedKind = target.kind,
+        before = observation,
+        reason = "vivi_reauth_ticket_restore_${mutationIndex + 1}"
+      ) ?: return null
+    }
+    return observation.takeIf { ticketViviReauthRestoredTarget(returnTarget, it) }
+  }
+
+  private suspend fun awaitViviReauthRestoreTransition(
+    returnTarget: TicketViviReauthReturnTarget,
+    dispatchedKind: TicketViviReauthRestoreTargetKind,
+    before: TicketVisualActionObservation,
+    reason: String
+  ): TicketVisualActionObservation? {
+    val deadline = SystemClock.elapsedRealtime() + VIVI_REAUTH_LOGIN_PROOF_TIMEOUT_MILLIS
+    while (SystemClock.elapsedRealtime() < deadline) {
+      rootHardwareH264CaptureEngine.requestImmediateRefresh(reason)
+      val remaining = (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1L)
+      val observed = awaitStableTicketVisualActionObservation(
+        reason = reason,
+        timeoutMillis = minOf(VIVI_REAUTH_VERIFY_SLICE_MILLIS, remaining),
+        allowUnknown = true
+      )
+      when (ticketViviReauthRestoreTransitionStatus(
+        returnTarget,
+        dispatchedKind,
+        before,
+        observed
+      )) {
+        TicketViviReauthRestoreTransitionStatus.PROVED -> return observed
+        TicketViviReauthRestoreTransitionStatus.REJECTED -> return null
+        TicketViviReauthRestoreTransitionStatus.WAITING ->
+          delay(VIVI_REAUTH_VERIFY_POLL_MILLIS)
+      }
+    }
+    return null
   }
 
   private suspend fun reauthAttentionOrFailure(
@@ -1991,6 +2511,7 @@ class TicketStreamService : Service() {
     credentialRevision = request.credentialRevision,
     resetAppData = request.resetAppData,
     logoutInApp = request.logoutInApp,
+    redetectAfterLogin = request.redetectAfterLogin,
     status = status,
     phase = phase,
     reason = reason,
@@ -2027,6 +2548,7 @@ class TicketStreamService : Service() {
       credentialRevision = snapshot.credentialRevision,
       resetAppData = snapshot.resetAppData,
       logoutInApp = snapshot.logoutInApp,
+      redetectAfterLogin = snapshot.redetectAfterLogin,
       phase = "terminal",
       terminalStatus = snapshot.status,
       terminalReason = snapshot.reason,
@@ -2062,6 +2584,7 @@ class TicketStreamService : Service() {
       credentialRevision = preferences.getString("credential_revision", "").orEmpty(),
       resetAppData = preferences.getBoolean("reset_app_data", false),
       logoutInApp = preferences.getBoolean("logout_in_app", false),
+      redetectAfterLogin = preferences.getBoolean("redetect_after_login", false),
       phase = preferences.getString("phase", "").orEmpty(),
       terminalStatus = preferences.getString("terminal_status", "").orEmpty(),
       terminalReason = preferences.getString("terminal_reason", "").orEmpty(),
@@ -2079,6 +2602,7 @@ class TicketStreamService : Service() {
         credentialRevision = request.credentialRevision,
         resetAppData = request.resetAppData,
         logoutInApp = request.logoutInApp,
+        redetectAfterLogin = request.redetectAfterLogin,
         phase = phase
       )
     )
@@ -2093,6 +2617,7 @@ class TicketStreamService : Service() {
           .putString("credential_revision", value.credentialRevision)
           .putBoolean("reset_app_data", value.resetAppData)
           .putBoolean("logout_in_app", value.logoutInApp)
+          .putBoolean("redetect_after_login", value.redetectAfterLogin)
           .putString("phase", value.phase)
           .putString("terminal_status", value.terminalStatus)
           .putString("terminal_reason", value.terminalReason)
@@ -2111,11 +2636,12 @@ class TicketStreamService : Service() {
    * does not read the accessibility hierarchy: the rooted capture helper returns only opaque
    * card anchors and bounded controls, and every mutation requires two distinct agreeing probes.
    */
-  private fun handleTicketVisualActionV3(
+  private suspend fun handleTicketVisualActionV3(
     command: TicketSpacetimeCommand,
     request: TicketVisualActionRequest
   ): TicketSpacetimeCommandResult {
-    synchronized(ticketActionV3Lock) {
+    return sessionMutex.withLock {
+      synchronized(ticketActionV3Lock) {
       val retainedTerminal = loadTicketVisualActionJournal()
       if (retainedTerminal.hasRetainedTerminal &&
         (retainedTerminal.actionId != request.actionId ||
@@ -2199,59 +2725,68 @@ class TicketStreamService : Service() {
         phase = "awaiting_visual_proof",
         reason = "ticket_action_v3_admitted"
       )
+      ticketVisualActionJobOwnershipActive = true
       ticketActionV3Job = serviceScope.launch {
-        val terminal = runCatching {
-          if (request.target == TicketVisualActionTarget.PROVE_CURRENT &&
-            !cleanupCheckpointRecoveryProof
-          ) {
-            runReadOnlyTicketVisualProofV3(command, request, generation)
-          } else {
-            controlCodePhoneMutationLane.withOwnership {
-              runTicketVisualActionV3(
-                command,
-                request,
-                generation,
-                readOnlyCleanupCheckpointRecovery = cleanupCheckpointRecoveryProof
-              )
-            }
-          }
-        }.getOrElse {
-          val checkpoint = if (request.target.activatesTicket) {
-            val revision = if (request.target == TicketVisualActionTarget.REGISTER_CURRENT) {
-              request.expectedInteractionRevision
+        try {
+          val terminal = runCatching {
+            if (request.target == TicketVisualActionTarget.PROVE_CURRENT &&
+              !cleanupCheckpointRecoveryProof
+            ) {
+              runReadOnlyTicketVisualProofV3(command, request, generation)
             } else {
-              command.revision
+              controlCodePhoneMutationLane.withOwnership {
+                runTicketVisualActionV3(
+                  command,
+                  request,
+                  generation,
+                  readOnlyCleanupCheckpointRecovery = cleanupCheckpointRecoveryProof
+                )
+              }
             }
-            ticketActivationCheckpoint(command.id, revision, request.attemptId)
-          } else {
-            null
+          }.getOrElse {
+            val checkpoint = if (request.target.activatesTicket) {
+              val revision = if (request.target == TicketVisualActionTarget.REGISTER_CURRENT) {
+                request.expectedInteractionRevision
+              } else {
+                command.revision
+              }
+              ticketActivationCheckpoint(command.id, revision, request.attemptId)
+            } else {
+              null
+            }
+            val failurePhase = when {
+              checkpoint?.stage == TicketActivationCheckpointStage.NO_TRANSITION_PROVEN &&
+                checkpoint.dispatchOrdinal >= 2 -> "no_transition"
+              checkpoint?.stage == TicketActivationCheckpointStage.NO_TRANSITION_PROVEN ->
+                "retry_not_dispatched"
+              checkpoint?.dispatchOrdinal?.let { ordinal -> ordinal > 0 } == true ->
+                "outcome_unknown"
+              else -> "not_dispatched"
+            }
+            ticketVisualActionTerminal(
+              request,
+              ok = false,
+              status = if (request.target.activatesTicket) "needs_attention" else "failed",
+              reason = "ticket_action_v3_internal_failure",
+              terminalPhase = failurePhase.takeIf { request.target.activatesTicket }
+            )
           }
-          val failurePhase = when {
-            checkpoint?.stage == TicketActivationCheckpointStage.NO_TRANSITION_PROVEN &&
-              checkpoint.dispatchOrdinal >= 2 -> "no_transition"
-            checkpoint?.stage == TicketActivationCheckpointStage.NO_TRANSITION_PROVEN ->
-              "retry_not_dispatched"
-            checkpoint?.dispatchOrdinal?.let { ordinal -> ordinal > 0 } == true ->
-              "outcome_unknown"
-            else -> "not_dispatched"
+          synchronized(ticketActionV3Lock) {
+            if (ticketActionV3Generation == generation &&
+              ticketActionV3Snapshot.actionId == request.actionId
+            ) {
+              ticketActionV3Snapshot = terminal
+              ticketActionV3CleanupCheckpointRecoveryActive = false
+            }
           }
-          ticketVisualActionTerminal(
-            request,
-            ok = false,
-            status = if (request.target.activatesTicket) "needs_attention" else "failed",
-            reason = "ticket_action_v3_internal_failure",
-            terminalPhase = failurePhase.takeIf { request.target.activatesTicket }
-          )
+          broadcastStatus()
+        } finally {
+          withContext(NonCancellable) {
+            sessionMutex.withLock {
+              ticketVisualActionJobOwnershipActive = false
+            }
+          }
         }
-        synchronized(ticketActionV3Lock) {
-          if (ticketActionV3Generation == generation &&
-            ticketActionV3Snapshot.actionId == request.actionId
-          ) {
-            ticketActionV3Snapshot = terminal
-            ticketActionV3CleanupCheckpointRecoveryActive = false
-          }
-        }
-        broadcastStatus()
       }
       return TicketSpacetimeCommandResult(
         ok = false,
@@ -2260,6 +2795,7 @@ class TicketStreamService : Service() {
         terminal = false,
         ticketActionV3 = ticketActionV3Snapshot
       )
+      }
     }
   }
 
@@ -2397,7 +2933,9 @@ class TicketStreamService : Service() {
       readOnlyCleanupCheckpointRecovery &&
         request.target == TicketVisualActionTarget.PROVE_CURRENT &&
         recoveringControlCodeCheckpointAtStart
-    ticketVisualActionCaptureLeaseActive = true
+    sessionMutex.withLock {
+      ticketVisualActionCaptureLeaseActive = true
+    }
     synchronized(ticketActionV3Lock) {
       deferredTicketVisualTerminalActionId = ""
       deferredTicketVisualTerminalObservation = null
@@ -2426,6 +2964,7 @@ class TicketStreamService : Service() {
       durationMillis = TICKET_ACTION_V3_PANEL_DARK_LEASE_MILLIS
     )
     var leaseAcquired = false
+    var commandStartedProofSessionGeneration: Long? = null
     var provisional = TicketVisualActionSnapshot(
       actionId = request.actionId,
       target = request.target.wireName,
@@ -2461,7 +3000,10 @@ class TicketStreamService : Service() {
           command,
           request,
           generation,
-          panelLease
+          panelLease,
+          onNewSessionAdmitted = { sessionGeneration ->
+            commandStartedProofSessionGeneration = sessionGeneration
+          }
         )
         val leaseState = panelLease.snapshot()
         when {
@@ -2507,7 +3049,15 @@ class TicketStreamService : Service() {
         PhoneAutomationServiceBridge.clearNonTouchInputTailForBrowserCriticalAction(
           "ticket:ticket_action_panel_dark:${request.actionId.takeLast(24)}:released"
         )
-        ticketVisualActionCaptureLeaseActive = false
+        sessionMutex.withLock {
+          ticketVisualActionCaptureLeaseActive = false
+          commandStartedProofSessionGeneration?.let { sessionGeneration ->
+            scheduleCommandStartedProofStreamCleanupLocked(
+              expectedSessionGeneration = sessionGeneration,
+              reason = "ticket_action_v3_proof_stream_idle"
+            )
+          }
+        }
       }
     }
     val completedLease = finalization
@@ -2693,7 +3243,8 @@ class TicketStreamService : Service() {
     command: TicketSpacetimeCommand,
     request: TicketVisualActionRequest,
     generation: Long,
-    panelLease: TicketActionPanelDarkLease
+    panelLease: TicketActionPanelDarkLease,
+    onNewSessionAdmitted: (Long) -> Unit
   ): TicketVisualActionSnapshot {
     loadTicketVisualSwitchAnchorsIfNeeded()
     val recoveringControlCodeCheckpoint = controlCodeSignatureCleanupRequired
@@ -2748,7 +3299,9 @@ class TicketStreamService : Service() {
       )
     }
     if (!streamActive) {
-      val startResponse = startTicketSession()
+      val startResponse = startTicketSession(
+        onNewSessionAdmitted = onNewSessionAdmitted
+      )
       if (!startResponse.ok || !streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264) {
         return ticketVisualActionTerminal(
           request,
@@ -4715,7 +5268,8 @@ class TicketStreamService : Service() {
   private suspend fun startTicketSession(
     prepareCaptureWithCurrentPhoneMutationOwnership: Boolean = false,
     timeoutMillis: Long = SESSION_START_TIMEOUT_MILLIS,
-    lockedStartDecision: (() -> TicketSessionResponse?)? = null
+    lockedStartDecision: (() -> TicketSessionResponse?)? = null,
+    onNewSessionAdmitted: ((Long) -> Unit)? = null
   ): TicketSessionResponse {
     val response = withTimeoutOrNull(timeoutMillis.coerceAtLeast(1L)) {
       if (!secureCaptureStartupReconciled.await()) {
@@ -4735,7 +5289,8 @@ class TicketStreamService : Service() {
       sessionMutex.withLock {
         lockedStartDecision?.invoke() ?: startTicketSessionLocked(
           scheduleCaptureStart = !prepareCaptureWithCurrentPhoneMutationOwnership,
-          controlCodeOwnsStart = prepareCaptureWithCurrentPhoneMutationOwnership
+          controlCodeOwnsStart = prepareCaptureWithCurrentPhoneMutationOwnership,
+          onNewSessionAdmitted = onNewSessionAdmitted
         )
       }
     } ?: return run {
@@ -4771,7 +5326,8 @@ class TicketStreamService : Service() {
 
   private suspend fun startTicketSessionLocked(
     scheduleCaptureStart: Boolean,
-    controlCodeOwnsStart: Boolean
+    controlCodeOwnsStart: Boolean,
+    onNewSessionAdmitted: ((Long) -> Unit)?
   ): TicketSessionResponse {
     tryReuseActiveHardwareStreamBeforePreflight()?.let { return it }
     if (
@@ -5011,7 +5567,9 @@ class TicketStreamService : Service() {
       admitted = {
         admissionGranted = true
         fallbackReason = null
+        ticketSessionGeneration += 1L
         streamActive = true
+        onNewSessionAdmitted?.invoke(ticketSessionGeneration)
         hardwareCaptureVerified = false
         hardwareFrameBroadcastAllowed = false
         activeCaptureMode = CAPTURE_MODE_ROOT_HARDWARE_H264
@@ -5470,6 +6028,7 @@ class TicketStreamService : Service() {
         val stillInactive = viewerInputGeneration == expectedViewerInputGeneration &&
           lastViewerInputAtMillis == expectedLastInputAtMillis &&
           ticketSessionOpen() &&
+          !ticketProofStreamAutomationOwnershipActive() &&
           TicketInactivityPolicy.shouldStop(
             lastInputAtMillis = lastViewerInputAtMillis,
             nowMillis = nowMillis,
@@ -5593,7 +6152,38 @@ class TicketStreamService : Service() {
     startupDisconnectGraceUntilMillis = 0L
   }
 
-  private fun scheduleClientDisconnectGraceLocked() {
+  private fun scheduleCommandStartedProofStreamCleanupLocked(
+    expectedSessionGeneration: Long,
+    reason: String
+  ) {
+    if (!streamActive ||
+      ticketSessionGeneration != expectedSessionGeneration ||
+      totalClientCount() != 0
+    ) {
+      return
+    }
+    // Invalidate an inactivity timeout token captured before the command's final convergence.
+    // The stricter generation-fenced cleanup below still parks this stream after 90 seconds.
+    markViewerInput("command_proof_terminal_cleanup")
+    scheduleClientDisconnectGraceLocked(
+      expectedSessionGeneration = expectedSessionGeneration,
+      stopReason = reason
+    )
+  }
+
+  private fun ticketProofStreamAutomationOwnershipActive(): Boolean {
+    return streamStartAdmission.claimCount() > 0L ||
+      ticketSpacetimeControlCodeRequestActive() ||
+      ticketVisualActionJobOwnershipActive ||
+      ticketVisualActionCaptureLeaseActive ||
+      ticketActionV3Job?.isActive == true ||
+      viviReauthCaptureLeaseActive
+  }
+
+  private fun scheduleClientDisconnectGraceLocked(
+    expectedSessionGeneration: Long? = null,
+    stopReason: String = "browser_left_ticket_screen"
+  ) {
     val startupGraceMillis = (startupDisconnectGraceUntilMillis - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
     val delayMillis = startupGraceMillis.coerceAtLeast(CLIENT_DISCONNECT_IDLE_GRACE_MILLIS)
     clientDisconnectStopJob?.cancel()
@@ -5607,12 +6197,25 @@ class TicketStreamService : Service() {
           return@withLock
         }
         try {
-          if (
-            totalClientCount() == 0 &&
-            ticketSessionOpen() &&
-            streamStartAdmission.claimCount() == 0L
-          ) {
-            noteClientDetachedLocked("browser_left_ticket_screen")
+          val decision = ticketProofStreamCleanupDecision(
+            expectedSessionGeneration = expectedSessionGeneration,
+            currentSessionGeneration = ticketSessionGeneration,
+            streamActive = ticketSessionOpen(),
+            clientCount = totalClientCount(),
+            startOwnershipActive = streamStartAdmission.claimCount() > 0L,
+            controlOwnershipActive = ticketSpacetimeControlCodeRequestActive(),
+            actionOwnershipActive = ticketVisualActionJobOwnershipActive ||
+              ticketVisualActionCaptureLeaseActive ||
+              ticketActionV3Job?.isActive == true,
+            reauthOwnershipActive = viviReauthCaptureLeaseActive
+          )
+          when (decision) {
+            TicketProofStreamCleanupDecision.STOP -> noteClientDetachedLocked(stopReason)
+            TicketProofStreamCleanupDecision.RETRY -> scheduleClientDisconnectGraceLocked(
+              expectedSessionGeneration = expectedSessionGeneration,
+              stopReason = stopReason
+            )
+            TicketProofStreamCleanupDecision.DROP -> Unit
           }
         } finally {
           if (clientDisconnectStopJob === runningJob) {
@@ -6537,7 +7140,9 @@ class TicketStreamService : Service() {
    */
   private fun streamCaptureNeededForControlCodeRequest(): Boolean {
     return streamStartAdmission.claimCount() > 0L ||
+      ticketVisualActionJobOwnershipActive ||
       ticketVisualActionCaptureLeaseActive ||
+      viviReauthCaptureLeaseActive ||
       controlCodeRequestActive()
   }
 
@@ -10158,14 +10763,19 @@ class TicketStreamService : Service() {
   }
 
   private suspend fun claimControlCodeAutomationForRequest() {
-    streamStartAdmission.claim()
+    sessionMutex.withLock {
+      streamStartAdmission.claim()
+      // Admission and disconnect cleanup share the session lock. A cleanup that
+      // already won the lock finishes first; otherwise this claim prevents a
+      // stop from committing while the request begins to reuse the stream.
+      clientDisconnectStopJob?.cancel()
+      clientDisconnectStopJob = null
+    }
     // A request is the sole phone-control authority while it is admitted. Stop
     // obsolete foreground work before the request enters the serialized
     // mutation lane. A background root-capture preparation may be inside the
     // lane's long list-recovery proof; cancel and join it so the request does
     // not wait behind work that is no longer relevant to the user action.
-    clientDisconnectStopJob?.cancel()
-    clientDisconnectStopJob = null
     cancelForegroundGuard()
     cancelTicketRecovery("control_code_request_admitted")
     controlExitCleanupJob?.cancel()
@@ -10178,18 +10788,18 @@ class TicketStreamService : Service() {
   }
 
   private suspend fun releaseControlCodeAutomationForRequest() {
-    val remainingClaims = streamStartAdmission.release()
-    if (remainingClaims != 0L) return
     withContext(NonCancellable) {
       sessionMutex.withLock {
-        val currentClaims = streamStartAdmission.claimCount()
+        val remainingClaims = streamStartAdmission.release()
+        if (remainingClaims != 0L) return@withLock
         if (
           shouldScheduleDisconnectAfterFinalControlClaim(
-            remainingClaims = currentClaims,
+            remainingClaims = remainingClaims,
             clientCount = totalClientCount(),
             sessionOpen = ticketSessionOpen()
           )
         ) {
+          markViewerInput("control_automation_released")
           scheduleClientDisconnectGraceLocked()
           recordTicketEvent("client_disconnect_cleanup_rescheduled", "reason=control_automation_released")
         }
@@ -15201,7 +15811,7 @@ class TicketStreamService : Service() {
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
     private const val SESSION_START_TIMEOUT_MILLIS = 70_000L
     private const val SERVICE_DESTROY_JOIN_TIMEOUT_MILLIS = 12_000L
-    const val SERVER_VERSION = "ticket-stream-2026-09-03-vivi-logout-login-v336"
+    const val SERVER_VERSION = "ticket-stream-2026-09-04-proof-stream-idle-cleanup-v340"
     private const val CONTROL_CODE_MARKER_RESULT_HIERARCHY = "__marker_control_code_result__"
     private const val FRAME_ENVELOPE_VERSION = "tsf2"
     private const val FRAME_ENVELOPE_MAGIC = 0x54534632
@@ -15364,6 +15974,8 @@ class TicketStreamService : Service() {
     private const val VIVI_REAUTH_VERIFY_SLICE_MILLIS = 2_500L
     private const val VIVI_REAUTH_VERIFY_POLL_MILLIS = 200L
     private const val VIVI_REAUTH_LOGOUT_POLL_MILLIS = 80L
+    private const val VIVI_REAUTH_TICKET_RESTORE_MAX_MUTATIONS = 3
+    private const val VIVI_REAUTH_TICKET_REDETECT_MAX_MUTATIONS = 5
     private const val CONTROL_CODE_POPUP_READY_CACHE_MILLIS = 2_000L
     private const val CONTROL_CODE_FAST_ROOT_DUMP_TIMEOUT_MILLIS = 8_000L
     private const val CONTROL_CODE_RAW_TICKET_ROOT_CONFIRM_TIMEOUT_MILLIS = 8_000L

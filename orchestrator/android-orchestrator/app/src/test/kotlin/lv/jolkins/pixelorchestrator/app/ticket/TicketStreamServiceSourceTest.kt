@@ -125,7 +125,7 @@ class TicketStreamServiceSourceTest {
   fun proveCurrentUsesTwoFreshVisualFramesWithoutLaunchingOrNavigating() {
     val dispatch = body(
       service,
-      "private fun handleTicketVisualActionV3",
+      "private suspend fun handleTicketVisualActionV3",
       "private suspend fun runReadOnlyTicketVisualProofV3"
     )
     val action = body(
@@ -167,7 +167,7 @@ class TicketStreamServiceSourceTest {
   fun staleControlCleanupCheckpointUsesAProtectedFreshPixelOnlyProveCurrentRecovery() {
     val dispatch = body(
       service,
-      "private fun handleTicketVisualActionV3",
+      "private suspend fun handleTicketVisualActionV3",
       "private suspend fun runReadOnlyTicketVisualProofV3"
     )
     val proof = body(
@@ -794,7 +794,7 @@ class TicketStreamServiceSourceTest {
       subscription.indexOf("subscribedCommandHandoff.fromSubscription"))
     val admission = body(
       service,
-      "private fun handleTicketVisualActionV3",
+      "private suspend fun handleTicketVisualActionV3",
       "private suspend fun runReadOnlyTicketVisualProofV3"
     )
     assertTrue(admission.contains("retainedTerminal.hasRetainedTerminal"))
@@ -1015,7 +1015,7 @@ class TicketStreamServiceSourceTest {
       "private suspend fun runTicketVisualActionV3WithCaptureLease",
       "private suspend fun activateTicketFromVisualAction"
     )
-    val start = action.indexOf("val startResponse = startTicketSession()")
+    val start = action.indexOf("val startResponse = startTicketSession(")
     val gate = action.indexOf("if (!startResponse.ok || !streamActive")
     val unavailable = action.indexOf("ticket_action_visual_stream_unavailable")
     val launch = action.indexOf("launchViviForWake", start)
@@ -1077,7 +1077,7 @@ class TicketStreamServiceSourceTest {
 
   @Test
   fun publicV3FailureReasonIsAFixedSafeToken() {
-    val handler = body(service, "private fun handleTicketVisualActionV3", "private suspend fun runTicketVisualActionV3")
+    val handler = body(service, "private suspend fun handleTicketVisualActionV3", "private suspend fun runTicketVisualActionV3")
     assertTrue(handler.contains("ticket_action_v3_internal_failure"))
     assertFalse(handler.contains("safeErrorDetail(error)"))
     assertFalse(handler.contains("error.message"))
@@ -1332,7 +1332,7 @@ class TicketStreamServiceSourceTest {
     assertFalse(action.contains("UiAutomator"))
     assertFalse(action.contains("dumpViviHierarchy"))
     assertTrue(service.contains(
-      "ticket-stream-2026-09-03-vivi-logout-login-v336"
+      "ticket-stream-2026-09-04-proof-stream-idle-cleanup-v340"
     ))
     assertFalse(service.contains(
       "ticket-stream-2026-08-25-native-edge-action-clamp-proof-v320"
@@ -3444,6 +3444,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(stop.contains("lastViewerInputAtMillis == expectedLastInputAtMillis"))
     assertTrue(stop.contains("TicketInactivityPolicy.shouldStop"))
     assertTrue(stop.contains("activeViewerDemand = videoClients.isNotEmpty()"))
+    assertTrue(stop.contains("!ticketProofStreamAutomationOwnershipActive()"))
     assertTrue(stop.contains("if (!authorized)"))
   }
 
@@ -3459,10 +3460,10 @@ class TicketStreamServiceSourceTest {
     assertTrue(timer.contains("viewerInputGeneration += 1L"))
     assertTrue(accept.contains("if (totalClientCount() == 0)"))
     assertTrue(accept.contains("scheduleClientDisconnectGraceLocked()"))
-    assertTrue(disconnect.contains("totalClientCount() == 0"))
-    assertTrue(disconnect.contains("streamStartAdmission.claimCount() == 0L"))
+    assertTrue(disconnect.contains("clientCount = totalClientCount()"))
+    assertTrue(disconnect.contains("startOwnershipActive = streamStartAdmission.claimCount() > 0L"))
     assertTrue(disconnect.contains("CLIENT_DISCONNECT_IDLE_GRACE_MILLIS"))
-    assertTrue(disconnect.contains("noteClientDetachedLocked(\"browser_left_ticket_screen\")"))
+    assertTrue(disconnect.contains("TicketProofStreamCleanupDecision.STOP -> noteClientDetachedLocked(stopReason)"))
   }
 
   @Test
@@ -3470,9 +3471,10 @@ class TicketStreamServiceSourceTest {
     val disconnect = body(service, "private fun scheduleClientDisconnectGraceLocked", "private fun markViewerInput")
     assertTrue(disconnect.contains("val runningJob = coroutineContext[Job]"))
     assertTrue(disconnect.contains("clientDisconnectStopJob !== runningJob"))
-    assertTrue(disconnect.contains("totalClientCount() == 0"))
-    assertTrue(disconnect.contains("ticketSessionOpen()"))
-    assertTrue(disconnect.contains("streamStartAdmission.claimCount() == 0L"))
+    assertTrue(disconnect.contains("expectedSessionGeneration = expectedSessionGeneration"))
+    assertTrue(disconnect.contains("currentSessionGeneration = ticketSessionGeneration"))
+    assertTrue(disconnect.contains("streamActive = ticketSessionOpen()"))
+    assertTrue(disconnect.contains("TicketProofStreamCleanupDecision.RETRY -> scheduleClientDisconnectGraceLocked("))
   }
 
   @Test
@@ -3490,10 +3492,13 @@ class TicketStreamServiceSourceTest {
 
     assertTrue(claim.contains("streamStartAdmission.claim()"))
     assertTrue(claim.contains("clientDisconnectStopJob?.cancel()"))
+    assertTrue(claim.contains("sessionMutex.withLock"))
+    assertTrue(claim.indexOf("sessionMutex.withLock") < claim.indexOf("streamStartAdmission.claim()"))
     assertTrue(release.contains("val remainingClaims = streamStartAdmission.release()"))
     assertTrue(release.contains("withContext(NonCancellable)"))
     assertTrue(release.contains("sessionMutex.withLock"))
-    assertTrue(release.contains("val currentClaims = streamStartAdmission.claimCount()"))
+    assertTrue(release.indexOf("sessionMutex.withLock") < release.indexOf("streamStartAdmission.release()"))
+    assertTrue(release.contains("markViewerInput(\"control_automation_released\")"))
     assertTrue(release.contains("scheduleClientDisconnectGraceLocked()"))
   }
 
