@@ -118,6 +118,8 @@ class TicketH264EncoderOutputAssemblerTest {
 
   @Test
   fun emitsOneAnnexBAccessUnitForSeveralPartialBuffersAndMergesFlags() {
+    val sps = nalPayload(0x67, 0x11, 0x22)
+    val pps = nalPayload(0x68, 0x33)
     val idr = nalPayload(0x65, 0x80, 0x01, 0x02, 0x03)
     val bytes = lengthPrefixed(idr)
     val first = bytes.copyOfRange(0, 2)
@@ -133,7 +135,7 @@ class TicketH264EncoderOutputAssemblerTest {
     val emitted = assembler.accept(last, false, false, false)
 
     assertTrue(emitted != null)
-    assertArrayEquals(annexB(idr) + aud(), emitted!!.payload)
+    assertArrayEquals(annexB(sps, pps, idr) + aud(), emitted!!.payload)
     assertTrue(emitted.codecConfig)
     assertTrue(emitted.keyFrame)
     val drainProgress = TicketEncoderDrainProgress
@@ -193,12 +195,58 @@ class TicketH264EncoderOutputAssemblerTest {
     val oversized = ByteArray(TicketH264EncoderOutputAssembler.MAX_ASSEMBLY_BYTES + 1)
 
     assertNull(assembler.accept(oversized, true, false, true))
+    assertTrue(assembler.consumeOverflowed())
     assertTrue(assembler.hasPending())
     assertNull(assembler.accept(byteArrayOf(0x65), false, false, true))
     assertFalse(assembler.hasPending())
 
     val next = assembler.accept(lengthPrefixed(nalPayload(0x41, 0x80, 0x44)), false, false, false)
     assertTrue(next != null)
+  }
+
+  @Test
+  fun makesEveryIdrSelfContainedAndKeepsOneTrailingAud() {
+    val assembler = TicketH264EncoderOutputAssembler()
+    val sps = nalPayload(0x67, 0x11, 0x22)
+    val pps = nalPayload(0x68, 0x33)
+    val idr = nalPayload(0x65, 0x80, 0x44)
+    assertTrue(assembler.accept(annexB(sps, pps), false, true, false) != null)
+
+    val emitted = assembler.accept(annexB(idr), false, false, true)!!
+
+    assertArrayEquals(annexB(sps, pps, idr) + aud(), emitted.payload)
+    assertEquals(1, countOccurrences(emitted.payload, aud()))
+    assertTrue(emitted.idrKeyFrame)
+  }
+
+  @Test
+  fun preservesAlreadySelfContainedAnnexBAndExistingAudByteForByte() {
+    val assembler = TicketH264EncoderOutputAssembler()
+    val payload = annexB(
+      nalPayload(0x67, 0x11),
+      nalPayload(0x68, 0x22),
+      nalPayload(0x65, 0x80, 0x33)
+    ) + aud()
+
+    val emitted = assembler.accept(payload, false, true, true)!!
+
+    assertArrayEquals(payload, emitted.payload)
+  }
+
+  @Test
+  fun finalPayloadCannotExceedTwoMiBAfterAudOrParameterSets() {
+    val assembler = TicketH264EncoderOutputAssembler()
+    latchAnnexB(assembler, byteArrayOf(0, 0, 0, 1))
+    val oversizedAfterAud = ByteArray(TicketH264EncoderOutputAssembler.MAX_ASSEMBLY_BYTES) { 0x55 }
+    oversizedAfterAud[0] = 0
+    oversizedAfterAud[1] = 0
+    oversizedAfterAud[2] = 0
+    oversizedAfterAud[3] = 1
+    oversizedAfterAud[4] = 0x41
+
+    assertNull(assembler.accept(oversizedAfterAud, false, false, false))
+    assertTrue(assembler.consumeOverflowed())
+    assertEquals(2 * 1024 * 1024, TicketH264EncoderOutputAssembler.MAX_ASSEMBLY_BYTES)
   }
 
   private fun latchLengthPrefixed(assembler: TicketH264EncoderOutputAssembler) {

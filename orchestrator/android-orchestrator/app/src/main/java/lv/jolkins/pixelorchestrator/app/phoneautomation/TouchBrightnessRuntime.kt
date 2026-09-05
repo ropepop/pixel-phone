@@ -465,7 +465,7 @@ internal class AndroidTouchBrightnessDeviceController(
 
       delay(BRIGHTNESS_SETTLE_DELAY_MILLIS)
       val after = readBrightnessStateForVerification(panelOnly)
-      if (after == null || matches(after)) {
+      if (after != null && matches(after)) {
         return PhoneAutomationActionResult(true, successDetail)
       }
       lastState = after

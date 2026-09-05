@@ -1,7 +1,9 @@
 package lv.jolkins.pixelorchestrator.app.ticket;
 
 import java.io.ByteArrayOutputStream;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * Reassembles MediaCodec output buffers before they are put on the Ticket Annex-B pipe.
@@ -13,7 +15,7 @@ import java.util.Arrays;
  * the JVM.</p>
  */
 final class TicketH264EncoderOutputAssembler {
-  static final int MAX_ASSEMBLY_BYTES = 4 * 1024 * 1024;
+  static final int MAX_ASSEMBLY_BYTES = TicketH264FrameRecord.MAX_PAYLOAD_BYTES;
 
   private static final byte[] START_CODE = new byte[] { 0, 0, 0, 1 };
   private static final byte[] ACCESS_UNIT_DELIMITER = new byte[] { 0, 0, 0, 1, 9, 16 };
@@ -23,6 +25,9 @@ final class TicketH264EncoderOutputAssembler {
   private boolean pendingCodecConfig;
   private boolean pendingKeyFrame;
   private boolean discardUntilFinal;
+  private boolean overflowed;
+  private byte[] sps;
+  private byte[] pps;
   private FramingMode framingMode = FramingMode.UNKNOWN;
 
   EmittedAccessUnit accept(byte[] data, boolean partialFrame, boolean codecConfig, boolean keyFrame) {
@@ -43,6 +48,7 @@ final class TicketH264EncoderOutputAssembler {
       if (!appendBounded(safeData)) {
         clearPendingAssembly();
         discardUntilFinal = partialFrame;
+        overflowed = true;
         return null;
       }
       hasPending = true;
@@ -55,6 +61,7 @@ final class TicketH264EncoderOutputAssembler {
     }
 
     if (safeData.length > MAX_ASSEMBLY_BYTES) {
+      overflowed = true;
       return null;
     }
     return emit(safeData, codecConfig, keyFrame);
@@ -63,6 +70,9 @@ final class TicketH264EncoderOutputAssembler {
   /** Drops an unfinished partial access unit and all associated flags. */
   void reset() {
     clearPendingAssembly();
+    overflowed = false;
+    sps = null;
+    pps = null;
     framingMode = FramingMode.UNKNOWN;
   }
 
@@ -81,6 +91,12 @@ final class TicketH264EncoderOutputAssembler {
 
   boolean hasPending() {
     return hasPending || discardUntilFinal;
+  }
+
+  boolean consumeOverflowed() {
+    boolean value = overflowed;
+    overflowed = false;
+    return value;
   }
 
   private boolean appendBounded(byte[] data) {
@@ -113,16 +129,86 @@ final class TicketH264EncoderOutputAssembler {
     if (annexB.length == 0) {
       return null;
     }
+    rememberParameterSets(annexB);
+    boolean containsVcl = containsNalTypeInRange(annexB, 1, 5);
+    boolean idrKeyFrame = containsNalTypeInRange(annexB, 5, 5);
+    if (idrKeyFrame) {
+      annexB = makeIdrSelfContained(annexB);
+      if (annexB.length == 0) {
+        return null;
+      }
+    }
     byte[] payload = endsWith(annexB, ACCESS_UNIT_DELIMITER)
       ? annexB
       : append(annexB, ACCESS_UNIT_DELIMITER);
+    if (payload.length > TicketH264FrameRecord.MAX_PAYLOAD_BYTES) {
+      overflowed = true;
+      return null;
+    }
     return new EmittedAccessUnit(
       payload,
       codecConfig,
       keyFrame,
-      containsNalTypeInRange(annexB, 1, 5),
-      containsNalTypeInRange(annexB, 5, 5)
+      containsVcl,
+      idrKeyFrame
     );
+  }
+
+  private void rememberParameterSets(byte[] annexB) {
+    for (byte[] nal : splitAnnexB(annexB)) {
+      int type = nalType(nal);
+      if (type == 7) {
+        sps = nal;
+      } else if (type == 8) {
+        pps = nal;
+      }
+    }
+  }
+
+  private byte[] makeIdrSelfContained(byte[] annexB) {
+    List<byte[]> nals = splitAnnexB(annexB);
+    boolean hasSps = nals.stream().anyMatch(nal -> nalType(nal) == 7);
+    boolean hasPps = nals.stream().anyMatch(nal -> nalType(nal) == 8);
+    if ((!hasSps && sps == null) || (!hasPps && pps == null)) {
+      return new byte[0];
+    }
+    if (!hasSps) {
+      nals.add(0, sps);
+    }
+    if (!hasPps) {
+      int insertAt = 0;
+      for (int index = 0; index < nals.size(); index += 1) {
+        if (nalType(nals.get(index)) == 7) insertAt = index + 1;
+      }
+      nals.add(insertAt, pps);
+    }
+    ByteArrayOutputStream output = new ByteArrayOutputStream(annexB.length + 128);
+    for (byte[] nal : nals) {
+      output.write(nal, 0, nal.length);
+    }
+    return output.toByteArray();
+  }
+
+  private static List<byte[]> splitAnnexB(byte[] annexB) {
+    List<byte[]> nals = new ArrayList<>();
+    int offset = 0;
+    while (offset < annexB.length) {
+      int startCodeLength = startCodeLengthAt(annexB, offset);
+      if (startCodeLength == 0 || offset + startCodeLength >= annexB.length) {
+        return new ArrayList<>();
+      }
+      int next = findStartCode(annexB, offset + startCodeLength + 1);
+      int end = next < 0 ? annexB.length : next;
+      nals.add(Arrays.copyOfRange(annexB, offset, end));
+      offset = end;
+    }
+    return nals;
+  }
+
+  private static int nalType(byte[] nalWithStartCode) {
+    int startCodeLength = startCodeLengthAt(nalWithStartCode, 0);
+    if (startCodeLength == 0 || startCodeLength >= nalWithStartCode.length) return 0;
+    return nalWithStartCode[startCodeLength] & 0x1f;
   }
 
   private static FramingMode detectCodecConfigFraming(byte[] data) {

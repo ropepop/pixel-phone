@@ -270,8 +270,47 @@ class TicketVideoClientWriterPumpTest {
     assertEquals(listOf(250L), expirations)
   }
 
+  @Test
+  fun productionBoundedWriteWindowDoesNotCloseAFeasibleWriteAtTheOld250Millis() = runTest {
+    val usefulnessMillis = 1_250L
+    val state = state(slowCloseMillis = usefulnessMillis)
+    state.markConfigReady()
+    val first = state.offer(frame(1, keyFrame = true), 1L)
+    val gate = CompletableDeferred<Unit>()
+    val closeDecisions = mutableListOf<TicketVideoDeliveryDecision>()
+    var current = true
+    val pump = pump(
+      state = state,
+      slowCloseMillis = usefulnessMillis,
+      nowMillis = { testScheduler.currentTime + 1L },
+      isCurrent = { current },
+      sendBinary = { _, canSend -> gate.await(); canSend() },
+      onDecision = { decision ->
+        if (decision.closeSlowClient) {
+          closeDecisions += decision
+          current = false
+          gate.complete(Unit)
+        }
+      }
+    )
+
+    pump.start(first.frameToWrite!!, first.writeToken)
+    runCurrent()
+    advanceTimeBy(250L)
+    runCurrent()
+    assertTrue(closeDecisions.isEmpty())
+    assertFalse(state.snapshot().closed)
+
+    advanceTimeBy(1_000L)
+    runCurrent()
+    advanceUntilIdle()
+    assertEquals(1_250L, closeDecisions.single().blockedMillis)
+    assertTrue(state.snapshot().closed)
+  }
+
   private suspend fun pump(
     state: TicketVideoClientDeliveryState,
+    slowCloseMillis: Long = 250L,
     nowMillis: () -> Long = { 1L },
     sendBinary: suspend (TicketVideoDeliveryFrame, () -> Boolean) -> Boolean,
     onDecision: (TicketVideoDeliveryDecision) -> Unit = {},
@@ -283,7 +322,7 @@ class TicketVideoClientWriterPumpTest {
       scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.currentCoroutineContext()),
       state = state,
       slowWriteMillis = 100L,
-      slowCloseMillis = 250L,
+      slowCloseMillis = slowCloseMillis,
       nowMillis = nowMillis,
       isCurrent = isCurrent,
       sendBinary = sendBinary,
@@ -294,11 +333,14 @@ class TicketVideoClientWriterPumpTest {
     )
   }
 
-  private fun state(expectedEpoch: Long = 7L): TicketVideoClientDeliveryState {
+  private fun state(
+    expectedEpoch: Long = 7L,
+    slowCloseMillis: Long = 250L
+  ): TicketVideoClientDeliveryState {
     return TicketVideoClientDeliveryState(
       expectedEpoch = expectedEpoch,
       maxFrameBytes = 1024,
-      slowCloseMillis = 250L
+      slowCloseMillis = slowCloseMillis
     )
   }
 

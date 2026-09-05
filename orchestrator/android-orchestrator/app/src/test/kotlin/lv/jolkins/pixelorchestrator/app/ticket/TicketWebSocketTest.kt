@@ -9,6 +9,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,6 +17,58 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TicketWebSocketTest {
+  @Test
+  fun readLoopAnswersControlTrafficBeforeMediaIsConfigured() = runBlocking {
+    val written = ByteArrayOutputStream()
+    val probe = "clock-probe".toByteArray()
+    val ping = byteArrayOf(0x21, 0x22, 0x23)
+    lateinit var client: TicketWebSocket
+    client = TicketWebSocket(
+      socket = Socket(),
+      input = BufferedInputStream(
+        ByteArrayInputStream(
+          maskedClientFrame(0x1, probe) +
+            maskedClientFrame(0x9, ping) +
+            maskedClientFrame(0x8, byteArrayOf())
+        )
+      ),
+      output = BufferedOutputStream(written),
+      onText = { message ->
+        assertEquals("clock-probe", message)
+        client.sendText("clock-result")
+      },
+      onClose = {},
+      binaryFramesInitiallyAllowed = false
+    )
+
+    client.readLoop()
+
+    assertArrayEquals(
+      serverFrame(0x1, "clock-result".toByteArray()) + serverFrame(0xA, ping),
+      written.toByteArray()
+    )
+    assertFalse(client.isOpen())
+    assertFalse(client.binaryFramesAllowed())
+  }
+
+  @Test
+  fun closeIsIdempotentAndOpenStateIsVisibleToAtomicRegistration() {
+    var closeCalls = 0
+    val client = TicketWebSocket(
+      socket = Socket(),
+      input = BufferedInputStream(ByteArrayInputStream(byteArrayOf())),
+      output = BufferedOutputStream(ByteArrayOutputStream()),
+      onText = {},
+      onClose = { closeCalls += 1 }
+    )
+
+    assertTrue(client.isOpen())
+    assertTrue(client.close())
+    assertFalse(client.isOpen())
+    assertFalse(client.close())
+    assertEquals(1, closeCalls)
+  }
+
   @Test
   fun videoBinaryFramesRemainBlockedUntilConfigIsFlushed() {
     val written = ByteArrayOutputStream()
@@ -196,9 +249,58 @@ class TicketWebSocketTest {
     assertEquals(1, closeCalls)
   }
 
+  @Test
+  fun generatedTextPayloadIsTimestampedOnlyAfterEarlierWritesReleaseTheLock() {
+    val blockingWriteStarted = CountDownLatch(1)
+    val releaseBlockingWrite = CountDownLatch(1)
+    val payloadBuilt = CountDownLatch(1)
+    val written = BlockingOutputStream(blockingWriteStarted, releaseBlockingWrite)
+    val client = TicketWebSocket(
+      socket = Socket(),
+      input = BufferedInputStream(ByteArrayInputStream(byteArrayOf())),
+      output = BufferedOutputStream(written),
+      onText = {},
+      onClose = {}
+    )
+    val executor = Executors.newFixedThreadPool(2)
+    try {
+      val blocker = executor.submit { client.sendText("blocking") }
+      assertTrue(blockingWriteStarted.await(2, TimeUnit.SECONDS))
+      val generated = executor.submit<Boolean> {
+        client.sendTextAtWrite {
+          payloadBuilt.countDown()
+          "clock-result"
+        }
+      }
+
+      assertFalse(payloadBuilt.await(100, TimeUnit.MILLISECONDS))
+      releaseBlockingWrite.countDown()
+      blocker.get(2, TimeUnit.SECONDS)
+      assertTrue(generated.get(2, TimeUnit.SECONDS))
+      assertTrue(payloadBuilt.await(2, TimeUnit.SECONDS))
+      assertArrayEquals(
+        serverFrame(0x1, "blocking".toByteArray()) +
+          serverFrame(0x1, "clock-result".toByteArray()),
+        written.toByteArray()
+      )
+    } finally {
+      releaseBlockingWrite.countDown()
+      executor.shutdownNow()
+    }
+  }
+
   private fun serverFrame(opcode: Int, payload: ByteArray): ByteArray {
     require(payload.size < 126)
     return byteArrayOf((0x80 or opcode).toByte(), payload.size.toByte()) + payload
+  }
+
+  private fun maskedClientFrame(opcode: Int, payload: ByteArray): ByteArray {
+    require(payload.size < 126)
+    val mask = byteArrayOf(0x11, 0x22, 0x33, 0x44)
+    val masked = ByteArray(payload.size) { index ->
+      (payload[index].toInt() xor mask[index % mask.size].toInt()).toByte()
+    }
+    return byteArrayOf((0x80 or opcode).toByte(), (0x80 or payload.size).toByte()) + mask + masked
   }
 
   private class BlockingOutputStream(

@@ -4,9 +4,9 @@ package lv.jolkins.pixelorchestrator.app.ticket;
  * Bounds cold-start encoder priming without changing the public one-FPS stream contract.
  *
  * <p>The caller owns capture and codec I/O. This state machine only schedules at most three
- * input-surface posts and decides which fully assembled access units may reach the Annex-B pipe.
- * Codec configuration remains visible, the first complete keyframe is exposed, and every other
- * media access unit produced while priming is suppressed. At the first steady-cadence boundary,
+ * input-surface posts and decides which fully assembled access units may reach the framed pipe.
+ * The first complete keyframe is exposed and every other media access unit produced while priming
+ * is suppressed. At the first steady-cadence boundary,
  * the caller may buffer all IDRs dequeued after that Surface post and expose only the newest one.
  * This keeps delayed priming siblings off the pipe without creating a two-period public gap.</p>
  */
@@ -30,7 +30,7 @@ final class TicketEncoderStartupPrimer {
   private boolean firstKeyFrameForwarded;
   private boolean fallbackWaitingForFirstKeyFrame;
   private boolean boundaryDrainActive;
-  private byte[] boundaryAccessUnit;
+  private TicketH264FrameRecord boundaryAccessUnit;
   private boolean boundaryAccessUnitForwarded;
   private boolean finished;
 
@@ -78,8 +78,8 @@ final class TicketEncoderStartupPrimer {
       return OutputDisposition.FORWARD;
     }
 
-    // SPS/PPS, SEI, and AUD output are not pictures. They must reach the pipe even when an encoder
-    // omits or misapplies BUFFER_FLAG_CODEC_CONFIG.
+    // SPS/PPS, SEI, and AUD output are not pictures. They update the helper's access-unit state but
+    // do not consume one of the primed picture decisions.
     if (!containsVcl) {
       return OutputDisposition.FORWARD;
     }
@@ -100,7 +100,7 @@ final class TicketEncoderStartupPrimer {
   }
 
   OutputDisposition classifyCompleteAccessUnit(
-    byte[] payload,
+    TicketH264FrameRecord frame,
     boolean containsVcl,
     boolean idrKeyFrame,
     long nowMillis
@@ -111,7 +111,7 @@ final class TicketEncoderStartupPrimer {
       nowMillis
     );
     if (disposition == OutputDisposition.BUFFER_BOUNDARY) {
-      bufferBoundaryAccessUnit(payload);
+      bufferBoundaryAccessUnit(frame);
     }
     return disposition;
   }
@@ -125,8 +125,8 @@ final class TicketEncoderStartupPrimer {
     boundaryAccessUnitForwarded = false;
   }
 
-  void bufferBoundaryAccessUnit(byte[] payload) {
-    if (!boundaryDrainActive || payload == null || payload.length == 0) {
+  void bufferBoundaryAccessUnit(TicketH264FrameRecord frame) {
+    if (!boundaryDrainActive || frame == null || frame.payload.length == 0) {
       throw new IllegalStateException("startup primer boundary access unit is not valid");
     }
     if (boundaryAccessUnit != null) {
@@ -134,15 +134,15 @@ final class TicketEncoderStartupPrimer {
       // delayed primer siblings cannot burst ahead of the picture posted at this boundary.
       suppressedMediaOutputs += 1;
     }
-    boundaryAccessUnit = payload;
+    boundaryAccessUnit = frame;
   }
 
-  byte[] completeBoundaryDrain() {
+  TicketH264FrameRecord completeBoundaryDrain() {
     if (!boundaryDrainActive) {
       return null;
     }
     boundaryDrainActive = false;
-    byte[] selected = boundaryAccessUnit;
+    TicketH264FrameRecord selected = boundaryAccessUnit;
     boundaryAccessUnit = null;
     return selected;
   }

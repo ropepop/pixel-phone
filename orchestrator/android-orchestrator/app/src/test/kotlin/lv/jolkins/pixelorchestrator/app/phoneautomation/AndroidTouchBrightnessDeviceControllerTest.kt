@@ -17,6 +17,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
       scriptResults = ArrayDeque(
         listOf(
           okResult(stdout = ""),
+          okResult(stdout = ""),
           okResult(
             stdout = """
               mode=0
@@ -44,6 +45,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
     val rootExecutor = QueuedRootExecutor(
       scriptResults = ArrayDeque(
         listOf(
+          okResult(stdout = ""),
           okResult(stdout = ""),
           okResult(
             stdout = """
@@ -177,6 +179,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
     val rootExecutor = QueuedRootExecutor(
       scriptResults = ArrayDeque(
         listOf(
+          okResult(stdout = ""),
           okResult(stdout = ""),
           okResult(stdout = ""),
           okResult(
@@ -552,6 +555,64 @@ class AndroidTouchBrightnessDeviceControllerTest {
     }
     assertTrue(result.success)
     assertEquals(2, restoreScripts.size)
+  }
+
+  @Test
+  fun restoreRetriesWhenTheFirstPostCommandReadIsUnavailableThenSucceeds() = runTest {
+    val matchingVerification = okResult(
+      stdout = """
+        mode=0
+        value=171
+        display_percentage=67.0
+        panel_path=/sys/class/backlight/panel0-backlight
+        panel_brightness=2639
+        panel_actual_brightness=2639
+        panel_max_brightness=3939
+      """.trimIndent()
+    )
+    val rootExecutor = QueuedRootExecutor(
+      scriptResults = ArrayDeque(
+        listOf(
+          okResult(stdout = ""),
+          okResult(stdout = ""),
+          okResult(stdout = ""),
+          okResult(stdout = ""),
+          matchingVerification
+        )
+      )
+    )
+    val controller = AndroidTouchBrightnessDeviceController(
+      context = ContextWrapper(null),
+      rootExecutor = rootExecutor
+    )
+
+    val result = controller.restoreBrightnessState(ScreenBrightnessState(mode = 0, value = 171))
+
+    val restoreScripts = rootExecutor.scripts.filter {
+      it.contains("settings put system screen_brightness 171")
+    }
+    assertTrue(result.success)
+    assertEquals(2, restoreScripts.size)
+  }
+
+  @Test
+  fun restoreFailsAfterFourAttemptsWhenEveryPostCommandReadIsUnavailable() = runTest {
+    val rootExecutor = QueuedRootExecutor(
+      scriptResults = ArrayDeque(List(9) { okResult(stdout = "") })
+    )
+    val controller = AndroidTouchBrightnessDeviceController(
+      context = ContextWrapper(null),
+      rootExecutor = rootExecutor
+    )
+
+    val result = controller.restoreBrightnessState(ScreenBrightnessState(mode = 0, value = 171))
+
+    val restoreScripts = rootExecutor.scripts.filter {
+      it.contains("settings put system screen_brightness 171")
+    }
+    assertFalse(result.success)
+    assertEquals("Brightness restore verification failed after 4 attempts", result.detail)
+    assertEquals(4, restoreScripts.size)
   }
 
   @Test

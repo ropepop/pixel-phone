@@ -20,6 +20,7 @@ class TicketStreamServiceSourceTest {
   private val config by lazy { source("ticket/TicketScreenConfig.kt") }
   private val h264Engine by lazy { source("ticket/TicketRootHardwareH264CaptureEngine.kt") }
   private val h264Main by lazy { source("ticket/TicketRootHardwareH264CaptureMain.java") }
+  private val tsf3Envelope by lazy { source("ticket/TicketTsf3FrameEnvelope.java") }
   private val panelDarkLease by lazy { source("ticket/TicketActionPanelDarkLease.kt") }
   private val rootInput by lazy { source("ticket/TicketControlCodeRootInput.kt") }
   private val visualAction by lazy { source("ticket/TicketVisualAction.kt") }
@@ -39,6 +40,31 @@ class TicketStreamServiceSourceTest {
     source("phoneautomation/PhoneAutomationAccessibilityService.kt")
   }
   private val phoneAutomationBridge by lazy { source("phoneautomation/PhoneAutomationBridge.kt") }
+
+  @Test
+  fun streamRecoveryRechecksStartupInsideTheExistingEncoderOwner() {
+    val restart = body(service, "private fun restartActiveStreamEngine", "private fun scheduleStreamWatchdog")
+    assertTrue(restart.contains("TicketStreamStartupRecoveryPolicy.restartIfNeeded("))
+    assertTrue(restart.contains("lock = encoderLock"))
+    assertTrue(restart.contains("streamActive && !activeHardwareStreamStartingForRecovery(SystemClock.elapsedRealtime())"))
+    assertTrue(restart.indexOf("shouldRestart =") < restart.indexOf("resetFrameEpoch("))
+    assertTrue(restart.indexOf("restart = {") < restart.indexOf("rootHardwareH264CaptureEngine.restart(reason)"))
+    assertTrue(restart.indexOf("rootHardwareH264CaptureEngine.restart(reason)") < restart.indexOf("ensureRootHardwareH264CaptureIfPossible()"))
+  }
+
+  @Test
+  fun delayedSourceCallbacksAreFencedBeforeCurrentEpochAndCounters() {
+    val receive = body(service, "private fun handleRootHardwareH264CaptureFrame", "private fun scheduleRootHardwareSecureCaptureProbe")
+    val lock = receive.indexOf("val acceptedGeneration = synchronized(encoderLock)")
+    val fence = receive.indexOf("rootHardwareH264CaptureEngine.isCurrentCaptureGeneration(frame)")
+    assertTrue(lock >= 0)
+    assertTrue(fence > lock)
+    assertTrue(fence < receive.indexOf("droppedVideoFrames += 1L"))
+    assertTrue(fence < receive.indexOf("ensureFrameEpoch(\"frame\")"))
+    assertTrue(fence < receive.indexOf("encodedFrames += 1"))
+    assertTrue(h264Engine.contains("captureGeneration = sourceGeneration"))
+    assertTrue(h264Engine.contains("frame.hasCurrentCaptureGeneration(captureGeneration.get())"))
+  }
 
   @Test
   fun v3TicketActionsUseVisualProofAndOnlyTheBoundedRegistrationHierarchy() {
@@ -438,7 +464,7 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun v3SuccessJournalAndPublicTerminalCannotPrecedePanelDarkFinalization() {
+  fun v3EveryJournalAndPublicTerminalWaitsForPanelDarkFinalization() {
     val wrapper = body(
       service,
       "private suspend fun runTicketVisualActionV3(",
@@ -483,10 +509,24 @@ class TicketStreamServiceSourceTest {
       "private fun ticketVisualActionTerminal",
       "private fun persistTicketVisualTerminalSnapshot"
     )
-    assertTrue(terminal.contains("deferProvedMutationTerminal"))
-    assertTrue(terminal.contains("ticketVisualLatestNotDetectedTerminalHasBoundProof(snapshot)"))
-    assertTrue(terminal.contains("request.target != TicketVisualActionTarget.PROVE_CURRENT ||"))
     assertTrue(terminal.contains("ticketVisualActionCaptureLeaseActive"))
+    assertTrue(terminal.contains("ticketActionV3Snapshot.actionId == request.actionId"))
+    val defer = terminal.indexOf("if (deferred) return snapshot")
+    assertTrue(defer >= 0)
+    assertTrue(terminal.indexOf("persistTicketVisualTerminalSnapshot") > defer)
+    assertFalse(terminal.contains("deferProvedMutationTerminal"))
+    assertFalse(wrapper.contains("terminal != provisional"))
+    assertEquals(1, Regex("persistTicketVisualTerminalSnapshot\\(").findAll(wrapper).count())
+    val phase = wrapper.substringAfter("val stablePhase =").substringBefore("rawTerminal.copy(")
+    assertTrue(phase.contains("ticketActivationFailureTerminalPhase("))
+    assertFalse(phase.contains("mutationMayHaveDispatched"))
+    val staging = body(service, "internal fun stageTicketVisualActionFinalization",
+      "internal fun pendingTicketVisualActionFinalization")
+    assertFalse(staging.contains("persistTicketVisualActionJournal"))
+    assertTrue(staging.contains("it.action == action.copy("))
+    val writer = body(service, "private fun persistTicketVisualTerminalSnapshot",
+      "private fun loadTicketVisualActionJournal")
+    assertTrue(writer.contains("if (prior.hasRetainedTerminal) return prior == terminalJournal"))
   }
 
   @Test
@@ -600,15 +640,23 @@ class TicketStreamServiceSourceTest {
     val readiness = action.indexOf("PhoneAutomationServiceBridge.awaitAccessibilityConnection(")
     val initialProof = action.indexOf("awaitStableTicketVisualActionObservation(")
     val connectedFence = preparation.indexOf("PhoneAutomationServiceBridge.awaitStableTicketInputFence(")
+    val semanticProof = preparation.indexOf("awaitStableTicketSemanticSliderBounds(")
     val freshExactProof = preparation.indexOf("awaitStableTicketVisualActionObservation(")
     val watermark = preparation.indexOf("awaitTicketVisualActionFrameWatermark(")
 
     assertTrue(readiness >= 0)
     assertTrue(initialProof > readiness)
     assertTrue(connectedFence >= 0)
-    assertTrue(freshExactProof > connectedFence)
+    assertTrue(semanticProof > connectedFence)
+    assertTrue(freshExactProof > semanticProof)
     assertTrue(watermark > freshExactProof)
-    assertEquals(2, Regex("fastTicketRegistrationHierarchy\\(").findAll(preparation).count())
+    assertEquals(1, Regex("fastTicketRegistrationHierarchy\\(").findAll(preparation).count())
+    assertTrue(preparation.contains("TicketSemanticSliderStabilizationStatus.MISSING"))
+    assertTrue(preparation.contains("TicketSemanticSliderStabilizationStatus.UNSTABLE"))
+    assertTrue(preparation.contains("TicketSemanticSliderStabilizationStatus.FENCE_CHANGED"))
+    assertTrue(preparation.contains("notAfterMillis = visualProofDeadlineMillis"))
+    assertTrue(preparation.contains("proofObservation = freshObservation"))
+    assertTrue(preparation.contains("proofStreamEpoch = captureStreamEpoch"))
     assertTrue(activation.contains("ticketVisualActivationObservationAfterCompletedGesture("))
     assertTrue(activation.contains("ticket_action_gesture_completed_no_transition"))
     assertTrue(activation.contains("ticket_action_post_gesture_visual_unproved"))
@@ -617,6 +665,56 @@ class TicketStreamServiceSourceTest {
     assertFalse(preparation.contains("bottomTab"))
     assertTrue(activation.contains("ticketActivationCheckpointStore.recordNoTransitionProven(dispatching)"))
     assertTrue(activation.contains("ticket_action_no_transition_checkpoint_unproved"))
+  }
+
+  @Test
+  fun exactRegistrationFreshnessCannotBeRenewedByALaterGenericWatermark() {
+    val preparation = body(
+      service,
+      "private suspend fun prepareExactTicketActivationDispatch",
+      "private suspend fun ticketActivationPreparationStillCurrent"
+    )
+    val currentness = body(
+      service,
+      "private suspend fun ticketActivationPreparationStillCurrent",
+      "private suspend fun ticketActivationInputFenceStillCurrent"
+    )
+    val observation = body(
+      service,
+      "private suspend fun awaitStableTicketVisualActionObservation",
+      "/**\n   * Binds a terminal visual proof"
+    )
+    val activation = body(
+      service,
+      "private suspend fun activateTicketFromVisualAction",
+      "private suspend fun prepareExactTicketActivationDispatch"
+    )
+
+    assertTrue(observation.contains("copy(atMillis = started)"))
+    assertTrue(preparation.contains(
+      "freshObservation.captureStartUs / 1_000L + ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS"
+    ))
+    assertTrue(preparation.contains("notAfterMillis = visualProofDeadlineMillis"))
+    assertTrue(currentness.contains("ticketVisualObservationIsFreshForDispatch("))
+    assertTrue(currentness.contains("streamEpoch == prepared.captureStreamEpoch"))
+    assertTrue(currentness.contains("prepared.watermark.first == prepared.captureStreamEpoch"))
+    assertTrue(activation.indexOf("ticketActivationPreparationStillCurrent(") <
+      activation.indexOf("recordTicketActivationDispatching("))
+    assertTrue(activation.lastIndexOf("ticketActivationPreparationStillCurrent(") <
+      activation.indexOf("performTicketSliderFullStroke("))
+  }
+
+  @Test
+  fun exactRegistrationReusesItsObservedCaptureWithoutRequestingAnExtraFrame() {
+    val watermark = body(service, "private suspend fun awaitTicketVisualActionFrameWatermark", "private fun ticketVisualActionWatermarkCurrentLocked")
+    val broadcast = body(service, "private fun broadcastFrame(", "private fun sendVideoFrame(")
+    assertTrue(watermark.contains("if (proofObservation == null) requestKeyFrame(reason)"))
+    assertTrue(watermark.contains("ticketVisualFrameMatchesRegistrationObservation("))
+    assertTrue(watermark.contains("frameCaptureStartUs = keyFrame.captureStartUs"))
+    assertTrue(watermark.contains("keyFrame.epoch == currentEpoch && keyFrame.sequence > 0L"))
+    assertTrue(watermark.contains("currentEpoch != starting.first || keyFrame.sequence > starting.second"))
+    assertTrue(broadcast.contains("captureStartUs = sourceFrame.captureStartUs"))
+    assertTrue(watermark.indexOf("synchronized(encoderLock)") < watermark.indexOf("ticketVisualFrameMatchesRegistrationObservation("))
   }
 
   @Test
@@ -824,6 +922,8 @@ class TicketStreamServiceSourceTest {
       "private fun sqlLiteral"
     )
     assertFalse(client.contains("compatibility_fallback"))
+    assertTrue(client.contains("val action = envelope.action"))
+    assertFalse(client.contains("query("))
   }
 
   @Test
@@ -1332,7 +1432,7 @@ class TicketStreamServiceSourceTest {
     assertFalse(action.contains("UiAutomator"))
     assertFalse(action.contains("dumpViviHierarchy"))
     assertTrue(service.contains(
-      "ticket-stream-2026-09-04-proof-stream-idle-cleanup-v340"
+      "ticket-stream-2026-09-05-canonical-terminal-v351"
     ))
     assertFalse(service.contains(
       "ticket-stream-2026-08-25-native-edge-action-clamp-proof-v320"
@@ -1455,7 +1555,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(expectedNegative.contains("reason = \"ticket_action_latest_not_detected\""))
     assertTrue(expectedNegative.contains("expectedNegativeProof = true"))
     assertTrue(terminal.contains("observation?.state == TicketVisualPhoneState.TICKETS_TIME_EMPTY"))
-    assertTrue(terminal.contains("ticketVisualLatestNotDetectedTerminalHasBoundProof(snapshot)"))
+    assertTrue(terminal.contains("if (deferred) return snapshot"))
 
     val release = wrapper.indexOf("panelLease.releaseAfterFinalConvergence")
     val proofRecheck = wrapper.indexOf(
@@ -1732,10 +1832,8 @@ class TicketStreamServiceSourceTest {
     val headerRead =
       "startupTraceCorrelationId = boundedStartupTraceCorrelationId(headers[\"x-ticket-startup-trace\"].orEmpty())"
     val duplicateClose = socket.indexOf("closeDuplicateViewerClients(info)")
-    val bind = socket.indexOf(
-      "bindStartupTraceCorrelationIdFromVideoSocket(\n          info.startupTraceCorrelationId,\n          info.generation"
-    )
-    val opened = socket.indexOf("recordTicketEventForCurrentVideoSocket(\n          \"stream_client_opened\"")
+    val bind = socket.indexOf("bindStartupTraceCorrelationIdFromVideoSocket(")
+    val opened = socket.indexOf("recordTicketEventForCurrentVideoSocket(")
     val immediate = socket.indexOf("startTicketSessionForVideoClientOpen(info)")
 
     assertTrue(socket.contains(headerRead))
@@ -1863,7 +1961,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(effects.contains("video_client_unexpected_delta"))
     assertTrue(cached.contains("cached.sequence == sourceTail.second"))
     assertTrue(cached.contains("cached.epoch == sourceTail.first"))
-    assertTrue(service.contains("VIDEO_CLIENT_MAX_FRAME_BYTES = 5 * 1024 * 1024"))
+    assertTrue(service.contains("TicketH264FrameRecord.MAX_PAYLOAD_BYTES"))
     assertFalse(service.contains("VIDEO_CLIENT_PENDING_MAX_FRAMES"))
     assertFalse(service.contains("VIDEO_CLIENT_PENDING_MAX_AGE"))
   }
@@ -1960,8 +2058,9 @@ class TicketStreamServiceSourceTest {
     assertTrue(envelope.contains("currentHeight = currentSize?.height"))
     assertTrue(envelope.contains("val epoch = streamEpoch"))
     assertTrue(envelope.contains("frameSequence += 1"))
-    assertTrue(envelope.contains("buffer.putLong(epoch)"))
-    assertTrue(envelope.contains("buffer.putLong(sequence)"))
+    assertTrue(envelope.contains("TicketTsf3FrameEnvelope.encode("))
+    assertTrue(tsf3Envelope.contains("buffer.putLong(epoch)"))
+    assertTrue(tsf3Envelope.contains("buffer.putLong(sequence)"))
     assertTrue(envelope.contains("latestKeyFrame = TicketCachedKeyFrame("))
     assertTrue(envelope.contains("epoch = epoch"))
     assertTrue(envelope.contains("sequence = sequence"))
@@ -2073,7 +2172,22 @@ class TicketStreamServiceSourceTest {
       "private suspend fun startTicketSessionLocked"
     )
 
-    assertTrue(socket.contains("if (video && !startTicketSessionForVideoClientOpen(info)) {\n      return"))
+    assertTrue(socket.contains("val clientLifecycleLock = Any()"))
+    assertTrue(socket.contains("val videoClientRegistered = AtomicBoolean(false)"))
+    assertTrue(socket.contains("val videoReadStarted = if (video) CompletableDeferred<Unit>() else null"))
+    assertTrue(socket.contains("videoReadStarted?.complete(Unit)\n        client.readLoop()"))
+    assertTrue(socket.contains("videoReadStarted?.await()"))
+    assertTrue(socket.indexOf("videoReadStarted?.await()") < socket.indexOf("var acceptedClientGeneration"))
+    assertTrue(socket.contains("if (!client.isOpen())"))
+    assertTrue(socket.contains("videoClientRegistered.set(true)"))
+    assertTrue(socket.contains("mediaCommandsAllowed = videoClientRegistered.get()"))
+    assertTrue(socket.contains("if (video && !startTicketSessionForVideoClientOpen(info)) {\n      client.close()\n      videoReadJob?.await()\n      return"))
+    assertTrue(socket.contains("val currentAfterStart = sessionMutex.withLock"))
+    assertTrue(socket.contains("synchronized(clientLifecycleLock)"))
+    assertTrue(socket.contains("!videoClientRegistered.get() ||"))
+    assertTrue(socket.contains("!client.isOpen() ||"))
+    assertTrue(socket.contains("!videoClients.contains(client) ||"))
+    assertTrue(socket.contains("!startupTraceCorrelation.isCurrentVideoSocket("))
     assertFalse(socket.contains("stream_client_attached_without_session_start"))
     assertTrue(immediateStart.contains("lockedStartDecision = {"))
     assertTrue(immediateStart.contains("startupTraceCorrelation.resolveVideoSocketStart("))
@@ -2094,6 +2208,8 @@ class TicketStreamServiceSourceTest {
     assertTrue(serializedStart.contains("sessionMutex.withLock"))
     assertTrue(serializedStart.contains("lockedStartDecision?.invoke() ?: startTicketSessionLocked("))
     assertTrue(socket.indexOf("startTicketSessionForVideoClientOpen(info)") < socket.indexOf("ensureEncoderIfPossible()"))
+    assertTrue(socket.indexOf("videoReadStarted?.await()") < socket.indexOf("startTicketSessionForVideoClientOpen(info)"))
+    assertTrue(socket.contains("videoReadJob?.await()\n      return"))
     assertTrue(durableStart.contains("ticketSpacetimeBackgroundStreamAlreadyHealthy()"))
     assertTrue(durableStart.contains("startTicketSession().toTicketSpacetimeCommandResult(reason)"))
   }
@@ -2616,8 +2732,8 @@ class TicketStreamServiceSourceTest {
       "private fun destroyProcessAndWait"
     )
     assertTrue(h264Engine.contains("private val captureGeneration = AtomicLong(0L)"))
-    assertTrue(h264Engine.contains("val parserGeneration = advanceCaptureGeneration()"))
-    assertTrue(h264Engine.contains("if (parserGeneration == captureGeneration.get())"))
+    assertTrue(h264Engine.contains("val recordGeneration = advanceCaptureGeneration()"))
+    assertTrue(h264Engine.contains("if (sourceGeneration != captureGeneration.get()) continue"))
     assertTrue(stop.contains("advanceCaptureGeneration()"))
   }
 
@@ -3254,6 +3370,32 @@ class TicketStreamServiceSourceTest {
     assertTrue(restart.contains("hardwareCaptureVerified = verifiedBeforeRestart"))
     assertTrue(watchdog.contains("!hardwareFrameBroadcastAllowed || !hardwareCaptureVerified"))
     assertTrue(watchdog.contains("waiting_ticket_ready"))
+  }
+
+  @Test
+  fun watchdogKeepsThreeSecondRecoveryButGrantsOnlyCurrentEncoderStartupGrace() {
+    val recover = body(
+      service,
+      "private fun activeHardwareStreamStartingForRecovery",
+      "private fun recoverTicketSessionReason"
+    )
+    val watchdog = body(service, "private fun evaluateStreamWatchdog", "private fun configMessage")
+    val stale = body(
+      service,
+      "private fun activeStreamStaleForRecovery",
+      "private fun sendStatus"
+    )
+    assertTrue(service.contains("STREAM_WATCHDOG_NO_ENCODER_RESTART_MILLIS = 3_000L"))
+    assertTrue(service.contains("STREAM_WATCHDOG_STALE_FRAME_RESTART_MILLIS = 3_000L"))
+    assertTrue(service.contains(
+      "STREAM_WATCHDOG_STARTUP_FIRST_USEFUL_FRAME_GRACE_MILLIS =\n" +
+        "      TICKET_FAST_PUBLIC_OPEN_ROOT_PROOF_TIMEOUT_MILLIS"
+    ))
+    assertTrue(watchdog.contains("hardwareStartupFirstUsefulFramePending(health)"))
+    assertTrue(watchdog.contains("waiting_startup_first_useful_frame"))
+    assertTrue(recover.contains("hardwareStartupFirstUsefulFramePending(health)"))
+    assertTrue(stale.contains("hardwareStartupStillPreparing(nowMillis)"))
+    assertTrue(stale.contains("hardwareStartupFirstUsefulFramePending(health)"))
   }
 
   @Test

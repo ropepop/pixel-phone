@@ -1,6 +1,5 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
-import java.io.ByteArrayOutputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -196,22 +195,21 @@ class TicketEncoderStartupPrimerTest {
 
     primer.beginBoundaryDrain()
     fun offerIdr(label: String, atMillis: Long) {
-      val payload = label.toByteArray()
+      val frame = frame(label, atMillis * 1_000L)
       assertEquals(
         TicketEncoderStartupPrimer.OutputDisposition.BUFFER_BOUNDARY,
-        primer.classifyCompleteAccessUnit(payload, true, true, atMillis)
+        primer.classifyCompleteAccessUnit(frame, true, true, atMillis)
       )
     }
 
     offerIdr("old-primer-sibling-1", 1_205L)
     offerIdr("old-primer-sibling-2", 1_210L)
     offerIdr("steady-boundary-idr", 1_215L)
-    val boundaryOutput = ByteArrayOutputStream()
-    TicketRootHardwareH264CaptureMain.forwardSelectedBoundaryAccessUnit(boundaryOutput, primer)
+    val selected = primer.completeBoundaryDrain()!!
 
-    assertEquals("steady-boundary-idr", boundaryOutput.toString(Charsets.UTF_8.name()))
+    assertEquals("steady-boundary-idr", selected.payload.toString(Charsets.UTF_8))
+    assertEquals(1_215_000L, selected.captureStartUs)
     assertEquals(2, primer.suppressedMediaOutputs())
-    assertTrue(primer.boundaryAccessUnitForwarded())
     assertFalse(primer.boundaryDrainActive())
 
     primer.finish()
@@ -382,4 +380,16 @@ class TicketEncoderStartupPrimerTest {
   private fun annexB(vararg nals: ByteArray): ByteArray = nals.fold(byteArrayOf()) { result, nal ->
     result + byteArrayOf(0, 0, 0, 1) + nal
   }
+
+  private fun frame(label: String, startUs: Long) = TicketH264FrameRecord(
+    true,
+    startUs,
+    9L,
+    startUs,
+    startUs + 1L,
+    startUs + 2L,
+    startUs + 3L,
+    0L,
+    label.toByteArray()
+  )
 }

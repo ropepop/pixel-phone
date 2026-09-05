@@ -1,5 +1,8 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
@@ -676,6 +679,185 @@ class TicketVisualActionTest {
     consensus.reset()
     assertNull(consensus.offer(first.copy(probeId = 31)))
     assertEquals(32L, consensus.offer(first.copy(probeId = 32))?.probeId)
+  }
+
+  @Test
+  fun semanticSliderStabilizerAcceptsEmptyThenTwoIdenticalBounds() = runTest {
+    val bounds = TicketViviGraphicBounds(20, 100, 520, 201)
+    var nowMillis = 0L
+    val samples = ArrayDeque<TicketViviGraphicBounds?>(listOf(null, bounds, bounds))
+
+    val result = awaitStableTicketSemanticSliderBounds(
+      timeoutMillis = 10L,
+      pollMillis = 1L,
+      elapsedRealtimeMillis = { nowMillis },
+      stillCurrent = { true },
+      readBounds = { samples.removeFirst() },
+      waitForNextSample = { nowMillis += it }
+    )
+
+    assertEquals(TicketSemanticSliderStabilizationStatus.PROVED, result.status)
+    assertEquals(bounds, result.bounds)
+    assertEquals(3, result.readCount)
+  }
+
+  @Test
+  fun semanticSliderStabilizerAcceptsTheSettledPairAfterAChange() = runTest {
+    val first = TicketViviGraphicBounds(20, 100, 520, 201)
+    val settled = TicketViviGraphicBounds(22, 102, 522, 203)
+    var nowMillis = 0L
+    val samples = ArrayDeque(listOf(first, settled, settled))
+
+    val result = awaitStableTicketSemanticSliderBounds(
+      timeoutMillis = 10L,
+      pollMillis = 1L,
+      elapsedRealtimeMillis = { nowMillis },
+      stillCurrent = { true },
+      readBounds = { samples.removeFirst() },
+      waitForNextSample = { nowMillis += it }
+    )
+
+    assertEquals(TicketSemanticSliderStabilizationStatus.PROVED, result.status)
+    assertEquals(settled, result.bounds)
+    assertEquals(3, result.readCount)
+  }
+
+  @Test
+  fun semanticSliderStabilizerFailsClosedForMissingAndOscillatingBounds() = runTest {
+    suspend fun stabilize(read: () -> TicketViviGraphicBounds?): TicketSemanticSliderStabilizationResult {
+      var nowMillis = 0L
+      return awaitStableTicketSemanticSliderBounds(
+        timeoutMillis = 4L,
+        pollMillis = 1L,
+        elapsedRealtimeMillis = { nowMillis },
+        stillCurrent = { true },
+        readBounds = { read() },
+        waitForNextSample = { nowMillis += it }
+      )
+    }
+    val first = TicketViviGraphicBounds(20, 100, 520, 201)
+    val second = TicketViviGraphicBounds(22, 102, 522, 203)
+    var ordinal = 0
+
+    val missing = stabilize { null }
+    val oscillating = stabilize {
+      (if (ordinal++ % 2 == 0) first else second)
+    }
+
+    assertEquals(TicketSemanticSliderStabilizationStatus.MISSING, missing.status)
+    assertNull(missing.bounds)
+    assertEquals(TicketSemanticSliderStabilizationStatus.UNSTABLE, oscillating.status)
+    assertNull(oscillating.bounds)
+  }
+
+  @Test
+  fun semanticSliderStabilizerTreatsNullAsABreakInConsecutiveness() = runTest {
+    val bounds = TicketViviGraphicBounds(20, 100, 520, 201)
+    var nowMillis = 0L
+    val samples = ArrayDeque<TicketViviGraphicBounds?>(listOf(bounds, null, bounds, bounds))
+
+    val result = awaitStableTicketSemanticSliderBounds(
+      timeoutMillis = 10L,
+      pollMillis = 1L,
+      elapsedRealtimeMillis = { nowMillis },
+      stillCurrent = { true },
+      readBounds = { samples.removeFirst() },
+      waitForNextSample = { nowMillis += it }
+    )
+
+    assertEquals(TicketSemanticSliderStabilizationStatus.PROVED, result.status)
+    assertEquals(4, result.readCount)
+  }
+
+  @Test
+  fun semanticSliderStabilizerRejectsFocusOrGenerationLossAroundARead() = runTest {
+    val bounds = TicketViviGraphicBounds(20, 100, 520, 201)
+    var focused = true
+    val focusLost = awaitStableTicketSemanticSliderBounds(
+      timeoutMillis = 10L,
+      pollMillis = 1L,
+      elapsedRealtimeMillis = { 0L },
+      stillCurrent = { focused },
+      readBounds = {
+        focused = false
+        bounds
+      },
+      waitForNextSample = {}
+    )
+    var generation = 7L
+    val generationChanged = awaitStableTicketSemanticSliderBounds(
+      timeoutMillis = 10L,
+      pollMillis = 1L,
+      elapsedRealtimeMillis = { 0L },
+      stillCurrent = { generation == 7L },
+      readBounds = {
+        generation += 1L
+        bounds
+      },
+      waitForNextSample = {}
+    )
+
+    assertEquals(TicketSemanticSliderStabilizationStatus.FENCE_CHANGED, focusLost.status)
+    assertEquals(TicketSemanticSliderStabilizationStatus.FENCE_CHANGED, generationChanged.status)
+    assertNull(focusLost.bounds)
+    assertNull(generationChanged.bounds)
+  }
+
+  @Test
+  fun semanticSliderStabilizerRejectsFenceLossAfterTheMatchingRead() = runTest {
+    val bounds = TicketViviGraphicBounds(20, 100, 520, 201)
+    var nowMillis = 0L
+    var fenceChecks = 0
+
+    val result = awaitStableTicketSemanticSliderBounds(
+      timeoutMillis = 10L,
+      pollMillis = 1L,
+      elapsedRealtimeMillis = { nowMillis },
+      stillCurrent = { ++fenceChecks < 4 },
+      readBounds = { bounds },
+      waitForNextSample = { nowMillis += it }
+    )
+
+    assertEquals(TicketSemanticSliderStabilizationStatus.FENCE_CHANGED, result.status)
+    assertNull(result.bounds)
+    assertEquals(2, result.readCount)
+  }
+
+  @Test
+  @OptIn(ExperimentalCoroutinesApi::class)
+  fun semanticSliderStabilizerCannotProveAReadThatOutlivesItsDeadline() = runTest {
+    val bounds = TicketViviGraphicBounds(20, 100, 520, 201)
+
+    val result = awaitStableTicketSemanticSliderBounds(
+      timeoutMillis = 3L,
+      pollMillis = 1L,
+      elapsedRealtimeMillis = { testScheduler.currentTime },
+      stillCurrent = { true },
+      readBounds = {
+        delay(4L)
+        bounds
+      },
+      waitForNextSample = { delay(it) }
+    )
+
+    assertEquals(TicketSemanticSliderStabilizationStatus.MISSING, result.status)
+    assertNull(result.bounds)
+    assertEquals(1, result.readCount)
+  }
+
+  @Test
+  fun exactVisualDispatchFreshnessUsesAClosedMonotonicWindow() {
+    val observation = TicketVisualActionObservation(
+      probeId = 1L,
+      state = TicketVisualPhoneState.UNACTIVATED_DETAIL,
+      atMillis = 100L,
+      captureStartUs = 100_000L
+    )
+
+    assertTrue(ticketVisualObservationIsFreshForDispatch(observation, 1_350L, 1_250L))
+    assertFalse(ticketVisualObservationIsFreshForDispatch(observation, 1_351L, 1_250L))
+    assertFalse(ticketVisualObservationIsFreshForDispatch(observation, 99L, 1_250L))
+    assertFalse(ticketVisualObservationIsFreshForDispatch(observation.copy(atMillis = 0L), 100L, 1_250L))
   }
 
   @Test

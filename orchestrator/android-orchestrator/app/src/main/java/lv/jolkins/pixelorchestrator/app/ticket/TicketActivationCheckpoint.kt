@@ -76,6 +76,18 @@ internal fun ticketActivationNoTransitionTerminalReason(
   "ticket_action_retry_not_dispatched"
 }
 
+/** Navigation taps never establish that the separate registration stroke was dispatched. */
+internal fun ticketActivationFailureTerminalPhase(
+  checkpoint: TicketActivationCheckpoint?,
+  provisionalPhase: String = ""
+): String = when {
+  checkpoint?.stage == TicketActivationCheckpointStage.NO_TRANSITION_PROVEN ->
+    ticketActivationNoTransitionTerminalPhase(checkpoint)
+  checkpoint?.dispatchOrdinal?.let { it > 0 } == true ||
+    provisionalPhase == "outcome_unknown" -> "outcome_unknown"
+  else -> "not_dispatched"
+}
+
 /**
  * A server-finalized terminal may retire only a checkpoint whose local stage proves the same
  * conclusive outcome. Dispatch uncertainty and generic attention remain as durable replay fences.

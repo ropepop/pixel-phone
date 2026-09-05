@@ -23,6 +23,14 @@ internal class TicketWebSocket(
     sendFrame(opcode = OPCODE_TEXT, payload = value.toByteArray(Charsets.UTF_8))
   }
 
+  fun sendTextAtWrite(buildValue: () -> String): Boolean {
+    return sendFrame(
+      opcode = OPCODE_TEXT,
+      payload = byteArrayOf(),
+      payloadAtWrite = { buildValue().toByteArray(Charsets.UTF_8) }
+    )
+  }
+
   fun sendConfigAndAllowBinary(value: String): Boolean {
     return sendFrame(
       opcode = OPCODE_TEXT,
@@ -44,6 +52,8 @@ internal class TicketWebSocket(
   fun binaryFramesAllowed(): Boolean = synchronized(writeLock) {
     open.get() && binaryFramesAllowed
   }
+
+  fun isOpen(): Boolean = open.get()
 
   fun sendBinary(payload: ByteArray): Boolean {
     return sendFrame(opcode = OPCODE_BINARY, payload = payload, requireBinaryAllowed = true)
@@ -126,7 +136,8 @@ internal class TicketWebSocket(
     requireBinaryAllowed: Boolean = false,
     allowBinaryAfterSend: Boolean = false,
     canSend: () -> Boolean = { true },
-    closeOnFailure: Boolean = true
+    closeOnFailure: Boolean = true,
+    payloadAtWrite: (() -> ByteArray)? = null
   ): Boolean {
     if (!open.get()) {
       return false
@@ -136,23 +147,24 @@ internal class TicketWebSocket(
         return@synchronized false
       }
       runCatching {
+        val currentPayload = payloadAtWrite?.invoke() ?: payload
         output.write(0x80 or opcode)
         when {
-          payload.size < 126 -> output.write(payload.size)
-          payload.size <= 65535 -> {
+          currentPayload.size < 126 -> output.write(currentPayload.size)
+          currentPayload.size <= 65535 -> {
             output.write(126)
-            output.write((payload.size shr 8) and 0xFF)
-            output.write(payload.size and 0xFF)
+            output.write((currentPayload.size shr 8) and 0xFF)
+            output.write(currentPayload.size and 0xFF)
           }
           else -> {
             output.write(127)
-            val length = payload.size.toLong()
+            val length = currentPayload.size.toLong()
             for (shift in 56 downTo 0 step 8) {
               output.write(((length shr shift) and 0xFF).toInt())
             }
           }
         }
-        output.write(payload)
+        output.write(currentPayload)
         output.flush()
       }.fold(
         onSuccess = {

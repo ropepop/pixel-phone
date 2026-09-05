@@ -66,12 +66,18 @@ class TicketTracePrivacyTest {
       "ticket_slider_start_unknown",
       TicketTracePrivacy.eventName("ticket_slider_start_unknown")
     )
+    listOf(
+      "ticket_slider_semantic_missing",
+      "ticket_slider_semantic_unstable",
+      "ticket_slider_semantic_fence_changed"
+    ).forEach { event -> assertEquals(event, TicketTracePrivacy.eventName(event)) }
     assertEquals(
       "vivi_reauth_package_clear",
       TicketTracePrivacy.eventName("vivi_reauth_package_clear")
     )
     assertNull(TicketTracePrivacy.eventName("vivi_reauth_package_clear_extra"))
     assertNull(TicketTracePrivacy.eventName("ticket_slider_start_failed"))
+    assertNull(TicketTracePrivacy.eventName("ticket_slider_semantic_raw_dump"))
     assertNull(TicketTracePrivacy.eventName("viewer_account_42"))
     assertNull(TicketTracePrivacy.eventName("stream_started token=abc"))
   }

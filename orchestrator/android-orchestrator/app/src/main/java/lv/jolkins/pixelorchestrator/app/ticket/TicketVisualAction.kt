@@ -1,5 +1,6 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
@@ -536,7 +537,8 @@ internal data class TicketVisualActionObservation(
   val timeTicketsTabBounds: TicketVisualProbeBounds? = null,
   val bottomTab: TicketViviBottomTab = TicketViviBottomTab.NONE,
   val cards: List<TicketVisualCardAnchor> = emptyList(),
-  val atMillis: Long = 0L
+  val atMillis: Long = 0L,
+  val captureStartUs: Long = 0L
 ) {
   fun timeTicketsNavigationBoundsFor(target: TicketVisualActionTarget): TicketVisualProbeBounds? =
     timeTicketsTabBounds.takeIf {
@@ -675,6 +677,117 @@ internal class TicketVisualObservationConsensus {
     }
   }
 }
+
+internal enum class TicketSemanticSliderStabilizationStatus {
+  PROVED,
+  MISSING,
+  UNSTABLE,
+  FENCE_CHANGED
+}
+
+internal data class TicketSemanticSliderStabilizationResult(
+  val status: TicketSemanticSliderStabilizationStatus,
+  val bounds: TicketViviGraphicBounds? = null,
+  val readCount: Int = 0
+)
+
+private data class TicketSemanticSliderSample(
+  val bounds: TicketViviGraphicBounds? = null,
+  val fenceCurrent: Boolean
+)
+
+/**
+ * Accepts only two consecutive, identical, non-null semantic slider snapshots. A null sample
+ * breaks consecutiveness, while every read is fenced on both sides so a focus or generation
+ * change can never be hidden by a later matching snapshot.
+ */
+internal suspend fun awaitStableTicketSemanticSliderBounds(
+  timeoutMillis: Long,
+  pollMillis: Long,
+  elapsedRealtimeMillis: () -> Long,
+  stillCurrent: suspend () -> Boolean,
+  readBounds: suspend () -> TicketViviGraphicBounds?,
+  waitForNextSample: suspend (Long) -> Unit
+): TicketSemanticSliderStabilizationResult {
+  val startedAtMillis = elapsedRealtimeMillis()
+  val deadlineMillis = startedAtMillis + timeoutMillis.coerceAtLeast(1L)
+  var previous: TicketViviGraphicBounds? = null
+  var sawNonNull = false
+  var readCount = 0
+  while (elapsedRealtimeMillis() < deadlineMillis) {
+    val sampleBudgetMillis = deadlineMillis - elapsedRealtimeMillis()
+    val sample = withTimeoutOrNull(sampleBudgetMillis.coerceAtLeast(1L)) {
+      if (!stillCurrent()) {
+        return@withTimeoutOrNull TicketSemanticSliderSample(fenceCurrent = false)
+      }
+      readCount += 1
+      val current = readBounds()
+      TicketSemanticSliderSample(
+        bounds = current,
+        fenceCurrent = stillCurrent()
+      )
+    } ?: break
+    if (!sample.fenceCurrent) {
+      return TicketSemanticSliderStabilizationResult(
+        TicketSemanticSliderStabilizationStatus.FENCE_CHANGED,
+        readCount = readCount
+      )
+    }
+    if (elapsedRealtimeMillis() >= deadlineMillis) break
+    val current = sample.bounds
+    if (current == null) {
+      previous = null
+    } else {
+      sawNonNull = true
+      if (current == previous) {
+        return TicketSemanticSliderStabilizationResult(
+          status = TicketSemanticSliderStabilizationStatus.PROVED,
+          bounds = current,
+          readCount = readCount
+        )
+      }
+      previous = current
+    }
+    val remainingMillis = deadlineMillis - elapsedRealtimeMillis()
+    if (remainingMillis <= 0L) break
+    withTimeoutOrNull(remainingMillis.coerceAtLeast(1L)) {
+      waitForNextSample(minOf(pollMillis.coerceAtLeast(1L), remainingMillis))
+    } ?: break
+  }
+  return TicketSemanticSliderStabilizationResult(
+    status = if (sawNonNull) {
+      TicketSemanticSliderStabilizationStatus.UNSTABLE
+    } else {
+      TicketSemanticSliderStabilizationStatus.MISSING
+    },
+    readCount = readCount
+  )
+}
+
+internal fun ticketVisualObservationIsFreshForDispatch(
+  observation: TicketVisualActionObservation,
+  nowMillis: Long,
+  maxAgeMillis: Long
+): Boolean {
+  val capturedAtMillis = observation.captureStartUs / 1_000L
+  return observation.probeId > 0L && observation.atMillis > 0L &&
+    observation.captureStartUs > 0L && capturedAtMillis >= observation.atMillis &&
+    nowMillis >= capturedAtMillis &&
+    nowMillis - capturedAtMillis <= maxAgeMillis.coerceAtLeast(0L)
+}
+
+/** The encoded picture must be the exact observed capture or later in the same stream. */
+internal fun ticketVisualFrameMatchesRegistrationObservation(
+  observation: TicketVisualActionObservation,
+  proofStreamEpoch: Long,
+  frameEpoch: Long,
+  frameCaptureStartUs: Long,
+  nowMillis: Long,
+  maxAgeMillis: Long
+): Boolean = ticketVisualObservationIsFreshForDispatch(observation, nowMillis, maxAgeMillis) &&
+  proofStreamEpoch > 0L && frameEpoch == proofStreamEpoch &&
+  frameCaptureStartUs >= observation.captureStartUs &&
+  frameCaptureStartUs / 1_000L <= nowMillis
 
 private fun boundsAgree(
   first: TicketVisualProbeBounds?,

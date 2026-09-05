@@ -70,7 +70,6 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
-import java.nio.ByteBuffer
 import java.time.Instant
 import java.util.ArrayDeque
 import java.util.Collections
@@ -92,7 +91,7 @@ private data class TicketCachedKeyFrame(
   val sequence: Long,
   val envelope: ByteArray,
   val cachedAtMillis: Long,
-  val timestampUs: Long
+  val captureStartUs: Long
 )
 
 private data class TicketSessionStartSafetyPreflight(
@@ -396,6 +395,7 @@ class TicketStreamService : Service() {
     val gestureBounds: TicketViviGraphicBounds,
     val watermark: Pair<Long, Long>,
     val inputFence: PhoneAutomationTicketInputFence,
+    val captureStreamEpoch: Long,
     val captureRestartCount: Long,
     val actionMutationGeneration: Long
   )
@@ -464,6 +464,9 @@ class TicketStreamService : Service() {
   private val canceledRigasSatiksmeBatchIds = Collections.synchronizedSet(mutableSetOf<String>())
   private val videoClients = Collections.synchronizedSet(mutableSetOf<TicketWebSocket>())
   private val clientInfo = mutableMapOf<TicketWebSocket, TicketClientInfo>()
+  private val captureDemandSessions = Collections.synchronizedMap(
+    mutableMapOf<TicketWebSocket, TicketCaptureDemandSession>()
+  )
   private val videoSendStates = TicketVideoClientDeliveryRegistry<TicketWebSocket>()
   private val encoderLock = Any()
   private val sessionMutex = Mutex()
@@ -1092,6 +1095,8 @@ class TicketStreamService : Service() {
     output.flush()
     socket.soTimeout = 0
     lateinit var client: TicketWebSocket
+    val clientLifecycleLock = Any()
+    val videoClientRegistered = AtomicBoolean(false)
     val info = TicketClientInfo(
       video = video,
       viewerId = queryParam(query, "viewer"),
@@ -1106,20 +1111,29 @@ class TicketStreamService : Service() {
       output = output,
       onText = { message ->
         if (video) {
-          handleVideoClientCommand(client, message)
+          handleVideoClientCommand(
+            client,
+            message,
+            mediaCommandsAllowed = videoClientRegistered.get()
+          )
         } else {
           handleClientCommand(client, message)
         }
       },
       onClose = {
         if (video) {
-          videoClients.remove(client)
-          recordTicketEventForTrace(
-            "stream_client_closed",
-            streamClientTraceDetail(info, "closed"),
-            info.startupTraceCorrelationId
-          )
-          startupTraceCorrelation.releaseVideoSocket(info.generation)
+          synchronized(clientLifecycleLock) {
+            if (videoClientRegistered.getAndSet(false)) {
+              videoClients.remove(client)
+              captureDemandSessions.remove(client)
+              recordTicketEventForTrace(
+                "stream_client_closed",
+                streamClientTraceDetail(info, "closed"),
+                info.startupTraceCorrelationId
+              )
+              startupTraceCorrelation.releaseVideoSocket(info.generation)
+            }
+          }
         } else {
           controlClients.remove(client)
           protectedControlClients.remove(client)
@@ -1138,58 +1152,118 @@ class TicketStreamService : Service() {
       },
       binaryFramesInitiallyAllowed = !video
     )
+    // Start transport-control handling immediately after the upgrade, including while another
+    // socket still owns serialized phone preflight. This lets every replacement answer Ping and
+    // clock probes without starting media work or weakening the relay's short dead-path timeout.
+    val videoReadStarted = if (video) CompletableDeferred<Unit>() else null
+    val videoReadJob = if (video) {
+      serviceScope.async {
+        videoReadStarted?.complete(Unit)
+        client.readLoop()
+      }
+    } else {
+      null
+    }
+    videoReadStarted?.await()
     extendStartupDisconnectGrace()
     var acceptedClientGeneration = true
     sessionMutex.withLock {
       if (video) {
-        acceptedClientGeneration = bindStartupTraceCorrelationIdFromVideoSocket(
-          info.startupTraceCorrelationId,
-          info.generation
-        )
-        if (!acceptedClientGeneration) return@withLock
-      }
-      closeDuplicateViewerClients(info)
-      clientDisconnectStopJob?.cancel()
-      clientDisconnectStopJob = null
-      if (video) {
-        videoSendStates.add(client, newVideoClientDeliveryState())
-        videoClients.add(client)
-        recordTicketEventForCurrentVideoSocket(
-          "stream_client_opened",
-          streamClientTraceDetail(info, "opened"),
-          info
-        )
-        lastVideoClientConnectedAtMillis = SystemClock.elapsedRealtime()
+        synchronized(clientLifecycleLock) {
+          if (!client.isOpen()) {
+            acceptedClientGeneration = false
+          } else {
+            acceptedClientGeneration = bindStartupTraceCorrelationIdFromVideoSocket(
+              info.startupTraceCorrelationId,
+              info.generation
+            )
+            if (acceptedClientGeneration) {
+              closeDuplicateViewerClients(info)
+              clientDisconnectStopJob?.cancel()
+              clientDisconnectStopJob = null
+              videoSendStates.add(client, newVideoClientDeliveryState())
+              captureDemandSessions[client] = TicketCaptureDemandSession()
+              videoClients.add(client)
+              synchronized(clientInfo) {
+                clientInfo[client] = info
+              }
+              videoClientRegistered.set(true)
+              recordTicketEventForCurrentVideoSocket(
+                "stream_client_opened",
+                streamClientTraceDetail(info, "opened"),
+                info
+              )
+              lastVideoClientConnectedAtMillis = SystemClock.elapsedRealtime()
+              markViewerInput("client_connected")
+            }
+          }
+        }
       } else {
+        closeDuplicateViewerClients(info)
+        clientDisconnectStopJob?.cancel()
+        clientDisconnectStopJob = null
         controlClients.add(client)
+        synchronized(clientInfo) {
+          clientInfo[client] = info
+        }
+        markViewerInput("client_connected")
       }
-      synchronized(clientInfo) {
-        clientInfo[client] = info
-      }
-      markViewerInput("client_connected")
     }
     if (!acceptedClientGeneration) {
       client.close()
+      videoReadJob?.await()
       return
     }
     if (video && !startTicketSessionForVideoClientOpen(info)) {
+      client.close()
+      videoReadJob?.await()
+      return
+    }
+    if (video) {
+      val currentAfterStart = sessionMutex.withLock {
+        synchronized(clientLifecycleLock) {
+          if (
+            !videoClientRegistered.get() ||
+            !client.isOpen() ||
+            !videoClients.contains(client) ||
+            !startupTraceCorrelation.isCurrentVideoSocket(
+              boundedStartupTraceCorrelationId(info.startupTraceCorrelationId),
+              info.generation
+            )
+          ) {
+            false
+          } else {
+            if (ticketSessionOpen()) {
+              updateTicketSessionState(TICKET_SESSION_LIVE, "client_connected")
+              recordTicketEvent(
+                "client_connected",
+                "generation=${info.generation} video=true"
+              )
+            }
+            streamSize?.let { size ->
+              sendConfigAndWarmStart(client, size)
+            }
+            ensureEncoderIfPossible()
+            scheduleStreamWatchdog("client_connected")
+            true
+          }
+        }
+      }
+      if (!currentAfterStart) {
+        videoReadJob?.await()
+        return
+      }
+      videoReadJob?.await()
       return
     }
     if (ticketSessionOpen()) {
       updateTicketSessionState(TICKET_SESSION_LIVE, "client_connected")
       recordTicketEvent(
         "client_connected",
-        "generation=${info.generation} video=$video"
+        "generation=${info.generation} video=false"
       )
-    }
-    if (!video && ticketSessionOpen()) {
       sendStatus(client)
       sendInactivityStatus(client)
-    }
-    if (video) {
-      streamSize?.let { size ->
-        sendConfigAndWarmStart(client, size)
-      }
     }
     ensureEncoderIfPossible()
     scheduleStreamWatchdog("client_connected")
@@ -1318,10 +1392,61 @@ class TicketStreamService : Service() {
     }
   }
 
-  private fun handleVideoClientCommand(client: TicketWebSocket, message: String) {
+  private fun handleVideoClientCommand(
+    client: TicketWebSocket,
+    message: String,
+    mediaCommandsAllowed: Boolean = true
+  ) {
+    val phoneReceiveUptimeMicros = SystemClock.elapsedRealtimeNanos() / 1_000L
+    val receivedAtUptimeMillis = phoneReceiveUptimeMicros / 1_000L
     val element = runCatching { json.parseToJsonElement(message).jsonObject }.getOrNull() ?: return
     when (element["type"]?.jsonPrimitive?.contentOrNull) {
-      "keyframe" -> sendCachedKeyFrameOrRequest(client, element["reason"]?.jsonPrimitive?.contentOrNull ?: "video_client_request")
+      "keyframe" -> if (mediaCommandsAllowed) {
+        sendCachedKeyFrameOrRequest(client, element["reason"]?.jsonPrimitive?.contentOrNull ?: "video_client_request")
+      }
+      "capture_demand" -> {
+        if (!mediaCommandsAllowed) return
+        val request = TicketCaptureDemandProtocol.parseRequest(element) ?: return
+        val session = captureDemandSessions[client] ?: return
+        val currentEpoch = synchronized(encoderLock) {
+          streamEpoch.takeIf {
+            streamActive &&
+              activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264 &&
+              videoClients.contains(client)
+          } ?: 0L
+        }
+        session.admit(
+          request = request,
+          currentStreamEpoch = currentEpoch,
+          receivedAtUptimeMillis = receivedAtUptimeMillis,
+          nowUptimeMillis = SystemClock.elapsedRealtime()
+        ) { validUntilUptimeMillis ->
+          synchronized(encoderLock) {
+            if (
+              !streamActive ||
+              activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264 ||
+              streamEpoch != request.streamEpoch ||
+              !videoClients.contains(client) ||
+              SystemClock.elapsedRealtime() > validUntilUptimeMillis
+            ) {
+              false
+            } else {
+              rootHardwareH264CaptureEngine.requestOrdinaryCaptureDemand(validUntilUptimeMillis)
+            }
+          }
+        }
+      }
+      "clock_probe" -> {
+        val request = TicketClockProbeProtocol.parseRequest(element) ?: return
+        client.sendTextAtWrite {
+          val phoneSendUptimeMicros = SystemClock.elapsedRealtimeNanos() / 1_000L
+          TicketClockProbeProtocol.encodeResult(
+            request,
+            phoneReceiveUptimeMicros,
+            phoneSendUptimeMicros
+          )
+        }
+      }
     }
   }
 
@@ -2754,15 +2879,7 @@ class TicketStreamService : Service() {
             } else {
               null
             }
-            val failurePhase = when {
-              checkpoint?.stage == TicketActivationCheckpointStage.NO_TRANSITION_PROVEN &&
-                checkpoint.dispatchOrdinal >= 2 -> "no_transition"
-              checkpoint?.stage == TicketActivationCheckpointStage.NO_TRANSITION_PROVEN ->
-                "retry_not_dispatched"
-              checkpoint?.dispatchOrdinal?.let { ordinal -> ordinal > 0 } == true ->
-                "outcome_unknown"
-              else -> "not_dispatched"
-            }
+            val failurePhase = ticketActivationFailureTerminalPhase(checkpoint)
             ticketVisualActionTerminal(
               request,
               ok = false,
@@ -3170,13 +3287,15 @@ class TicketStreamService : Service() {
       else -> provisional
     }
     val terminal = if (request.target.activatesTicket && !rawTerminal.ok) {
-      val stablePhase = provisional.phase.takeIf {
-        it in setOf("retry_not_dispatched", "no_transition", "outcome_unknown")
-      } ?: if (completedLease?.snapshot?.mutationMayHaveDispatched == true) {
-        "outcome_unknown"
+      val checkpointRevision = if (request.target == TicketVisualActionTarget.REGISTER_CURRENT) {
+        request.expectedInteractionRevision
       } else {
-        "not_dispatched"
+        command.revision
       }
+      val stablePhase = ticketActivationFailureTerminalPhase(
+        ticketActivationCheckpoint(command.id, checkpointRevision, request.attemptId),
+        provisional.phase
+      )
       rawTerminal.copy(
         status = "needs_attention",
         phase = stablePhase,
@@ -3202,25 +3321,23 @@ class TicketStreamService : Service() {
     }
     val terminalExpectedNegativeProof =
       ticketVisualLatestNotDetectedTerminalHasBoundProof(terminal)
-    if (terminal.ok || terminalExpectedNegativeProof || terminal != provisional) {
-      val terminalObservation = deferredObservation.takeIf {
-        (terminal.ok || terminalExpectedNegativeProof) && successfulProofCurrent
-      }
-      if (!persistTicketVisualTerminalSnapshot(request, terminal, terminalObservation)) {
-        recordTicketEvent(
-          "ticket_action_terminal_journal_unproved",
-          "action=${request.actionId.takeLast(24)} status=${terminal.status}"
-        )
-        return terminal.copy(
-          status = "needs_attention",
-          phase = "needs_attention",
-          reason = "ticket_action_terminal_journal_unproved",
-          switchAvailable = false,
-          switchExpiresAt = "",
-          sliderRegion = null,
-          ok = false
-        )
-      }
+    val terminalObservation = deferredObservation.takeIf {
+      (terminal.ok || terminalExpectedNegativeProof) && successfulProofCurrent
+    }
+    if (!persistTicketVisualTerminalSnapshot(request, terminal, terminalObservation)) {
+      recordTicketEvent(
+        "ticket_action_terminal_journal_unproved",
+        "action=${request.actionId.takeLast(24)} status=${terminal.status}"
+      )
+      return terminal.copy(
+        status = "needs_attention",
+        phase = "needs_attention",
+        reason = "ticket_action_terminal_journal_unproved",
+        switchAvailable = false,
+        switchExpiresAt = "",
+        sliderRegion = null,
+        ok = false
+      )
     }
     if (terminal.ok && recoveredControlCodeSurface && recoveredControlCodeCleanupCommitted) {
       publishControlCodeReadyAfterPanelFinalization(lastControlCodeRequestId.orEmpty())
@@ -4141,7 +4258,56 @@ class TicketStreamService : Service() {
       timeoutMillis = TICKET_SLIDER_ACCESSIBILITY_RECONNECT_TIMEOUT_MILLIS
     ) ?: return TicketActivationPreparationResult(reason = "ticket_action_input_window_unproved")
     val actionMutationGeneration = ticketActionV3MutationGeneration
+    val captureStreamEpoch = streamEpoch
+    if (captureStreamEpoch <= 0L) {
+      return TicketActivationPreparationResult(reason = "ticket_action_visual_unproved")
+    }
     val captureRestartCount = rootHardwareH264CaptureEngine.snapshot().restartCount
+    val semanticStartedAtMillis = SystemClock.elapsedRealtime()
+    var semanticReadOrdinal = 0
+    val semanticProof = awaitStableTicketSemanticSliderBounds(
+      timeoutMillis = TICKET_SLIDER_PROOF_TIMEOUT_MILLIS,
+      pollMillis = TICKET_SLIDER_PROOF_POLL_MILLIS,
+      elapsedRealtimeMillis = SystemClock::elapsedRealtime,
+      stillCurrent = {
+        ticketActivationInputFenceStillCurrent(
+          generation = generation,
+          actionMutationGeneration = actionMutationGeneration,
+          captureStreamEpoch = captureStreamEpoch,
+          captureRestartCount = captureRestartCount,
+          inputFence = inputFence,
+          panelLease = panelLease
+        )
+      },
+      readBounds = {
+        semanticReadOrdinal += 1
+        TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(
+          fastTicketRegistrationHierarchy("ticket_action_v3_semantic_slider_$semanticReadOrdinal")
+        )
+      },
+      waitForNextSample = { delay(it) }
+    )
+    if (semanticProof.status != TicketSemanticSliderStabilizationStatus.PROVED) {
+      val event = when (semanticProof.status) {
+        TicketSemanticSliderStabilizationStatus.MISSING -> "ticket_slider_semantic_missing"
+        TicketSemanticSliderStabilizationStatus.UNSTABLE -> "ticket_slider_semantic_unstable"
+        TicketSemanticSliderStabilizationStatus.FENCE_CHANGED -> "ticket_slider_semantic_fence_changed"
+        TicketSemanticSliderStabilizationStatus.PROVED -> error("proved slider handled above")
+      }
+      recordTicketEvent(
+        event,
+        "count=${semanticProof.readCount} duration_ms=${SystemClock.elapsedRealtime() - semanticStartedAtMillis}"
+      )
+      return TicketActivationPreparationResult(
+        reason = if (semanticProof.status == TicketSemanticSliderStabilizationStatus.FENCE_CHANGED) {
+          "ticket_action_exact_input_fence_changed"
+        } else {
+          "ticket_action_slider_unproved"
+        }
+      )
+    }
+    val semanticBounds = semanticProof.bounds
+      ?: return TicketActivationPreparationResult(reason = "ticket_action_slider_unproved")
     rootHardwareH264CaptureEngine.requestImmediateRefresh("ticket_action_v3_exact_input_proof")
     val freshObservation = awaitStableTicketVisualActionObservation(
       reason = "ticket_action_v3_exact_input_proof",
@@ -4155,27 +4321,38 @@ class TicketStreamService : Service() {
     }
     val visualSlider = freshObservation.sliderBounds?.let(::ticketVisualProbeBoundsToDevice)
       ?: return TicketActivationPreparationResult(reason = "ticket_action_slider_unproved")
-    val firstHierarchy = fastTicketRegistrationHierarchy("ticket_action_v3_semantic_slider_1")
-    val firstSemantic = TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(firstHierarchy)
-      ?: return TicketActivationPreparationResult(reason = "ticket_action_slider_unproved")
-    delay(TICKET_ACTION_V3_PROBE_GAP_MILLIS)
-    val secondHierarchy = fastTicketRegistrationHierarchy("ticket_action_v3_semantic_slider_2")
-    val secondSemantic = TicketViviPageEnforcer.ticketRegistrationSliderBoundsForHierarchy(secondHierarchy)
-      ?.takeIf { it == firstSemantic }
-      ?: return TicketActivationPreparationResult(reason = "ticket_action_slider_unproved")
     val gestureBounds = ticketSliderGestureBoundsAfterVisualProof(
-      hierarchyBounds = secondSemantic,
+      hierarchyBounds = semanticBounds,
       visualBounds = visualSlider,
       displayWidth = resources.displayMetrics.widthPixels,
       displayHeight = resources.displayMetrics.heightPixels
     ) ?: return TicketActivationPreparationResult(reason = "ticket_action_slider_geometry_invalid")
-    val watermark = awaitTicketVisualActionFrameWatermark("ticket_action_v3_exact_input_watermark")
+    if (!ticketVisualObservationIsFreshForDispatch(
+        freshObservation,
+        SystemClock.elapsedRealtime(),
+        ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS
+      )
+    ) {
+      return TicketActivationPreparationResult(reason = "ticket_action_visual_unproved")
+    }
+    val visualProofDeadlineMillis =
+      freshObservation.captureStartUs / 1_000L + ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS
+    val watermark = awaitTicketVisualActionFrameWatermark(
+      reason = "ticket_action_v3_exact_input_watermark",
+      notAfterMillis = visualProofDeadlineMillis,
+      proofObservation = freshObservation,
+      proofStreamEpoch = captureStreamEpoch
+    )
       ?: return TicketActivationPreparationResult(reason = "ticket_action_frame_watermark_unproved")
+    if (watermark.first != captureStreamEpoch) {
+      return TicketActivationPreparationResult(reason = "ticket_action_exact_input_fence_changed")
+    }
     val prepared = TicketActivationDispatchPreparation(
       observation = freshObservation,
       gestureBounds = gestureBounds,
       watermark = watermark,
       inputFence = inputFence,
+      captureStreamEpoch = captureStreamEpoch,
       captureRestartCount = captureRestartCount,
       actionMutationGeneration = actionMutationGeneration
     )
@@ -4192,12 +4369,51 @@ class TicketStreamService : Service() {
     generation: Long,
     panelLease: TicketActionPanelDarkLease
   ): Boolean {
+    if (!ticketVisualObservationIsFreshForDispatch(
+        prepared.observation,
+        SystemClock.elapsedRealtime(),
+        ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS
+      )
+    ) return false
+    if (!ticketActivationInputFenceStillCurrent(
+        generation = generation,
+        actionMutationGeneration = prepared.actionMutationGeneration,
+        captureStreamEpoch = prepared.captureStreamEpoch,
+        captureRestartCount = prepared.captureRestartCount,
+        inputFence = prepared.inputFence,
+        panelLease = panelLease
+      )
+    ) return false
     return ticketActionV3Generation == generation &&
       ticketActionV3MutationGeneration == prepared.actionMutationGeneration &&
+      streamEpoch == prepared.captureStreamEpoch &&
+      prepared.watermark.first == prepared.captureStreamEpoch &&
       rootHardwareH264CaptureEngine.snapshot().restartCount == prepared.captureRestartCount &&
       synchronized(encoderLock) { ticketVisualActionWatermarkCurrentLocked(prepared.watermark) } &&
-      PhoneAutomationServiceBridge.ticketInputFenceIsCurrent(prepared.inputFence) &&
-      panelLease.beforeMutationAllowed()
+      ticketVisualObservationIsFreshForDispatch(
+        prepared.observation,
+        SystemClock.elapsedRealtime(),
+        ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS
+      )
+  }
+
+  private suspend fun ticketActivationInputFenceStillCurrent(
+    generation: Long,
+    actionMutationGeneration: Long,
+    captureStreamEpoch: Long,
+    captureRestartCount: Long,
+    inputFence: PhoneAutomationTicketInputFence,
+    panelLease: TicketActionPanelDarkLease
+  ): Boolean {
+    fun cheapFenceCurrent(): Boolean = ticketActionV3Generation == generation &&
+      ticketActionV3MutationGeneration == actionMutationGeneration &&
+      captureStreamEpoch > 0L && streamEpoch == captureStreamEpoch &&
+      rootHardwareH264CaptureEngine.snapshot().restartCount == captureRestartCount
+    if (!cheapFenceCurrent()) return false
+    if (!PhoneAutomationServiceBridge.ticketInputFenceIsCurrent(inputFence) ||
+      !panelLease.beforeMutationAllowed()
+    ) return false
+    return cheapFenceCurrent()
   }
 
   private suspend fun ticketVisualActivationSuccess(
@@ -4361,7 +4577,9 @@ class TicketStreamService : Service() {
         continue
       }
       if (probe != null) completedProbeSeen = true
-      val current = probe?.ticketActionObservation
+      // The exact probe id guarantees that this capture starts after the request. Use that request
+      // boundary to reject an older capture; actual picture age uses the helper's capture start.
+      val current = probe?.ticketActionObservation?.copy(atMillis = started)
       if (current != null && current.probeId == probeId) {
         consensus.offer(current, allowUnknown)?.let { return it }
       }
@@ -4374,11 +4592,28 @@ class TicketStreamService : Service() {
    * can arrive before MediaCodec emits the first frame of a restarted epoch, so publishing the
    * service counters directly can otherwise expose sequence zero to the browser.
    */
-  private suspend fun awaitTicketVisualActionFrameWatermark(reason: String): Pair<Long, Long>? {
+  private suspend fun awaitTicketVisualActionFrameWatermark(
+    reason: String,
+    notAfterMillis: Long = Long.MAX_VALUE,
+    proofObservation: TicketVisualActionObservation? = null,
+    proofStreamEpoch: Long = 0L
+  ): Pair<Long, Long>? {
     val startedAtMillis = SystemClock.elapsedRealtime()
+    val deadlineMillis = minOf(
+      startedAtMillis + TICKET_ACTION_V3_FRAME_WATERMARK_TIMEOUT_MILLIS,
+      notAfterMillis
+    )
+    if (startedAtMillis >= deadlineMillis) {
+      recordTicketEvent(
+        "ticket_action_frame_watermark_unproved",
+        "reason=$reason epoch=$streamEpoch sequence=$frameSequence"
+      )
+      return null
+    }
     val starting = synchronized(encoderLock) { streamEpoch to frameSequence }
-    requestKeyFrame(reason)
-    val deadlineMillis = startedAtMillis + TICKET_ACTION_V3_FRAME_WATERMARK_TIMEOUT_MILLIS
+    // The registration probe already requested this picture. Its encoded output may arrive
+    // before or after its classifier reply; do not force a second one-second capture period.
+    if (proofObservation == null) requestKeyFrame(reason)
     while (SystemClock.elapsedRealtime() < deadlineMillis) {
       val watermark = synchronized(encoderLock) {
         val currentEpoch = streamEpoch
@@ -4386,7 +4621,18 @@ class TicketStreamService : Service() {
         latestKeyFrame?.takeIf { keyFrame ->
           currentEpoch > 0L && currentSequence > 0L &&
             keyFrame.epoch == currentEpoch && keyFrame.sequence > 0L &&
-            (currentEpoch != starting.first || keyFrame.sequence > starting.second)
+            if (proofObservation != null) {
+              ticketVisualFrameMatchesRegistrationObservation(
+                observation = proofObservation,
+                proofStreamEpoch = proofStreamEpoch,
+                frameEpoch = keyFrame.epoch,
+                frameCaptureStartUs = keyFrame.captureStartUs,
+                nowMillis = SystemClock.elapsedRealtime(),
+                maxAgeMillis = ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS
+              )
+            } else {
+              currentEpoch != starting.first || keyFrame.sequence > starting.second
+            }
         }?.let { keyFrame -> keyFrame.epoch to keyFrame.sequence }
       }
       if (watermark != null) return watermark
@@ -4653,17 +4899,18 @@ class TicketStreamService : Service() {
       terminal = true,
       ok = terminalOk
     )
-    val deferProvedMutationTerminal =
-      (snapshot.ok || ticketVisualLatestNotDetectedTerminalHasBoundProof(snapshot)) &&
-      (request.target != TicketVisualActionTarget.PROVE_CURRENT ||
-        ticketVisualActionCaptureLeaseActive)
-    if (deferProvedMutationTerminal) {
-      synchronized(ticketActionV3Lock) {
+    val deferred = synchronized(ticketActionV3Lock) {
+      if (ticketVisualActionCaptureLeaseActive &&
+        ticketActionV3Snapshot.actionId == request.actionId
+      ) {
         deferredTicketVisualTerminalActionId = request.actionId
         deferredTicketVisualTerminalObservation = observation
+        true
+      } else {
+        false
       }
-      return snapshot
     }
+    if (deferred) return snapshot
     if (persistTicketVisualTerminalSnapshot(request, snapshot, observation)) return snapshot
     recordTicketEvent(
       "ticket_action_terminal_journal_unproved",
@@ -4693,37 +4940,37 @@ class TicketStreamService : Service() {
     val sameActionPrior = prior.takeIf {
       it.actionId == request.actionId && it.target == request.target.wireName
     } ?: TicketVisualActionJournalState()
-    return persistTicketVisualActionJournal(
-      TicketVisualActionJournalState(
-        commandId = request.commandId,
-        commandRevision = request.commandRevision,
-        flow = request.flow,
-        refreshActivationAttemptId = request.refreshActivationAttemptId,
-        refreshActivationRevision = request.refreshActivationRevision,
-        actionId = request.actionId,
-        target = request.target.wireName,
-        phase = "terminal",
-        intendedAnchor = ticketVisualTerminalIntendedAnchor(sameActionPrior, observation),
-        navigationFromState = sameActionPrior.navigationFromState,
-        navigationToState = sameActionPrior.navigationToState,
-        navigationAnchor = sameActionPrior.navigationAnchor,
-        streamEpoch = snapshot.streamEpoch,
-        frameSequence = snapshot.frameSequence,
-        terminalStatus = snapshot.status,
-        terminalPhase = snapshot.phase,
-        terminalReason = snapshot.reason,
-        terminalView = snapshot.currentView.wireName,
-        interactionRevision = snapshot.interactionRevision,
-        activationRevision = snapshot.activationRevision,
-        activationAttemptId = snapshot.activationAttemptId,
-        completedAt = snapshot.completedAt,
-        terminalOk = snapshot.ok,
-        sliderLeftBasisPoints = snapshot.sliderRegion?.leftBasisPoints ?: -1,
-        sliderTopBasisPoints = snapshot.sliderRegion?.topBasisPoints ?: -1,
-        sliderRightBasisPoints = snapshot.sliderRegion?.rightBasisPoints ?: -1,
-        sliderBottomBasisPoints = snapshot.sliderRegion?.bottomBasisPoints ?: -1
-      )
+    val terminalJournal = TicketVisualActionJournalState(
+      commandId = request.commandId,
+      commandRevision = request.commandRevision,
+      flow = request.flow,
+      refreshActivationAttemptId = request.refreshActivationAttemptId,
+      refreshActivationRevision = request.refreshActivationRevision,
+      actionId = request.actionId,
+      target = request.target.wireName,
+      phase = "terminal",
+      intendedAnchor = ticketVisualTerminalIntendedAnchor(sameActionPrior, observation),
+      navigationFromState = sameActionPrior.navigationFromState,
+      navigationToState = sameActionPrior.navigationToState,
+      navigationAnchor = sameActionPrior.navigationAnchor,
+      streamEpoch = snapshot.streamEpoch,
+      frameSequence = snapshot.frameSequence,
+      terminalStatus = snapshot.status,
+      terminalPhase = snapshot.phase,
+      terminalReason = snapshot.reason,
+      terminalView = snapshot.currentView.wireName,
+      interactionRevision = snapshot.interactionRevision,
+      activationRevision = snapshot.activationRevision,
+      activationAttemptId = snapshot.activationAttemptId,
+      completedAt = snapshot.completedAt,
+      terminalOk = snapshot.ok,
+      sliderLeftBasisPoints = snapshot.sliderRegion?.leftBasisPoints ?: -1,
+      sliderTopBasisPoints = snapshot.sliderRegion?.topBasisPoints ?: -1,
+      sliderRightBasisPoints = snapshot.sliderRegion?.rightBasisPoints ?: -1,
+      sliderBottomBasisPoints = snapshot.sliderRegion?.bottomBasisPoints ?: -1
     )
+    if (prior.hasRetainedTerminal) return prior == terminalJournal
+    return persistTicketVisualActionJournal(terminalJournal)
   }
 
   private fun loadTicketVisualActionJournal(): TicketVisualActionJournalState {
@@ -4810,33 +5057,10 @@ class TicketStreamService : Service() {
     action: TicketVisualActionSnapshot
   ): TicketActionFinalizationEnvelope? {
     if (!action.terminal || commandId.isBlank() || commandRevision.isBlank()) return null
-    val journal = loadTicketVisualActionJournal()
-    if (!journal.hasRetainedTerminal || journal.actionId != action.actionId ||
-      journal.target != action.target
-    ) return null
-    val staged = journal.copy(
-      commandId = commandId,
-      commandRevision = commandRevision,
-      terminalStatus = action.status,
-      terminalPhase = action.phase,
-      terminalReason = action.reason,
-      terminalView = action.currentView.wireName,
-      streamEpoch = action.streamEpoch,
-      frameSequence = action.frameSequence,
-      interactionRevision = action.interactionRevision,
-      activationRevision = action.activationRevision.takeIf { action.ok }.orEmpty(),
-      activationAttemptId = action.activationAttemptId,
-      completedAt = action.completedAt.ifBlank { journal.completedAt }.ifBlank {
-        Instant.now().toString()
-      },
-      terminalOk = action.ok,
-      sliderLeftBasisPoints = action.sliderRegion?.leftBasisPoints ?: -1,
-      sliderTopBasisPoints = action.sliderRegion?.topBasisPoints ?: -1,
-      sliderRightBasisPoints = action.sliderRegion?.rightBasisPoints ?: -1,
-      sliderBottomBasisPoints = action.sliderRegion?.bottomBasisPoints ?: -1
-    )
-    if (!persistTicketVisualActionJournal(staged)) return null
-    return ticketActionFinalizationEnvelope(staged)
+    return pendingTicketVisualActionFinalization()?.takeIf {
+      it.commandId == commandId && it.commandRevision == commandRevision &&
+        it.action == action.copy(switchAvailable = false, switchExpiresAt = "")
+    }
   }
 
   internal fun pendingTicketVisualActionFinalization(): TicketActionFinalizationEnvelope? =
@@ -4847,10 +5071,7 @@ class TicketStreamService : Service() {
   ): Boolean {
     val journal = loadTicketVisualActionJournal()
     if (!journal.hasRetainedTerminal) return journal.actionId.isBlank()
-    if (journal.commandId != envelope.commandId ||
-      journal.commandRevision != envelope.commandRevision ||
-      journal.actionId != envelope.action.actionId
-    ) return false
+    if (ticketActionFinalizationEnvelope(journal) != envelope) return false
     val activationCheckpointReady = if (envelope.action.activationAttemptId.isBlank()) {
       true
     } else {
@@ -5937,15 +6158,17 @@ class TicketStreamService : Service() {
       return false
     }
     val health = rootHardwareH264CaptureEngine.snapshot(nowMillis)
-    if (!health.active && health.state != "starting" && health.state != "restarting") {
-      return false
-    }
-    val frameAgeMillis = ageMillis(lastFrameSentAtMillis, nowMillis)
-    if (frameAgeMillis != null && frameAgeMillis <= LIVE_FRAME_MAX_AGE_MILLIS) {
-      return true
-    }
-    val encoderStartAgeMillis = ageMillis(lastEncoderStartAtMillis, nowMillis)
-    return encoderStartAgeMillis == null || encoderStartAgeMillis < STREAM_WATCHDOG_NO_FRAME_RESTART_MILLIS
+    return TicketStreamStartupRecoveryPolicy.canContinueCurrentEncoder(
+      encoderActive = health.active,
+      encoderState = health.state,
+      ordinaryCaptureDemandGated = health.ordinaryCaptureDemandGated,
+      captureFrameExpected = health.captureFrameExpected,
+      firstUsefulFramePending = hardwareStartupFirstUsefulFramePending(health),
+      frameAgeMillis = ageMillis(lastFrameSentAtMillis, nowMillis),
+      encoderStartAgeMillis = ageMillis(lastEncoderStartAtMillis, nowMillis),
+      liveFrameMaxAgeMillis = LIVE_FRAME_MAX_AGE_MILLIS,
+      startupWaitMillis = STREAM_WATCHDOG_NO_FRAME_RESTART_MILLIS
+    )
   }
 
   private fun recoverTicketSessionReason(body: String): String {
@@ -7272,6 +7495,8 @@ class TicketStreamService : Service() {
       health.bitrate,
       health.fps,
       health.frameDependencyMode,
+      health.ordinaryCaptureDemandGated,
+      health.captureFrameExpected,
       health.frames == 0L,
       health.frames == 1L,
       health.keyFrames == 0L,
@@ -7292,31 +7517,38 @@ class TicketStreamService : Service() {
   }
 
   private fun restartActiveStreamEngine(reason: String) {
-    if (!streamActive) {
-      return
-    }
-    val verifiedBeforeRestart = hardwareCaptureVerified
-    lastStreamWatchdogAction = "restart_capture_engine"
-    lastStreamWatchdogReason = reason
-    lastStreamRecoveryResult = "started"
-    lastStreamRecoveryFailureReason = null
-    lastStreamRecoveryAtMillis = SystemClock.elapsedRealtime()
-    recordTicketEvent(
-      "stream_recovery_started",
-      "reason=$reason mode=$activeCaptureMode clients=${videoClients.size} frame_age_ms=${ageMillis(lastFrameSentAtMillis, lastStreamRecoveryAtMillis) ?: -1L} watchdog=$streamWatchdogStage"
-    )
-    recordTicketEvent("active_stream_engine_restart", "mode=$activeCaptureMode reason=$reason")
-    resetFrameEpoch("active_stream_engine_restart_$reason", active = true)
-    streamSize?.let(::broadcastConfig)
-    when (activeCaptureMode) {
-      CAPTURE_MODE_ROOT_HARDWARE_H264 -> {
-        rootHardwareH264CaptureEngine.restart(reason)
-        hardwareCaptureVerified = verifiedBeforeRestart
-        ensureRootHardwareH264CaptureIfPossible()
+    TicketStreamStartupRecoveryPolicy.restartIfNeeded(
+      lock = encoderLock,
+      shouldRestart = {
+        // A watchdog and a durable recovery may both observe the old stalled encoder.
+        // Recheck after joining its owner: teardown can block before the new start is recorded.
+        streamActive && !activeHardwareStreamStartingForRecovery(SystemClock.elapsedRealtime())
+      },
+      restart = {
+        val verifiedBeforeRestart = hardwareCaptureVerified
+        lastStreamWatchdogAction = "restart_capture_engine"
+        lastStreamWatchdogReason = reason
+        lastStreamRecoveryResult = "started"
+        lastStreamRecoveryFailureReason = null
+        lastStreamRecoveryAtMillis = SystemClock.elapsedRealtime()
+        recordTicketEvent(
+          "stream_recovery_started",
+          "reason=$reason mode=$activeCaptureMode clients=${videoClients.size} frame_age_ms=${ageMillis(lastFrameSentAtMillis, lastStreamRecoveryAtMillis) ?: -1L} watchdog=$streamWatchdogStage"
+        )
+        recordTicketEvent("active_stream_engine_restart", "mode=$activeCaptureMode reason=$reason")
+        resetFrameEpoch("active_stream_engine_restart_$reason", active = true)
+        streamSize?.let(::broadcastConfig)
+        when (activeCaptureMode) {
+          CAPTURE_MODE_ROOT_HARDWARE_H264 -> {
+            rootHardwareH264CaptureEngine.restart(reason)
+            hardwareCaptureVerified = verifiedBeforeRestart
+            ensureRootHardwareH264CaptureIfPossible()
+          }
+        }
+        scheduleStreamWatchdog("engine_restart:$reason")
+        broadcastStatus()
       }
-    }
-    scheduleStreamWatchdog("engine_restart:$reason")
-    broadcastStatus()
+    )
   }
 
   private fun scheduleStreamWatchdog(reason: String) {
@@ -7385,6 +7617,14 @@ class TicketStreamService : Service() {
       return
     }
     val health = rootHardwareH264CaptureEngine.snapshot(nowMillis)
+    if (health.active && health.ordinaryCaptureDemandGated && !health.captureFrameExpected) {
+      streamWatchdogStage = "demand_idle"
+      return
+    }
+    if (hardwareStartupFirstUsefulFramePending(health)) {
+      streamWatchdogStage = "waiting_startup_first_useful_frame"
+      return
+    }
     val recoveryReason = when {
       !health.active -> "watchdog_no_encoder"
       lastFrameSentAtMillis == 0L && encoderStartAgeMillis >= STREAM_WATCHDOG_NO_FRAME_RESTART_MILLIS -> "watchdog_no_first_frame"
@@ -7425,7 +7665,7 @@ class TicketStreamService : Service() {
     val colorStandard = TicketScreenConfig.ROOT_HARDWARE_H264_COLOR_STANDARD
     val phoneUptimeMillis = SystemClock.elapsedRealtime()
     return """
-      {"type":"config","serverVersion":"$SERVER_VERSION","codec":"$codec","transport":"$transport","captureMode":"$activeCaptureMode","captureSource":${json.encodeToString(captureSource)},"captureMethod":${json.encodeToString(captureMethod)},"rootCapture":true,"frameEnvelope":"$FRAME_ENVELOPE_VERSION","frameDependencyMode":"$frameDependencyMode","streamEpoch":$configuredEpoch,"phoneUptimeMillis":$phoneUptimeMillis,"qualityProfile":"$qualityProfile","colorCorrection":${json.encodeToString(colorCorrection)},"colorStandard":${json.encodeToString(colorStandard)},"width":${size.width},"height":${size.height},"sourceWidth":${size.sourceWidth},"sourceHeight":${size.sourceHeight},"sourceLeftCrop":${size.sourceLeftCrop},"sourceTopCrop":${size.sourceTopCrop},"sourceRightCrop":${size.sourceRightCrop},"sourceBottomCrop":${size.sourceBottomCrop},"sourceVisibleWidth":${size.sourceVisibleWidth},"sourceVisibleHeight":${size.sourceVisibleHeight},"bitrate":$bitrate,"fps":$fps,"sourceFps":$sourceFps,"keyframeIntervalFrames":$keyframeIntervalFrames,"feedbackVersion":$feedbackVersion,"keyFrameIntervalMillis":$keyFrameInterval}
+      {"type":"config","serverVersion":"$SERVER_VERSION","codec":"$codec","transport":"$transport","captureMode":"$activeCaptureMode","captureSource":${json.encodeToString(captureSource)},"captureMethod":${json.encodeToString(captureMethod)},"rootCapture":true,"frameEnvelope":"$FRAME_ENVELOPE_VERSION","frameDependencyMode":"$frameDependencyMode","streamEpoch":$configuredEpoch,"phoneUptimeMillis":$phoneUptimeMillis,"captureDemandVersion":${TicketCaptureDemandProtocol.VERSION},"captureDemandTtlMillis":${TicketCaptureDemandProtocol.TTL_MILLIS},"qualityProfile":"$qualityProfile","colorCorrection":${json.encodeToString(colorCorrection)},"colorStandard":${json.encodeToString(colorStandard)},"width":${size.width},"height":${size.height},"sourceWidth":${size.sourceWidth},"sourceHeight":${size.sourceHeight},"sourceLeftCrop":${size.sourceLeftCrop},"sourceTopCrop":${size.sourceTopCrop},"sourceRightCrop":${size.sourceRightCrop},"sourceBottomCrop":${size.sourceBottomCrop},"sourceVisibleWidth":${size.sourceVisibleWidth},"sourceVisibleHeight":${size.sourceVisibleHeight},"bitrate":$bitrate,"fps":$fps,"sourceFps":$sourceFps,"keyframeIntervalFrames":$keyframeIntervalFrames,"feedbackVersion":$feedbackVersion,"keyFrameIntervalMillis":$keyFrameInterval}
     """.trimIndent()
   }
 
@@ -7619,9 +7859,7 @@ class TicketStreamService : Service() {
   }
 
   private fun broadcastFrame(
-    keyFrame: Boolean,
-    timestampUs: Long,
-    payload: ByteArray,
+    sourceFrame: TicketRootCaptureFrame,
     acceptedGeneration: TicketVideoFrameGeneration
   ): TicketVideoDeliveryFrame? {
     val sentAtMillis = SystemClock.elapsedRealtime()
@@ -7642,31 +7880,38 @@ class TicketStreamService : Service() {
       if (epoch <= 0L) return@synchronized null
       frameSequence += 1
       val sequence = frameSequence
-      val buffer = ByteBuffer.allocate(FRAME_ENVELOPE_HEADER_BYTES + payload.size)
-      buffer.putInt(FRAME_ENVELOPE_MAGIC)
-      buffer.put(if (keyFrame) FRAME_FLAG_KEYFRAME else 0.toByte())
-      buffer.putLong(epoch)
-      buffer.putLong(sequence)
-      buffer.putLong(timestampUs)
-      buffer.put(payload)
-      val frame = buffer.array()
+      val frame = TicketTsf3FrameEnvelope.encode(
+        sourceFrame.keyFrame,
+        epoch,
+        sequence,
+        sourceFrame.captureAttemptId,
+        sourceFrame.codecGeneration,
+        sourceFrame.captureStartUs,
+        sourceFrame.captureCompleteUs,
+        sourceFrame.codecInputUs,
+        sourceFrame.codecOutputUs,
+        sourceFrame.recordEmissionUs,
+        0L,
+        0L,
+        sourceFrame.payload
+      )
       clearStartupDisconnectGrace()
       lastFrameBytes = frame.size
       lastFrameSentAtMillis = sentAtMillis
       noteFrameBytes(frame.size, sentAtMillis)
-      if (keyFrame) {
+      if (sourceFrame.keyFrame) {
         lastKeyFrameBytes = frame.size
         latestKeyFrame = TicketCachedKeyFrame(
           epoch = epoch,
           sequence = sequence,
           envelope = frame,
           cachedAtMillis = sentAtMillis,
-          timestampUs = timestampUs
+          captureStartUs = sourceFrame.captureStartUs
         )
       }
       TicketVideoDeliveryFrame(
         bytes = frame,
-        keyFrame = keyFrame,
+        keyFrame = sourceFrame.keyFrame,
         epoch = epoch,
         sequence = sequence
       )
@@ -7808,13 +8053,18 @@ class TicketStreamService : Service() {
 
   private fun handleRootHardwareH264CaptureFrame(frame: TicketRootCaptureFrame) {
     val encodedAtMillis = SystemClock.elapsedRealtime()
-    if (!frame.keyFrame) {
-      droppedVideoFrames += 1L
-      rootHardwareH264CaptureEngine.requestImmediateRefresh("service_rejected_unexpected_delta")
-      hardwareCaptureSnapshot = rootHardwareH264CaptureEngine.snapshot()
-      return
-    }
     val acceptedGeneration = synchronized(encoderLock) {
+      // The engine's earlier read-side check can precede a wait behind recovery teardown.
+      // Revalidate the same source fence before this callback can take the replacement epoch.
+      if (!rootHardwareH264CaptureEngine.isCurrentCaptureGeneration(frame)) {
+        return@synchronized null
+      }
+      if (!frame.keyFrame) {
+        droppedVideoFrames += 1L
+        rootHardwareH264CaptureEngine.requestImmediateRefresh("service_rejected_unexpected_delta")
+        hardwareCaptureSnapshot = rootHardwareH264CaptureEngine.snapshot()
+        return@synchronized null
+      }
       if (!streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264) {
         null
       } else {
@@ -7848,9 +8098,7 @@ class TicketStreamService : Service() {
     }
     val firstVisibleFrame = sentFrames == 0L
     val deliveredFrame = broadcastFrame(
-      keyFrame = true,
-      timestampUs = frame.timestampUs,
-      payload = frame.payload,
+      sourceFrame = frame,
       acceptedGeneration = acceptedGeneration
     ) ?: run {
       hardwareCaptureSnapshot = rootHardwareH264CaptureEngine.snapshot()
@@ -7977,6 +8225,10 @@ class TicketStreamService : Service() {
     if (hardwareStartupStillPreparing(nowMillis)) {
       return false
     }
+    val health = rootHardwareH264CaptureEngine.snapshot(nowMillis)
+    if (health.active && health.ordinaryCaptureDemandGated && !health.captureFrameExpected) {
+      return false
+    }
     val lastFrameAge = ageMillis(lastFrameSentAtMillis, nowMillis)
     if (lastFrameAge != null) {
       return lastFrameAge > STREAM_STALE_ENGINE_RESTART_MILLIS
@@ -7994,11 +8246,27 @@ class TicketStreamService : Service() {
     if (ticketSessionState == TICKET_SESSION_STARTING || !hardwareCaptureVerified) {
       return true
     }
+    val health = rootHardwareH264CaptureEngine.snapshot(nowMillis)
+    if (hardwareStartupFirstUsefulFramePending(health)) {
+      return true
+    }
     if (lastFrameSentAtMillis == 0L) {
       val encoderStartAgeMillis = ageMillis(lastEncoderStartAtMillis, nowMillis)
       return encoderStartAgeMillis == null || encoderStartAgeMillis < STREAM_WATCHDOG_NO_FRAME_RESTART_MILLIS
     }
     return encodedFrames == 0L
+  }
+
+  private fun hardwareStartupFirstUsefulFramePending(health: TicketHardwareH264Health): Boolean {
+    return TicketStreamStartupRecoveryPolicy.waitingForFirstUsefulFrame(
+      encoderActive = health.active,
+      encoderState = health.state,
+      encoderStartAgeMillis = health.lastStartAgoMillis,
+      lastFrameAgeMillis = health.lastFrameAgoMillis,
+      lastFrameSourceToServiceMillis = health.lastFrameSourceToServiceMillis,
+      graceMillis = STREAM_WATCHDOG_STARTUP_FIRST_USEFUL_FRAME_GRACE_MILLIS,
+      sourceUsefulnessMillis = ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS
+    )
   }
 
   private fun sendStatus(client: TicketWebSocket) {
@@ -15811,12 +16079,9 @@ class TicketStreamService : Service() {
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
     private const val SESSION_START_TIMEOUT_MILLIS = 70_000L
     private const val SERVICE_DESTROY_JOIN_TIMEOUT_MILLIS = 12_000L
-    const val SERVER_VERSION = "ticket-stream-2026-09-04-proof-stream-idle-cleanup-v340"
+    const val SERVER_VERSION = "ticket-stream-2026-09-05-canonical-terminal-v351"
     private const val CONTROL_CODE_MARKER_RESULT_HIERARCHY = "__marker_control_code_result__"
-    private const val FRAME_ENVELOPE_VERSION = "tsf2"
-    private const val FRAME_ENVELOPE_MAGIC = 0x54534632
-    private const val FRAME_ENVELOPE_HEADER_BYTES = 29
-    private const val FRAME_FLAG_KEYFRAME: Byte = 1
+    private const val FRAME_ENVELOPE_VERSION = "tsf3"
     private const val TICKET_SESSION_IDLE = "idle"
     private const val TICKET_SESSION_STARTING = "starting"
     private const val TICKET_SESSION_LIVE = "live"
@@ -15839,11 +16104,14 @@ class TicketStreamService : Service() {
     private const val ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS = 1_250L
     private const val LIVE_FRAME_MAX_AGE_MILLIS = 2_000L
     private const val ACTIVE_STREAM_REUSE_TICKET_DETAIL_MAX_AGE_MILLIS = 5 * 60_000L
+    private const val TICKET_FAST_PUBLIC_OPEN_ROOT_PROOF_TIMEOUT_MILLIS = 6_000L
     private const val STREAM_STALE_ENGINE_RESTART_MILLIS = 3_000L
     private const val STREAM_WATCHDOG_POLL_MILLIS = 500L
     private const val STREAM_WATCHDOG_NO_ENCODER_RESTART_MILLIS = 3_000L
     private const val STREAM_WATCHDOG_NO_FRAME_RESTART_MILLIS = 3_000L
     private const val STREAM_WATCHDOG_STALE_FRAME_RESTART_MILLIS = 3_000L
+    private const val STREAM_WATCHDOG_STARTUP_FIRST_USEFUL_FRAME_GRACE_MILLIS =
+      TICKET_FAST_PUBLIC_OPEN_ROOT_PROOF_TIMEOUT_MILLIS
     private const val STREAM_WATCHDOG_RECOVERY_COOLDOWN_MILLIS = 1_000L
     private const val SPACETIME_DESIRED_RECOVERY_COOLDOWN_MILLIS = 20_000L
     private const val SPACETIME_DESIRED_RECOVERY_STALE_BLOCK_MILLIS = 15_000L
@@ -15867,11 +16135,11 @@ class TicketStreamService : Service() {
     private const val KEY_VIVI_MEMORY_TICKET_WALL_MILLIS = "ticket_detail_wall_millis"
     private const val SEND_BITRATE_WINDOW_MILLIS = 1_000L
     private const val VIDEO_CLIENT_SLOW_WRITE_MILLIS = 100L
-    private const val VIDEO_CLIENT_MAX_FRAME_BYTES = 5 * 1024 * 1024
-    private const val VIDEO_CLIENT_SLOW_CLOSE_MILLIS = 250L
+    private const val VIDEO_CLIENT_MAX_FRAME_BYTES =
+      TicketTsf3FrameEnvelope.HEADER_BYTES + TicketH264FrameRecord.MAX_PAYLOAD_BYTES
+    private const val VIDEO_CLIENT_SLOW_CLOSE_MILLIS = ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS
     private const val TICKET_WAKE_BUDGET_MILLIS = 3_000L
     private const val TICKET_FAST_PUBLIC_OPEN_BUDGET_MILLIS = 5_000L
-    private const val TICKET_FAST_PUBLIC_OPEN_ROOT_PROOF_TIMEOUT_MILLIS = 6_000L
     private const val TICKET_FAST_PUBLIC_OPEN_VISUAL_PROOF_POLL_MILLIS = 40L
     private const val TICKET_FAST_PUBLIC_OPEN_VISUAL_PROOF_SAMPLE_GAP_MILLIS = 80L
     private const val TICKET_DETAIL_VISUAL_PROOF_TIMEOUT_MILLIS = 3_000L

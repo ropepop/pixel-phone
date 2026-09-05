@@ -10,6 +10,7 @@ package lv.jolkins.pixelorchestrator.app.ticket;
 public final class TicketCaptureCadenceScheduler {
   public static final int FIXED_FPS = 1;
   public static final long INTERVAL_MILLIS = 1_000L;
+  public static final long WAIT_UNTIL_SIGNAL_MILLIS = -1L;
 
   private long nextDeadlineMillis;
   private long deadlineMisses;
@@ -18,6 +19,9 @@ public final class TicketCaptureCadenceScheduler {
   private long lastSkippedTicks;
   private boolean immediateCapturePending;
   private long immediateCaptureBlockedUntilMillis;
+  private boolean ordinaryCaptureDemandGated;
+  private boolean ordinaryCaptureOpportunityPending;
+  private long ordinaryCaptureOpportunityValidUntilMillis;
 
   public TicketCaptureCadenceScheduler(long nowMillis) {
     nextDeadlineMillis = nowMillis;
@@ -28,7 +32,71 @@ public final class TicketCaptureCadenceScheduler {
   }
 
   public synchronized long waitMillis(long nowMillis) {
+    return waitMillis(nowMillis, false);
+  }
+
+  /**
+   * Returns the time to the next permitted capture, or {@link #WAIT_UNTIL_SIGNAL_MILLIS} when
+   * ordinary capture is intentionally parked. Proof can run without demand; when demand is already
+   * pending, that same emitted picture coalesces and consumes the grant.
+   */
+  public synchronized long waitMillis(long nowMillis, boolean proofBypass) {
+    expireOrdinaryCaptureOpportunity(nowMillis);
+    if (
+      ordinaryCaptureDemandGated &&
+      !ordinaryCaptureOpportunityPending &&
+      !proofBypass &&
+      !immediateCapturePending
+    ) {
+      return WAIT_UNTIL_SIGNAL_MILLIS;
+    }
     return Math.max(0L, nextDeadlineMillis - nowMillis);
+  }
+
+  /** Atomically enables JIT mode and latches at most one unexpired ordinary opportunity. */
+  public synchronized boolean enableDemandGateAndLatchOrdinaryCapture(
+    long validUntilMillis,
+    long nowMillis
+  ) {
+    if (validUntilMillis <= 0L || nowMillis <= 0L) {
+      return false;
+    }
+    expireOrdinaryCaptureOpportunity(nowMillis);
+    ordinaryCaptureDemandGated = true;
+    if (validUntilMillis < nowMillis) {
+      return false;
+    }
+    boolean newlyPending = !ordinaryCaptureOpportunityPending;
+    ordinaryCaptureOpportunityPending = true;
+    ordinaryCaptureOpportunityValidUntilMillis = Math.max(
+      ordinaryCaptureOpportunityValidUntilMillis,
+      validUntilMillis
+    );
+    return newlyPending;
+  }
+
+  public synchronized boolean ordinaryCaptureDemandGated() {
+    return ordinaryCaptureDemandGated;
+  }
+
+  public synchronized boolean ordinaryCaptureOpportunityPending(long nowMillis) {
+    expireOrdinaryCaptureOpportunity(nowMillis);
+    return ordinaryCaptureOpportunityPending;
+  }
+
+  /**
+   * Coalesces a demand that arrived after capture began but before that picture reached the pipe.
+   * The relay treats the next emitted binary picture as satisfying its one aggregate opportunity,
+   * so the helper must not retain a second ordinary capture for the following cadence boundary.
+   */
+  public synchronized boolean notePictureEmitted(long nowMillis) {
+    expireOrdinaryCaptureOpportunity(nowMillis);
+    if (!ordinaryCaptureDemandGated || !ordinaryCaptureOpportunityPending) {
+      return false;
+    }
+    ordinaryCaptureOpportunityPending = false;
+    ordinaryCaptureOpportunityValidUntilMillis = 0L;
+    return true;
   }
 
   /**
@@ -66,6 +134,28 @@ public final class TicketCaptureCadenceScheduler {
    * The returned decision is never a request for more than one capture.
    */
   public synchronized CaptureDecision beginCapture(long nowMillis) {
+    return beginCapture(nowMillis, false);
+  }
+
+  public synchronized CaptureDecision beginCapture(long nowMillis, boolean proofBypass) {
+    expireOrdinaryCaptureOpportunity(nowMillis);
+    boolean effectiveProofBypass = proofBypass || immediateCapturePending;
+    if (
+      ordinaryCaptureDemandGated &&
+      !ordinaryCaptureOpportunityPending &&
+      !effectiveProofBypass
+    ) {
+      throw new IllegalStateException("ordinary capture is waiting for demand");
+    }
+    if (nowMillis < nextDeadlineMillis) {
+      throw new IllegalStateException("capture started before its one-second deadline");
+    }
+    boolean ordinaryDemandOpportunityConsumed =
+      ordinaryCaptureDemandGated && ordinaryCaptureOpportunityPending;
+    if (ordinaryDemandOpportunityConsumed) {
+      ordinaryCaptureOpportunityPending = false;
+      ordinaryCaptureOpportunityValidUntilMillis = 0L;
+    }
     boolean immediate = immediateCapturePending;
     long lateness = Math.max(0L, nowMillis - nextDeadlineMillis);
     long expiredTicks = lateness == 0L
@@ -90,7 +180,22 @@ public final class TicketCaptureCadenceScheduler {
       nextDeadlineMillis += intervalsToAdvance * intervalMillis();
     }
     immediateCapturePending = false;
-    return new CaptureDecision(lateness, expiredTicks, immediate);
+    return new CaptureDecision(
+      lateness,
+      expiredTicks,
+      immediate,
+      ordinaryDemandOpportunityConsumed
+    );
+  }
+
+  private void expireOrdinaryCaptureOpportunity(long nowMillis) {
+    if (
+      ordinaryCaptureOpportunityPending &&
+      nowMillis > ordinaryCaptureOpportunityValidUntilMillis
+    ) {
+      ordinaryCaptureOpportunityPending = false;
+      ordinaryCaptureOpportunityValidUntilMillis = 0L;
+    }
   }
 
   public synchronized long deadlineMisses() {
@@ -113,11 +218,18 @@ public final class TicketCaptureCadenceScheduler {
     public final long latenessMillis;
     public final long skippedTicks;
     public final boolean immediate;
+    public final boolean ordinaryDemandOpportunityConsumed;
 
-    CaptureDecision(long latenessMillis, long skippedTicks, boolean immediate) {
+    CaptureDecision(
+      long latenessMillis,
+      long skippedTicks,
+      boolean immediate,
+      boolean ordinaryDemandOpportunityConsumed
+    ) {
       this.latenessMillis = latenessMillis;
       this.skippedTicks = skippedTicks;
       this.immediate = immediate;
+      this.ordinaryDemandOpportunityConsumed = ordinaryDemandOpportunityConsumed;
     }
   }
 }

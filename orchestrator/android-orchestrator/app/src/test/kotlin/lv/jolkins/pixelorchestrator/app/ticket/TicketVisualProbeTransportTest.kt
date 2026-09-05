@@ -38,7 +38,7 @@ class TicketVisualProbeTransportTest {
   fun parsesTheExactUnactivatedDetailWireShapeUsedByTheHelper() = withEngine { engine ->
     engine.ingestStderrLine(
       "CONTROL_CODE_VISUAL result=unactivated_detail reason=ticket_action probe_id=81 " +
-        "method=ticket_action_visual_probe anchor=00112233445566778899aabb " +
+        "method=ticket_action_visual_probe capture_start_us=4100123 anchor=00112233445566778899aabb " +
         "slider=14,231,178,250 control=135,206,180,226 back=166,4,187,24",
       nowMillis = 4_200L
     )
@@ -46,11 +46,37 @@ class TicketVisualProbeTransportTest {
     val probe = engine.recentControlCodeVisualProbeAfter(81L, 4_000L)
     val observation = probe?.ticketActionObservation
     assertEquals(TicketVisualPhoneState.UNACTIVATED_DETAIL, observation?.state)
+    assertEquals(4_100_123L, observation?.captureStartUs)
+    val requestedObservation = requireNotNull(observation).copy(atMillis = 4_000L)
+    assertTrue(ticketVisualFrameMatchesRegistrationObservation(
+      requestedObservation, 7L, 7L, 4_100_123L, 4_800L, 1_250L
+    ))
+    assertFalse(ticketVisualFrameMatchesRegistrationObservation(
+      requestedObservation, 7L, 7L, 4_099_999L, 4_800L, 1_250L
+    ))
     assertEquals("00112233445566778899aabb", observation?.currentAnchor)
     assertEquals(TicketVisualProbeBounds(14, 231, 178, 250), observation?.sliderBounds)
     assertEquals(TicketVisualProbeBounds(135, 206, 180, 226), observation?.controlCodeBounds)
     assertEquals(TicketVisualProbeBounds(166, 4, 187, 24), observation?.backBounds)
     assertFalse(engine.snapshot(nowMillis = 4_300L).stderrTail.contains("00112233445566778899aabb"))
+  }
+
+  @Test
+  fun missingMalformedOrNonpositiveCaptureTimeCannotBindARegistrationWatermark() = withEngine { engine ->
+    listOf("", " capture_start_us=invalid", " capture_start_us=0", " capture_start_us=-1").forEachIndexed { index, field ->
+      val id = 200L + index
+      engine.ingestStderrLine(
+        "CONTROL_CODE_VISUAL result=unactivated_detail reason=ticket_action probe_id=$id " +
+          "method=ticket_action_visual_probe$field slider=14,231,178,250",
+        nowMillis = 4_200L
+      )
+      val observation = requireNotNull(engine.recentControlCodeVisualProbeAfter(id, 4_000L)?.ticketActionObservation)
+        .copy(atMillis = 4_000L)
+      assertEquals(0L, observation.captureStartUs)
+      assertFalse(ticketVisualFrameMatchesRegistrationObservation(
+        observation, 7L, 7L, 4_100_123L, 4_800L, 1_250L
+      ))
+    }
   }
 
   @Test
