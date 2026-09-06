@@ -111,10 +111,11 @@ class TicketStreamServiceSourceTest {
     val cycle = body(
       spacetimeWorker,
       "private suspend fun runCycle",
-      "private fun shouldMeasureBrowserCriticalCommand"
+      "private suspend fun publishNextPhoneResult"
     )
-    assertTrue(cycle.contains("client.finalizeTicketActionV3(config, envelope)"))
-    assertTrue(cycle.contains("service.completeTicketVisualActionFinalization(envelope)"))
+    assertTrue(spacetimeWorker.contains("client.finalizeTicketActionV3(config, envelope)"))
+    assertFalse(cycle.contains("client.finalizeTicketActionV3(config, envelope)"))
+    assertTrue(spacetimeWorker.contains("service.completeTicketVisualActionFinalization(envelope)"))
     assertEquals(
       1,
       Regex("client\\.finalizeTicketActionV3\\(config, envelope\\)")
@@ -142,7 +143,8 @@ class TicketStreamServiceSourceTest {
     assertFalse(h264Main.contains("motionSampler"))
     assertTrue(h264Main.contains("visible = frameLooksVisible(source.bitmap, sourceCrop)"))
     assertTrue(h264Main.contains("classifyControlCodeVisualState(\n              source.bitmap,\n              sourceCrop,"))
-    assertTrue(h264Main.contains("drawBitmap(inputSurface, source.bitmap, sourceCrop, destination, paint)"))
+    assertTrue(h264Main.contains("new PendingCapture(source, sourceCrop,"))
+    assertTrue(h264Main.contains("drawBitmap(inputSurface, packet.source.bitmap, packet.sourceCrop, destination, paint)"))
     assertEquals(2, Regex("Rect sourceCrop = sourceCropRect\\(").findAll(h264Main).count())
     assertEquals(1, Regex("return new Rect\\(").findAll(h264Main).count())
   }
@@ -183,7 +185,7 @@ class TicketStreamServiceSourceTest {
     assertFalse(dispatch.contains("priorJob?.join()"))
     assertTrue(proof.contains("TicketVisualPhoneState.UNACTIVATED_DETAIL"))
     assertTrue(proof.contains("ticket_action_current_unactivated_proved"))
-    assertTrue(proof.contains("interactionRevision = command.revision"))
+    assertTrue(proof.contains("command.revision.isBlank()"))
     assertFalse(proof.contains("selectedAnchor"))
     assertFalse(proof.contains("launchViviForWake"))
     assertFalse(proof.contains("tapTicketVisualProbeBounds"))
@@ -231,7 +233,7 @@ class TicketStreamServiceSourceTest {
     assertFalse(proof.contains("dumpViviHierarchy"))
     assertFalse(proof.contains("launchViviForWake"))
     assertFalse(proof.contains("tapTicketVisualProbeBounds"))
-    assertTrue(wrapper.contains("ticketVisualSuccessProofCurrentAfterPanelFinalization("))
+    assertTrue(wrapper.contains("provisional.semanticProof && provisional.actionId == request.actionId"))
     assertTrue(wrapper.contains("!controlCodeRequestActive()"))
     assertTrue(wrapper.contains("pendingControlCodeBrowserCaptureRequestId == null"))
     assertTrue(wrapper.contains("activeControlCodeKeyboardClamp == null"))
@@ -248,8 +250,10 @@ class TicketStreamServiceSourceTest {
       "private suspend fun runTicketVisualActionV3(",
       "private suspend fun runTicketVisualActionV3WithCaptureLease"
     )
-    assertTrue(wrapper.contains("TicketActionPanelDarkLease("))
-    assertTrue(wrapper.contains("ownerProcessId = android.os.Process.myPid()"))
+    assertTrue(wrapper.contains("newTicketPanelDarkLease(request.actionId)"))
+    val factory = body(service, "private fun newTicketPanelDarkLease", "private val panelDarkCommandRunner")
+    assertTrue(factory.contains("ownerProcessId = android.os.Process.myPid()"))
+    assertTrue(factory.contains("physicalTouchState = PhoneAutomationServiceBridge::currentRootPhysicalTouchState"))
     assertTrue(wrapper.indexOf("panelLease.acquire()") <
       wrapper.indexOf("runTicketVisualActionV3WithCaptureLease("))
     assertTrue(wrapper.contains("finally"))
@@ -261,9 +265,10 @@ class TicketStreamServiceSourceTest {
     assertTrue(panelDarkLease.contains("physical_touch_at_mutation_boundary"))
     assertTrue(panelDarkLease.contains("suspend fun beforeMutationAllowed()"))
     assertTrue(panelDarkLease.contains("refreshStaleZeroProofAtMutationBoundary()"))
-    assertEquals(2, Regex(
-      "if \\(!physicalTouchClearAtMutationBoundary\\(\\)\\) return false"
-    ).findAll(panelDarkLease).count())
+    val mutationGate = body(panelDarkLease, "suspend fun beforeMutationAllowed()", "private fun physicalTouchClearAtMutationBoundary()")
+    assertTrue(Regex(
+      "!physicalTouchClearAtMutationBoundary\\(\\)"
+    ).findAll(mutationGate).count() >= 3)
     assertTrue(panelDarkLease.contains("/proc/\${'$'}owner_pid/stat"))
     assertTrue(panelDarkLease.contains("CLEANUP_STALE_HELPERS_SCRIPT"))
     assertTrue(config.contains("val launchExitCode: Int? = null"))
@@ -292,7 +297,7 @@ class TicketStreamServiceSourceTest {
       "private suspend fun handleGenerateRigasSatiksmeMonthlyTicketQr"
     )
     val lane = request.substringAfter("controlCodePhoneMutationLane.withOwnership {")
-    assertTrue(lane.contains("TicketActionPanelDarkLease("))
+    assertTrue(lane.contains("newTicketPanelDarkLease(panelOwnerId)"))
     assertTrue(lane.contains("panelDarkLease?.acquire()"))
     assertTrue(lane.indexOf("panelDarkLease?.acquire()") <
       lane.indexOf("RequestScopedKeyboardClampLease("))
@@ -324,16 +329,7 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun everyControlCodeViviMutationIsFencedAndBecomesNonReplayableBeforeDispatch() {
-    val gate = body(
-      service,
-      "private suspend fun beginControlCodePanelDarkMutation",
-      "private fun controlCodePanelDarkMutationBlockedResult"
-    )
-    assertTrue(gate.indexOf("lease.beforeMutationAllowed()") <
-      gate.indexOf("lease.markMutationMayHaveDispatched()"))
-    assertTrue(gate.contains("control_code_panel_dark_mutation_blocked"))
-
+  fun everyRootInputAndWakeUsesTheSharedPanelDarkCommandBoundary() {
     listOf(
       "private suspend fun runFastNonTouchInput",
       "private suspend fun runSensitiveFastNonTouchScript",
@@ -348,11 +344,11 @@ class TicketStreamServiceSourceTest {
         "private suspend fun runFastRecoveryInput",
         "private suspend fun runFastNonTouchWakeScript",
         "private suspend fun runFastNonTouchScript",
-        "private fun wrapNonTouchPanelSleepClamp"
+        "private fun boundedNonTouchCommand"
       )[index]
       val helper = body(service, signature, next)
       assertTrue("missing panel-dark gate in $signature", helper.contains(
-        "beginControlCodePanelDarkMutation(reason)"
+        "runPanelDarkCommand(reason)"
       ))
     }
     val submitTap = body(
@@ -360,13 +356,15 @@ class TicketStreamServiceSourceTest {
       "private suspend fun tapControlCodePointWithoutKeyboard",
       "private suspend fun waitForEnteredControlCodeValueVisualProof"
     )
-    assertTrue(submitTap.contains("if (!beginControlCodePanelDarkMutation(reason)) return false"))
+    assertTrue(submitTap.contains("runFastNonTouchInput("))
+    assertFalse(submitTap.contains("inputRootExecutor."))
     val launch = body(
       service,
       "private suspend fun launchViviForWake",
       "private fun remainingWakeBudgetMillis"
     )
-    assertTrue(launch.indexOf("beginControlCodePanelDarkMutation") < launch.indexOf("launchVivi()"))
+    assertTrue(launch.contains("runPanelDarkCommand("))
+    assertTrue(launch.indexOf("runPanelDarkCommand(") < launch.indexOf("launchVivi()"))
   }
 
   @Test
@@ -472,7 +470,7 @@ class TicketStreamServiceSourceTest {
     )
     val tail = wrapper.indexOf("panelLease.releaseAfterFinalConvergence")
     val finalProof = wrapper.indexOf(
-      "ticketVisualSuccessProofCurrentAfterPanelFinalization(",
+      "provisional.semanticProof && provisional.actionId == request.actionId",
       tail
     )
     val finalSafeGate = wrapper.indexOf("completedLease?.safe != true", tail)
@@ -482,10 +480,9 @@ class TicketStreamServiceSourceTest {
     assertTrue(finalSafeGate > tail)
     assertTrue(terminalPersist > finalSafeGate)
     listOf(
-      "proofGeneration = generation",
-      "currentGeneration = ticketActionV3Generation",
-      "currentStreamEpoch = streamEpoch",
-      "latestKeyFrameEpoch = keyFrame?.epoch ?: 0L"
+      "provisional.semanticProof",
+      "provisional.actionId == request.actionId",
+      "generation == ticketActionV3Generation"
     ).forEach { assertTrue(wrapper.contains(it)) }
     val staleProofTerminal = wrapper.substringAfter(
       "provisionalHasBoundVisualProof && !successfulProofCurrent ->"
@@ -586,7 +583,7 @@ class TicketStreamServiceSourceTest {
       stroke
     )
     val stoppedBranch = activation.substring(physicalTouchCheck)
-      .substringBefore("val postGestureObservation")
+      .substringBefore("var postGestureObservation")
     assertTrue(stroke >= 0)
     assertTrue(physicalTouchCheck > stroke)
     assertTrue(stoppedBranch.contains("ticketActivationCheckpointStore.recordNeedsAttention(dispatching)"))
@@ -610,7 +607,7 @@ class TicketStreamServiceSourceTest {
     assertFalse(activation.contains("continueTicketSliderGesture("))
     assertFalse(activation.contains("endTicketSliderGesture("))
     assertFalse(activation.contains("retryTicketSliderFullStroke("))
-    val postProofFence = activation.substringAfter("val postGestureObservation")
+    val postProofFence = activation.substringAfter("var postGestureObservation")
       .substringBefore("val resultGenerationCurrent")
     assertTrue(postProofFence.contains("panelLease.beforeMutationAllowed()"))
     assertTrue(postProofFence.contains("ticketActivationPhysicalTouchFenceIsCurrent("))
@@ -618,6 +615,35 @@ class TicketStreamServiceSourceTest {
     assertTrue(postProofFence.contains("terminalPhase = \"outcome_unknown\""))
     assertFalse(postProofFence.contains("recordTicketActivationProven("))
     assertFalse(postProofFence.contains("rememberTicketVisualActivatedAnchor("))
+  }
+
+  @Test
+  fun physicalRevealRefreshesProofWithoutReplayingACompletedStroke() {
+    val activation = body(service, "private suspend fun activateTicketFromVisualAction", "private suspend fun prepareExactTicketActivationDispatch")
+    val preparation = body(service, "private suspend fun prepareExactTicketActivationDispatch(", "private suspend fun prepareExactTicketActivationDispatchOnce(")
+    val postStroke = activation.substringAfter("gestureResult != TicketSliderGestureDispatchResult.COMPLETED")
+    val proof = postStroke.substringAfter("var postGestureObservation").substringBefore("val resultGenerationCurrent")
+    assertTrue(preparation.contains("repeat(3)"))
+    assertTrue(preparation.contains("before.touchBeginCount != after.touchBeginCount"))
+    assertTrue(preparation.contains("prepareExactTicketActivationDispatchOnce("))
+    assertTrue(proof.contains("for (proofAttempt in 1..3)"))
+    assertTrue(proof.indexOf("panelLease.beforeMutationAllowed()") < proof.indexOf("val postLiftFence"))
+    assertTrue(proof.contains("postLiftFence,"))
+    assertFalse(postStroke.contains("performTicketSliderFullStroke("))
+    val retryFence = postStroke.substringAfter("val exactNoTransition").substringBefore("val noTransition")
+    assertTrue(retryFence.contains("physicalTouchFence, PhoneAutomationServiceBridge.currentRootPhysicalTouchState()"))
+    assertTrue(retryFence.contains("postGestureObservation.currentAnchor == provenDetailAnchor"))
+  }
+
+  @Test
+  fun readOnlyPhysicalTouchRestartsOnlyBoundedProofWithSameActionGeneration() {
+    val wrapper = body(service, "private suspend fun runReadOnlyTicketVisualProofV3(", "private suspend fun runReadOnlyTicketVisualProofV3Once(")
+    assertTrue(wrapper.contains("repeat(3)"))
+    assertTrue(wrapper.contains("while (PhoneAutomationServiceBridge.currentRootPhysicalTouchState().active)"))
+    assertTrue(wrapper.contains("ticketActionV3MutationGeneration != mutationGeneration"))
+    assertTrue(wrapper.contains("runReadOnlyTicketVisualProofV3Once(command, request, generation, requireFreshRawDetail)"))
+    assertFalse(wrapper.contains("performTicketSliderFullStroke("))
+    assertFalse(wrapper.contains("launchViviForWake("))
   }
 
   @Test
@@ -649,14 +675,13 @@ class TicketStreamServiceSourceTest {
     assertTrue(connectedFence >= 0)
     assertTrue(semanticProof > connectedFence)
     assertTrue(freshExactProof > semanticProof)
-    assertTrue(watermark > freshExactProof)
+    assertEquals(-1, watermark)
     assertEquals(1, Regex("fastTicketRegistrationHierarchy\\(").findAll(preparation).count())
     assertTrue(preparation.contains("TicketSemanticSliderStabilizationStatus.MISSING"))
     assertTrue(preparation.contains("TicketSemanticSliderStabilizationStatus.UNSTABLE"))
     assertTrue(preparation.contains("TicketSemanticSliderStabilizationStatus.FENCE_CHANGED"))
-    assertTrue(preparation.contains("notAfterMillis = visualProofDeadlineMillis"))
-    assertTrue(preparation.contains("proofObservation = freshObservation"))
-    assertTrue(preparation.contains("proofStreamEpoch = captureStreamEpoch"))
+    assertTrue(preparation.contains("ticketVisualObservationIsFreshForDispatch("))
+    assertFalse(preparation.contains("synchronized(encoderLock)"))
     assertTrue(activation.contains("ticketVisualActivationObservationAfterCompletedGesture("))
     assertTrue(activation.contains("ticket_action_gesture_completed_no_transition"))
     assertTrue(activation.contains("ticket_action_post_gesture_visual_unproved"))
@@ -682,7 +707,7 @@ class TicketStreamServiceSourceTest {
     val observation = body(
       service,
       "private suspend fun awaitStableTicketVisualActionObservation",
-      "/**\n   * Binds a terminal visual proof"
+      "private fun TicketVisualActionObservation.toRecoveryState"
     )
     val activation = body(
       service,
@@ -691,13 +716,12 @@ class TicketStreamServiceSourceTest {
     )
 
     assertTrue(observation.contains("copy(atMillis = started)"))
-    assertTrue(preparation.contains(
-      "freshObservation.captureStartUs / 1_000L + ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS"
-    ))
-    assertTrue(preparation.contains("notAfterMillis = visualProofDeadlineMillis"))
+    assertTrue(preparation.contains("ticketVisualObservationIsFreshForDispatch("))
+    assertFalse(preparation.contains("awaitTicketVisualActionFrameWatermark("))
     assertTrue(currentness.contains("ticketVisualObservationIsFreshForDispatch("))
     assertTrue(currentness.contains("streamEpoch == prepared.captureStreamEpoch"))
-    assertTrue(currentness.contains("prepared.watermark.first == prepared.captureStreamEpoch"))
+    assertFalse(currentness.contains("watermark"))
+    assertFalse(currentness.contains("encoderLock"))
     assertTrue(activation.indexOf("ticketActivationPreparationStillCurrent(") <
       activation.indexOf("recordTicketActivationDispatching("))
     assertTrue(activation.lastIndexOf("ticketActivationPreparationStillCurrent(") <
@@ -706,15 +730,12 @@ class TicketStreamServiceSourceTest {
 
   @Test
   fun exactRegistrationReusesItsObservedCaptureWithoutRequestingAnExtraFrame() {
-    val watermark = body(service, "private suspend fun awaitTicketVisualActionFrameWatermark", "private fun ticketVisualActionWatermarkCurrentLocked")
+    val preparation = body(service, "private suspend fun prepareExactTicketActivationDispatch", "private suspend fun ticketActivationPreparationStillCurrent")
     val broadcast = body(service, "private fun broadcastFrame(", "private fun sendVideoFrame(")
-    assertTrue(watermark.contains("if (proofObservation == null) requestKeyFrame(reason)"))
-    assertTrue(watermark.contains("ticketVisualFrameMatchesRegistrationObservation("))
-    assertTrue(watermark.contains("frameCaptureStartUs = keyFrame.captureStartUs"))
-    assertTrue(watermark.contains("keyFrame.epoch == currentEpoch && keyFrame.sequence > 0L"))
-    assertTrue(watermark.contains("currentEpoch != starting.first || keyFrame.sequence > starting.second"))
+    assertFalse(service.contains("fun awaitTicketVisualActionFrameWatermark"))
+    assertFalse(preparation.contains("requestKeyFrame("))
+    assertFalse(preparation.contains("encoderLock"))
     assertTrue(broadcast.contains("captureStartUs = sourceFrame.captureStartUs"))
-    assertTrue(watermark.indexOf("synchronized(encoderLock)") < watermark.indexOf("ticketVisualFrameMatchesRegistrationObservation("))
   }
 
   @Test
@@ -737,7 +758,6 @@ class TicketStreamServiceSourceTest {
       "ticket_action_detail_identity_conflict",
       "ticket_action_slider_unproved",
       "ticket_action_slider_geometry_invalid",
-      "ticket_action_frame_watermark_unproved",
       "ticket_action_exact_input_fence_changed"
     ).forEach { reason -> assertTrue("missing zero-gesture fence $reason", preparation.contains(reason)) }
     assertFalse(preparation.contains("performTicketSliderFullStroke("))
@@ -760,7 +780,7 @@ class TicketStreamServiceSourceTest {
     val dispatchResult = activation.indexOf(
       "if (gestureResult != TicketSliderGestureDispatchResult.COMPLETED)"
     )
-    val completedProof = activation.indexOf("val postGestureObservation", dispatchResult)
+    val completedProof = activation.indexOf("var postGestureObservation", dispatchResult)
     assertTrue(dispatchResult >= 0)
     assertTrue(completedProof > dispatchResult)
     val rejectedBranch = activation.substring(dispatchResult, completedProof)
@@ -841,27 +861,12 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun controlCodeCleanupHandoffWaitCoversTheBoundedPhoneCleanupAndMatchesTheRequest() {
-    val handoff = body(
-      spacetimeWorker,
-      "private suspend fun drainControlCodeCleanupHandoff",
-      "private suspend fun publishPhoneMessage"
-    )
-
-    assertTrue(handoff.contains("payload.string(\"requestId\") == requestId"))
-    assertTrue(handoff.contains("isControlCodeCleanupHandoffPayload(payload)"))
-    assertTrue(handoff.contains("CONTROL_CODE_CLEANUP_HANDOFF_DRAIN_MILLIS"))
-    assertTrue(spacetimeWorker.contains("CONTROL_CODE_CLEANUP_HANDOFF_DRAIN_MILLIS = 25_000L"))
-    assertFalse(spacetimeWorker.contains("CONTROL_CODE_CLEANUP_HANDOFF_DRAIN_MILLIS = 1_200L"))
-    val stateEvent = body(
-      spacetimeWorker,
-      "private suspend fun publishTicketStateEvent",
-      "private suspend fun publishControlCodeResult"
-    )
-    assertTrue(stateEvent.contains("client.completeControlCodeCleanupReady("))
-    assertTrue(stateEvent.contains("require(streamEpoch.isNotBlank() && frameSequence.isNotBlank())"))
-    assertTrue(spacetimeWorker.contains("ticketremote_complete_control_code_cleanup_ready"))
-    assertTrue(spacetimeWorker.contains("publicationMode\" to if (atomic) \"atomic\" else \"compatibility_fallback\""))
+  fun controlCodeCleanupDeliveryUsesTheIndependentResultSender() {
+    val publisher = body(spacetimeWorker, "private suspend fun publishNextPhoneResult", "private fun shouldMeasureBrowserCriticalCommand")
+    assertTrue(publisher.contains("isControlCodeCleanupHandoffPayload(payload) -> 0"))
+    assertTrue(spacetimeWorker.contains("notifications = service.ticketSpacetimeResultNotifications"))
+    assertFalse(spacetimeWorker.contains("drainControlCodeCleanupHandoff"))
+    assertFalse(spacetimeWorker.contains("CONTROL_CODE_CLEANUP_HANDOFF_DRAIN"))
   }
 
   @Test
@@ -869,7 +874,7 @@ class TicketStreamServiceSourceTest {
     val cycle = body(
       spacetimeWorker,
       "private suspend fun runCycle",
-      "private fun shouldMeasureBrowserCriticalCommand"
+      "private suspend fun publishNextPhoneResult"
     )
     val finalizerCall = spacetimeWorker.indexOf("client.finalizeTicketActionV3(config, envelope)")
     val localCompletion = spacetimeWorker.indexOf(
@@ -881,7 +886,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(localCompletion > finalizerCall)
     assertTrue(spacetimeWorker.contains("ticketremote_finalize_ticket_action_v3"))
     assertTrue(spacetimeWorker.contains("envelope.commandRevision"))
-    assertTrue(cycle.contains("commandDispatchMutex.withLock"))
+    assertFalse(cycle.contains("commandDispatchMutex.withLock"))
     val subscription = body(
       spacetimeWorker,
       "private suspend fun handleSubscribedTicketCommand",
@@ -1222,14 +1227,15 @@ class TicketStreamServiceSourceTest {
       assertTrue(load.contains(key))
       assertTrue(persist.contains(key))
     }
-    assertTrue(persist.contains("return ticketVisualActionJournalWriteProved("))
+    assertTrue(persist.contains("val persisted = ticketVisualActionJournalWriteProved("))
+    assertTrue(persist.contains("if (persisted && value.hasRetainedTerminal) requestTicketSpacetimeResultPublication()"))
     assertTrue(persist.contains("readBack = ::loadTicketVisualActionJournal"))
     assertTrue(visualAction.contains("if (!commit()) return false"))
     assertTrue(visualAction.contains("return readBack() == value"))
   }
 
   @Test
-  fun everySuccessfulV3TerminalUsesARealEncodedFrameWatermark() {
+  fun successfulTerminalsUseRawObservationsWithoutWaitingForEncoding() {
     val action = body(
       service,
       "private suspend fun runTicketVisualActionV3WithCaptureLease",
@@ -1242,7 +1248,7 @@ class TicketStreamServiceSourceTest {
     )
     val success = body(
       service,
-      "private suspend fun ticketVisualActionSuccess",
+      "private fun ticketVisualActionSuccess",
       "private fun ticketVisualActionTerminal"
     )
     val terminal = body(
@@ -1252,34 +1258,36 @@ class TicketStreamServiceSourceTest {
     )
     assertFalse(action.contains("ticketVisualActionTerminal(request, true"))
     assertTrue(action.contains("ticketVisualActionSuccess("))
-    assertTrue(activation.contains("awaitTicketVisualActionFrameWatermark"))
-    assertTrue(activation.contains("proofWatermark = watermark"))
+    assertFalse(activation.contains("awaitTicketVisualActionFrameWatermark"))
+    assertFalse(activation.contains("proofWatermark = watermark"))
     assertTrue(activation.indexOf("val checkpointVisualMatches") <
       activation.indexOf("rememberTicketVisualActivatedAnchor(observation)"))
     assertTrue(activation.contains("updateActivatedAnchor && !checkpointRecovery"))
     assertTrue(activation.contains("activationRevision.takeIf { value.ok }.orEmpty()"))
     assertTrue(activation.contains("terminalPhase = \"outcome_unknown\".takeIf"))
-    assertTrue(success.contains("awaitTicketVisualActionFrameWatermark"))
-    assertTrue(success.contains("bindTicketRegistrationProofToCurrentWatermark"))
-    assertTrue(terminal.contains("successfulWatermarkCurrent"))
-    assertTrue(terminal.contains("ticket_action_frame_watermark_unproved"))
+    assertFalse(success.contains("awaitTicketVisualActionFrameWatermark"))
+    assertFalse(success.contains("bindTicketRegistrationProofToCurrentWatermark"))
+    assertTrue(terminal.contains("observationProved"))
+    assertTrue(terminal.contains("ticketVisualObservationIsFreshForDispatch("))
+    assertFalse(terminal.contains("encoderLock"))
     assertTrue(terminal.contains("val terminalSwitchAvailable = terminalOk && switchAvailable"))
     assertTrue(terminal.contains("switchAvailable = terminalSwitchAvailable"))
   }
 
   @Test
-  fun terminalReducerAtomicallySettlesCommandActionAndSliderGeometry() {
+  fun terminalReducerSettlesOutcomeWhileCurrentObservationOwnsSliderGeometry() {
     val cycle = body(
       spacetimeWorker,
       "private suspend fun runCycle",
-      "private fun shouldMeasureBrowserCriticalCommand"
+      "private suspend fun publishNextPhoneResult"
     )
     val client = body(
       spacetimeWorker,
       "suspend fun finalizeTicketActionV3",
       "private fun sqlLiteral"
     )
-    assertTrue(cycle.contains("client.finalizeTicketActionV3(config, envelope)"))
+    assertTrue(spacetimeWorker.contains("client.finalizeTicketActionV3(config, envelope)"))
+    assertFalse(cycle.contains("client.finalizeTicketActionV3(config, envelope)"))
     assertTrue(client.contains("ticketremote_finalize_ticket_action_v3"))
     assertTrue(client.contains("region != null"))
     assertTrue(client.contains("envelope.commandRevision"))
@@ -1297,7 +1305,7 @@ class TicketStreamServiceSourceTest {
 
     val success = body(
       service,
-      "private suspend fun ticketVisualActionSuccess",
+      "private fun ticketVisualActionSuccess",
       "private fun ticketVisualActionTerminal"
     )
     val persist = body(
@@ -1305,8 +1313,8 @@ class TicketStreamServiceSourceTest {
       "private fun persistTicketVisualTerminalSnapshot",
       "private fun loadTicketVisualActionJournal"
     )
-    assertTrue(success.contains("sliderRegion = sliderRegion"))
-    assertTrue(success.contains("Terminal proof and normalized geometry enter one local envelope"))
+    assertFalse(success.contains("sliderRegion ="))
+    assertTrue(persist.contains("semanticProof = snapshot.semanticProof"))
     assertTrue(persist.contains("snapshot.sliderRegion?.leftBasisPoints"))
     assertTrue(persist.contains("snapshot.sliderRegion?.bottomBasisPoints"))
   }
@@ -1338,7 +1346,7 @@ class TicketStreamServiceSourceTest {
     val wait = body(
       service,
       "private suspend fun awaitStableTicketVisualActionObservation",
-      "private suspend fun awaitTicketVisualActionFrameWatermark"
+      "private fun TicketVisualActionObservation.toRecoveryState"
     )
     val boundary = wait.indexOf("if (!convergenceExtended)")
     val extendDeadline = wait.indexOf("deadline += boundedConvergenceExtensionMillis")
@@ -1431,12 +1439,6 @@ class TicketStreamServiceSourceTest {
     ))
     assertFalse(action.contains("UiAutomator"))
     assertFalse(action.contains("dumpViviHierarchy"))
-    assertTrue(service.contains(
-      "ticket-stream-2026-09-05-canonical-terminal-v351"
-    ))
-    assertFalse(service.contains(
-      "ticket-stream-2026-08-25-native-edge-action-clamp-proof-v320"
-    ))
     val afterNavigation = action.substring(
       action.indexOf("val postNavigationObservation"),
       action.indexOf("observation = postNavigationObservation")
@@ -1522,7 +1524,7 @@ class TicketStreamServiceSourceTest {
     val expectedNegative = body(
       service,
       "private suspend fun ticketVisualActionLatestNotDetectedAfterTimeTab",
-      "private suspend fun ticketVisualActionSuccess"
+      "private fun ticketVisualActionSuccess"
     )
     val wrapper = body(
       service,
@@ -1547,10 +1549,8 @@ class TicketStreamServiceSourceTest {
       2,
       Regex("ticketVisualActionLatestNotDetectedAfterTimeTab\\(").findAll(action).count()
     )
-    assertTrue(expectedNegative.contains(
-      "awaitTicketVisualActionFrameWatermark(\n" +
-        "      \"ticket_action_v3_redetect_latest_not_detected\""
-    ))
+    assertFalse(expectedNegative.contains("awaitTicketVisualActionFrameWatermark("))
+    assertTrue(expectedNegative.contains("ticketVisualRedetectLatestNotDetectedObservation("))
     assertTrue(expectedNegative.contains("status = \"failed\""))
     assertTrue(expectedNegative.contains("reason = \"ticket_action_latest_not_detected\""))
     assertTrue(expectedNegative.contains("expectedNegativeProof = true"))
@@ -1559,7 +1559,7 @@ class TicketStreamServiceSourceTest {
 
     val release = wrapper.indexOf("panelLease.releaseAfterFinalConvergence")
     val proofRecheck = wrapper.indexOf(
-      "ticketVisualSuccessProofCurrentAfterPanelFinalization(",
+      "provisional.semanticProof && provisional.actionId == request.actionId",
       release
     )
     val terminalPersist = wrapper.indexOf("persistTicketVisualTerminalSnapshot", proofRecheck)
@@ -1594,31 +1594,28 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun subscribedTerminalV3WaitsForPollAtomicFinalization() {
-    val subscribed = body(
-      spacetimeWorker,
-      "private suspend fun handleSubscribedTicketCommand",
-      "private suspend fun handleKeyframeCommand"
-    )
-    val terminalGuardIndex = subscribed.indexOf("takeIf { !result.terminal }")
-    val subscriptionUpdateIndex = subscribed.indexOf("client.updateTicketActionV3(config, action)")
-    assertTrue(terminalGuardIndex >= 0)
-    assertTrue(subscriptionUpdateIndex > terminalGuardIndex)
+  fun subscribedTerminalV3NotifiesOneIndependentAtomicFinalizer() {
+    val subscribed = body(spacetimeWorker, "private suspend fun handleSubscribedTicketCommand", "private suspend fun handleKeyframeCommand")
+    assertTrue(subscribed.contains("service.requestTicketSpacetimeResultPublication()"))
     assertTrue(subscribed.contains("subscribedCommandHandoff.fromSubscription(command.id)"))
-    assertFalse(subscribed.contains("subscribedCommandResults.record"))
+    assertFalse(subscribed.contains("client.updateTicketActionV3"))
     assertFalse(subscribed.contains("client.ack("))
-    val poll = body(
-      spacetimeWorker,
-      "private suspend fun runCycle",
-      "private fun shouldMeasureBrowserCriticalCommand"
-    )
-    val finalizeIndex = poll.indexOf("client.finalizeTicketActionV3(config, envelope)")
-    val completeIndex = poll.indexOf(
-      "service.completeTicketVisualActionFinalization(envelope)",
-      finalizeIndex
-    )
-    assertTrue(finalizeIndex >= 0)
-    assertTrue(completeIndex > finalizeIndex)
+    val publisher = body(spacetimeWorker, "private suspend fun publishNextPhoneResult", "private fun shouldMeasureBrowserCriticalCommand")
+    val finalizer = publisher.indexOf("client.finalizeTicketActionV3(config, envelope)")
+    val complete = publisher.indexOf("service.completeTicketVisualActionFinalization(envelope)")
+    assertTrue(finalizer >= 0 && complete > finalizer)
+    assertFalse(publisher.contains("commandDispatchMutex.withLock"))
+    assertTrue(publisher.contains("subscribedCommandResults.settle(envelope.commandId"))
+    assertTrue(publisher.contains("client.updateTicketActionV3(config, progress)"))
+  }
+
+  @Test
+  fun generatedPhoneStatePrecedesTheSeparateBrowserPictureDelivery() {
+    val confirmation = body(service, "private suspend fun confirmGeneratedControlCodeResultForBrowser", "private suspend fun markerFirstControlCodeFrameWatermarkForBrowser")
+    val observed = confirmation.indexOf("sendControlCodeProgress(lastControlCodeRequestId.orEmpty(), \"generated\"")
+    val picture = confirmation.indexOf("val watermark = markerFirstControlCodeFrameWatermarkForBrowser")
+    assertTrue(observed >= 0 && picture > observed)
+    assertTrue(confirmation.contains("generated_waiting_for_picture"))
   }
 
   @Test
@@ -1680,14 +1677,14 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun controlResultFastDrainRepeeksAfterOneMessage() {
-    val drain = body(
-      spacetimeWorker,
-      "private suspend fun drainPhoneMessagesUntilControlCodeResult",
-      "private suspend fun drainControlCodeCleanupHandoff"
-    )
-    assertTrue(drain.contains("drainPhoneMessages(config, client, CONTROL_CODE_HOT_PHONE_MESSAGE_DRAIN_LIMIT)"))
-    assertFalse(drain.contains("drainPhoneMessages(config, client)"))
+  fun resultPublisherReselectsPriorityAfterEveryDeliveryWithoutMediaPolling() {
+    val publication = body(spacetimeWorker, "private suspend fun publishNextPhoneResult", "private fun shouldMeasureBrowserCriticalCommand")
+    assertTrue(publication.contains("peekTicketSpacetimePhoneMessages(PHONE_MESSAGE_PRIORITY_PEEK_LIMIT)"))
+    assertTrue(publication.contains(".minByOrNull"))
+    assertTrue(publication.contains("isControlCodeResultPayload(payload) -> 0"))
+    assertTrue(publication.contains("service.acknowledgeTicketSpacetimePhoneMessage(message)"))
+    assertFalse(spacetimeWorker.contains("drainPhoneMessagesUntilControlCodeResult"))
+    assertFalse(spacetimeWorker.contains("routinePhoneMessageDrainLimit"))
   }
 
   @Test
@@ -2084,11 +2081,11 @@ class TicketStreamServiceSourceTest {
   fun traceSinkIsAllowlistedAndErrorTextIsBounded() {
     val allowlist = body(service, "private fun shouldPublishTicketTraceEvent", "private fun safeErrorDetail")
     val safeError = body(service, "private fun safeErrorDetail", "private fun safeRootFailure")
-    assertTrue(allowlist.contains("event.startsWith(\"control_code_\")"))
-    assertTrue(allowlist.contains("event.startsWith(\"spacetime_\")"))
-    assertTrue(allowlist.contains("event.startsWith(\"stream_\")"))
-    assertTrue(allowlist.contains("event.startsWith(\"ticket_brightness_\")"))
-    assertTrue(allowlist.contains("event == \"ticket_state_event\""))
+    assertTrue(allowlist.contains("TicketTracePrivacy.eventName(event) != null"))
+    assertEquals("spacetime_test", TicketTracePrivacy.eventName("spacetime_test"))
+    assertEquals("stream_test", TicketTracePrivacy.eventName("stream_test"))
+    assertEquals("ticket_brightness_test", TicketTracePrivacy.eventName("ticket_brightness_test"))
+    assertEquals("ticket_state_event", TicketTracePrivacy.eventName("ticket_state_event"))
     assertTrue(safeError.contains("split(Regex(\"\\\\s+\"))"))
     assertTrue(safeError.contains("take(MAX_TICKET_EVENT_DETAIL_BYTES)"))
   }
@@ -2233,7 +2230,7 @@ class TicketStreamServiceSourceTest {
     assertFalse(keyframe.contains("ticketSpacetimeBackgroundStreamAlreadyHealthy()"))
     assertFalse(keyframe.contains("stream_already_healthy"))
     assertTrue(h264Engine.contains("pendingKeyFrameRequest.offer(reason)"))
-    assertTrue(h264Main.contains("requestImmediateSyncFrame(syncFrameRequested, cadenceScheduler, frameWaitLock)"))
+    assertTrue(h264Main.contains("requestNextSyncFrame(syncFrameRequested, frameWaitLock)"))
   }
 
   @Test
@@ -2578,19 +2575,15 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun sensitiveControlCodeEntryCancelsItsExactRootCommandOnPhysicalTouch() {
+  fun sensitiveControlCodeEntryUsesSharedCancellationAndRedactsAllCommandOutput() {
     val sensitive = body(
       service,
       "private suspend fun runSensitiveFastNonTouchScript",
       "private suspend fun runFastOneShotControlSurfaceCloseInput"
     )
-    assertTrue(sensitive.contains("supervisorScope"))
-    assertTrue(sensitive.contains("currentRootPhysicalTouchState()"))
-    assertTrue(sensitive.contains("touch.active"))
-    assertTrue(sensitive.contains("rootCommand.cancel("))
-    assertTrue(sensitive.contains("lease?.beforeMutationAllowed()"))
-    assertTrue(sensitive.contains("physical_touch_during:${'$'}reason"))
-    assertTrue(service.contains("CONTROL_CODE_SENSITIVE_INPUT_TOUCH_POLL_MILLIS = 5L"))
+    assertTrue(sensitive.contains("runPanelDarkCommand(reason)"))
+    assertTrue(sensitive.contains("boundedNonTouchCommand(command, timeout), timeout"))
+    assertTrue(sensitive.contains("copy(command = \"[REDACTED]\", stdout = \"\", stderr = \"\")"))
   }
 
   @Test
@@ -2739,14 +2732,32 @@ class TicketStreamServiceSourceTest {
 
   @Test
   fun rootEncoderKeepsHardwareCaptureAliveUntilInputIsDrained() {
-    val loop = body(h264Main, "while (frames <= 0 || sent < frames)", "encoder.signalEndOfInputStream()")
+    val loop = body(h264Main, "while ((packet = pendingFrames.take()) != null)", "encoder.signalEndOfInputStream()")
     val draw = loop.indexOf("drawBitmap(inputSurface")
     val drain = loop.indexOf("TicketEncoderDrainProgress drainProgress")
-    val close = loop.indexOf("source.close()")
+    val close = loop.indexOf("packet.close()")
     assertTrue(draw >= 0)
     assertTrue(drain > draw)
     assertTrue(close > drain)
-    assertTrue(loop.contains("hardware-backed capture result alive until this frame's encoder drain"))
+    assertTrue(loop.contains("GPU input retains the bitmap through drain"))
+  }
+
+  @Test
+  fun ordinaryCaptureOwnsObservationAndNoPrivateStartupCaptureRemains() {
+    val loop = body(h264Main, "while (frames <= 0 || sent < frames)", "private static final class PendingCapture")
+    assertEquals(1, Regex("capture.capture\\(\\)").findAll(loop).count())
+    assertTrue(loop.indexOf("pendingFrames.offer(") < loop.indexOf("classifyControlCodeVisualState("))
+    assertTrue(loop.contains("!controlCodeVisualProbeActive || visualProbeRequest.ticketAction"))
+    assertTrue(loop.contains("source.retain()"))
+    assertFalse(loop.contains("drainEncoder"))
+    assertFalse(loop.contains("drawBitmap(inputSurface"))
+    assertFalse(h264Main.contains("privatePreparationCapture"))
+    assertFalse(h264Main.contains("ticket_preparation_"))
+    assertFalse(h264Engine.contains("PreparationWindow"))
+    val action = body(service, "private suspend fun runTicketVisualActionV3(", "private suspend fun runTicketVisualActionV3WithCaptureLease(")
+    assertFalse(service.contains("beginPreparationWindow"))
+    assertTrue(action.contains("request.target != TicketVisualActionTarget.PROVE_CURRENT"))
+    assertTrue(action.contains("warmObservation?.cancelAndJoin()"))
   }
 
   @Test
@@ -2792,15 +2803,10 @@ class TicketStreamServiceSourceTest {
     assertTrue(open.contains("rooted_visual_probe"))
     assertFalse(open.contains("TicketViviPageEnforcer"))
     assertFalse(open.contains("fallbackControlCodeButtonTarget"))
-    assertTrue(open.contains("postMillis = CONTROL_CODE_FAST_PANEL_SLEEP_CLAMP_POST_MILLIS"))
+    assertTrue(open.contains("runFastNonTouchInput("))
     assertTrue(type.contains("TicketControlCodeRootInput.buildTypeScript("))
     assertFalse(type.contains("openX = transaction.open?.x"))
     assertFalse(type.contains("openY = transaction.open?.y"))
-  }
-
-  @Test
-  fun controlCodeFastPanelClampDoesNotAddASecondPostDelay() {
-    assertTrue(service.contains("CONTROL_CODE_FAST_PANEL_SLEEP_CLAMP_POST_MILLIS = 0L"))
   }
 
   @Test
@@ -2839,7 +2845,7 @@ class TicketStreamServiceSourceTest {
   fun submitIsAnExplicitRootTapAndNotAKeyboardEnterKey() {
     val tap = body(service, "private suspend fun tapControlCodePointWithoutKeyboard", "private suspend fun waitForEnteredControlCodeValueVisualProof")
     assertTrue(tap.contains("input tap ${'$'}x ${'$'}y"))
-    assertTrue(tap.contains("PhoneAutomationServiceBridge.markNonTouchInput"))
+    assertTrue(tap.contains("runFastNonTouchInput("))
     assertTrue(tap.contains("CONTROL_CODE_ROOT_SUBMIT_TIMEOUT_MILLIS"))
     assertFalse(rootInput.contains("KEY_ENTER"))
     assertFalse(rootInput.contains("KEY_KPENTER"))
@@ -2898,7 +2904,8 @@ class TicketStreamServiceSourceTest {
     assertTrue(send.contains("runFastOneShotControlSurfaceCloseInput("))
     assertFalse(send.contains("runFastNonTouchInput("))
     assertTrue(service.contains("private val controlSurfaceCloseRootExecutor = SuRootExecutor()"))
-    assertTrue(oneShot.contains("controlSurfaceCloseRootExecutor.run(command, timeout)"))
+    assertTrue(oneShot.contains("controlSurfaceCloseRootExecutor.run("))
+    assertTrue(oneShot.contains("runPanelDarkCommand(reason)"))
     assertFalse(oneShot.contains("wrapNonTouchPanelSleepClamp("))
     assertFalse(oneShot.contains("runScript("))
     assertTrue(oneShot.contains("CONTROL_CODE_FAST_CLOSE_COMMAND_TIMEOUT_MILLIS.milliseconds"))
@@ -3011,8 +3018,8 @@ class TicketStreamServiceSourceTest {
   fun finalReselectTraceRequiresConfirmedOperationalWriteBeforePhoneAck() {
     val drain = body(
       spacetimeWorker,
-      "private suspend fun drainPhoneMessages",
-      "private fun controlCodeRequestId"
+      "private suspend fun publishNextPhoneResult",
+      "private fun shouldMeasureBrowserCriticalCommand"
     )
     val tracePublisher = body(
       spacetimeWorker,
@@ -3024,8 +3031,8 @@ class TicketStreamServiceSourceTest {
       "internal class TicketOperationalLogQueue",
       "private data class TicketPhoneMessagePublishOutcome"
     )
-    assertTrue(drain.contains("if (!outcome.acknowledgePhoneMessage)"))
-    assertTrue(drain.indexOf("if (!outcome.acknowledgePhoneMessage)") <
+    assertTrue(drain.contains("if (outcome.acknowledgePhoneMessage)"))
+    assertTrue(drain.indexOf("if (outcome.acknowledgePhoneMessage)") <
       drain.indexOf("service.acknowledgeTicketSpacetimePhoneMessage(message)"))
     assertTrue(tracePublisher.contains("event.startsWith(\"latest_ticket_reselect_final_\")"))
     assertTrue(tracePublisher.contains("client.safeLogRetainedAsync("))
@@ -3105,7 +3112,6 @@ class TicketStreamServiceSourceTest {
     assertTrue(service.contains("CONTROL_CODE_FAST_CLEANUP_POLL_MILLIS = 75L"))
     assertTrue(service.contains("CONTROL_CODE_FAST_CLEANUP_VISUAL_SAMPLE_GAP_MILLIS = 200L"))
     assertTrue(service.contains("CONTROL_CODE_FAST_CLEANUP_RAW_VISUAL_PROOF_COUNT = 2"))
-    assertTrue(service.contains("CONTROL_CODE_FAST_PANEL_SLEEP_CLAMP_POST_MILLIS = 0L"))
     assertFalse(service.contains("CONTROL_CODE_FAST_CLEANUP_ROOT_DUMP_TIMEOUT_MILLIS"))
   }
 
@@ -3159,7 +3165,7 @@ class TicketStreamServiceSourceTest {
     val create = body(service, "override fun onCreate()", "override fun onStartCommand")
     val generate = body(service, "private suspend fun handleGenerateControlCode", "private suspend fun handleGenerateRigasSatiksmeMonthlyTicketQr")
     val requestFinally = generate.substringAfter("} finally {").substringBefore("releaseControlCodeAutomationForRequest")
-    val complete = body(service, "private suspend fun completeControlExitCleanup", "private suspend fun waitForFreshStreamFrameAfterCleanup")
+    val complete = body(service, "private suspend fun completeControlExitCleanup", "private fun recordControlExitCleanup")
     assertTrue(create.contains("CONTROL_CODE_VISUAL_CHECKPOINT_PENDING_KEY"))
     assertTrue(service.contains("persistControlCodeSignatureCleanupRequired(true)"))
     assertTrue(service.contains("if (!editor.commit()) return false"))
@@ -3210,14 +3216,17 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun cleanupPublishesRawStateOnlyAfterFreshFrameWhenRequired() {
-    val complete = body(service, "private suspend fun completeControlExitCleanup", "private suspend fun waitForFreshStreamFrameAfterCleanup")
-    val fresh = body(service, "private suspend fun waitForFreshStreamFrameAfterCleanup", "private fun recordControlExitCleanup")
-    assertTrue(complete.contains("waitForFreshStreamFrameAfterCleanup(reason, cleanupStartedAtMillis)"))
-    assertTrue(complete.contains("ticketState = TICKET_PIXEL_STATE_RAW_TICKET"))
-    assertTrue(complete.indexOf("waitForFreshStreamFrameAfterCleanup") < complete.indexOf("TICKET_PIXEL_STATE_RAW_TICKET"))
-    assertTrue(fresh.contains("requestKeyFrame(\"control_exit_cleanup\")"))
-    assertTrue(fresh.contains("lastFrameSentAtMillis > baselineFrameAtMillis") || fresh.contains("frameAtMillis > baselineFrameAtMillis"))
+  fun cleanupUsesRawDetailAndFinalPanelProofWithoutAnEncodedFrameWait() {
+    val complete = body(service, "private suspend fun completeControlExitCleanup", "private fun recordControlExitCleanup")
+    assertFalse(service.contains("waitForFreshStreamFrameAfterCleanup"))
+    assertFalse(complete.contains("restartActiveStreamEngine"))
+    assertTrue(complete.contains("activeTicketActionPanelDarkLease != null"))
+    assertTrue(complete.contains("persistControlCodeSignatureCleanupRequired(false)"))
+    assertTrue(complete.contains("cleanupRevision = phoneControlState.updates.value.contextRevision"))
+    assertTrue(complete.contains("eventFrameSequence = 0L"))
+    val publish = body(spacetimeWorker, "private suspend fun publishTicketStateEvent", "private suspend fun publishControlCodeResult")
+    assertTrue(publish.contains("require(revision.startsWith(\"pc-\"))"))
+    assertTrue(publish.contains("client.completeControlCodeCleanupReady("))
   }
 
   @Test
@@ -3401,9 +3410,10 @@ class TicketStreamServiceSourceTest {
   @Test
   fun publicOpenAndRootWakeNavigationTelemetryIsPublished() {
     val allowlist = body(service, "private fun shouldPublishTicketTraceEvent", "private fun safeErrorDetail")
-    assertTrue(allowlist.contains("event.startsWith(\"wake_\")"))
-    assertTrue(allowlist.contains("event.startsWith(\"fast_public_open_\")"))
-    assertTrue(allowlist.contains("event == \"root_readiness\""))
+    assertTrue(allowlist.contains("TicketTracePrivacy.eventName(event) != null"))
+    assertEquals("wake_test", TicketTracePrivacy.eventName("wake_test"))
+    assertEquals("fast_public_open_test", TicketTracePrivacy.eventName("fast_public_open_test"))
+    assertEquals("root_readiness", TicketTracePrivacy.eventName("root_readiness"))
   }
 
   @Test
@@ -3479,7 +3489,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(recovery.contains("controlCodePhoneMutationLane.withOwnership"))
     assertTrue(recovery.contains("if (!ownsTicketRecovery(generation, runningJob))"))
     assertTrue(recovery.contains("if (ticketRecoveryJob === runningJob) ticketRecoveryJob = null"))
-    assertTrue(service.contains("event.startsWith(\"recovery_\")"))
+    assertEquals("recovery_test", TicketTracePrivacy.eventName("recovery_test"))
   }
 
   @Test
@@ -3520,7 +3530,7 @@ class TicketStreamServiceSourceTest {
     val cycle = body(
       spacetimeWorker,
       "private suspend fun runCycle",
-      "private fun shouldMeasureBrowserCriticalCommand"
+      "private suspend fun publishNextPhoneResult"
     )
     val commandLoop = cycle.substring(cycle.indexOf("for (scannedCommand in commands)"))
     val revalidate = commandLoop.indexOf("client.pendingCommandIsDispatchable(config, command.id)")
@@ -3564,8 +3574,7 @@ class TicketStreamServiceSourceTest {
     assertTrue(attempt.contains("runFastRecoveryInput("))
     assertTrue(attempt.contains("minOf(timeoutMillis, TICKET_WAKE_RECOVERY_INPUT_TIMEOUT_MILLIS).milliseconds"))
     assertTrue(input.contains("timeout: Duration = NON_TOUCH_ROOT_COMMAND_TIMEOUT_MILLIS.milliseconds"))
-    assertTrue(input.contains("val commandTimeout = (timeout - postMillis.milliseconds).coerceAtLeast(250.milliseconds)"))
-    assertTrue(input.contains("commandTimeout = commandTimeout"))
+    assertTrue(input.contains("boundedNonTouchCommand(command, timeout), timeout"))
   }
 
   @Test
@@ -3574,9 +3583,8 @@ class TicketStreamServiceSourceTest {
     assertTrue(service.contains("private val recoveryInputRootExecutor = SuRootExecutor()"))
     assertTrue(recovery.contains("recoveryInputRootExecutor.run(command, timeout)"))
     assertTrue(recovery.contains("TICKET_WAKE_RECOVERY_INPUT_TIMEOUT_MILLIS.milliseconds"))
-    assertTrue(recovery.contains("if (zeroTailPanelClamp)"))
-    assertTrue(recovery.contains("wrapNonTouchPanelSleepClamp(command, postMillis = 0L"))
-    assertTrue(recovery.contains("recoveryInputRootExecutor.run(command, timeout)"))
+    assertTrue(recovery.contains("runPanelDarkCommand(reason)"))
+    assertFalse(service.contains("zeroTailPanelClamp"))
   }
 
   @Test
@@ -3645,14 +3653,31 @@ class TicketStreamServiceSourceTest {
   }
 
   @Test
-  fun nonTouchPanelClampUsesOneBoundedWorkerAndPostWrites() {
-    val clamp = body(service, "private fun wrapNonTouchPanelSleepClamp", "private fun shellQuote")
-    assertTrue(clamp.contains("while [ ! -f"))
-    assertTrue(clamp.contains("ticket_clamp_pid="))
-    assertTrue(clamp.contains("touch"))
-    assertTrue(clamp.contains("wait"))
-    assertTrue(clamp.contains("while [") && clamp.contains("ticket_post") && clamp.contains("postWrites"))
-    assertFalse(clamp.contains("ticket_background_clamp"))
+  fun allPersistentRootScriptsKeepTheirDescendantDeadlineWithoutAnotherClamp() {
+    val command = body(service, "private fun boundedNonTouchCommand", "private fun shellQuote")
+    assertTrue(command.contains("timeout.inWholeMilliseconds - NON_TOUCH_COMMAND_SELF_TIMEOUT_CUSHION_MILLIS"))
+    assertTrue(command.contains("timeout -k 0.250s"))
+    assertTrue(command.contains("shellQuote(command)"))
+    val helpers = body(service, "private suspend fun runFastNonTouchInput", "private fun boundedNonTouchCommand")
+    assertEquals(4, Regex("runScript\\(boundedNonTouchCommand\\(command, timeout\\), timeout\\)").findAll(helpers).count())
+    assertFalse(service.contains("wrapNonTouchPanelSleepClamp"))
+    assertFalse(service.contains("ticket_clamp_pid"))
+    assertFalse(service.contains("PANEL_SLEEP_CLAMP_POST_MILLIS"))
+  }
+
+  @Test
+  fun standaloneAuthorityLossAbortsTheWholeOperationWithoutReacquiringOrNestingTheLane() {
+    val command = body(service, "private suspend fun runPanelDarkCommand", "private suspend fun runFastNonTouchInput")
+    assertTrue(command.indexOf("val standalone = activeTicketActionPanelDarkLease == null") <
+      command.indexOf("panelDarkCommandRunner.run(reason, command)"))
+    assertTrue(command.contains("if (standalone && touchBrightnessSnapshot()?.touchBrightnessEnabled == false) return command()"))
+    assertTrue(command.contains("if (standalone && result.exitCode == 46)"))
+    assertTrue(command.contains("updateTicketSessionState(TICKET_SESSION_NEEDS_ATTENTION"))
+    assertTrue(command.contains("throw CancellationException("))
+    assertTrue(command.contains("finally"))
+    assertTrue(command.contains("clearNonTouchInputTailForBrowserCriticalAction("))
+    assertFalse(command.contains("withOwnership"))
+    assertFalse(command.contains(".acquire()"))
   }
 
   @Test

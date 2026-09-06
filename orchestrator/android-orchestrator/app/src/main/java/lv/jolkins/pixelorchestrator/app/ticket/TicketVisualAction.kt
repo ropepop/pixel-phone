@@ -71,6 +71,8 @@ internal data class TicketVisualActionSnapshot(
   val activationRevision: String = "",
   val activationAttemptId: String = "",
   val sliderRegion: TicketSliderRegionV3? = null,
+  /** Typed unencoded observation was verified on the phone; video is presentation only. */
+  val semanticProof: Boolean = false,
   val terminal: Boolean = false,
   val ok: Boolean = false
 )
@@ -131,6 +133,7 @@ internal data class TicketVisualActionJournalState(
   val activationAttemptId: String = "",
   val completedAt: String = "",
   val terminalOk: Boolean = false,
+  val semanticProof: Boolean = false,
   /** Privacy-safe encoded-frame geometry retained until both terminal reducers are acknowledged. */
   val sliderLeftBasisPoints: Int = -1,
   val sliderTopBasisPoints: Int = -1,
@@ -186,7 +189,7 @@ internal fun retainedTicketVisualTerminalSnapshot(
     ticketVisualLatestNotDetectedJournalHasBoundProof(journal)
   val storedWatermarkRequired = journal.terminalOk || expectedNegativeCandidate
   val successfulWatermarkValid = !storedWatermarkRequired ||
-    journal.streamEpoch > 0L && journal.frameSequence > 0L
+    journal.semanticProof || (journal.streamEpoch > 0L && journal.frameSequence > 0L)
   val retainedView = TicketVisualActionView.entries.firstOrNull {
     it.wireName == journal.terminalView
   } ?: TicketVisualActionView.UNKNOWN
@@ -249,6 +252,7 @@ internal fun retainedTicketVisualTerminalSnapshot(
     activationRevision = journal.activationRevision,
     activationAttemptId = journal.activationAttemptId,
     sliderRegion = journal.retainedSliderRegionOrNull().takeIf { retainedTerminalValid },
+    semanticProof = journal.semanticProof,
     terminal = true,
     ok = journal.terminalOk && retainedTerminalValid
   )
@@ -261,7 +265,7 @@ internal fun ticketVisualLatestNotDetectedJournalHasBoundProof(
   journal.terminalStatus == "failed" &&
   journal.terminalReason == "ticket_action_latest_not_detected" &&
   journal.terminalView == TicketVisualActionView.UNKNOWN.wireName &&
-  !journal.terminalOk && journal.streamEpoch > 0L && journal.frameSequence > 0L &&
+  !journal.terminalOk && (journal.semanticProof || (journal.streamEpoch > 0L && journal.frameSequence > 0L)) &&
   journal.sliderLeftBasisPoints == -1 && journal.sliderTopBasisPoints == -1 &&
   journal.sliderRightBasisPoints == -1 && journal.sliderBottomBasisPoints == -1
 
@@ -331,6 +335,7 @@ internal fun ticketActionFinalizationEnvelope(
       activationRevision = journal.activationRevision.takeIf { journal.terminalOk }.orEmpty(),
       activationAttemptId = journal.activationAttemptId,
       sliderRegion = journal.retainedSliderRegionOrNull(),
+      semanticProof = journal.semanticProof,
       terminal = true,
       ok = journal.terminalOk
     )
@@ -852,7 +857,7 @@ internal fun ticketVisualLatestNotDetectedTerminalHasBoundProof(
   snapshot.status == "failed" && snapshot.phase == "failed" &&
   snapshot.currentView == TicketVisualActionView.UNKNOWN &&
   snapshot.reason == "ticket_action_latest_not_detected" &&
-  snapshot.streamEpoch > 0L && snapshot.frameSequence > 0L &&
+  (snapshot.semanticProof || (snapshot.streamEpoch > 0L && snapshot.frameSequence > 0L)) &&
   snapshot.sliderRegion == null
 
 internal fun ticketRegistrationProofMatchesVisualAnchor(
@@ -916,8 +921,9 @@ internal fun ticketVisualProvenTicketAnchor(
 /**
  * Binds register_current to the exact proof named by the browser command or that proof's exact
  * scheduled alias. The retained proof is identity only: the gesture geometry and freshness come
- * from the new agreeing detail observation, and the executor binds a new positive frame watermark
- * before any drag. The durable reducer separately rejects an expired or replaced action revision.
+ * from the new agreeing detail observation. Direct phone contexts are independent of video;
+ * retained action revisions require their legacy watermark until those callers are retired.
+ * The durable reducer separately rejects an expired or replaced context revision.
  */
 internal fun ticketRegistrationProofForCurrentVisualAction(
   proof: TicketRegistrationProof?,
@@ -940,8 +946,7 @@ internal fun ticketRegistrationProofForCurrentVisualAction(
       observation.sliderBounds != null &&
       it.status == "unactivated_ready" &&
       it.ticketAnchor.isNotBlank() &&
-      it.streamEpoch > 0L &&
-      it.frameSequence > 0L
+      (it.interactionRevision.startsWith("pc-") || (it.streamEpoch > 0L && it.frameSequence > 0L))
   } ?: return genericFailure
   if (!ticketRegistrationProofMatchesVisualDetail(candidate, observation.currentAnchor)) {
     return TicketRegistrationProofGateResult(

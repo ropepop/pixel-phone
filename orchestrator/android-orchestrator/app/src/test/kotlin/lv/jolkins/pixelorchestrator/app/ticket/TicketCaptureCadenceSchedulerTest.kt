@@ -3,6 +3,7 @@ package lv.jolkins.pixelorchestrator.app.ticket
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class TicketCaptureCadenceSchedulerTest {
@@ -23,50 +24,37 @@ class TicketCaptureCadenceSchedulerTest {
     scheduler.beginCapture(1_000L)
 
     // Work finished 1.25 seconds later. The 2,000 deadline expired, so the
-    // scheduler grants one capture and advances to 3,000 ms without catch-up.
+    // scheduler grants one capture and starts a full new interval without catch-up.
     val decision = scheduler.beginCapture(2_250L)
     assertEquals(250L, decision.latenessMillis)
     assertEquals(1L, decision.skippedTicks)
     assertEquals(1L, scheduler.skippedTicks())
     assertEquals(1L, scheduler.deadlineMisses())
-    assertEquals(3_000L, 2_250L + scheduler.waitMillis(2_250L))
+    assertEquals(3_250L, 2_250L + scheduler.waitMillis(2_250L))
   }
 
   @Test
-  fun requestAfterPeriodicFrameIsImmediateThenStartsANewOneSecondPeriod() {
+  fun repeatedProofRequestsCannotShortenTheOrdinaryOneSecondInterval() {
     val scheduler = TicketCaptureCadenceScheduler(10_000L)
-    assertFalse(scheduler.beginCapture(10_000L).immediate)
+    scheduler.beginCapture(10_000L)
     assertEquals(1_000L, scheduler.waitMillis(10_000L))
-
-    assertTrue(scheduler.requestImmediateCapture(10_100L))
-    assertFalse(scheduler.requestImmediateCapture(10_101L))
-    assertTrue(scheduler.hasImmediateCapturePending())
-    assertEquals(0L, scheduler.waitMillis(10_101L))
-
-    // The first request does not wait for the old 11,000 ms periodic deadline.
-    assertTrue(scheduler.beginCapture(10_101L).immediate)
-    assertFalse(scheduler.hasImmediateCapturePending())
-    // Its presentation starts a new period ending at 11,101 ms.
-    assertEquals(1_000L, scheduler.waitMillis(10_101L))
-
-    // Further requests in that period coalesce onto the refresh and add no frame.
-    assertFalse(scheduler.requestImmediateCapture(10_150L))
-    assertFalse(scheduler.hasImmediateCapturePending())
-    assertEquals(951L, scheduler.waitMillis(10_150L))
-    assertTrue(scheduler.requestImmediateCapture(11_101L))
-    assertTrue(scheduler.beginCapture(11_101L).immediate)
-    assertEquals(1_000L, scheduler.waitMillis(11_101L))
+    for (now in 10_001L..10_999L) {
+      assertEquals(11_000L - now, scheduler.waitMillis(now, true))
+      assertThrows(IllegalStateException::class.java) { scheduler.beginCapture(now, true) }
+    }
+    scheduler.beginCapture(11_000L, true)
+    assertEquals(1_000L, scheduler.waitMillis(11_000L, true))
   }
 
   @Test
-  fun periodicCaptureAfterImmediateStartsAtTheNewOneSecondDeadline() {
+  fun lateCaptureCannotProduceAnEarlyCatchUpFrame() {
     val scheduler = TicketCaptureCadenceScheduler(20_000L)
-    assertFalse(scheduler.beginCapture(20_000L).immediate)
-    assertTrue(scheduler.requestImmediateCapture(20_050L))
-    assertEquals(0L, scheduler.waitMillis(20_050L))
-    assertTrue(scheduler.beginCapture(20_050L).immediate)
-    assertEquals(1_000L, scheduler.waitMillis(20_050L))
-    assertFalse(scheduler.beginCapture(21_050L).immediate)
+    scheduler.beginCapture(20_000L)
+    scheduler.beginCapture(21_550L, true)
+    assertEquals(1_000L, scheduler.waitMillis(21_550L, true))
+    assertThrows(IllegalStateException::class.java) { scheduler.beginCapture(22_000L, true) }
+    scheduler.beginCapture(22_550L)
+    assertEquals(1_000L, scheduler.waitMillis(22_550L))
   }
 
   @Test
@@ -77,11 +65,10 @@ class TicketCaptureCadenceSchedulerTest {
     scheduler.restartPeriodFrom(30_275L)
 
     assertEquals(1_000L, scheduler.waitMillis(30_275L))
-    assertFalse(scheduler.requestImmediateCapture(30_300L))
-    assertFalse(scheduler.hasImmediateCapturePending())
     assertEquals(975L, scheduler.waitMillis(30_300L))
-    assertTrue(scheduler.requestImmediateCapture(31_275L))
-    assertTrue(scheduler.beginCapture(31_275L).immediate)
+    scheduler.beginCapture(31_275L, true)
+    // Late primer bookkeeping cannot move the live deadline back to an older picture.
+    scheduler.restartPeriodFrom(30_275L)
     assertEquals(1_000L, scheduler.waitMillis(31_275L))
   }
 
@@ -186,15 +173,14 @@ class TicketCaptureCadenceSchedulerTest {
     val scheduler = TicketCaptureCadenceScheduler(10_000L)
     scheduler.beginCapture(10_000L)
     scheduler.enableDemandGateAndLatchOrdinaryCapture(12_500L, 10_010L)
-    assertTrue(scheduler.requestImmediateCapture(10_020L))
-    assertTrue(scheduler.beginCapture(10_020L, true).ordinaryDemandOpportunityConsumed)
+    assertEquals(980L, scheduler.waitMillis(10_020L, true))
+    assertTrue(scheduler.beginCapture(11_000L, true).ordinaryDemandOpportunityConsumed)
     assertEquals(
       TicketCaptureCadenceScheduler.WAIT_UNTIL_SIGNAL_MILLIS,
-      scheduler.waitMillis(10_100L, false)
+      scheduler.waitMillis(11_100L, false)
     )
 
-    assertFalse(scheduler.requestImmediateCapture(10_100L))
-    assertEquals(920L, scheduler.waitMillis(10_100L, true))
-    assertFalse(scheduler.beginCapture(11_020L, true).immediate)
+    assertEquals(900L, scheduler.waitMillis(11_100L, true))
+    scheduler.beginCapture(12_000L, true)
   }
 }

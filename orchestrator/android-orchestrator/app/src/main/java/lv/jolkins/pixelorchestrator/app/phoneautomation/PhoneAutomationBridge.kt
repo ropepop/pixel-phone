@@ -81,13 +81,20 @@ enum class TicketSliderGestureDispatchResult {
 data class PhoneAutomationNonTouchInputEvent(
   val reason: String,
   val observedAtUptimeMillis: Long,
-  val suppressedUntilUptimeMillis: Long
+  val suppressedUntilUptimeMillis: Long,
+  val touchBeginCount: Long = 0L
 )
 
 data class PhoneAutomationRootPhysicalTouchState(
   val available: Boolean = false,
   val active: Boolean = false,
-  val observedAtUptimeMillis: Long = 0L
+  val observedAtUptimeMillis: Long = 0L,
+  val touchBeginCount: Long = 0L
+)
+
+data class PhoneAutomationPhysicalVisibleWindow(
+  val deadlineUptimeMillis: Long = 0L,
+  val generation: Long = 0L
 )
 
 data class PhoneAutomationFocusedInputWindow(
@@ -122,15 +129,6 @@ internal interface PhoneAutomationAccessibilityHost {
   fun syncBlackoutOverlayVisibility(visible: Boolean): Boolean
 
   suspend fun setBlackoutOverlayVisible(visible: Boolean): Boolean
-
-  /**
-   * A pixel-transparent, non-interactive accessibility window that keeps Android's window-level
-   * brightness authority at zero while panel sleep is active. This is deliberately independent of
-   * the touch-capturing blackout overlay so Ticket streaming can remain visible to the encoder.
-   */
-  fun syncPanelSleepBrightnessShieldVisibility(visible: Boolean): Boolean = !visible
-
-  suspend fun setPanelSleepBrightnessShieldVisible(visible: Boolean): Boolean = !visible
 
   suspend fun clickFirstMatching(
     expectedPackageName: String,
@@ -279,6 +277,7 @@ internal interface PhoneAutomationAccessibilityHost {
 }
 
 object PhoneAutomationServiceBridge {
+  const val PHYSICAL_VISIBLE_WINDOW_MILLIS = 90_000L
   private const val ACCESSIBILITY_SNAPSHOT_TIMEOUT_MILLIS = 750L
   private const val ACCESSIBILITY_CALL_GRACE_TIMEOUT_MILLIS = 250L
   private const val TICKET_SLIDER_DIAGNOSTIC_TAG = "PixelTicketSlider"
@@ -299,10 +298,17 @@ object PhoneAutomationServiceBridge {
   private val lastExpectedOrchestratorForegroundAtMillis = MutableStateFlow(0L)
   private val blackoutOverlayRequested = MutableStateFlow(false)
   private val blackoutOverlaySuppressed = MutableStateFlow(false)
-  private val panelSleepBrightnessShieldRequested = MutableStateFlow(false)
   private val remoteScreenBrightnessState = MutableStateFlow<ScreenBrightnessState?>(null)
   private val nonTouchInputSuppressedUntilUptimeMillis = MutableStateFlow(0L)
   private val rootPhysicalTouchState = MutableStateFlow(PhoneAutomationRootPhysicalTouchState())
+  private val rootPhysicalTouchLock = Any()
+  private var physicalVisibilityEnabled = false
+  private var physicalVisibleWindow = PhoneAutomationPhysicalVisibleWindow()
+  private var physicalVisibilityLastEventAtUptimeMillis = -1L
+  private var physicalVisibilityRevokedAtUptimeMillis = -1L
+  private var physicalVisibilityTouchActive = false
+  private var physicalVisibilityRequiresNewDown = false
+  private val physicalVisibilityBlockers = MutableStateFlow<Set<String>>(emptySet())
   private val activeNotifications = MutableStateFlow<Map<String, PhoneAutomationObservedNotification>>(emptyMap())
   private val rawNotificationEvents =
     MutableSharedFlow<PhoneAutomationNotificationEvent>(extraBufferCapacity = 64)
@@ -327,7 +333,6 @@ object PhoneAutomationServiceBridge {
     accessibilityGeneration.incrementAndGet()
     accessibilityService.value = service
     service.syncBlackoutOverlayVisibility(blackoutOverlayRequested.value && !blackoutOverlaySuppressed.value)
-    service.syncPanelSleepBrightnessShieldVisibility(panelSleepBrightnessShieldRequested.value)
   }
 
   internal fun unbindAccessibilityService(service: PhoneAutomationAccessibilityHost) {
@@ -414,15 +419,112 @@ object PhoneAutomationServiceBridge {
     observedAtUptimeMillis: Long = SystemClock.uptimeMillis(),
     available: Boolean = true
   ) {
-    rootPhysicalTouchState.value = PhoneAutomationRootPhysicalTouchState(
-      available = available,
-      active = active,
-      observedAtUptimeMillis = observedAtUptimeMillis
-    )
+    synchronized(rootPhysicalTouchLock) {
+      val prior = rootPhysicalTouchState.value
+      // Publish the occurrence and current state atomically. Touch-up and source restarts must
+      // retain the occurrence so a consumer cannot miss a complete tap between its samples.
+      rootPhysicalTouchState.value = PhoneAutomationRootPhysicalTouchState(
+        available = available,
+        active = active,
+        observedAtUptimeMillis = observedAtUptimeMillis,
+        touchBeginCount = prior.touchBeginCount + if (active && !prior.active) 1L else 0L
+      )
+      if (available && (active || prior.active)) {
+        recordPhysicalVisibilityTouchLocked(observedAtUptimeMillis, active)
+      } else if (!available && observedAtUptimeMillis >= physicalVisibilityLastEventAtUptimeMillis) {
+        // Losing the source releases contact tracking, but is never a physical touch-up grant.
+        physicalVisibilityTouchActive = false
+        physicalVisibilityLastEventAtUptimeMillis = observedAtUptimeMillis
+      }
+    }
   }
 
   fun currentRootPhysicalTouchState(): PhoneAutomationRootPhysicalTouchState =
     rootPhysicalTouchState.value
+
+  fun configurePhysicalVisibility(enabled: Boolean) {
+    synchronized(rootPhysicalTouchLock) {
+      if (physicalVisibilityEnabled == enabled) return
+      physicalVisibilityEnabled = enabled
+      physicalVisibleWindow = PhoneAutomationPhysicalVisibleWindow(
+        generation = physicalVisibleWindow.generation + 1L
+      )
+      physicalVisibilityTouchActive = rootPhysicalTouchState.value.active
+      physicalVisibilityRequiresNewDown = true
+    }
+  }
+
+  fun currentPhysicalVisibleWindow(): PhoneAutomationPhysicalVisibleWindow =
+    synchronized(rootPhysicalTouchLock) { physicalVisibleWindow }
+
+  /** Register before a helper can start; retain ownership until its exact stop is proved. */
+  fun registerPhysicalVisibilityBlocker(ownerToken: String) {
+    require(ownerToken.isNotBlank())
+    synchronized(rootPhysicalTouchLock) {
+      physicalVisibilityBlockers.value = physicalVisibilityBlockers.value + ownerToken
+    }
+  }
+
+  fun clearPhysicalVisibilityBlocker(ownerToken: String) {
+    synchronized(rootPhysicalTouchLock) {
+      physicalVisibilityBlockers.value = physicalVisibilityBlockers.value - ownerToken
+    }
+  }
+
+  fun currentPhysicalVisibilityBlockers(): Set<String> = physicalVisibilityBlockers.value
+
+  suspend fun awaitPhysicalVisibilityUnblocked(timeoutMillis: Long = 5_000L): Boolean {
+    if (physicalVisibilityBlockers.value.isEmpty()) return true
+    return withTimeoutOrNull(timeoutMillis.coerceAtLeast(0L)) {
+      physicalVisibilityBlockers.first { it.isEmpty() }
+      true
+    } ?: false
+  }
+
+  /** Trusted physical down/up only. Synthetic input and Accessibility notifications do not grant visibility. */
+  fun recordPhysicalVisibilityTouch(observedAtUptimeMillis: Long, active: Boolean = true) {
+    synchronized(rootPhysicalTouchLock) {
+      recordPhysicalVisibilityTouchLocked(observedAtUptimeMillis, active)
+    }
+  }
+
+  private fun recordPhysicalVisibilityTouchLocked(observedAtUptimeMillis: Long, active: Boolean) {
+    if (observedAtUptimeMillis < 0L ||
+      observedAtUptimeMillis < physicalVisibilityLastEventAtUptimeMillis ||
+      observedAtUptimeMillis <= physicalVisibilityRevokedAtUptimeMillis
+    ) return
+    val newDown = active && !physicalVisibilityTouchActive
+    val newer = observedAtUptimeMillis > physicalVisibilityLastEventAtUptimeMillis
+    physicalVisibilityTouchActive = active
+    physicalVisibilityLastEventAtUptimeMillis = observedAtUptimeMillis
+    if (!physicalVisibilityEnabled) return
+    if (physicalVisibilityRequiresNewDown) {
+      if (!newDown) return
+      physicalVisibilityRequiresNewDown = false
+    }
+    if (!newer) return
+    val deadline = observedAtUptimeMillis.coerceAtMost(Long.MAX_VALUE - PHYSICAL_VISIBLE_WINDOW_MILLIS) +
+      PHYSICAL_VISIBLE_WINDOW_MILLIS
+    if (deadline <= physicalVisibleWindow.deadlineUptimeMillis) return
+    physicalVisibleWindow = PhoneAutomationPhysicalVisibleWindow(
+      deadlineUptimeMillis = deadline,
+      generation = physicalVisibleWindow.generation + 1L
+    )
+  }
+
+  fun revokePhysicalVisibility(observedAtUptimeMillis: Long) {
+    synchronized(rootPhysicalTouchLock) {
+      if (observedAtUptimeMillis < 0L || observedAtUptimeMillis <= physicalVisibilityRevokedAtUptimeMillis) return
+      physicalVisibilityRevokedAtUptimeMillis = observedAtUptimeMillis
+      physicalVisibilityLastEventAtUptimeMillis = maxOf(
+        physicalVisibilityLastEventAtUptimeMillis, observedAtUptimeMillis
+      )
+      physicalVisibilityRequiresNewDown = true
+      physicalVisibleWindow = PhoneAutomationPhysicalVisibleWindow(
+        generation = physicalVisibleWindow.generation + 1L
+      )
+    }
+  }
 
   fun recordBlackoutOverlayWakeRequested(
     observedAtUptimeMillis: Long,
@@ -475,25 +577,19 @@ object PhoneAutomationServiceBridge {
       PhoneAutomationNonTouchInputEvent(
         reason = reason,
         observedAtUptimeMillis = observedAtUptimeMillis,
-        suppressedUntilUptimeMillis = untilMillis
+        suppressedUntilUptimeMillis = untilMillis,
+        touchBeginCount = currentRootPhysicalTouchState().touchBeginCount
       )
     )
   }
 
   fun clearNonTouchInputTailForBrowserCriticalAction(
-    reason: String,
     observedAtUptimeMillis: Long = SystemClock.uptimeMillis()
   ) {
     nonTouchInputSuppressedUntilUptimeMillis.update { current ->
       if (current > observedAtUptimeMillis) observedAtUptimeMillis else current
     }
-    rawNonTouchInputEvents.tryEmit(
-      PhoneAutomationNonTouchInputEvent(
-        reason = reason,
-        observedAtUptimeMillis = observedAtUptimeMillis,
-        suppressedUntilUptimeMillis = observedAtUptimeMillis
-      )
-    )
+    // Releasing software-input suppression must not enqueue another command to darken the panel.
   }
 
   fun isNonTouchInputSuppressed(
@@ -528,15 +624,6 @@ object PhoneAutomationServiceBridge {
     val service = accessibilityService.value ?: return true
     return service.setBlackoutOverlayVisible(visible)
   }
-
-  suspend fun setPanelSleepBrightnessShieldVisible(visible: Boolean): Boolean {
-    panelSleepBrightnessShieldRequested.value = visible
-    val service = accessibilityService.value ?: return !visible
-    return service.setPanelSleepBrightnessShieldVisible(visible)
-  }
-
-  internal fun isPanelSleepBrightnessShieldRequested(): Boolean =
-    panelSleepBrightnessShieldRequested.value
 
   suspend fun awaitAccessibilityConnection(timeoutMillis: Long): Boolean {
     if (accessibilityService.value != null) {
@@ -996,10 +1083,18 @@ object PhoneAutomationServiceBridge {
     lastExpectedOrchestratorForegroundAtMillis.value = 0L
     blackoutOverlayRequested.value = false
     blackoutOverlaySuppressed.value = false
-    panelSleepBrightnessShieldRequested.value = false
     remoteScreenBrightnessState.value = null
     nonTouchInputSuppressedUntilUptimeMillis.value = 0L
-    rootPhysicalTouchState.value = PhoneAutomationRootPhysicalTouchState()
+    synchronized(rootPhysicalTouchLock) {
+      rootPhysicalTouchState.value = PhoneAutomationRootPhysicalTouchState()
+      physicalVisibilityEnabled = false
+      physicalVisibleWindow = PhoneAutomationPhysicalVisibleWindow()
+      physicalVisibilityLastEventAtUptimeMillis = -1L
+      physicalVisibilityRevokedAtUptimeMillis = -1L
+      physicalVisibilityTouchActive = false
+      physicalVisibilityRequiresNewDown = false
+      physicalVisibilityBlockers.value = emptySet()
+    }
     activeNotifications.value = emptyMap()
   }
 

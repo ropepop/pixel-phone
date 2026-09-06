@@ -9,7 +9,8 @@ internal data class ScreenBrightnessState(
   val panelPath: String? = null,
   val panelBrightness: Int? = null,
   val panelActualBrightness: Int? = null,
-  val panelMaxBrightness: Int? = null
+  val panelMaxBrightness: Int? = null,
+  val panelBacklightPower: Int? = null
 )
 
 internal object ScreenBrightnessControl {
@@ -33,6 +34,19 @@ internal object ScreenBrightnessControl {
     } else {
       target
     }
+  }
+
+  // Pixel's driver forces emitted brightness to zero while bl_power is blanked,
+  // including subsequent Android brightness requests. Brightness readback alone
+  // reports the requested value and cannot establish whether this gate is open.
+  fun buildPanelBlankScript(blank: Boolean): String {
+    val power = if (blank) 4 else 0
+    return """
+      ${panelDiscoveryScript()}
+      [ -n "${'$'}panel_dir" ] && [ -w "${'$'}panel_dir/bl_power" ] || exit 1
+      echo $power > "${'$'}panel_dir/bl_power" || exit 1
+      [ "${'$'}(cat "${'$'}panel_dir/bl_power")" = $power ] || exit 1
+    """.trimIndent()
   }
 
   fun buildSetPercentScript(
@@ -183,10 +197,12 @@ internal object ScreenBrightnessControl {
       if [ -n "${'$'}panel_dir" ]; then
         panel_brightness=$(cat "${'$'}panel_dir/brightness" 2>/dev/null || true)
         panel_actual=$(cat "${'$'}panel_dir/actual_brightness" 2>/dev/null || true)
+        panel_power=$(cat "${'$'}panel_dir/bl_power" 2>/dev/null || true)
         panel_max=$(cat "${'$'}panel_dir/max_brightness" 2>/dev/null || true)
         printf 'panel_path=%s\n' "${'$'}panel_dir"
         printf 'panel_brightness=%s\n' "${'$'}panel_brightness"
         printf 'panel_actual_brightness=%s\n' "${'$'}panel_actual"
+        printf 'panel_backlight_power=%s\n' "${'$'}panel_power"
         printf 'panel_max_brightness=%s\n' "${'$'}panel_max"
       fi
     """.trimIndent()
@@ -231,7 +247,8 @@ internal object ScreenBrightnessControl {
       panelPath = panelPath,
       panelBrightness = panelBrightness,
       panelActualBrightness = panelActualBrightness,
-      panelMaxBrightness = panelMaxBrightness
+      panelMaxBrightness = panelMaxBrightness,
+      panelBacklightPower = values["panel_backlight_power"].parseIntValue()
     )
   }
 

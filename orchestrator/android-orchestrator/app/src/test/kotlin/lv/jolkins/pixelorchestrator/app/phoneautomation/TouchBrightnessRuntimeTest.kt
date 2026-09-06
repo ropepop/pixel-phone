@@ -2,6 +2,7 @@ package lv.jolkins.pixelorchestrator.app.phoneautomation
 
 import android.content.ContextWrapper
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -13,12 +14,337 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.Before
 import kotlin.time.Duration
 import lv.jolkins.pixelorchestrator.rootexec.RootExecutor
 import lv.jolkins.pixelorchestrator.rootexec.RootResult
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TouchBrightnessRuntimeTest {
+  @Before fun resetBridge() { PhoneAutomationServiceBridge.resetForTests() }
+
+  @Test
+  fun powerRevocationCancelsAndJoinsSlowVisibleWriterBeforeImmediateZero() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val device = FakeTouchBrightnessDeviceController()
+    val events = FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)
+    val runtime = buildRuntime(backgroundScope, store, device, FakeBlackoutOverlayController(), events) { testScheduler.currentTime }
+    runtime.start()
+    runCurrent()
+    device.operationCalls.clear()
+    val restoreBlocked = CompletableDeferred<Unit>()
+    val cleanupBlocked = CompletableDeferred<Unit>()
+    device.beforeRestore = {
+      try { restoreBlocked.await() } finally {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+          device.operationCalls += "restore:cleanup_started"
+          cleanupBlocked.await()
+          device.operationCalls += "restore:cleanup_done"
+        }
+      }
+    }
+    events.emit(physicalTouchEvent(1, testScheduler.currentTime))
+    runCurrent()
+    advanceTimeBy(1L)
+    PhoneAutomationServiceBridge.revokePhysicalVisibility(testScheduler.currentTime)
+    events.emit(TouchBrightnessEvent.PowerButtonPressed(testScheduler.currentTime, powerSource))
+    advanceTimeBy(20L)
+    runCurrent()
+    assertTrue(device.operationCalls.contains("restore:cleanup_started"))
+    assertFalse(device.operationCalls.contains("raw:zero"))
+    cleanupBlocked.complete(Unit)
+    runCurrent()
+    assertTrue(device.operationCalls.indexOf("restore:cleanup_done") < device.operationCalls.indexOf("raw:zero"))
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+    assertFalse(restoreBlocked.isCompleted)
+  }
+
+  @Test
+  fun newTouchCancelsOwnedSideButtonConvergenceBeforeVisibleRestore() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val device = FakeTouchBrightnessDeviceController()
+    val events = FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)
+    val runtime = buildRuntime(backgroundScope, store, device, FakeBlackoutOverlayController(), events) { testScheduler.currentTime }
+    runtime.start()
+    runCurrent()
+    val tail = CompletableDeferred<Unit>()
+    device.beforeSetBrightness = {
+      try { tail.await() } finally { device.operationCalls += "side_tail:cleanup_done" }
+    }
+    events.emit(TouchBrightnessEvent.PowerButtonPressed(testScheduler.currentTime, powerSource))
+    runCurrent()
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+    advanceTimeBy(1L)
+    events.emit(physicalTouchEvent(1, testScheduler.currentTime))
+    runCurrent()
+    assertTrue(device.operationCalls.indexOf("side_tail:cleanup_done") < device.operationCalls.indexOf("restore"))
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+    assertFalse(tail.isCompleted)
+  }
+
+  @Test
+  fun failedImmediateZeroStillConvergesWithoutRestoringVisibleBrightness() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val device = FakeTouchBrightnessDeviceController()
+    val events = FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)
+    val runtime = buildRuntime(backgroundScope, store, device, FakeBlackoutOverlayController(), events) { testScheduler.currentTime }
+    runtime.start()
+    runCurrent()
+    events.emit(physicalTouchEvent(1, testScheduler.currentTime))
+    runCurrent()
+    val restores = device.restoreBrightnessStateCalls.size
+    device.immediateClampResult = PhoneAutomationActionResult(false, "unproved")
+    device.operationCalls.clear()
+    events.emit(TouchBrightnessEvent.PowerButtonPressed(testScheduler.currentTime, powerSource))
+    runCurrent()
+    assertEquals(listOf("raw:zero", "set:0"), device.operationCalls)
+    assertEquals(restores, device.restoreBrightnessStateCalls.size)
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+    assertEquals(0L, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow().deadlineUptimeMillis)
+  }
+
+
+  @Test
+  fun immediatePanelControllerUsesOnlyRawWriteAndReadback() = runTest {
+    val scripts = mutableListOf<String>()
+    var exitCode = 0
+    val root = object : RootExecutor {
+      override suspend fun isRootAvailable() = true
+      override suspend fun run(command: String, timeout: Duration): RootResult = error("unexpected")
+      override suspend fun runScript(script: String, timeout: Duration): RootResult {
+        scripts += script
+        return RootResult(exitCode, "", "", script, 1L)
+      }
+    }
+    val controller = AndroidTouchBrightnessDeviceController(ContextWrapper(null), root)
+    assertTrue(controller.clampPanelSleepImmediately().success)
+    assertEquals(1, scripts.size)
+    assertFalse(scripts.single().contains("settings "))
+    assertFalse(scripts.single().contains("cmd display"))
+    assertTrue(scripts.single().contains("bl_power"))
+    assertTrue(scripts.single().contains("|| exit 1"))
+    exitCode = 1
+    assertFalse(controller.clampPanelSleepImmediately().success)
+  }
+
+  @Test
+  fun physicalTapWaitsForExactDarkHelperStopBeforeRestoringVisibility() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val device = FakeTouchBrightnessDeviceController()
+    val events = FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)
+    val runtime = buildRuntime(backgroundScope, store, device, FakeBlackoutOverlayController(), events) { testScheduler.currentTime }
+    runtime.start()
+    runCurrent()
+    PhoneAutomationServiceBridge.registerPhysicalVisibilityBlocker("ticket-helper")
+    advanceTimeBy(1L)
+    events.emit(physicalTouchEvent(1, testScheduler.currentTime))
+    events.emit(physicalTouchEvent(0, testScheduler.currentTime))
+    runCurrent()
+    assertTrue(device.restoreBrightnessStateCalls.isEmpty())
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+
+    PhoneAutomationServiceBridge.clearPhysicalVisibilityBlocker("different-helper")
+    advanceTimeBy(100L)
+    runCurrent()
+    assertTrue(device.restoreBrightnessStateCalls.isEmpty())
+    PhoneAutomationServiceBridge.clearPhysicalVisibilityBlocker("ticket-helper")
+    runCurrent()
+
+    assertTrue(device.restoreBrightnessStateCalls.isNotEmpty())
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+  }
+
+  @Test
+  fun sideButtonDuringHelperStopWaitPreventsEvenATemporaryVisibleRestore() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val device = FakeTouchBrightnessDeviceController()
+    val events = FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)
+    val runtime = buildRuntime(backgroundScope, store, device, FakeBlackoutOverlayController(), events) { testScheduler.currentTime }
+    runtime.start()
+    runCurrent()
+    PhoneAutomationServiceBridge.registerPhysicalVisibilityBlocker("ticket-helper")
+    advanceTimeBy(1L)
+    events.emit(physicalTouchEvent(1, testScheduler.currentTime))
+    events.emit(physicalTouchEvent(0, testScheduler.currentTime))
+    runCurrent()
+    assertTrue(device.restoreBrightnessStateCalls.isEmpty())
+    advanceTimeBy(1L)
+    events.emit(TouchBrightnessEvent.PowerButtonPressed(testScheduler.currentTime, powerSource))
+    runCurrent()
+    assertEquals(0L, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow().deadlineUptimeMillis)
+
+    PhoneAutomationServiceBridge.clearPhysicalVisibilityBlocker("ticket-helper")
+    runCurrent()
+
+    assertTrue(device.restoreBrightnessStateCalls.isEmpty())
+    assertTrue(device.setBrightnessPercentCalls.all { it == 0 })
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+  }
+
+  @Test
+  fun enabledRestartKeepsPhysicalWindowVisibleWithoutRestartClampOrDeadlineExtension() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val device = FakeTouchBrightnessDeviceController()
+    val events = FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)
+    val runtime = buildRuntime(backgroundScope, store, device, FakeBlackoutOverlayController(), events) { testScheduler.currentTime }
+    runtime.start()
+    runCurrent()
+    advanceTimeBy(1L)
+    events.emit(physicalTouchEvent(1, testScheduler.currentTime))
+    events.emit(physicalTouchEvent(0, testScheduler.currentTime))
+    runCurrent()
+    val deadline = PhoneAutomationServiceBridge.currentPhysicalVisibleWindow().deadlineUptimeMillis
+    advanceTimeBy(30_000L)
+    runtime.stop("supervisor_handoff")
+    runCurrent()
+    device.setBrightnessPercentCalls.clear()
+    runtime.start()
+    runCurrent()
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+    assertTrue(device.setBrightnessPercentCalls.isEmpty())
+    assertEquals(deadline, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow().deadlineUptimeMillis)
+    advanceTimeBy(deadline - testScheduler.currentTime - 1L)
+    runCurrent()
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+    advanceTimeBy(1L)
+    runCurrent()
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+  }
+
+  @Test
+  fun bufferedPhysicalDownBeforePowerRevocationCannotRestoreVisibility() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val device = FakeTouchBrightnessDeviceController()
+    val events = FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)
+    val runtime = buildRuntime(backgroundScope, store, device, FakeBlackoutOverlayController(), events) { testScheduler.currentTime }
+    runtime.start()
+    runCurrent()
+    advanceTimeBy(10L)
+    events.emit(TouchBrightnessEvent.PowerButtonPressed(testScheduler.currentTime, powerSource))
+    runCurrent()
+    val restoreCount = device.restoreBrightnessStateCalls.size
+    events.emit(physicalTouchEvent(1, 5L))
+    runCurrent()
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+    assertEquals(restoreCount, device.restoreBrightnessStateCalls.size)
+    advanceTimeBy(1L)
+    events.emit(physicalTouchEvent(0, testScheduler.currentTime))
+    runCurrent()
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+    advanceTimeBy(1L)
+    events.emit(physicalTouchEvent(1, testScheduler.currentTime))
+    runCurrent()
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+  }
+
+  @Test
+  fun unprovedDarkCommandCleanupCancelsSessionBeforeAnyVisibleRestore() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val controller = FakeTouchBrightnessDeviceController()
+    val events = FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)
+    val runtime = buildRuntime(backgroundScope, store, controller, FakeBlackoutOverlayController(), events,
+      dimGuardEnabled = true) { testScheduler.currentTime }
+    runtime.start()
+    runCurrent()
+    val darkStarted = CompletableDeferred<Unit>()
+    val darkCompletion = CompletableDeferred<Unit>()
+    controller.beforeSetBrightness = { percent ->
+      if (percent == 0) {
+        darkStarted.complete(Unit)
+        try { darkCompletion.await() } finally {
+          throw IllegalStateException("root command cleanup unproved")
+        }
+      }
+    }
+    events.emit(TouchBrightnessEvent.NonTouchInput("ticket:tap", 0L, 4_000L, touchBeginCount = 0L))
+    runCurrent()
+    assertTrue(darkStarted.isCompleted)
+
+    events.emit(physicalTouchEvent(1, 1L))
+    events.emit(physicalTouchEvent(0, 2L))
+    runCurrent()
+
+    assertFalse(darkCompletion.isCompleted)
+    assertEquals(TouchBrightnessRuntimeState.ERROR, store.load().touchBrightnessState)
+    assertTrue(controller.restoreBrightnessStateCalls.isEmpty())
+    assertTrue(controller.setBrightnessPercentCalls.all { it == 0 })
+  }
+
+  @Test
+  fun physicalTapCancelsExpiredTimerDarkWriteBeforeVisibleRestore() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val controller = FakeTouchBrightnessDeviceController()
+    val events = FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)
+    val runtime = buildRuntime(backgroundScope, store, controller, FakeBlackoutOverlayController(), events,
+      dimGuardEnabled = true) { testScheduler.currentTime }
+    runtime.start()
+    runCurrent()
+    events.emit(physicalTouchEvent(1, 0L))
+    events.emit(physicalTouchEvent(0, 0L))
+    runCurrent()
+    controller.operationCalls.clear()
+    val timerWriteStarted = CompletableDeferred<Unit>()
+    val timerWriteCompletion = CompletableDeferred<Unit>()
+    controller.beforeSetBrightness = { percent ->
+      if (percent == 0) {
+        timerWriteStarted.complete(Unit)
+        try { timerWriteCompletion.await() } finally { controller.operationCalls += "timer_dark_cancelled" }
+      }
+    }
+    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
+    runCurrent()
+    assertTrue(timerWriteStarted.isCompleted)
+    events.emit(physicalTouchEvent(1, testScheduler.currentTime))
+    events.emit(physicalTouchEvent(0, testScheduler.currentTime))
+    runCurrent()
+    assertFalse(timerWriteCompletion.isCompleted)
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+    assertTrue(controller.operationCalls.indexOf("timer_dark_cancelled") < controller.operationCalls.indexOf("restore"))
+  }
+
+  @Test
+  fun completedTapCancelsPendingNonTouchDarkWriteBeforeRestoreAndRejectsStaleEvent() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val controller = FakeTouchBrightnessDeviceController()
+    val events = FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)
+    val runtime = buildRuntime(backgroundScope, store, controller, FakeBlackoutOverlayController(), events,
+      dimGuardEnabled = true) { testScheduler.currentTime }
+    runtime.start()
+    runCurrent()
+    val darkStarted = CompletableDeferred<Unit>()
+    val darkCompletion = CompletableDeferred<Unit>()
+    var darkCancelled = false
+    controller.beforeSetBrightness = { percent ->
+      if (percent == 0) {
+        darkStarted.complete(Unit)
+        try { darkCompletion.await() } finally {
+          darkCancelled = true
+          controller.operationCalls += "dark_cancelled"
+        }
+      }
+    }
+    events.emit(TouchBrightnessEvent.NonTouchInput("ticket:tap", 0L, 4_000L, touchBeginCount = 0L))
+    runCurrent()
+    assertTrue(darkStarted.isCompleted)
+
+    events.emit(physicalTouchEvent(1, 1L))
+    events.emit(physicalTouchEvent(0, 2L))
+    runCurrent()
+    assertTrue(darkCancelled)
+    assertFalse(darkCompletion.isCompleted)
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+    assertTrue(controller.operationCalls.indexOf("dark_cancelled") < controller.operationCalls.indexOf("restore"))
+    val darkWritesAtRestore = controller.setBrightnessPercentCalls.size
+
+    // Even an equal-timestamp stale event cannot undo the completed tap: occurrence wins.
+    events.emit(TouchBrightnessEvent.NonTouchInput("ticket:queued", 2L, 4_000L, touchBeginCount = 0L))
+    advanceTimeBy(2_000L)
+    runCurrent()
+    assertEquals(darkWritesAtRestore, controller.setBrightnessPercentCalls.size)
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+  }
+
+
   private val touchSource = RootTouchDevice(
     path = "/dev/input/event2",
     name = "synaptics_tcm_touch",
@@ -31,9 +357,9 @@ class TouchBrightnessRuntimeTest {
   )
 
   @Test
-  fun panelSleepUsesRealZeroAfterTwoMinutes() {
+  fun panelSleepUsesRealZeroAfterNinetySeconds() {
     assertEquals(0, TouchBrightnessRuntime.PANEL_SLEEP_PERCENT)
-    assertEquals(120_000L, TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
+    assertEquals(90_000L, TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
   }
 
   @Test
@@ -62,71 +388,14 @@ class TouchBrightnessRuntimeTest {
     assertTrue(store.load().touchBrightnessDebugDetail.contains("timer=none"))
   }
 
-  @Test
-  fun panelSleepPreparesAndShowsBrightnessShield() = runTest {
-    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
-    val deviceController = FakeTouchBrightnessDeviceController()
-    val shieldController = FakePanelSleepBrightnessShieldController(deviceController.operationCalls)
-    val runtime = buildRuntime(
-      backgroundScope,
-      store,
-      deviceController,
-      FakeBlackoutOverlayController(),
-      FakeTouchBrightnessEventSource(
-        interactive = true,
-        activeTouchCount = 0,
-        source = touchSource,
-        powerSource = powerSource
-      ),
-      shieldController = shieldController
-    ) { testScheduler.currentTime }
 
-    runtime.start()
-    runCurrent()
 
-    assertEquals(1, shieldController.prepareCalls)
-    assertEquals(1, shieldController.showCalls)
-    assertTrue(shieldController.isVisible())
-    assertTrue(
-      deviceController.operationCalls.indexOf("shield:show") <
-        deviceController.operationCalls.indexOf("set:0")
-    )
-  }
+
 
   @Test
-  fun shieldShowFailureFallsBackToRawPanelClampAndPanelSleep() = runTest {
+  fun transientSessionFailureDoesNotRestoreBrightnessDuringRetryBackoff() = runTest {
     val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
     val deviceController = FakeTouchBrightnessDeviceController()
-    val shieldController = FakePanelSleepBrightnessShieldController().apply {
-      showResult = PhoneAutomationActionResult(false, "overlay unavailable")
-    }
-    val runtime = buildRuntime(
-      backgroundScope,
-      store,
-      deviceController,
-      FakeBlackoutOverlayController(),
-      FakeTouchBrightnessEventSource(
-        interactive = true,
-        activeTouchCount = 0,
-        source = touchSource,
-        powerSource = powerSource
-      ),
-      shieldController = shieldController
-    ) { testScheduler.currentTime }
-
-    runtime.start()
-    runCurrent()
-
-    assertFalse(shieldController.isVisible())
-    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
-    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
-  }
-
-  @Test
-  fun physicalTouchRemovesBrightnessShieldBeforeVisibleRestore() = runTest {
-    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
-    val deviceController = FakeTouchBrightnessDeviceController()
-    val shieldController = FakePanelSleepBrightnessShieldController(deviceController.operationCalls)
     val eventSource = FakeTouchBrightnessEventSource(
       interactive = true,
       activeTouchCount = 0,
@@ -139,73 +408,6 @@ class TouchBrightnessRuntimeTest {
       deviceController,
       FakeBlackoutOverlayController(),
       eventSource,
-      shieldController = shieldController
-    ) { testScheduler.currentTime }
-
-    runtime.start()
-    runCurrent()
-    deviceController.operationCalls.clear()
-
-    eventSource.emit(physicalTouchEvent(activeTouchCount = 1, observedAtUptimeMillis = testScheduler.currentTime))
-    runCurrent()
-
-    assertFalse(shieldController.isVisible())
-    assertTrue(
-      deviceController.operationCalls.indexOf("shield:hide") <
-        deviceController.operationCalls.indexOf("restore")
-    )
-  }
-
-  @Test
-  fun shieldRemovalFailureBlocksVisibleRestoreAndRemainsRetryable() = runTest {
-    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
-    val deviceController = FakeTouchBrightnessDeviceController()
-    val shieldController = FakePanelSleepBrightnessShieldController(deviceController.operationCalls)
-    val eventSource = FakeTouchBrightnessEventSource(
-      interactive = true,
-      activeTouchCount = 0,
-      source = touchSource,
-      powerSource = powerSource
-    )
-    val runtime = buildRuntime(
-      backgroundScope,
-      store,
-      deviceController,
-      FakeBlackoutOverlayController(),
-      eventSource,
-      shieldController = shieldController
-    ) { testScheduler.currentTime }
-
-    runtime.start()
-    runCurrent()
-    shieldController.hideResult = PhoneAutomationActionResult(false, "remove failed")
-
-    eventSource.emit(physicalTouchEvent(activeTouchCount = 1, observedAtUptimeMillis = testScheduler.currentTime))
-    runCurrent()
-
-    assertTrue(shieldController.isVisible())
-    assertTrue(deviceController.restoreBrightnessStateCalls.isEmpty())
-    assertTrue(shieldController.hideCalls >= 1)
-  }
-
-  @Test
-  fun transientSessionFailureKeepsPanelSleepShieldAttachedDuringRetryBackoff() = runTest {
-    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
-    val deviceController = FakeTouchBrightnessDeviceController()
-    val shieldController = FakePanelSleepBrightnessShieldController(deviceController.operationCalls)
-    val eventSource = FakeTouchBrightnessEventSource(
-      interactive = true,
-      activeTouchCount = 0,
-      source = touchSource,
-      powerSource = powerSource
-    )
-    val runtime = buildRuntime(
-      backgroundScope,
-      store,
-      deviceController,
-      FakeBlackoutOverlayController(),
-      eventSource,
-      shieldController = shieldController
     ) { testScheduler.currentTime }
 
     runtime.start()
@@ -214,8 +416,6 @@ class TouchBrightnessRuntimeTest {
     runCurrent()
 
     assertEquals(TouchBrightnessRuntimeState.ERROR, store.load().touchBrightnessState)
-    assertTrue(shieldController.isVisible())
-    assertEquals(0, shieldController.hideCalls)
   }
 
   @Test
@@ -311,107 +511,62 @@ class TouchBrightnessRuntimeTest {
   }
 
   @Test
-  fun powerButtonDuringPanelSleepRestoresPanelAndStartsTimerAgain() = runTest {
+  fun powerButtonDuringPanelSleepKeepsPanelDarkAndAndroidAwake() = runTest {
     val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
     val deviceController = FakeTouchBrightnessDeviceController()
     val powerController = FakeTouchScreenPowerController()
-    val eventSource = FakeTouchBrightnessEventSource(
-      interactive = true,
-      activeTouchCount = 0,
-      source = touchSource,
-      powerSource = powerSource
-    )
-    val runtime = buildRuntime(backgroundScope, store, deviceController, FakeBlackoutOverlayController(), eventSource, powerController) {
-      testScheduler.currentTime
-    }
-
+    val events = FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)
+    val runtime = buildRuntime(backgroundScope, store, deviceController, FakeBlackoutOverlayController(), events, powerController) { testScheduler.currentTime }
     runtime.start()
     runCurrent()
-    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
-
-    eventSource.emit(
-      TouchBrightnessEvent.PowerButtonPressed(
-        observedAtUptimeMillis = testScheduler.currentTime,
-        device = powerSource
-      )
-    )
+    events.emit(TouchBrightnessEvent.PowerButtonPressed(testScheduler.currentTime, powerSource))
     runCurrent()
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+    assertTrue(powerController.wakeHoldActive)
+    assertTrue(deviceController.restoreBrightnessStateCalls.isEmpty())
+    advanceTimeBy(90_000L)
+    runCurrent()
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+  }
 
-    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+  @Test
+  fun immediateScreenOffAfterPowerPressRecoversDarkWithoutVisibleRebound() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val deviceController = FakeTouchBrightnessDeviceController()
+    val powerController = FakeTouchScreenPowerController()
+    val events = FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)
+    val runtime = buildRuntime(backgroundScope, store, deviceController, FakeBlackoutOverlayController(), events, powerController) { testScheduler.currentTime }
+    runtime.start()
+    runCurrent()
+    events.emit(TouchBrightnessEvent.PowerButtonPressed(testScheduler.currentTime, powerSource))
+    runCurrent()
+    advanceTimeBy(0L)
+    events.emit(TouchBrightnessEvent.ScreenInteractiveChanged(false))
+    runCurrent()
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
     assertEquals(1, powerController.forceWakeCalls)
-    assertEquals(ScreenBrightnessState(mode = 1, value = 127), deviceController.restoreBrightnessStateCalls.last())
-
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS)
-    runCurrent()
-    assertEquals(listOf(0, 0), deviceController.setBrightnessPercentCalls)
-    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+    assertTrue(powerController.wakeHoldActive)
+    assertTrue(deviceController.restoreBrightnessStateCalls.isEmpty())
   }
 
   @Test
-  fun screenOffImmediatelyAfterPanelSleepPowerButtonIsReboundedAwake() = runTest {
+  fun delayedScreenOffAfterPowerPressRecoversDarkWithoutVisibleRebound() = runTest {
     val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val deviceController = FakeTouchBrightnessDeviceController()
     val powerController = FakeTouchScreenPowerController()
-    val eventSource = FakeTouchBrightnessEventSource(
-      interactive = true,
-      activeTouchCount = 0,
-      source = touchSource,
-      powerSource = powerSource
-    )
-    val runtime = buildRuntime(backgroundScope, store, FakeTouchBrightnessDeviceController(), FakeBlackoutOverlayController(), eventSource, powerController) {
-      testScheduler.currentTime
-    }
-
+    val events = FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)
+    val runtime = buildRuntime(backgroundScope, store, deviceController, FakeBlackoutOverlayController(), events, powerController) { testScheduler.currentTime }
     runtime.start()
     runCurrent()
-    eventSource.emit(TouchBrightnessEvent.PowerButtonPressed(testScheduler.currentTime, powerSource))
+    events.emit(TouchBrightnessEvent.PowerButtonPressed(testScheduler.currentTime, powerSource))
     runCurrent()
-    eventSource.emit(TouchBrightnessEvent.ScreenInteractiveChanged(interactive = false))
-    runCurrent()
-
-    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
-    assertEquals(2, powerController.forceWakeCalls)
-    assertFalse(store.load().touchBrightnessDetail.contains("Suspended"))
-  }
-
-  @Test
-  fun delayedScreenOffAfterPanelSleepPowerButtonKeepsOriginalTwoMinuteTimer() = runTest {
-    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
-    val powerController = FakeTouchScreenPowerController()
-    val eventSource = FakeTouchBrightnessEventSource(
-      interactive = true,
-      activeTouchCount = 0,
-      source = touchSource,
-      powerSource = powerSource
-    )
-    val runtime = buildRuntime(backgroundScope, store, FakeTouchBrightnessDeviceController(), FakeBlackoutOverlayController(), eventSource, powerController) {
-      testScheduler.currentTime
-    }
-
-    runtime.start()
-    runCurrent()
-    val powerPressedAtMillis = testScheduler.currentTime
-    eventSource.emit(TouchBrightnessEvent.PowerButtonPressed(powerPressedAtMillis, powerSource))
-    runCurrent()
-
-    advanceTimeBy(TouchBrightnessRuntime.POWER_BUTTON_REBOUND_WINDOW_MILLIS + 1L)
-    runCurrent()
-    eventSource.emit(TouchBrightnessEvent.ScreenInteractiveChanged(interactive = false))
-    runCurrent()
-
-    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
-    assertEquals(2, powerController.forceWakeCalls)
-    assertFalse(store.load().touchBrightnessDetail.contains("Suspended"))
-
-    val remainingMillis = powerPressedAtMillis +
-      TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS -
-      testScheduler.currentTime
-    advanceTimeBy(remainingMillis - 1L)
-    runCurrent()
-    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
-
-    advanceTimeBy(1L)
+    advanceTimeBy(3000L)
+    events.emit(TouchBrightnessEvent.ScreenInteractiveChanged(false))
     runCurrent()
     assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+    assertEquals(1, powerController.forceWakeCalls)
+    assertTrue(powerController.wakeHoldActive)
+    assertTrue(deviceController.restoreBrightnessStateCalls.isEmpty())
   }
 
   @Test
@@ -475,53 +630,70 @@ class TouchBrightnessRuntimeTest {
   }
 
   @Test
-  fun powerButtonVisibleIdleIgnoresTicketNonTouchUntilTwoMinuteTimerExpires() = runTest {
+  fun physicalTapWindowIgnoresNewNonTouchInputWithoutExtendingDeadline() = runTest {
     val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
     val deviceController = FakeTouchBrightnessDeviceController()
     val powerController = FakeTouchScreenPowerController()
-    val eventSource = FakeTouchBrightnessEventSource(
-      interactive = true,
-      activeTouchCount = 0,
-      source = touchSource,
-      powerSource = powerSource
-    )
-    val runtime = buildRuntime(backgroundScope, store, deviceController, FakeBlackoutOverlayController(), eventSource, powerController) {
-      testScheduler.currentTime
-    }
-
+    val events = FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)
+    val runtime = buildRuntime(backgroundScope, store, deviceController, FakeBlackoutOverlayController(), events, powerController) { testScheduler.currentTime }
     runtime.start()
     runCurrent()
-    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
-    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
-
-    eventSource.emit(TouchBrightnessEvent.PowerButtonPressed(testScheduler.currentTime, powerSource))
+    events.emit(physicalTouchEvent(1, testScheduler.currentTime))
     runCurrent()
-    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
-    assertTrue(store.load().touchBrightnessDebugDetail.contains("timer=pending("))
-
-    eventSource.emit(
-      TouchBrightnessEvent.NonTouchInput(
-        reason = "ticket:wake_start:manual_power_check",
-        observedAtUptimeMillis = testScheduler.currentTime,
-        suppressedUntilUptimeMillis = testScheduler.currentTime + 2_000L
-      )
-    )
+    advanceTimeBy(5_000L)
+    events.emit(physicalTouchEvent(0, testScheduler.currentTime))
     runCurrent()
-
-    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
-    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
-    assertTrue(store.load().touchBrightnessDebugDetail.contains("timer=pending("))
-
-    advanceTimeBy(TouchBrightnessRuntime.IDLE_PANEL_SLEEP_DELAY_MILLIS - 1L)
+    advanceTimeBy(45_000L)
+    events.emit(TouchBrightnessEvent.NonTouchInput("ticket:new_action", testScheduler.currentTime, testScheduler.currentTime + 2_000L))
     runCurrent()
     assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
     assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
-
+    advanceTimeBy(44_999L)
+    runCurrent()
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
     advanceTimeBy(1L)
     runCurrent()
-
     assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
-    assertEquals(listOf(0, 0), deviceController.setBrightnessPercentCalls)
+  }
+
+  @Test
+  fun sideButtonRevokesHeldTouchAndReleaseDoesNotGrantVisibilityAgain() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val deviceController = FakeTouchBrightnessDeviceController()
+    val powerController = FakeTouchScreenPowerController()
+    val events = FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)
+    val runtime = buildRuntime(backgroundScope, store, deviceController, FakeBlackoutOverlayController(), events, powerController) { testScheduler.currentTime }
+    runtime.start()
+    runCurrent()
+    events.emit(physicalTouchEvent(1, testScheduler.currentTime))
+    runCurrent()
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+    events.emit(TouchBrightnessEvent.PowerButtonPressed(testScheduler.currentTime, powerSource))
+    runCurrent()
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+    assertTrue(powerController.wakeHoldActive)
+    val restores = deviceController.restoreBrightnessStateCalls.size
+    advanceTimeBy(1L)
+    events.emit(physicalTouchEvent(0, testScheduler.currentTime))
+    runCurrent()
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+    assertEquals(restores, deviceController.restoreBrightnessStateCalls.size)
+    advanceTimeBy(1L)
+    events.emit(physicalTouchEvent(1, testScheduler.currentTime))
+    runCurrent()
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+  }
+
+  @Test
+  fun disableRestoresPowerPolicyEvenWithoutStartedSession() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = false)
+    val policy = FakeTouchPowerButtonPolicyController()
+    val runtime = buildRuntime(backgroundScope, store, FakeTouchBrightnessDeviceController(), FakeBlackoutOverlayController(),
+      FakeTouchBrightnessEventSource(true, 0, source = touchSource), powerButtonPolicy = policy) { testScheduler.currentTime }
+    runtime.stop("disabled")
+    runCurrent()
+    assertEquals(1, policy.restoreCalls)
+    assertEquals(0, policy.acquireCalls)
   }
 
   @Test
@@ -589,7 +761,7 @@ class TouchBrightnessRuntimeTest {
   }
 
   @Test
-  fun ordinaryScreenOffOutsidePowerReboundSuspendsRuntime() = runTest {
+  fun screenOffDuringPhysicalWindowRecoversVisibleUntilDeadline() = runTest {
     val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
     val eventSource = FakeTouchBrightnessEventSource(
       interactive = true,
@@ -615,14 +787,30 @@ class TouchBrightnessRuntimeTest {
     eventSource.emit(TouchBrightnessEvent.ScreenInteractiveChanged(interactive = false))
     runCurrent()
 
-    assertEquals(TouchBrightnessRuntimeState.SUSPENDED_SCREEN_OFF, store.load().touchBrightnessState)
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+  }
+
+  @Test
+  fun disableWithoutSavedBrightnessStillReopensPanelWithSafeVisibleFallback() = runTest {
+    val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = false)
+    val device = FakeTouchBrightnessDeviceController().apply {
+      currentBrightnessState = ScreenBrightnessState(mode = 0, value = 0, panelBacklightPower = 4)
+    }
+    val runtime = buildRuntime(backgroundScope, store, device, FakeBlackoutOverlayController(),
+      FakeTouchBrightnessEventSource(true, 0, source = touchSource, powerSource = powerSource)) {
+      testScheduler.currentTime
+    }
+    runtime.stop("disabled:missing_checkpoint")
+    runCurrent()
+    assertEquals(listOf(TouchBrightnessRuntime.SAFE_VISIBLE_FALLBACK_PERCENT), device.setBrightnessPercentCalls)
+    assertEquals(0, device.currentBrightnessState.panelBacklightPower)
+    assertEquals(TouchBrightnessRuntimeState.DISABLED, store.load().touchBrightnessState)
   }
 
   @Test
   fun disableRestoresVisibleBrightnessFromPanelSleep() = runTest {
     val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
     val deviceController = FakeTouchBrightnessDeviceController()
-    val shieldController = FakePanelSleepBrightnessShieldController(deviceController.operationCalls)
     val eventSource = FakeTouchBrightnessEventSource(
       interactive = true,
       activeTouchCount = 0,
@@ -635,7 +823,6 @@ class TouchBrightnessRuntimeTest {
       deviceController,
       FakeBlackoutOverlayController(),
       eventSource,
-      shieldController = shieldController
     ) {
       testScheduler.currentTime
     }
@@ -645,24 +832,20 @@ class TouchBrightnessRuntimeTest {
     store.setTouchBrightnessEnabled(false)
 
     runtime.stop(reason = "disabled:test")
+    runCurrent()
     advanceUntilIdle()
 
     assertEquals(TouchBrightnessRuntimeState.DISABLED, store.load().touchBrightnessState)
-    assertFalse(shieldController.isVisible())
-    assertTrue(
-      deviceController.operationCalls.lastIndexOf("shield:hide") <
-        deviceController.operationCalls.lastIndexOf("restore")
-    )
     assertEquals(ScreenBrightnessState(mode = 1, value = 127), deviceController.restoreBrightnessStateCalls.last())
     assertEquals(null, store.load().touchBrightnessRestoreMode)
     assertEquals(null, store.load().touchBrightnessRestoreValue)
   }
 
   @Test
-  fun enabledStopKeepsAttachedShieldAndSavedRestoreStateForSupervisorHandoff() = runTest {
+  fun enabledStopKeepsPanelBlankAndSavedRestoreStateForSupervisorHandoff() = runTest {
     val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
+    val policy = FakeTouchPowerButtonPolicyController()
     val deviceController = FakeTouchBrightnessDeviceController()
-    val shieldController = FakePanelSleepBrightnessShieldController()
     val runtime = buildRuntime(
       backgroundScope,
       store,
@@ -674,18 +857,18 @@ class TouchBrightnessRuntimeTest {
         source = touchSource,
         powerSource = powerSource
       ),
-      shieldController = shieldController
+      powerButtonPolicy = policy
     ) { testScheduler.currentTime }
 
     runtime.start()
     runCurrent()
-    assertTrue(shieldController.isVisible())
 
     runtime.stop(reason = "service_destroyed")
+    runCurrent()
     advanceUntilIdle()
 
-    assertTrue(shieldController.isVisible())
-    assertEquals(0, shieldController.hideCalls)
+    assertEquals(0, policy.restoreCalls)
+    assertEquals(1, policy.acquireCalls)
     assertTrue(deviceController.restoreBrightnessStateCalls.isEmpty())
     assertEquals(1, store.load().touchBrightnessRestoreMode)
     assertEquals(127, store.load().touchBrightnessRestoreValue)
@@ -717,6 +900,7 @@ class TouchBrightnessRuntimeTest {
     ) { testScheduler.currentTime }
 
     runtime.stop(reason = "service_destroyed")
+    runCurrent()
     advanceUntilIdle()
 
     assertTrue(deviceController.restoreBrightnessStateCalls.isEmpty())
@@ -791,7 +975,7 @@ class TouchBrightnessRuntimeTest {
   }
 
   @Test
-  fun nonTouchInputEventDuringPanelSleepReassertsImmediatelyAndBursts() = runTest {
+  fun nonTouchInputEventReassertsOnceWithoutDelayedBrightnessBursts() = runTest {
     val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
     val deviceController = FakeTouchBrightnessDeviceController()
     val eventSource = FakeTouchBrightnessEventSource(
@@ -827,25 +1011,14 @@ class TouchBrightnessRuntimeTest {
     assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
     assertEquals(listOf(0, 0), deviceController.setBrightnessPercentCalls)
 
-    advanceTimeBy(99L)
+    advanceTimeBy(2_000L)
     runCurrent()
     assertEquals(listOf(0, 0), deviceController.setBrightnessPercentCalls)
 
-    advanceTimeBy(1L)
-    runCurrent()
-    assertEquals(listOf(0, 0, 0), deviceController.setBrightnessPercentCalls)
-
-    advanceTimeBy(149L)
-    runCurrent()
-    assertEquals(listOf(0, 0, 0), deviceController.setBrightnessPercentCalls)
-
-    advanceTimeBy(1L)
-    runCurrent()
-    assertEquals(listOf(0, 0, 0, 0), deviceController.setBrightnessPercentCalls)
   }
 
   @Test
-  fun ticketNonTouchInputCorrectsBrightIdleLeftByMisclassifiedSoftwareTouch() = runTest {
+  fun ticketNonTouchInputPreservesPhysicalIdleWindow() = runTest {
     val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
     val deviceController = FakeTouchBrightnessDeviceController()
     val eventSource = FakeTouchBrightnessEventSource(
@@ -871,17 +1044,11 @@ class TouchBrightnessRuntimeTest {
     assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
 
     eventSource.emit(
-      TouchBrightnessEvent.TouchCountChanged(
-        activeTouchCount = 1,
-        observedAtUptimeMillis = testScheduler.currentTime
-      )
+      physicalTouchEvent(1, testScheduler.currentTime)
     )
     runCurrent()
     eventSource.emit(
-      TouchBrightnessEvent.TouchCountChanged(
-        activeTouchCount = 0,
-        observedAtUptimeMillis = testScheduler.currentTime
-      )
+      physicalTouchEvent(0, testScheduler.currentTime)
     )
     runCurrent()
     assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
@@ -896,13 +1063,13 @@ class TouchBrightnessRuntimeTest {
     )
     runCurrent()
 
-    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
-    assertEquals(listOf(0, 0), deviceController.setBrightnessPercentCalls)
-    assertTrue(store.load().touchBrightnessDebugDetail.contains("timer=none"))
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
+    assertTrue(store.load().touchBrightnessDebugDetail.contains("timer=pending("))
   }
 
   @Test
-  fun genericNonTouchInputCorrectsBrightIdleLeftByMisclassifiedSoftwareAction() = runTest {
+  fun genericNonTouchInputPreservesPhysicalIdleWindow() = runTest {
     val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
     val deviceController = FakeTouchBrightnessDeviceController()
     val eventSource = FakeTouchBrightnessEventSource(
@@ -928,17 +1095,11 @@ class TouchBrightnessRuntimeTest {
     assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
 
     eventSource.emit(
-      TouchBrightnessEvent.TouchCountChanged(
-        activeTouchCount = 1,
-        observedAtUptimeMillis = testScheduler.currentTime
-      )
+      physicalTouchEvent(1, testScheduler.currentTime)
     )
     runCurrent()
     eventSource.emit(
-      TouchBrightnessEvent.TouchCountChanged(
-        activeTouchCount = 0,
-        observedAtUptimeMillis = testScheduler.currentTime
-      )
+      physicalTouchEvent(0, testScheduler.currentTime)
     )
     runCurrent()
     assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
@@ -953,9 +1114,9 @@ class TouchBrightnessRuntimeTest {
     )
     runCurrent()
 
-    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
-    assertEquals(listOf(0, 0), deviceController.setBrightnessPercentCalls)
-    assertTrue(store.load().touchBrightnessDebugDetail.contains("timer=none"))
+    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
+    assertEquals(listOf(0), deviceController.setBrightnessPercentCalls)
+    assertTrue(store.load().touchBrightnessDebugDetail.contains("timer=pending("))
   }
 
   @Test
@@ -990,7 +1151,7 @@ class TouchBrightnessRuntimeTest {
   }
 
   @Test
-  fun physicalScreenOnDuringPanelSleepRestoresVisibleBrightness() = runTest {
+  fun screenOnWithoutPhysicalTouchStaysDark() = runTest {
     val store = InMemoryTouchBrightnessSettingsStore(touchBrightnessEnabled = true)
     val deviceController = FakeTouchBrightnessDeviceController()
     val eventSource = FakeTouchBrightnessEventSource(
@@ -1010,9 +1171,9 @@ class TouchBrightnessRuntimeTest {
     eventSource.emit(TouchBrightnessEvent.ScreenInteractiveChanged(interactive = true))
     runCurrent()
 
-    assertEquals(TouchBrightnessRuntimeState.BRIGHT, store.load().touchBrightnessState)
-    assertEquals(restoreCallsAfterPanelSleep + 1, deviceController.restoreBrightnessStateCalls.size)
-    assertTrue(store.load().touchBrightnessDebugDetail.contains("timer=pending("))
+    assertEquals(TouchBrightnessRuntimeState.PANEL_SLEEP, store.load().touchBrightnessState)
+    assertEquals(restoreCallsAfterPanelSleep, deviceController.restoreBrightnessStateCalls.size)
+    assertTrue(store.load().touchBrightnessDebugDetail.contains("timer=none"))
   }
 
   @Test
@@ -1263,7 +1424,7 @@ class TouchBrightnessRuntimeTest {
     eventSource: FakeTouchBrightnessEventSource,
     powerController: FakeTouchScreenPowerController = FakeTouchScreenPowerController(),
     dimGuardEnabled: Boolean = false,
-    shieldController: FakePanelSleepBrightnessShieldController = FakePanelSleepBrightnessShieldController(),
+    powerButtonPolicy: FakeTouchPowerButtonPolicyController = FakeTouchPowerButtonPolicyController(),
     uptimeClock: () -> Long
   ): TouchBrightnessRuntime {
     PhoneAutomationServiceBridge.resetForTests()
@@ -1275,8 +1436,8 @@ class TouchBrightnessRuntimeTest {
       onSnapshotChanged = {},
       deviceController = deviceController,
       overlayController = overlayController,
-      panelSleepShieldController = shieldController,
       powerController = powerController,
+      powerButtonPolicy = powerButtonPolicy,
       eventSourceFactory = { eventSource },
       uptimeClock = uptimeClock,
       dimGuardEnabled = dimGuardEnabled
@@ -1343,6 +1504,10 @@ private class FakeTouchBrightnessEventSource(
   fun emit(event: TouchBrightnessEvent) {
     when (event) {
       is TouchBrightnessEvent.TouchCountChanged -> {
+        PhoneAutomationServiceBridge.recordRootPhysicalTouchState(
+          active = event.activeTouchCount > 0 && event.snapshot?.isRawTouchActive() == true,
+          observedAtUptimeMillis = event.observedAtUptimeMillis
+        )
         activeTouchCountState = event.activeTouchCount
         lastEventUptimeMillisState = event.observedAtUptimeMillis
         val snapshot = event.snapshot
@@ -1369,7 +1534,10 @@ private class FakeTouchBrightnessEventSource(
       is TouchBrightnessEvent.OverlayAvailabilityChanged -> overlayAvailableState = event.available
       is TouchBrightnessEvent.TouchSourceSelected -> sourceState = event.device
       is TouchBrightnessEvent.PowerSourceSelected -> powerSourceState = event.device
-      is TouchBrightnessEvent.PowerButtonPressed -> powerSourceState = event.device ?: powerSourceState
+      is TouchBrightnessEvent.PowerButtonPressed -> {
+        PhoneAutomationServiceBridge.revokePhysicalVisibility(event.observedAtUptimeMillis)
+        powerSourceState = event.device ?: powerSourceState
+      }
       is TouchBrightnessEvent.BlackoutWakeRequested -> Unit
       is TouchBrightnessEvent.NonTouchInput -> Unit
       is TouchBrightnessEvent.FatalError -> Unit
@@ -1379,6 +1547,9 @@ private class FakeTouchBrightnessEventSource(
 }
 
 private class FakeTouchBrightnessDeviceController : TouchBrightnessDeviceController {
+  var beforeSetBrightness: suspend (Int) -> Unit = {}
+  var beforeRestore: suspend () -> Unit = {}
+  var immediateClampResult = PhoneAutomationActionResult(true, "raw zero")
   var prepareResult = PhoneAutomationPreparationResult(ready = true, detail = "ready")
   var currentBrightnessState = ScreenBrightnessState(mode = 1, value = 127)
   var setBrightnessResult = PhoneAutomationActionResult(true, "set")
@@ -1387,6 +1558,11 @@ private class FakeTouchBrightnessDeviceController : TouchBrightnessDeviceControl
   val setBrightnessPercentCalls = mutableListOf<Int>()
   val restoreBrightnessStateCalls = mutableListOf<ScreenBrightnessState>()
   val operationCalls = mutableListOf<String>()
+
+  override suspend fun clampPanelSleepImmediately(): PhoneAutomationActionResult {
+    operationCalls += "raw:zero"
+    return immediateClampResult
+  }
 
   override suspend fun prepare(): PhoneAutomationPreparationResult {
     operationCalls += "prepare"
@@ -1401,10 +1577,12 @@ private class FakeTouchBrightnessDeviceController : TouchBrightnessDeviceControl
   override suspend fun setBrightnessPercent(percent: Int): PhoneAutomationActionResult {
     operationCalls += "set:$percent"
     setBrightnessPercentCalls += percent
+    beforeSetBrightness(percent)
     currentBrightnessState = ScreenBrightnessState(
       mode = 0,
       value = ScreenBrightnessControl.legacySystemValue(percent),
-      displayPercentage = percent.toFloat()
+      displayPercentage = percent.toFloat(),
+      panelBacklightPower = if (percent == 0) 4 else 0
     )
     return setBrightnessResult
   }
@@ -1412,6 +1590,7 @@ private class FakeTouchBrightnessDeviceController : TouchBrightnessDeviceControl
   override suspend fun restoreBrightnessState(state: ScreenBrightnessState): PhoneAutomationActionResult {
     operationCalls += "restore"
     restoreBrightnessStateCalls += state
+    beforeRestore()
     currentBrightnessState = state
     return restoreBrightnessResult
   }
@@ -1432,44 +1611,6 @@ private class FakeBlackoutOverlayController : BlackoutOverlayController {
   }
 
   override fun isAvailable(): Boolean = true
-}
-
-private class FakePanelSleepBrightnessShieldController(
-  private val operationCalls: MutableList<String>? = null
-) : PanelSleepBrightnessShieldController {
-  var prepareResult = PhoneAutomationActionResult(true, "ready")
-  var showResult = PhoneAutomationActionResult(true, "shown")
-  var hideResult = PhoneAutomationActionResult(true, "hidden")
-  var prepareCalls = 0
-  var showCalls = 0
-  var hideCalls = 0
-  private var visible = false
-
-  override suspend fun prepare(): PhoneAutomationActionResult {
-    prepareCalls += 1
-    operationCalls?.add("shield:prepare")
-    return prepareResult
-  }
-
-  override suspend fun show(): PhoneAutomationActionResult {
-    showCalls += 1
-    operationCalls?.add("shield:show")
-    if (showResult.success) {
-      visible = true
-    }
-    return showResult
-  }
-
-  override suspend fun hide(): PhoneAutomationActionResult {
-    hideCalls += 1
-    operationCalls?.add("shield:hide")
-    if (hideResult.success) {
-      visible = false
-    }
-    return hideResult
-  }
-
-  override fun isVisible(): Boolean = visible
 }
 
 private class FakeTouchScreenPowerController : TouchScreenPowerController {
@@ -1687,4 +1828,11 @@ private class UnusedRootExecutor : RootExecutor {
       durationMs = 0L
     )
   }
+}
+
+private class FakeTouchPowerButtonPolicyController : TouchPowerButtonPolicyController {
+  var acquireCalls = 0
+  var restoreCalls = 0
+  override suspend fun acquire(): Boolean { acquireCalls += 1; return true }
+  override suspend fun restore(): Boolean { restoreCalls += 1; return true }
 }

@@ -127,7 +127,7 @@ class TicketStreamStartupRecoveryPolicyTest {
     lastFrameAgeMillis = frameAgeMillis,
     lastFrameSourceToServiceMillis = sourceToServiceMillis,
     graceMillis = 6_000L,
-    sourceUsefulnessMillis = 1_250L
+    sourceUsefulnessMillis = 3_000L
   )
 
   @Test
@@ -139,7 +139,8 @@ class TicketStreamStartupRecoveryPolicyTest {
 
   @Test
   fun usefulCurrentGenerationFrameRestoresNormalStaleRecoveryImmediately() {
-    assertFalse(waiting(sourceToServiceMillis = 1_250L))
+    assertFalse(waiting(sourceToServiceMillis = 3_000L))
+    assertTrue(waiting(sourceToServiceMillis = 3_001L))
     assertTrue(
       waiting(
         startAgeMillis = 3_200L,

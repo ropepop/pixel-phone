@@ -48,12 +48,12 @@ class TicketCaptureDemandSourceTest {
     assertTrue(helper.contains("cadenceScheduler.notePictureEmitted(SystemClock.elapsedRealtime());"))
     val syncRequest = body(
       helper,
-      "private static void requestImmediateSyncFrame",
+      "private static void requestNextSyncFrame",
       "private static StartupPrimerRun runStartupPrimer"
     )
-    assertTrue(syncRequest.contains("cadenceScheduler.requestImmediateCapture"))
+    assertTrue(syncRequest.contains("syncFrameRequested.set(true)"))
     assertTrue(syncRequest.contains("frameWaitLock.notifyAll();"))
-    assertFalse(syncRequest.contains("if (cadenceScheduler.requestImmediateCapture"))
+    assertFalse(syncRequest.contains("cadenceScheduler"))
   }
 
   @Test
@@ -73,7 +73,7 @@ class TicketCaptureDemandSourceTest {
     assertTrue(service.contains(
       "private const val VIDEO_CLIENT_SLOW_CLOSE_MILLIS = ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS"
     ))
-    assertTrue(service.contains("private const val ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS = 1_250L"))
+    assertTrue(service.contains("private const val ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS = 3_000L"))
   }
 
   private fun body(text: String, startNeedle: String, endNeedle: String): String {

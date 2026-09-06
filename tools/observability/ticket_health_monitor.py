@@ -28,7 +28,11 @@ def _words(value: str) -> set[str]:
   return set(value.split())
 
 
-VERSION = "4"
+VERSION = "5"
+# Owning Ticket contracts: STREAM_BACKGROUND_REPORT_MAX_AGE_MS and streamPageOpenWarmHold.
+RELAY_REPORT_MAX_AGE_MILLIS = 5000
+PAGE_WARM_MAX_MILLIS = 30 * 60 * 1000
+CLOCK_FUTURE_TOLERANCE_MILLIS = 250
 TERMINAL_COMMAND_STATES = _words("succeeded failed expired canceled cancelled completed")
 STREAM_COMMAND_STATES = TERMINAL_COMMAND_STATES | _words("pending running warming closed")
 ENDPOINT_STATUS_STATES = _words("ok healthy ready live starting degraded error unhealthy unavailable")
@@ -228,8 +232,11 @@ HIGH_THRESHOLDS = {
 
 def _validate_thresholds(raw: Any) -> None:
   value = _mapping(raw, "thresholds", {"pixel_frame_age_millis", "relay_frame_age_millis", "resources"})
-  _number(value["pixel_frame_age_millis"], "thresholds.pixel_frame_age_millis", 1, 60000)
-  _number(value["relay_frame_age_millis"], "thresholds.relay_frame_age_millis", 1, 60000)
+  for field in ("pixel_frame_age_millis", "relay_frame_age_millis"):
+    pair = _mapping(value[field], field, {"warning", "failure"})
+    warning = _number(pair["warning"], f"{field}.warning", 1, 3000)
+    if type(pair["failure"]) is not int or pair["failure"] != 3000 or warning >= pair["failure"]:
+      raise ValueError(f"{field} requires an early warning below the 3000 ms product failure boundary")
   resources = _mapping(value["resources"], "thresholds.resources", {"host", "pixel"})
   for section, fields in HIGH_THRESHOLDS.items():
     values = _mapping(resources[section], f"thresholds.resources.{section}", set(fields) | ({"battery_level_percent"} if section == "pixel" else set()))
@@ -576,8 +583,60 @@ RELAY_STATUS_FIELDS = {
   "phone_desired": ("phoneDesired", "bool", None),
   "phone_stream_state": ("phoneStreamState", "enum", PHONE_STREAM_STATES),
   "live": ("live", "bool", None),
-  "last_frame_ago_millis": ("lastFrameAgoMillis", "int", None),
 }
+
+
+def _timestamp(value: Any) -> datetime:
+  if not isinstance(value, str) or len(value) > 80:
+    raise RuntimeError("spacetime_timestamp_invalid")
+  try:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+      raise ValueError("timezone required")
+    return parsed.astimezone(timezone.utc)
+  except ValueError:
+    raise RuntimeError("spacetime_timestamp_invalid") from None
+
+
+def _age_millis(value: Any, observed: datetime) -> int:
+  age = math.ceil((observed - _timestamp(value)).total_seconds() * 1000)
+  if age < -CLOCK_FUTURE_TOLERANCE_MILLIS:
+    raise RuntimeError("spacetime_clock_unbounded")
+  return max(0, age)
+
+
+def _optional_frame_age(value: str, observed: datetime) -> int | None:
+  # Spacetime CLI renders Option<String> as a tagged value, not JSON null/string.
+  if value in {"", "null", "NULL", "(none = ())"}:
+    return None
+  match = re.fullmatch(r'\(some = ("(?:[^"\\]|\\.)*")\)', value)
+  if match:
+    try:
+      value = json.loads(match[1])
+    except ValueError:
+      raise RuntimeError("spacetime_timestamp_invalid") from None
+    if value == "":
+      return None
+  return _age_millis(value, observed)
+
+
+def _page_warm_status(status: Mapping[str, Any], report_at: Any, observed: datetime) -> dict[str, Any] | None:
+  raw = status.get("pageOpenWarm")
+  if raw is None:
+    return None  # Older deployed reporters have no warm-state coverage.
+  if not isinstance(raw, Mapping) or set(raw) != {"retainedSessions", "expiresAt"}:
+    raise RuntimeError("spacetime_warm_state_invalid")
+  count, expiry = raw["retainedSessions"], raw["expiresAt"]
+  if type(count) is not int or not 0 <= count <= 1_000_000:
+    raise RuntimeError("spacetime_warm_state_invalid")
+  if count == 0:
+    if expiry != "":
+      raise RuntimeError("spacetime_warm_state_invalid")
+    return {"retained_sessions": 0, "remaining_millis": 0}
+  deadline = _timestamp(expiry)
+  if not 0 < (deadline - _timestamp(report_at)).total_seconds() * 1000 <= PAGE_WARM_MAX_MILLIS:
+    raise RuntimeError("spacetime_warm_state_invalid")
+  return {"retained_sessions": count, "remaining_millis": math.floor((deadline - observed).total_seconds() * 1000)}
 
 
 def _select_strict_status(status: Mapping[str, Any], fields: Mapping[str, tuple[str, str, set[str] | None]]) -> dict[str, Any]:
@@ -606,15 +665,15 @@ def collect_spacetime(config: Mapping[str, Any], runner: CommandRunner) -> dict[
   ticket = str(config["ticket_id"]).replace("'", "''")
   queries = [
     ("desired", "ticketremote_stream_desired_state", "desiredActive, viewerCount, reason", ["desiredActive", "viewerCount", "reason"]),
-    ("phone", "ticketremote_phone_current_report", "streamState, desiredActive, statusJson", ["streamState", "desiredActive", "statusJson"]),
-    ("relay", "ticketremote_relay_current_report", "videoClients, streamVerdict, lastFrameAgoMillis, statusJson", ["videoClients", "streamVerdict", "lastFrameAgoMillis", "statusJson"]),
+    ("phone", "ticketremote_phone_current_report", "streamState, desiredActive, statusJson, updatedAt", ["streamState", "desiredActive", "statusJson", "updatedAt"]),
+    ("relay", "ticketremote_relay_current_report", "videoClients, streamVerdict, lastFrameAt, statusJson, updatedAt", ["videoClients", "streamVerdict", "lastFrameAt", "statusJson", "updatedAt"]),
     ("commands", "ticketremote_stream_command", "status", ["status"]),
   ]
   try:
-    rows = {
-      name: spacetime_sql(config, f"SELECT {fields} FROM {table} WHERE ticketId = '{ticket}';", columns, runner)
-      for name, table, fields, columns in queries
-    }
+    rows, observed = {}, {}
+    for name, table, fields, columns in queries:
+      rows[name] = spacetime_sql(config, f"SELECT {fields} FROM {table} WHERE ticketId = '{ticket}';", columns, runner)
+      observed[name] = datetime.now(timezone.utc)
     if any(len(rows[name]) != 1 for name in ("desired", "phone", "relay")):
       raise RuntimeError("spacetime_current_state_missing")
     desired, phone, relay = rows["desired"][0], rows["phone"][0], rows["relay"][0]
@@ -630,9 +689,14 @@ def collect_spacetime(config: Mapping[str, Any], runner: CommandRunner) -> dict[
       "phone_stream_state": _strict_enum(phone["streamState"], PHONE_STREAM_STATES),
       "phone_desired_active": _strict_bool(phone["desiredActive"]),
       "phone_status": _select_strict_status(phone_json, PHONE_STATUS_FIELDS),
+      "phone_report_age_millis": _age_millis(phone["updatedAt"], observed["phone"]),
+      "phone_observed_at": observed["phone"].isoformat(),
       "relay_video_clients": _strict_int(relay["videoClients"], 0, 1_000_000),
       "relay_stream_verdict": _strict_enum(relay["streamVerdict"], RELAY_STREAM_VERDICTS),
-      "relay_last_frame_ago_millis": _strict_int(relay["lastFrameAgoMillis"], -1, 10**12),
+      "relay_last_frame_ago_millis": _optional_frame_age(relay["lastFrameAt"], observed["relay"]),
+      "relay_report_age_millis": _age_millis(relay["updatedAt"], observed["relay"]),
+      "relay_observed_at": observed["relay"].isoformat(),
+      "page_open_warm": _page_warm_status(relay_json, relay["updatedAt"], observed["relay"]),
       "relay_status": _select_strict_status(relay_json, RELAY_STATUS_FIELDS),
       "pending_stream_commands": sum(status not in TERMINAL_COMMAND_STATES for status in statuses),
     }
@@ -816,6 +880,7 @@ def collect_pixel(config: Mapping[str, Any], runner: CommandRunner) -> dict[str,
   health = _safe_json(response.stdout.strip()) if response.returncode == 0 else None
   if not health:
     return {**result, "error": "pixel_health_unavailable"}
+  result["observed_at"] = datetime.now(timezone.utc).isoformat()
   rotation_results = [
     _adb(config, runner, "shell", "settings", "get", "system", key)
     for key in ("accelerometer_rotation", "user_rotation")
@@ -914,6 +979,14 @@ def _ticket_lifecycle_valid(value: Any) -> bool:
   return type(oldest) is int and TICKET_LIFECYCLE_STUCK_SECONDS < oldest <= 315_576_000
 
 
+def _check_frame_age(value: Any, limits: Mapping[str, Any], failure: str, failures: list[str], warnings: list[str]) -> None:
+  age = _safe_int(value, 0)
+  if age is None or age > limits["failure"]:
+    failures.append(failure)
+  elif age > limits["warning"]:
+    warnings.append(f"{failure}: above the early-warning target but within the product freshness boundary.")
+
+
 def evaluate_snapshot(snapshot: Mapping[str, Any], thresholds: Mapping[str, Any], standby_devices: Sequence[Any]) -> dict[str, Any]:
   surfaces = {name: snapshot.get(name, {}) for name in ("public", "host", "spacetime", "pixel")}
   failures = [f"{name}_unhealthy" for name, value in surfaces.items() if not isinstance(value, Mapping) or value.get("ok") is not True]
@@ -924,6 +997,7 @@ def evaluate_snapshot(snapshot: Mapping[str, Any], thresholds: Mapping[str, Any]
   spacetime, pixel = surfaces["spacetime"], surfaces["pixel"]
   spacetime_ok, pixel_ok = spacetime.get("ok") is True, pixel.get("ok") is True
   active: bool | None = None
+  warm = False
   mode = "unknown"
   health = pixel.get("health", {}) if isinstance(pixel.get("health"), Mapping) else {}
   if pixel_ok and not pixel.get("portrait_lock", {}).get("ok"):
@@ -940,27 +1014,42 @@ def evaluate_snapshot(snapshot: Mapping[str, Any], thresholds: Mapping[str, Any]
     active = desired or viewers > 0
     mode = "active_viewer" if active else "no_active_viewer"
     relay = spacetime.get("relay_status", {}) if isinstance(spacetime.get("relay_status"), Mapping) else {}
+    clients = _as_int(spacetime.get("relay_video_clients"))
+    warm_status = spacetime.get("page_open_warm")
+    warm = bool(active and clients == 0 and isinstance(warm_status, Mapping)
+      and _safe_int(warm_status.get("retained_sessions"), 1, 1_000_000) is not None
+      and _safe_int(warm_status.get("remaining_millis"), 1, PAGE_WARM_MAX_MILLIS) is not None)
+    if warm:
+      mode = "warm_no_viewer"
     add = lambda condition, name: failures.append(name) if condition else None
     add(_as_int(spacetime.get("pending_stream_commands")) != 0, "pending_stream_commands")
     if active:
       add(not desired or viewers < 1, "viewer_desired_state_mismatch")
+      report_age = _safe_int(spacetime.get("relay_report_age_millis"), 0)
+      add(report_age is None or report_age > RELAY_REPORT_MAX_AGE_MILLIS, "relay_report_stale_or_unavailable")
       add(spacetime.get("phone_stream_state") != "streaming" or not spacetime.get("phone_desired_active"), "phone_report_not_streaming")
-      add(spacetime.get("relay_stream_verdict") != "live" or _as_int(spacetime.get("relay_video_clients")) < 1, "relay_not_live")
-      relay_age = _as_int(spacetime.get("relay_last_frame_ago_millis"), -1)
-      add(relay_age < 0 or relay_age > _as_int(thresholds.get("relay_frame_age_millis"), 1000), "relay_frame_stale")
-      add(not relay.get("phone_connected") or not relay.get("phone_desired") or not relay.get("live"), "relay_phone_state_mismatch")
+      add(not relay.get("phone_connected") or not relay.get("phone_desired"), "relay_phone_state_mismatch")
       add(str(relay.get("phone_stream_state", "")).lower() != "streaming", "relay_phone_not_streaming")
+      if warm:
+        add(spacetime.get("relay_stream_verdict") not in {"live", "waiting_keyframe", "stale_recovering"}, "warm_relay_unavailable")
+        warnings.append("Intentional page warmth has no browser video client; live picture freshness and browser/action proof were not assessed.")
+      else:
+        add(spacetime.get("relay_stream_verdict") != "live" or clients < 1, "relay_not_live")
+        add(not relay.get("live"), "relay_phone_state_mismatch")
+        if clients == 0:
+          add(warm_status is None, "warm_state_coverage_unavailable")
+          add(warm_status is not None, "warm_hold_missing_or_expired")
+        _check_frame_age(spacetime.get("relay_last_frame_ago_millis"), thresholds["relay_frame_age_millis"], "relay_frame_stale", failures, warnings)
       if pixel_ok:
-        add(health.get("session_state") != "live" or not health.get("stream_active") or health.get("stream_verdict") != "live", "pixel_stream_not_live")
-        maximum = _as_int(thresholds.get("pixel_frame_age_millis"), 1500)
-        age = _as_int(health.get("visible_frame_age_millis"), -1)
-        add(age < 0 or age > maximum, "pixel_frame_stale")
+        verdicts = {"live", "waiting_keyframe", "stale_recovering"} if warm else {"live"}
+        add(health.get("session_state") != "live" or not health.get("stream_active") or health.get("stream_verdict") not in verdicts, "pixel_stream_not_live")
         hardware = health.get("hardware_h264", {})
-        add(not hardware.get("active") or hardware.get("visibility") != "visible", "pixel_hardware_capture_not_visible")
+        add(not hardware.get("active") or not hardware.get("available") or (not warm and hardware.get("visibility") != "visible"), "pixel_hardware_capture_not_visible")
         pipeline = health.get("stream_pipeline", {})
         add(_as_int(pipeline.get("video_clients")) < 1 or not pipeline.get("encoder_running"), "pixel_pipeline_not_live")
-        pipeline_age = _as_int(pipeline.get("last_frame_sent_ago_millis"), -1)
-        add(pipeline_age < 0 or pipeline_age > maximum, "pixel_pipeline_frame_stale")
+        if not warm:
+          _check_frame_age(health.get("visible_frame_age_millis"), thresholds["pixel_frame_age_millis"], "pixel_frame_stale", failures, warnings)
+          _check_frame_age(pipeline.get("last_frame_sent_ago_millis"), thresholds["pixel_frame_age_millis"], "pixel_pipeline_frame_stale", failures, warnings)
         add(health.get("ticket_state") != "live" or health.get("vivi_state") != "TICKET_DETAIL", "pixel_ticket_state_not_live")
         recovery = health.get("recovery", {})
         add(isinstance(recovery, Mapping) and _recovery_failed(recovery), "pixel_recovery_failed")
@@ -979,11 +1068,12 @@ def evaluate_snapshot(snapshot: Mapping[str, Any], thresholds: Mapping[str, Any]
         add(not isinstance(recovery, Mapping) or _recovery_failed(recovery), "pixel_recovery_failed")
       add(spacetime.get("relay_stream_verdict") not in {"idle", "", None} or _as_int(spacetime.get("relay_video_clients")) != 0, "idle_relay_still_active")
   failures = list(dict.fromkeys(failures))
-  status = "degraded" if failures else ("healthy_live" if active else "healthy_idle")
+  stream_verdict = "warm" if warm else ("live" if active else "idle")
+  status = "degraded" if failures else f"healthy_{stream_verdict}"
   return {
     "status": status, "viewer_mode": mode,
-    "stream_verdict": "degraded" if failures else ("live" if active else "idle"),
-    "frame_age_millis": health.get("visible_frame_age_millis") if active is True and pixel_ok else None,
+    "stream_verdict": "degraded" if failures else stream_verdict,
+    "frame_age_millis": health.get("visible_frame_age_millis") if active is True and not warm and pixel_ok else None,
     "failures": failures, "warnings": warnings,
   }
 

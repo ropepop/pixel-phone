@@ -181,7 +181,7 @@ class TicketSpacetimeDesiredRefreshStateTest {
     val eagerLane = cycle.indexOf("val eagerCommandLane = eagerCommandLaneActive()")
     val signalRead = cycle.indexOf("val signal = client.commandSignal(config)")
     val signaledCommandRead = cycle.indexOf("TicketSpacetimePollingPolicy.shouldReadPendingCommands(signal.pendingCount)")
-    val routinePhoneMessageDrain = cycle.indexOf("drainPhoneMessages(config, client, routinePhoneMessageDrainLimit())")
+    val routinePhoneMessageDrain = cycle.indexOf("service.requestTicketSpacetimeResultPublication()", signaledCommandRead)
     val refreshDecision = cycle.indexOf("desiredRefreshState.shouldRefresh(")
     val previousDesired = cycle.indexOf("val previousDesired = desired", refreshDecision)
     val canonicalRead = cycle.indexOf("desired = client.desiredState(config)")

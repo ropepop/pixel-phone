@@ -43,8 +43,8 @@
     "health_url": "http://127.0.0.1:9388/api/v1/health"
   },
   "thresholds": {
-    "pixel_frame_age_millis": 1500,
-    "relay_frame_age_millis": 1000,
+    "pixel_frame_age_millis": {"warning": 1500, "failure": 3000},
+    "relay_frame_age_millis": {"warning": 1000, "failure": 3000},
     "resources": {
       "host": {
         "memory_used_percent": {"warning": 80, "failure": 92},

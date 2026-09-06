@@ -263,7 +263,7 @@ internal fun DashboardScreen(
       item(key = "brightness") {
         DashboardSection(
           title = "Touch brightness",
-          description = "Let physical touch and the power button control a zero-brightness panel."
+          description = "Physical touch keeps the panel visible for 90 seconds; the side button makes it black while Android stays awake."
         ) {
           ToggleRow(
             title = "Touch brightness mode",

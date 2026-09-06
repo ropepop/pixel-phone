@@ -7,6 +7,15 @@ import org.junit.Test
 
 class TicketTracePrivacyTest {
   @Test
+  fun actionTimingUsesOnlyNumericPhasesAndNeverPublishesArbitraryActionDetails() {
+    assertEquals("ticket_action_timing", TicketTracePrivacy.eventName("ticket_action_timing"))
+    assertNull(TicketTracePrivacy.eventName("ticket_action_private_detail"))
+    assertNull(TicketTracePrivacy.eventName("root_private_detail"))
+    assertEquals(mapOf("panel_ready_ms" to "120", "input_requested_ms" to "900", "helper_launch_work_ms" to "50"),
+      TicketTracePrivacy.allowlistedFields("panel_ready_ms=120 input_requested_ms=900 helper_launch_work_ms=50 ticket=private digits=1234"))
+  }
+
+  @Test
   fun startupPreflightTimingFieldsRemainBoundedAndContentFree() {
     val fields = TicketTracePrivacy.allowlistedFields(
       "preflight_ms=1510 portrait_ms=1509 secure_capture_ms=211 outcome=repaired raw=secret"

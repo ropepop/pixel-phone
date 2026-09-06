@@ -5,19 +5,28 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationRootPhysicalTouchState
 import lv.jolkins.pixelorchestrator.rootexec.RootExecutor
+
+internal data class TicketPhysicalVisibleWindow(
+  val deadlineUptimeMillis: Long = 0L,
+  val generation: Long = 0L
+)
 
 internal data class TicketActionPanelDarkLeaseSnapshot(
   val active: Boolean = false,
@@ -30,16 +39,18 @@ internal data class TicketActionPanelDarkLeaseSnapshot(
   val mutationMayHaveDispatched: Boolean = false,
   val launchExitCode: Int? = null,
   val launchDurationMillis: Long? = null,
+  val acquisitionVerificationMillis: Long? = null,
   val lastVerifierClassification: String = "not_run",
   val lastVerifierExitCode: Int? = null,
   val lastVerifierDurationMillis: Long? = null,
   val helperStage: String = "not_observed",
-  val helperExitCode: Int? = null
+  val helperExitCode: Int? = null,
+  val protectionMode: String = "dark"
 )
 
 internal data class TicketActionPanelDarkLeaseFinalization(
   val safe: Boolean,
-  val freshZeroProven: Boolean,
+  val freshDarkProven: Boolean,
   val exactHelperStopProven: Boolean,
   val snapshot: TicketActionPanelDarkLeaseSnapshot
 )
@@ -98,8 +109,9 @@ private enum class TicketPanelDarkLaunchState {
 
 /**
  * Holds the physical backlight at zero for one Ticket action. TouchBrightnessRuntime remains the
- * physical-input authority: its root-confirmed touch projection cancels this helper immediately,
- * after which the action must reconcile any already-dispatched phone mutation and never replay it.
+ * physical-input authority: a trusted visibility grant reveals the same action after exact helper
+ * shutdown. New mutations wait for finger-up; an already-dispatched mutation is never replayed.
+ * Without configured continuation authority or a live grant, physical touch remains fail-closed.
  */
 internal class TicketActionPanelDarkLease(
   private val actionId: String,
@@ -110,7 +122,11 @@ internal class TicketActionPanelDarkLease(
   private val onSnapshotChanged: (TicketActionPanelDarkLeaseSnapshot) -> Unit,
   private val ownerProcessId: Int,
   private val uptimeClock: () -> Long = SystemClock::uptimeMillis,
-  private val helperToken: String = "ticket-panel-${UUID.randomUUID()}"
+  private val helperToken: String = "ticket-panel-${UUID.randomUUID()}",
+  private val physicalVisibleWindow: () -> TicketPhysicalVisibleWindow = { TicketPhysicalVisibleWindow() },
+  private val physicalTouchContinuationEnabled: Boolean = false,
+  private val onDarkWriterStarting: () -> Unit = {},
+  private val onDarkWriterStopped: () -> Unit = {}
 ) {
   private val released = AtomicBoolean(false)
   private val emergencyHelperStopScheduled = AtomicBoolean(false)
@@ -122,9 +138,16 @@ internal class TicketActionPanelDarkLease(
   @Volatile private var helperLaunchState = TicketPanelDarkLaunchState.PENDING
   @Volatile private var touchMonitorJob: Job? = null
   @Volatile private var verifyJob: Job? = null
+  @Volatile private var acquisitionVerificationJob: Job? = null
   @Volatile private var helperStopProven = false
   @Volatile private var finalization: TicketActionPanelDarkLeaseFinalization? = null
   @Volatile private var lastMutationMayHaveDispatchedAtUptimeMillis: Long? = null
+  @Volatile private var acquiredTouchBeginCount: Long? = null
+  @Volatile private var acquiredVisibleWindowGeneration: Long? = null
+  @Volatile private var visibleTransitionJob: Job? = null
+  @Volatile private var continuingPhysicalTouch = false
+  @Volatile private var darkTransitionJob: Job? = null
+  @Volatile private var darkTransitionStartedAtUptimeMillis = 0L
   @Volatile private var state = TicketActionPanelDarkLeaseSnapshot(ownerActionId = actionId)
 
   fun snapshot(): TicketActionPanelDarkLeaseSnapshot = state
@@ -151,7 +174,43 @@ internal class TicketActionPanelDarkLease(
       return false
     }
 
-    helperLaunchJob = scope.launch {
+    acquiredTouchBeginCount = touch.touchBeginCount
+    val visibleWindow = physicalVisibleWindow()
+    startTouchMonitor()
+    if (visibleWindow.deadlineUptimeMillis > uptimeClock()) {
+      acquiredVisibleWindowGeneration = visibleWindow.generation
+      updateState {
+        if (it.physicalTouchPreempted || it.failure.isNotBlank()) it else it.copy(active = true, acquiredAtUptimeMillis = uptimeClock(),
+          releaseReason = "active", protectionMode = "visible_window")
+      }
+      return beforeMutationAllowed()
+    }
+    val acquired = acquireDarkHelper()
+    return if (snapshot().protectionMode in setOf("revealing", "visible_window")) beforeMutationAllowed() else acquired
+  }
+
+  /** Reacquire darkness for the same lease after visibility expires or is revoked. */
+  private suspend fun acquireDarkHelper(): Boolean {
+    if (released.get() || !physicalTouchClearAtMutationBoundary() ||
+      snapshot().physicalTouchPreempted || snapshot().failure.isNotBlank()
+    ) return false
+    val launchJob = synchronized(stateLock) {
+      if (released.get() || state.physicalTouchPreempted || state.failure.isNotBlank()) return false
+      if (state.protectionMode == "revealing") return false
+      helperStopProven = false
+      helperLaunchState = TicketPanelDarkLaunchState.PENDING
+      emergencyHelperStopScheduled.set(false)
+      onDarkWriterStarting()
+      val grantAfterRegistration = physicalVisibleWindow()
+      if (grantAfterRegistration.deadlineUptimeMillis > uptimeClock()) {
+        acquiredVisibleWindowGeneration = grantAfterRegistration.generation
+        helperStopProven = true
+        state = state.copy(active = true, protectionMode = "visible_window",
+          acquiredAtUptimeMillis = state.acquiredAtUptimeMillis.takeIf { it > 0L } ?: uptimeClock())
+        onDarkWriterStopped()
+        return@synchronized null
+      }
+      scope.launch(start = CoroutineStart.LAZY) {
       // The root command only starts the exact owner-bound helper. The helper itself is detached
       // from this su session, so an otherwise healthy root transport ending cannot terminate a
       // 5-16 second Ticket action. This short launcher acknowledges only that the detached spawn
@@ -187,10 +246,14 @@ internal class TicketActionPanelDarkLease(
           requestEmergencyHelperStop()
         }
       }
+      }.also { helperLaunchJob = it }
+    } ?: run {
+      onSnapshotChanged(snapshot())
+      return true
     }
+    launchJob.start()
 
     val readyDeadline = uptimeClock() + PANEL_DARK_ACQUIRE_TIMEOUT_MILLIS
-    var consecutiveReadyZeroConfirmations = 0
     var acquireAttempts = 0
     var lastVerification = TicketPanelDarkVerification.VERIFIER_UNAVAILABLE
     while (
@@ -203,44 +266,64 @@ internal class TicketActionPanelDarkLease(
         failForLostPhysicalTouchSource("physical_touch_source_lost_during_acquire")
         return false
       }
-      if (currentTouch.active) {
-        preemptForPhysicalTouch("physical_touch_during_acquire")
+      if (!physicalTouchClearAtMutationBoundary()) {
+        if (snapshot().physicalTouchPreempted) preemptForPhysicalTouch("physical_touch_during_acquire")
         return false
       }
+      if (snapshot().protectionMode in setOf("revealing", "visible_window")) return false
       if (helperLaunchState == TicketPanelDarkLaunchState.FAILED) break
       // The short root launcher and the exact detached-helper verifier are both authorities at
       // acquisition. Never let a pre-existing zero panel or a stale readiness record authorize an
       // action while the launcher is pending or after it has failed.
       if (helperLaunchState != TicketPanelDarkLaunchState.SUCCEEDED) {
-        consecutiveReadyZeroConfirmations = 0
         delay(PANEL_DARK_ACQUIRE_POLL_MILLIS)
         continue
       }
-      val verification = verifyHelperReadyAndZero()
+      val verification = verifyDuringAcquisition(readyDeadline) ?: run {
+        stopHelperAndJoinBounded()
+        return false
+      }
+      val verifiedTouch = physicalTouchState()
+      if (!verifiedTouch.available) {
+        failForLostPhysicalTouchSource("physical_touch_source_lost_during_acquire")
+        return false
+      }
+      if (!physicalTouchClearAtMutationBoundary()) {
+        if (snapshot().physicalTouchPreempted) preemptForPhysicalTouch("physical_touch_during_acquire")
+        return false
+      }
+      if (snapshot().protectionMode in setOf("revealing", "visible_window")) return false
+      if (uptimeClock() >= readyDeadline) {
+        lastVerification = if (verification == TicketPanelDarkVerification.PROVEN) {
+          TicketPanelDarkVerification.VERIFIER_UNAVAILABLE
+        } else verification
+        break
+      }
       lastVerification = verification
       if (verification == TicketPanelDarkVerification.PROVEN) {
-        consecutiveReadyZeroConfirmations += 1
-      } else {
-        consecutiveReadyZeroConfirmations = 0
-      }
-      if (consecutiveReadyZeroConfirmations >= PANEL_DARK_REQUIRED_ACQUIRE_CONFIRMATIONS) {
         val now = uptimeClock()
         updateState {
-          it.copy(
+          if (released.get() || it.protectionMode in setOf("revealing", "visible_window") || it.physicalTouchPreempted || it.failure.isNotBlank()) it else it.copy(
             active = true,
-            acquiredAtUptimeMillis = now,
+            acquiredAtUptimeMillis = it.acquiredAtUptimeMillis.takeIf { age -> age > 0L } ?: now,
             lastZeroConfirmedAtUptimeMillis = now,
             failure = "",
-            releaseReason = "active"
+            releaseReason = "active",
+            protectionMode = "dark"
           )
         }
-        startMonitors()
-        return true
+        if (snapshot().protectionMode in setOf("revealing", "visible_window")) return false
+        if (!snapshot().active) {
+          stopHelperAndJoinBounded()
+          return false
+        }
+        startPeriodicVerifier()
+        return ongoingCommandAllowed()
       }
       delay(PANEL_DARK_ACQUIRE_POLL_MILLIS)
     }
     updateState {
-      if (it.failure.isNotBlank()) {
+      if (it.failure.isNotBlank() || it.physicalTouchPreempted) {
         it.copy(active = false)
       } else {
         it.copy(
@@ -258,62 +341,209 @@ internal class TicketActionPanelDarkLease(
     return false
   }
 
-  suspend fun beforeMutationAllowed(): Boolean {
-    // Read the physical source synchronously at the mutation boundary as well as via the 20 ms
-    // monitor. This closes the scheduler window between a real finger-down event and the monitor
-    // coroutine's next turn.
-    if (!physicalTouchClearAtMutationBoundary()) return false
-    val current = snapshot()
-    val zeroProofAge = if (current.lastZeroConfirmedAtUptimeMillis > 0L) {
-      (uptimeClock() - current.lastZeroConfirmedAtUptimeMillis).coerceAtLeast(0L)
-    } else {
-      Long.MAX_VALUE
-    }
-    if (current.active && zeroProofAge > PANEL_DARK_MAX_ZERO_CONFIRMATION_AGE_MILLIS) {
-      // A delayed verifier coroutine must not turn a physically dark, healthy clamp into a false
-      // terminal. Wait for any already-running exact verifier and, if it did not produce a fresh
-      // proof, perform one bounded exact helper-identity/raw-zero refresh at this boundary. The
-      // stale proof itself never authorizes mutation.
-      val verification = refreshStaleZeroProofAtMutationBoundary()
-      // Physical touch remains the highest authority throughout the bounded root read. Re-read it
-      // before considering the new zero proof so a touch during verification always wins.
-      if (!physicalTouchClearAtMutationBoundary()) return false
-      val refreshed = snapshot()
-      if (!refreshed.active || refreshed.physicalTouchPreempted || refreshed.failure.isNotBlank()) {
-        return false
-      }
-      if (verification == TicketPanelDarkVerification.PROVEN) {
-        return true
-      }
-      val failure = when (verification) {
-        TicketPanelDarkVerification.HELPER_UNREADY -> "panel_dark_helper_identity_lost"
-        TicketPanelDarkVerification.PANEL_NOT_DARK -> "panel_dark_zero_lost"
-        TicketPanelDarkVerification.VERIFIER_UNAVAILABLE -> "panel_dark_verifier_unavailable"
-        TicketPanelDarkVerification.PROVEN -> error("handled above")
-      }
-      updateState {
-        if (it.physicalTouchPreempted || it.failure.isNotBlank()) {
-          it.copy(active = false)
-        } else {
-          it.copy(
-            active = false,
-            failure = failure,
-            releaseReason = when (verification) {
-              TicketPanelDarkVerification.VERIFIER_UNAVAILABLE ->
-                "panel_dark_zero_proof_stale_at_mutation_boundary"
-              else -> failure
-            }
-          )
-        }
-      }
+  /** Revealing changes protection for this lease; it never creates or repeats an action. */
+  private fun ensureVisibleTransitionStarted(window: TicketPhysicalVisibleWindow): Job? {
+    val job = synchronized(stateLock) {
+      if (released.get() || state.failure.isNotBlank() || state.physicalTouchPreempted) return@synchronized null
+      acquiredVisibleWindowGeneration = window.generation
+      if (state.protectionMode == "visible_window") return@synchronized null
+      if (state.protectionMode == "revealing") return@synchronized visibleTransitionJob
+      state = state.copy(active = true, protectionMode = "revealing",
+        acquiredAtUptimeMillis = state.acquiredAtUptimeMillis.takeIf { it > 0L } ?: uptimeClock())
+      // Cancel synchronously before the physical runtime is allowed to restore brightness.
       verifyJob?.cancel()
-      requestEmergencyHelperStop()
+      darkTransitionJob?.cancel()
+      acquisitionVerificationJob?.cancel()
+      scope.launch(start = CoroutineStart.LAZY) {
+        darkTransitionJob?.cancelAndJoin()
+        verifyJob?.cancelAndJoin()
+        acquisitionVerificationJob?.cancelAndJoin()
+        val stopped = stopHelperAndJoinBounded()
+        synchronized(stateLock) {
+          if (stopped && !released.get() && state.failure.isBlank()) {
+            helperLaunchJob = null
+            state = state.copy(protectionMode = "visible_window", lastZeroConfirmedAtUptimeMillis = 0L)
+          }
+        }
+        onSnapshotChanged(snapshot())
+      }.also { visibleTransitionJob = it }
+    }
+    onSnapshotChanged(snapshot())
+    job?.start()
+    return job
+  }
+
+  private fun visibleWindowStillValid(): Boolean {
+    val visibleWindow = physicalVisibleWindow()
+    return visibleWindow.generation == acquiredVisibleWindowGeneration &&
+      visibleWindow.deadlineUptimeMillis > uptimeClock()
+  }
+
+  private fun ensureDarkTransitionStarted(): Job? {
+    var started = false
+    val job = synchronized(stateLock) {
+      if (released.get() || !state.active || state.physicalTouchPreempted || state.failure.isNotBlank()) {
+        return@synchronized null
+      }
+      if (state.protectionMode != "visible_window" || visibleWindowStillValid() || physicalTouchState().active) {
+        return@synchronized darkTransitionJob
+      }
+      darkTransitionStartedAtUptimeMillis = uptimeClock()
+      state = state.copy(protectionMode = "darkening")
+      started = true
+      scope.launch(start = CoroutineStart.LAZY) {
+        var acquired = false
+        try {
+          acquired = withTimeoutOrNull(PANEL_DARK_ACQUIRE_TIMEOUT_MILLIS) { acquireDarkHelper() } == true
+          if (!acquired && !released.get() && snapshot().protectionMode != "revealing" && snapshot().failure.isBlank() && !snapshot().physicalTouchPreempted) {
+            failDarkTransition()
+          }
+        } finally {
+          if (!acquired) withContext(NonCancellable) { stopHelperAndJoinBounded() }
+        }
+      }.also { darkTransitionJob = it }
+    }
+    if (started) onSnapshotChanged(snapshot())
+    job?.start()
+    return job
+  }
+
+  private fun failDarkTransition() {
+    updateState {
+      if (it.failure.isNotBlank() || it.physicalTouchPreempted) it else it.copy(
+        active = false, failure = "panel_dark_transition_unproved", releaseReason = "panel_dark_transition_unproved"
+      )
+    }
+    darkTransitionJob?.cancel()
+    requestEmergencyHelperStop()
+  }
+
+  private suspend fun verifyDuringAcquisition(readyDeadline: Long): TicketPanelDarkVerification? = supervisorScope {
+    val pending = async(start = CoroutineStart.LAZY) {
+      verifyHelperReadyAndZero(
+        requiredConfirmations = PANEL_DARK_REQUIRED_ACQUIRE_CONFIRMATIONS,
+        deadlineUptimeMillis = readyDeadline
+      )
+    }
+    acquisitionVerificationJob = pending
+    try {
+      val current = snapshot()
+      if (current.physicalTouchPreempted || current.failure.isNotBlank()) {
+        pending.cancel()
+        return@supervisorScope null
+      }
+      pending.await()
+    } catch (cancelled: CancellationException) {
+      currentCoroutineContext().ensureActive()
+      val current = snapshot()
+      if (current.protectionMode == "revealing" || current.physicalTouchPreempted || current.failure.isNotBlank()) null else throw cancelled
+    } finally {
+      if (acquisitionVerificationJob === pending) acquisitionVerificationJob = null
+    }
+  }
+
+  /** Check in-flight cancellation without waiting behind a root verifier. */
+  fun ongoingCommandAllowed(): Boolean {
+    if (!physicalTouchClearAtMutationBoundary()) return false
+    ensureDarkTransitionStarted()
+    val current = snapshot()
+    if (current.protectionMode == "darkening" &&
+      uptimeClock() - darkTransitionStartedAtUptimeMillis >= PANEL_DARK_ACQUIRE_TIMEOUT_MILLIS
+    ) {
+      failDarkTransition()
       return false
     }
     return current.active && !current.physicalTouchPreempted && current.failure.isBlank()
   }
 
+  suspend fun beforeMutationAllowed(): Boolean {
+    while (true) {
+      // Read the physical source synchronously at the mutation boundary as well as via the 20 ms
+      // monitor. This closes the scheduler window between a real finger-down event and the monitor
+      // coroutine's next turn.
+      if (!physicalTouchClearAtMutationBoundary()) return false
+      val lifted = withTimeoutOrNull(PHYSICAL_TOUCH_RELEASE_TIMEOUT_MILLIS) {
+        while (physicalTouchState().active) {
+          if (!physicalTouchClearAtMutationBoundary()) return@withTimeoutOrNull false
+          delay(PHYSICAL_TOUCH_POLL_MILLIS)
+        }
+        physicalTouchClearAtMutationBoundary()
+      } == true
+      if (!lifted) {
+        if (snapshot().failure.isBlank()) {
+          updateState { it.copy(active = false, failure = "physical_touch_release_timeout", releaseReason = "physical_touch_release_timeout") }
+          verifyJob?.cancel()
+          darkTransitionJob?.cancel()
+          visibleTransitionJob?.cancelAndJoin()
+          stopHelperAndJoinBounded()
+        }
+        return false
+      }
+      visibleTransitionJob?.join()
+      if (!physicalTouchClearAtMutationBoundary()) return false
+      if (physicalTouchState().active || snapshot().protectionMode == "revealing") continue
+      if (snapshot().protectionMode == "visible_window" && visibleWindowStillValid()) {
+        return snapshot().let { it.active && !it.physicalTouchPreempted && it.failure.isBlank() }
+      }
+      ensureDarkTransitionStarted()?.join()
+      if (!physicalTouchClearAtMutationBoundary()) return false
+      if (snapshot().protectionMode in setOf("revealing", "visible_window") || physicalTouchState().active) continue
+      if (snapshot().protectionMode != "dark") return false
+      val current = snapshot()
+      val zeroProofAge = if (current.lastZeroConfirmedAtUptimeMillis > 0L) {
+        (uptimeClock() - current.lastZeroConfirmedAtUptimeMillis).coerceAtLeast(0L)
+      } else {
+        Long.MAX_VALUE
+      }
+      if (current.active && zeroProofAge > PANEL_DARK_MAX_ZERO_CONFIRMATION_AGE_MILLIS) {
+        // A delayed verifier coroutine must not turn a physically dark, healthy clamp into a false
+        // terminal. Wait for any already-running exact verifier and, if it did not produce a fresh
+        // proof, perform one bounded exact helper-identity/raw-zero refresh at this boundary. The
+        // stale proof itself never authorizes mutation.
+        val verification = refreshStaleZeroProofAtMutationBoundary()
+        // Physical touch remains the highest authority throughout the bounded root read. Re-read it
+        // before considering the new zero proof so a touch during verification always wins.
+        if (!physicalTouchClearAtMutationBoundary()) return false
+        if (snapshot().protectionMode != "dark" || physicalTouchState().active) continue
+        val refreshed = snapshot()
+        if (!refreshed.active || refreshed.physicalTouchPreempted || refreshed.failure.isNotBlank()) {
+          return false
+        }
+        if (verification == TicketPanelDarkVerification.PROVEN) {
+          return true
+        }
+        val failure = when (verification) {
+          TicketPanelDarkVerification.HELPER_UNREADY -> "panel_dark_helper_identity_lost"
+          TicketPanelDarkVerification.PANEL_NOT_DARK -> "panel_dark_zero_lost"
+          TicketPanelDarkVerification.VERIFIER_UNAVAILABLE -> "panel_dark_verifier_unavailable"
+          TicketPanelDarkVerification.PROVEN -> error("handled above")
+        }
+        updateState {
+          if (it.physicalTouchPreempted || it.failure.isNotBlank()) {
+            it.copy(active = false)
+          } else {
+            it.copy(
+              active = false,
+              failure = failure,
+              releaseReason = when (verification) {
+                TicketPanelDarkVerification.VERIFIER_UNAVAILABLE ->
+                  "panel_dark_zero_proof_stale_at_mutation_boundary"
+                else -> failure
+              }
+            )
+          }
+        }
+        verifyJob?.cancel()
+        darkTransitionJob?.cancel()
+        requestEmergencyHelperStop()
+        return false
+      }
+      return current.active && !current.physicalTouchPreempted && current.failure.isBlank()
+    }
+  }
+
   private fun physicalTouchClearAtMutationBoundary(): Boolean {
+    if (snapshot().physicalTouchPreempted || snapshot().failure.isNotBlank()) return false
     val currentTouch = physicalTouchState()
     if (!currentTouch.available) {
       updateState {
@@ -324,10 +554,24 @@ internal class TicketActionPanelDarkLease(
         )
       }
       verifyJob?.cancel()
+      darkTransitionJob?.cancel()
       requestEmergencyHelperStop()
       return false
     }
-    if (currentTouch.active) {
+    if (physicalTouchOccurred(currentTouch)) {
+      val window = physicalVisibleWindow()
+      if (window.deadlineUptimeMillis > uptimeClock()) {
+        acquiredTouchBeginCount = currentTouch.touchBeginCount
+        continuingPhysicalTouch = currentTouch.active
+        ensureVisibleTransitionStarted(window)
+        return true
+      }
+      if (physicalTouchContinuationEnabled) {
+        acquiredTouchBeginCount = currentTouch.touchBeginCount
+        continuingPhysicalTouch = currentTouch.active
+        return true
+      }
+      if (continuingPhysicalTouch && acquiredTouchBeginCount == currentTouch.touchBeginCount) return true
       updateState {
         it.copy(
           active = false,
@@ -336,11 +580,20 @@ internal class TicketActionPanelDarkLease(
         )
       }
       verifyJob?.cancel()
+      darkTransitionJob?.cancel()
       requestEmergencyHelperStop()
       return false
     }
+    continuingPhysicalTouch = false
+    if (snapshot().protectionMode in setOf("visible_window", "revealing")) {
+      val window = physicalVisibleWindow()
+      if (window.deadlineUptimeMillis > uptimeClock()) ensureVisibleTransitionStarted(window)
+    }
     return true
   }
+
+  private fun physicalTouchOccurred(touch: PhoneAutomationRootPhysicalTouchState): Boolean =
+    touch.active || acquiredTouchBeginCount?.let { it != touch.touchBeginCount } == true
 
   private suspend fun refreshStaleZeroProofAtMutationBoundary(): TicketPanelDarkVerification {
     return withTimeoutOrNull(PANEL_DARK_MUTATION_REFRESH_TIMEOUT_MILLIS) {
@@ -381,8 +634,7 @@ internal class TicketActionPanelDarkLease(
    */
   suspend fun releaseAfterFinalConvergence(reason: String): TicketActionPanelDarkLeaseFinalization {
     return withContext(NonCancellable) {
-      val freshZeroProven = awaitFinalConvergenceTail()
-      releaseInternal(reason, freshZeroProven)
+      releaseInternal(reason, requireSuccessProof = true)
     }
   }
 
@@ -402,7 +654,10 @@ internal class TicketActionPanelDarkLease(
       remainingMillis -= stepMillis
     }
     if (!beforeMutationAllowed()) return false
-    return when (verifyHelperReadyAndZero(recordFreshZero = true)) {
+    if (snapshot().protectionMode != "dark") return false
+    val finalVerification = verifyHelperReadyAndZero(recordFreshZero = true)
+    if (!physicalTouchClearAtMutationBoundary() || snapshot().protectionMode != "dark") return false
+    return when (finalVerification) {
       TicketPanelDarkVerification.PROVEN -> {
         beforeMutationAllowed()
       }
@@ -432,19 +687,54 @@ internal class TicketActionPanelDarkLease(
 
   suspend fun release(reason: String): TicketActionPanelDarkLeaseFinalization {
     return withContext(NonCancellable) {
-      releaseInternal(reason, freshZeroProven = false)
+      releaseInternal(reason, requireSuccessProof = false)
     }
   }
 
+  private fun commitVisibleFinalization(reason: String): TicketActionPanelDarkLeaseFinalization? = synchronized(stateLock) {
+        val touch = physicalTouchState()
+        if (state.protectionMode == "visible_window" && visibleWindowStillValid() &&
+          state.active && state.failure.isBlank() && !state.physicalTouchPreempted &&
+          touch.available && !physicalTouchOccurred(touch) && helperLaunchJob == null
+        ) {
+          released.set(true)
+          state = state.copy(active = false, releaseReason = reason)
+          TicketActionPanelDarkLeaseFinalization(
+            safe = true, freshDarkProven = false, exactHelperStopProven = true, snapshot = state
+          ).also { finalization = it }
+        } else null
+      }
+
   private suspend fun releaseInternal(
     reason: String,
-    freshZeroProven: Boolean
+    requireSuccessProof: Boolean
   ): TicketActionPanelDarkLeaseFinalization {
     finalizationMutex.lock()
     return try {
       finalization?.let { return it }
-      released.compareAndSet(false, true)
+      if (requireSuccessProof) beforeMutationAllowed()
+      // The grant and helper-start decision share this lock: expiry either wins and obtains
+      // normal dark finalization, or a visible terminal wins before any helper can be created.
+      val visibleFinalization = if (requireSuccessProof) commitVisibleFinalization(reason) else null
+      if (visibleFinalization != null) {
+        touchMonitorJob?.cancelAndJoin()
+        onSnapshotChanged(visibleFinalization.snapshot)
+        return visibleFinalization
+      }
+      val freshDarkProven = requireSuccessProof && awaitFinalConvergenceTail()
+      val revealedFinalization = if (requireSuccessProof) {
+        visibleTransitionJob?.join()
+        commitVisibleFinalization(reason)
+      } else null
+      if (revealedFinalization != null) {
+        touchMonitorJob?.cancelAndJoin()
+        onSnapshotChanged(revealedFinalization.snapshot)
+        return revealedFinalization
+      }
+      synchronized(stateLock) { released.compareAndSet(false, true) }
       withContext(NonCancellable) {
+        visibleTransitionJob?.cancelAndJoin()
+        darkTransitionJob?.cancelAndJoin()
         // Freeze periodic verification, then require the complete helper-identity/raw-zero gate
         // while the helper and its root-only identity files still exist. Exact shutdown removes
         // those files by design, so only the independent physical-touch authority is sampled
@@ -452,16 +742,26 @@ internal class TicketActionPanelDarkLease(
         // The touch monitor remains live throughout shutdown, and the synchronous post-stop read
         // closes the last scheduler window before it is cancelled.
         verifyJob?.cancelAndJoin()
-        val preStopBoundaryClear = if (freshZeroProven) beforeMutationAllowed() else false
+        val preStopBoundaryClear = if (freshDarkProven) beforeMutationAllowed() else false
         val exactHelperStopProven = stopHelperAndJoinBounded()
-        val postStopTouchClear = if (freshZeroProven && preStopBoundaryClear) {
-          physicalTouchClearAtMutationBoundary()
+        val postStopTouchClear = if (freshDarkProven && preStopBoundaryClear) {
+          withTimeoutOrNull(PHYSICAL_TOUCH_RELEASE_TIMEOUT_MILLIS) {
+            while (true) {
+              if (!physicalTouchClearAtMutationBoundary()) return@withTimeoutOrNull false
+              if (!physicalTouchState().active) return@withTimeoutOrNull true
+              delay(PHYSICAL_TOUCH_POLL_MILLIS)
+            }
+            @Suppress("UNREACHABLE_CODE") false
+          } == true
         } else {
           false
         }
         touchMonitorJob?.cancelAndJoin()
+        val visibleAfterStop = exactHelperStopProven && postStopTouchClear &&
+          physicalVisibleWindow().deadlineUptimeMillis > uptimeClock()
         updateState {
           it.copy(
+            protectionMode = if (visibleAfterStop) "visible_window" else it.protectionMode,
             active = false,
             releaseReason = if (it.physicalTouchPreempted || it.failure.isNotBlank()) {
               it.releaseReason
@@ -472,11 +772,11 @@ internal class TicketActionPanelDarkLease(
         }
         val finalSnapshot = snapshot()
         TicketActionPanelDarkLeaseFinalization(
-          safe = freshZeroProven && preStopBoundaryClear && exactHelperStopProven &&
+          safe = freshDarkProven && preStopBoundaryClear && exactHelperStopProven &&
             postStopTouchClear &&
             !finalSnapshot.active && !finalSnapshot.physicalTouchPreempted &&
             finalSnapshot.failure.isBlank(),
-          freshZeroProven = freshZeroProven,
+          freshDarkProven = freshDarkProven && !visibleAfterStop,
           exactHelperStopProven = exactHelperStopProven,
           snapshot = finalSnapshot
         ).also { finalization = it }
@@ -486,25 +786,37 @@ internal class TicketActionPanelDarkLease(
     }
   }
 
-  private fun startMonitors() {
+  private fun startTouchMonitor() {
     touchMonitorJob = scope.launch {
       while (true) {
         val currentTouch = physicalTouchState()
         if (!currentTouch.available) {
-          failForLostPhysicalTouchSource("physical_touch_source_lost")
+          failForLostPhysicalTouchSource(
+            if (snapshot().acquiredAtUptimeMillis == 0L) "physical_touch_source_lost_during_acquire"
+            else "physical_touch_source_lost"
+          )
           return@launch
         }
-        if (currentTouch.active) {
-          preemptForPhysicalTouch("physical_touch_preempted")
+        if (!physicalTouchClearAtMutationBoundary()) {
+          if (snapshot().physicalTouchPreempted) preemptForPhysicalTouch(
+            if (snapshot().acquiredAtUptimeMillis == 0L) "physical_touch_during_acquire" else "physical_touch_preempted"
+          )
           return@launch
         }
+        ensureDarkTransitionStarted()
         delay(PHYSICAL_TOUCH_POLL_MILLIS)
       }
     }
+  }
+
+  private fun startPeriodicVerifier() {
     verifyJob = scope.launch {
       while (true) {
         delay(PANEL_DARK_VERIFY_INTERVAL_MILLIS)
-        when (verifyHelperReadyAndZero(recordFreshZero = true)) {
+        if (!physicalTouchClearAtMutationBoundary() || snapshot().protectionMode != "dark") return@launch
+        val verification = verifyHelperReadyAndZero(recordFreshZero = true)
+        if (!physicalTouchClearAtMutationBoundary() || snapshot().protectionMode != "dark") return@launch
+        when (verification) {
           TicketPanelDarkVerification.PROVEN -> {
             // The exact proof timestamp is recorded before the serialized verifier is released.
           }
@@ -543,6 +855,7 @@ internal class TicketActionPanelDarkLease(
   }
 
   private suspend fun failForPanelVerification(failure: String, releaseReason: String) {
+    if (!physicalTouchClearAtMutationBoundary() || snapshot().protectionMode != "dark") return
     updateState {
       if (it.failure.isNotBlank()) {
         it.copy(active = false)
@@ -566,6 +879,8 @@ internal class TicketActionPanelDarkLease(
       )
     }
     verifyJob?.cancel()
+    darkTransitionJob?.cancel()
+    acquisitionVerificationJob?.cancelAndJoin()
     stopHelperAndJoinBounded()
   }
 
@@ -578,6 +893,8 @@ internal class TicketActionPanelDarkLease(
       )
     }
     verifyJob?.cancel()
+    darkTransitionJob?.cancel()
+    acquisitionVerificationJob?.cancelAndJoin()
     stopHelperAndJoinBounded()
   }
 
@@ -594,24 +911,25 @@ internal class TicketActionPanelDarkLease(
       helperStopProven = true
       return@withLock true
     }
-    // First stop any helper that is already visible, but retain the launch marker because a
-    // cancellation-ignoring launcher could still be between marker creation and detached spawn.
-    job.cancel()
-    stopHelperProcess(allowMissingReadiness = false, removeLaunchMarker = false)
-    val joined = withTimeoutOrNull(PANEL_DARK_HELPER_JOIN_TIMEOUT_MILLIS) {
-      job.join()
-      true
-    } ?: false
-    // Only after the launcher has quiesced can an exact scan prove that no late helper remains and
-    // remove the root-only launch marker. Missing readiness is never accepted as proof by itself.
-    val finalStopProven = if (joined) {
+    // A completed launcher cannot spawn a late child. Keep its readiness identity and prove
+    // one exact shutdown instead of deleting readiness then scanning all processes a second time.
+    val stopped = if (job.isCompleted) {
       stopHelperProcess(allowMissingReadiness = false, removeLaunchMarker = true)
     } else {
-      false
+      // Retain the marker while a cancellation-ignoring launcher could still spawn a child.
+      job.cancel()
+      stopHelperProcess(allowMissingReadiness = false, removeLaunchMarker = false)
+      val joined = withTimeoutOrNull(PANEL_DARK_HELPER_JOIN_TIMEOUT_MILLIS) {
+        job.join()
+        true
+      } ?: false
+      // Only after launch quiesces can the final exact scan exclude late children and remove
+      // the marker. Missing readiness alone is never accepted as proof.
+      joined && stopHelperProcess(allowMissingReadiness = false, removeLaunchMarker = true)
     }
-    val stopped = finalStopProven && joined
     if (stopped) {
       helperStopProven = true
+      onDarkWriterStopped()
     } else {
       updateState {
         it.copy(
@@ -644,21 +962,32 @@ internal class TicketActionPanelDarkLease(
   }
 
   private suspend fun verifyHelperReadyAndZero(
-    recordFreshZero: Boolean = false
+    recordFreshZero: Boolean = false,
+    requiredConfirmations: Int = 1,
+    deadlineUptimeMillis: Long? = null
   ): TicketPanelDarkVerification = verificationMutex.withLock {
-    verifyHelperReadyAndZeroLocked(recordFreshZero)
+    verifyHelperReadyAndZeroLocked(recordFreshZero, requiredConfirmations, deadlineUptimeMillis)
   }
 
   private suspend fun verifyHelperReadyAndZeroLocked(
-    recordFreshZero: Boolean
+    recordFreshZero: Boolean,
+    requiredConfirmations: Int = 1,
+    deadlineUptimeMillis: Long? = null
   ): TicketPanelDarkVerification {
+    // Batching preserves each observation's existing allowance. It may consume
+    // only the remaining acquisition window and cannot renew that deadline.
+    val remainingMillis = deadlineUptimeMillis?.minus(uptimeClock()) ?: Long.MAX_VALUE
+    if (remainingMillis <= 0L) return TicketPanelDarkVerification.VERIFIER_UNAVAILABLE
+    val timeoutMillis = (PANEL_DARK_VERIFY_TIMEOUT_MILLIS * requiredConfirmations)
+      .coerceAtMost(remainingMillis)
     val result = verifyRootExecutor.runScript(
-      panelDarkVerifyScript(helperToken),
-      PANEL_DARK_VERIFY_TIMEOUT_MILLIS.milliseconds
+      panelDarkVerifyScript(helperToken, requiredConfirmations),
+      timeoutMillis.milliseconds
     )
     val outputLines = result.stdout.lineSequence().map(String::trim).toSet()
     val verification = when {
-      result.ok && "helper_ready=1" in outputLines && "panel_dark=1" in outputLines ->
+      result.ok && "helper_ready=1" in outputLines && "panel_dark=1" in outputLines &&
+        (requiredConfirmations == 1 || "panel_confirmations=$requiredConfirmations" in outputLines) ->
         TicketPanelDarkVerification.PROVEN
       "helper_ready=0" in outputLines ->
         TicketPanelDarkVerification.HELPER_UNREADY
@@ -684,6 +1013,9 @@ internal class TicketActionPanelDarkLease(
         lastVerifierClassification = verification.healthToken,
         lastVerifierExitCode = result.exitCode,
         lastVerifierDurationMillis = result.durationMs.coerceAtLeast(0L),
+        acquisitionVerificationMillis = if (requiredConfirmations > 1) {
+          (it.acquisitionVerificationMillis ?: 0L) + result.durationMs.coerceAtLeast(0L)
+        } else it.acquisitionVerificationMillis,
         helperStage = helperStage ?: it.helperStage,
         helperExitCode = helperExitCode ?: it.helperExitCode
       )
@@ -701,6 +1033,7 @@ internal class TicketActionPanelDarkLease(
   companion object {
     internal const val PANEL_DARK_WRITE_INTERVAL_MILLIS = 5L
     internal const val PANEL_DARK_FINAL_CONVERGENCE_MILLIS = 2_500L
+    internal const val PHYSICAL_TOUCH_RELEASE_TIMEOUT_MILLIS = 10_000L
     internal const val PHYSICAL_TOUCH_POLL_MILLIS = 20L
     internal const val PANEL_DARK_VERIFY_INTERVAL_MILLIS = 250L
     internal const val PANEL_DARK_ACQUIRE_TIMEOUT_MILLIS = 3_000L
@@ -873,7 +1206,11 @@ internal class TicketActionPanelDarkLease(
           set -- ${'$'}rest
           shift 19
           [ "${'$'}{1:-}" = "${'$'}owner_start" ] || exit 0
-          echo 0 > "${'$'}panel/brightness" 2>/dev/null || exit 76
+          panel_power=""
+          IFS= read -r panel_power < "${'$'}panel/bl_power" 2>/dev/null || panel_power=""
+          if [ "${'$'}readiness_published" != "1" ] || [ "${'$'}panel_power" != "4" ]; then
+            echo 0 > "${'$'}panel/brightness" 2>/dev/null || exit 76
+          fi
           if [ "${'$'}readiness_published" != "1" ]; then
             write_stage zero_written
             printf "helper_pid=%s\nhelper_start=%s\nowner_pid=%s\nowner_start=%s\n" \
@@ -1266,9 +1603,39 @@ internal class TicketActionPanelDarkLease(
       """.trimIndent()
     }
 
-    internal fun panelDarkVerifyScript(helperToken: String): String {
+    internal fun panelDarkReadbackScript(): String = """
+      panel=""
+      for candidate in /sys/class/backlight/panel0-backlight /sys/class/backlight/*; do
+        if [ -f "${'$'}candidate/brightness" ]; then panel="${'$'}candidate"; break; fi
+      done
+      if [ -z "${'$'}panel" ]; then
+        echo panel_dark=0
+        exit 75
+      fi
+      # This Pixel driver reports requested brightness even while its blank gate
+      # forces emitted brightness to zero. Exact helper/owner identity is proved above.
+      power=""
+      IFS= read -r power < "${'$'}panel/bl_power" 2>/dev/null || power=""
+      if [ "${'$'}power" = "4" ]; then
+        echo panel_dark=1
+        exit 0
+      fi
+      current=""
+      IFS= read -r current < "${'$'}panel/brightness" 2>/dev/null || current=""
+      actual=""
+      IFS= read -r actual < "${'$'}panel/actual_brightness" 2>/dev/null || actual=""
+      if [ "${'$'}current" = "0" ] && { [ -z "${'$'}actual" ] || [ "${'$'}actual" = "0" ]; }; then
+        echo panel_dark=1
+        exit 0
+      fi
+      echo panel_dark=0
+      exit 1
+    """.trimIndent()
+
+    internal fun panelDarkVerifyScript(helperToken: String, requiredConfirmations: Int = 1): String {
       require(helperToken.matches(Regex("[A-Za-z0-9._-]+"))) { "unsafe helper token" }
-      return """
+      require(requiredConfirmations in 1..PANEL_DARK_REQUIRED_ACQUIRE_CONFIRMATIONS)
+      val observation = """
       helper_token='$helperToken'
       readiness_file='$HELPER_READINESS_DIRECTORY/$helperToken.ready'
       stage_file='$HELPER_READINESS_DIRECTORY/$helperToken.stage'
@@ -1338,24 +1705,30 @@ internal class TicketActionPanelDarkLease(
       [ "${'$'}(read_proc_start "${'$'}owner_pid")" = "${'$'}owner_start" ] || fail_readiness
       emit_helper_telemetry
       echo helper_ready=1
-      panel=""
-      for candidate in /sys/class/backlight/panel0-backlight /sys/class/backlight/*; do
-        if [ -f "${'$'}candidate/brightness" ]; then panel="${'$'}candidate"; break; fi
+      ${panelDarkReadbackScript()}
+      """.trimIndent()
+      if (requiredConfirmations == 1) return observation
+      // Two distinct full identity/readback observations share one root transport. A subshell
+      // contains each verifier's exit; only the final successful pair may authorize acquisition.
+      return """
+      verify_once() (
+      $observation
+      )
+      confirmations=0
+      while [ "${'$'}confirmations" -lt "$requiredConfirmations" ]; do
+        observation="${'$'}(verify_once)"
+        status=${'$'}?
+        if [ "${'$'}status" -ne 0 ]; then
+          printf '%s\n' "${'$'}observation"
+          exit "${'$'}status"
+        fi
+        confirmations=${'$'}((confirmations + 1))
+        if [ "${'$'}confirmations" -lt "$requiredConfirmations" ]; then
+          usleep ${PANEL_DARK_ACQUIRE_POLL_MILLIS * 1_000L} 2>/dev/null || sleep 0.025 || exit 76
+        fi
       done
-      if [ -z "${'$'}panel" ]; then
-        echo panel_dark=0
-        exit 75
-      fi
-      current=""
-      IFS= read -r current < "${'$'}panel/brightness" 2>/dev/null || current=""
-      actual=""
-      IFS= read -r actual < "${'$'}panel/actual_brightness" 2>/dev/null || actual=""
-      if [ "${'$'}current" = "0" ] && { [ -z "${'$'}actual" ] || [ "${'$'}actual" = "0" ]; }; then
-        echo panel_dark=1
-        exit 0
-      fi
-      echo panel_dark=0
-      exit 1
+      printf '%s\n' "${'$'}observation"
+      echo panel_confirmations=${'$'}confirmations
       """.trimIndent()
     }
   }

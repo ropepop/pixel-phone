@@ -317,7 +317,7 @@ public final class TicketVisualActionClassifier {
       return new Result(
         "unactivated_detail",
         detailAnchor,
-        scaleBounds(slider),
+        refineRegistrationSliderBounds(geometryPixels, scaleBounds(slider), registrationBands),
         detectControlCodeButton(headerGeometryPixels),
         back,
         new ArrayList<>()
@@ -769,6 +769,58 @@ public final class TicketVisualActionClassifier {
       }
     }
     return candidate;
+  }
+
+  /** Compact detection grants shape authority; this sample locates its actual unpadded edges. */
+  private static Bounds refineRegistrationSliderBounds(int[] pixels, Bounds coarse, List<Bounds> bands) {
+    if (coarse == null) return null;
+    Bounds track = null;
+    for (Bounds band : bands) {
+      int center = (band.top + band.bottom) / 2;
+      if (center < coarse.top || center >= coarse.bottom || band.right <= coarse.left || band.left >= coarse.right) continue;
+      if (track != null) return null;
+      track = band;
+    }
+    if (track == null) return null;
+    int height = track.bottom - track.top;
+    int left = Math.max(0, coarse.left - 4);
+    int right = Math.min(SAMPLE_WIDTH, Math.max(track.left + height * 2, coarse.left + (coarse.right - coarse.left) / 3));
+    int top = Math.max(0, coarse.top - 4);
+    int bottom = Math.min(SAMPLE_HEIGHT, coarse.bottom + 4);
+    boolean[] seen = new boolean[SAMPLE_WIDTH * SAMPLE_HEIGHT];
+    int[] queue = new int[(right - left) * (bottom - top)];
+    Bounds thumb = null;
+    int bestArea = 0;
+    for (int y = top; y < bottom; y++) for (int x = left; x < right; x++) {
+      int seed = y * SAMPLE_WIDTH + x;
+      if (seen[seed] || luminance(pixels[seed]) > 90 || isRegistrationColor(pixels[seed])) continue;
+      int head = 0, tail = 0;
+      queue[tail++] = seed;
+      seen[seed] = true;
+      int minX = x, maxX = x, minY = y, maxY = y;
+      boolean edge = false;
+      while (head < tail) {
+        int point = queue[head++], px = point % SAMPLE_WIDTH, py = point / SAMPLE_WIDTH;
+        minX = Math.min(minX, px); maxX = Math.max(maxX, px);
+        minY = Math.min(minY, py); maxY = Math.max(maxY, py);
+        if (px == left || px == right - 1 || py == top || py == bottom - 1) edge = true;
+        int[] neighbors = {point - 1, point + 1, point - SAMPLE_WIDTH, point + SAMPLE_WIDTH};
+        for (int next : neighbors) {
+          int nx = next % SAMPLE_WIDTH, ny = next / SAMPLE_WIDTH;
+          if (nx < left || nx >= right || ny < top || ny >= bottom || seen[next]) continue;
+          seen[next] = true;
+          if (luminance(pixels[next]) <= 90 && !isRegistrationColor(pixels[next])) queue[tail++] = next;
+        }
+      }
+      // Page chrome touches the search boundary; text is too short to be the round thumb.
+      if (edge || maxY - minY + 1 < height * 2 / 3 || maxX - minX + 1 > height * 3 ||
+          maxY < track.top || minY >= track.bottom || tail <= bestArea) continue;
+      bestArea = tail;
+      thumb = new Bounds(minX, minY, maxX + 1, maxY + 1);
+    }
+    if (thumb == null) return null;
+    return new Bounds(Math.min(track.left, thumb.left), Math.min(track.top, thumb.top),
+      track.right, Math.max(track.bottom, thumb.bottom));
   }
 
   private static List<Bounds> yellowBands(int[] pixels) {

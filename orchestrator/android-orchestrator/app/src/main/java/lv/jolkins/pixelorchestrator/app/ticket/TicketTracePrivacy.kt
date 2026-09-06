@@ -4,7 +4,8 @@ import kotlinx.serialization.json.JsonPrimitive
 
 /** Keeps durable Ticket traces useful without copying client identity or arbitrary runtime text. */
 internal object TicketTracePrivacy {
-  private val numericFields = setOf(
+  private val numericFields = TicketActionTiming.Phase.entries.map { it.field }.toSet() +
+    TicketActionTiming.Work.entries.map { it.field } + setOf("private_samples",
     "blocked_ms",
     "bytes",
     "clients",
@@ -78,10 +79,10 @@ internal object TicketTracePrivacy {
     "session_", "spacetime_", "startup_phase_", "hardware_", "stream_", "recovery_",
     "root_hardware", "root_capture", "loading_", "client_", "keyframe", "ticket_brightness_",
     "latest_ticket_reselect_", "control_code_", "ticket_control_code_", "ticket_card_",
-    "wake_", "fast_public_open_", "root_"
+    "wake_", "fast_public_open_"
   )
   private val exactEvents = setOf(
-    "ticket_state_event", "ticket_slider_start_unknown", "ticket_slider_semantic_missing",
+    "root_readiness", "ticket_action_timing", "ticket_state_event", "ticket_slider_start_unknown", "ticket_slider_semantic_missing",
     "ticket_slider_semantic_unstable", "ticket_slider_semantic_fence_changed",
     "vivi_hard_reset", "vivi_reauth_package_clear", "secure_capture_blocked"
   )

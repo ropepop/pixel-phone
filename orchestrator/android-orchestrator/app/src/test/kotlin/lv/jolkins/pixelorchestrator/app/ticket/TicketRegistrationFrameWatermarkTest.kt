@@ -19,14 +19,14 @@ class TicketRegistrationFrameWatermarkTest {
     expectedEpoch: Long = 7L,
     frameEpoch: Long = 7L
   ) = ticketVisualFrameMatchesRegistrationObservation(
-    proof, expectedEpoch, frameEpoch, capturedAtUs, now, 1_250L
+    proof, expectedEpoch, frameEpoch, capturedAtUs, now, 3_000L
   )
 
   @Test
   fun alreadyEncodedProbeDoesNotWaitForTheNextOneSecondCapture() {
     // Probe requested at 10,000; the 1 Hz source captures at 10,500, encodes at
     // 11,100, and its classifier reply is consumed at 11,120. The picture's
-    // deadline is 11,750 regardless of the wait before capture.
+    // deadline is 13,500 regardless of the wait before capture.
     val cachedSequence = 42L
     val oldWatermarkStartingSequence = cachedSequence
     assertFalse(cachedSequence > oldWatermarkStartingSequence)
@@ -49,9 +49,9 @@ class TicketRegistrationFrameWatermarkTest {
   @Test
   fun laterSameEpochPictureMayBindButCannotRenewTheOriginalProofDeadline() {
     assertTrue(matches(now = 11_200L, capturedAtUs = 10_900_123L))
-    assertTrue(matches(now = 11_750L))
-    assertFalse(matches(now = 11_751L))
-    assertFalse(matches(now = 12_000L, capturedAtUs = 11_900_123L))
+    assertTrue(matches(now = 13_500L))
+    assertFalse(matches(now = 13_501L))
+    assertFalse(matches(now = 13_501L, capturedAtUs = 13_400_123L))
   }
 
   @Test
@@ -81,11 +81,11 @@ class TicketRegistrationFrameWatermarkTest {
     assertTrue(11_550L - delayedCapture.atMillis > 1_250L)
     assertTrue(matches(now = 11_550L, capturedAtUs = delayedCapture.captureStartUs,
       proof = delayedCapture))
-    assertTrue(matches(now = 12_200L, capturedAtUs = delayedCapture.captureStartUs,
+    assertTrue(matches(now = 13_950L, capturedAtUs = delayedCapture.captureStartUs,
       proof = delayedCapture))
-    assertFalse(matches(now = 12_201L, capturedAtUs = delayedCapture.captureStartUs,
+    assertFalse(matches(now = 13_951L, capturedAtUs = delayedCapture.captureStartUs,
       proof = delayedCapture))
     // A later output cannot make the classified picture younger before dispatch.
-    assertFalse(matches(now = 12_201L, capturedAtUs = 12_100_000L, proof = delayedCapture))
+    assertFalse(matches(now = 13_951L, capturedAtUs = 12_100_000L, proof = delayedCapture))
   }
 }

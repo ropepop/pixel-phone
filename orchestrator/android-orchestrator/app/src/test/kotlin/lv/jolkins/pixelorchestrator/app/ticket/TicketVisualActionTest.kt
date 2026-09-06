@@ -854,10 +854,10 @@ class TicketVisualActionTest {
       captureStartUs = 100_000L
     )
 
-    assertTrue(ticketVisualObservationIsFreshForDispatch(observation, 1_350L, 1_250L))
-    assertFalse(ticketVisualObservationIsFreshForDispatch(observation, 1_351L, 1_250L))
-    assertFalse(ticketVisualObservationIsFreshForDispatch(observation, 99L, 1_250L))
-    assertFalse(ticketVisualObservationIsFreshForDispatch(observation.copy(atMillis = 0L), 100L, 1_250L))
+    assertTrue(ticketVisualObservationIsFreshForDispatch(observation, 3_100L, 3_000L))
+    assertFalse(ticketVisualObservationIsFreshForDispatch(observation, 3_101L, 3_000L))
+    assertFalse(ticketVisualObservationIsFreshForDispatch(observation, 99L, 3_000L))
+    assertFalse(ticketVisualObservationIsFreshForDispatch(observation.copy(atMillis = 0L), 100L, 3_000L))
   }
 
   @Test
@@ -1858,6 +1858,29 @@ class TicketVisualActionTest {
       9,
       12
     )?.sliderRegion)
+  }
+
+  @Test
+  fun semanticOutcomeSurvivesRestartWithoutAnyVideoAndStillRequiresTheRightView() {
+    val request = parse(
+      """{"version":3,"actionId":"a","target":"open_latest_unactivated","source":"test","reason":"test","attemptId":""}"""
+    )!!
+    val retained = TicketVisualActionJournalState(
+      commandId = "command-a", commandRevision = "a", actionId = "a",
+      target = "open_latest_unactivated", phase = "terminal", terminalStatus = "succeeded",
+      terminalPhase = "complete", terminalView = "latest_unactivated",
+      terminalReason = "ticket_action_target_visible", completedAt = "2026-09-06T12:00:00Z",
+      terminalOk = true, semanticProof = true
+    )
+    val replay = retainedTicketVisualTerminalSnapshot(retained, request, 0, 0)!!
+    assertTrue(replay.ok)
+    assertTrue(replay.semanticProof)
+    assertEquals(0L, replay.frameSequence)
+    assertTrue(ticketActionFinalizationEnvelope(retained)!!.action.semanticProof)
+    assertFalse(retainedTicketVisualTerminalSnapshot(
+      retained.copy(terminalView = "unknown"), request, 0, 0
+    )!!.ok)
+    assertNull(retainedTicketVisualTerminalSnapshot(retained.copy(actionId = "other"), request, 0, 0))
   }
 
   @Test

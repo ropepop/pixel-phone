@@ -49,10 +49,10 @@ class TicketVisualProbeTransportTest {
     assertEquals(4_100_123L, observation?.captureStartUs)
     val requestedObservation = requireNotNull(observation).copy(atMillis = 4_000L)
     assertTrue(ticketVisualFrameMatchesRegistrationObservation(
-      requestedObservation, 7L, 7L, 4_100_123L, 4_800L, 1_250L
+      requestedObservation, 7L, 7L, 4_100_123L, 4_800L, 3_000L
     ))
     assertFalse(ticketVisualFrameMatchesRegistrationObservation(
-      requestedObservation, 7L, 7L, 4_099_999L, 4_800L, 1_250L
+      requestedObservation, 7L, 7L, 4_099_999L, 4_800L, 3_000L
     ))
     assertEquals("00112233445566778899aabb", observation?.currentAnchor)
     assertEquals(TicketVisualProbeBounds(14, 231, 178, 250), observation?.sliderBounds)
@@ -74,7 +74,7 @@ class TicketVisualProbeTransportTest {
         .copy(atMillis = 4_000L)
       assertEquals(0L, observation.captureStartUs)
       assertFalse(ticketVisualFrameMatchesRegistrationObservation(
-        observation, 7L, 7L, 4_100_123L, 4_800L, 1_250L
+        observation, 7L, 7L, 4_100_123L, 4_800L, 3_000L
       ))
     }
   }

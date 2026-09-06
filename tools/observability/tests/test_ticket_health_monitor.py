@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -28,8 +29,8 @@ def spacetime_config() -> dict:
 
 def default_thresholds() -> dict:
   return {
-    "pixel_frame_age_millis": 1500,
-    "relay_frame_age_millis": 1000,
+    "pixel_frame_age_millis": {"warning": 1500, "failure": 3000},
+    "relay_frame_age_millis": {"warning": 1000, "failure": 3000},
     "resources": {
       "host": {
         "memory_used_percent": {"warning": 80, "failure": 92},
@@ -152,6 +153,8 @@ def healthy_snapshot(active: bool) -> dict:
       "relay_video_clients": 1 if active else 0,
       "relay_stream_verdict": "live" if active else "idle",
       "relay_last_frame_ago_millis": 100 if active else -1,
+      "relay_report_age_millis": 100,
+      "page_open_warm": {"retained_sessions": 0, "remaining_millis": 0},
       "relay_status": {
         "phone_connected": True,
         "phone_desired": active,
@@ -491,7 +494,7 @@ class TicketHealthMonitorTest(unittest.TestCase):
     snapshot = healthy_snapshot(active=True)
 
     healthy = monitor.evaluate_snapshot(snapshot, default_thresholds(), [])
-    snapshot["pixel"]["health"]["visible_frame_age_millis"] = 1501
+    snapshot["pixel"]["health"]["visible_frame_age_millis"] = 3001
     degraded = monitor.evaluate_snapshot(snapshot, default_thresholds(), [])
 
     self.assertEqual("healthy_live", healthy["status"])
@@ -578,35 +581,52 @@ class TicketHealthMonitorTest(unittest.TestCase):
     self.assertEqual('"nested"', monitor._normalize_cli_cell('""nested""'))
 
   def test_spacetime_collection_uses_operator_identity_and_keeps_only_safe_status_fields(self):
-    outputs = iter([
-      'desiredActive | viewerCount | reason\n--------------+-------------+-------\nfalse | 0 | "private email@example.com"\n',
-      'streamState | desiredActive | statusJson\n------------+---------------+-----------\n'
-      '"client_disconnected" | false | "{"streamActive":false,"streamVerdict":"idle","sessionState":"client_disconnected","rawTicket":"do-not-copy"}"\n',
-      'videoClients | streamVerdict | lastFrameAgoMillis | statusJson\n-------------+---------------+--------------------+-----------\n'
-      '0 | "idle" | -1 | "{"phoneConnected":true,"phoneDesired":false,"phoneStreamState":"client_disconnected","live":false,"lastFrameAgoMillis":null,"token":"do-not-copy"}"\n',
-      'status\n------\n"succeeded"\n"pending"\n',
-    ])
+    outputs = self.spacetime_outputs()
+    outputs[0] = outputs[0].replace("no_viewers", "private email@example.com")
     calls = []
-
     def runner(args, _timeout):
       calls.append(list(args))
       if list(args[1:]) == ["login", "show"]:
         return monitor.CommandResult(0, f"You are logged in as {EXPECTED_IDENTITY}\n", "")
-      return monitor.CommandResult(0, next(outputs), "")
-
+      return monitor.CommandResult(0, outputs.pop(0), "")
     result = monitor.collect_spacetime(spacetime_config(), runner)
-
-    self.assertTrue(result["ok"])
+    self.assertTrue(result["ok"], result)
     self.assertTrue(result["operator_identity_verified"])
     self.assertEqual("other", result["desired_reason"])
     self.assertEqual("client_disconnected", result["phone_stream_state"])
     self.assertEqual("client_disconnected", result["phone_status"]["session_state"])
     self.assertEqual("client_disconnected", result["relay_status"]["phone_stream_state"])
     self.assertEqual(1, result["pending_stream_commands"])
-    self.assertTrue(all("--anonymous" not in args for args in calls))
-    self.assertTrue(all("--token" not in args for args in calls))
-    self.assertNotIn("email@example.com", json.dumps(result, sort_keys=True))
-    self.assertNotIn("do-not-copy", json.dumps(result, sort_keys=True))
+    self.assertIsNone(result["relay_last_frame_ago_millis"])
+    self.assertLess(result["relay_report_age_millis"], 1000)
+    self.assertEqual({"retained_sessions": 0, "remaining_millis": 0}, result["page_open_warm"])
+    self.assertTrue(all("--anonymous" not in args and "--token" not in args for args in calls))
+    self.assertNotIn("email@example.com", json.dumps(result))
+    self.assertNotIn("do-not-copy", json.dumps(result))
+
+  def spacetime_outputs(self):
+    now = datetime.now(timezone.utc).isoformat()
+    def table(columns, values):
+      return " | ".join(columns) + "\n" + " | ".join(values) + "\n"
+    return [
+      table(["desiredActive", "viewerCount", "reason"], ["false", "0", "no_viewers"]),
+      table(["streamState", "desiredActive", "statusJson", "updatedAt"], [
+        "client_disconnected", "false",
+        json.dumps({"streamActive": False, "streamVerdict": "idle", "sessionState": "client_disconnected", "rawTicket": "do-not-copy"}), now]),
+      table(["videoClients", "streamVerdict", "lastFrameAt", "statusJson", "updatedAt"], [
+        "0", "idle", "null", json.dumps({"phoneConnected": True, "phoneDesired": False,
+          "phoneStreamState": "client_disconnected", "live": False, "token": "do-not-copy",
+          "pageOpenWarm": {"retainedSessions": 0, "expiresAt": ""}}), now]),
+      "status\nsucceeded\npending\n",
+    ]
+
+  def collect_outputs(self, outputs):
+    pending = iter(outputs)
+    def runner(args, _timeout):
+      if list(args[1:]) == ["login", "show"]:
+        return monitor.CommandResult(0, f"You are logged in as {EXPECTED_IDENTITY}\n", "")
+      return monitor.CommandResult(0, next(pending), "")
+    return monitor.collect_spacetime(spacetime_config(), runner)
 
   def test_spacetime_identity_mismatch_stops_before_any_sql(self):
     calls = []
@@ -623,62 +643,149 @@ class TicketHealthMonitorTest(unittest.TestCase):
     self.assertEqual([["spacetime", "login", "show"]], calls)
 
   def test_spacetime_malformed_schema_and_types_fail_closed(self):
-    valid = [
-      'desiredActive | viewerCount | reason\n--------------+-------------+-------\nfalse | 0 | "no_viewers"\n',
-      'streamState | desiredActive | statusJson\n------------+---------------+-----------\n"idle" | false | "{}"\n',
-      'videoClients | streamVerdict | lastFrameAgoMillis | statusJson\n-------------+---------------+--------------------+-----------\n0 | "idle" | -1 | "{}"\n',
-      'status\n------\n',
+    cases = [
+      (0, "viewerCount", "viewers"),
+      (0, "false", "yes"),
+      (0, " | 0 | ", " | zero | "),
+      (1, "statusJson", "healthJson"),
+      (1, "false | ", "0 | "),
+      (2, "0 | idle", "zero | idle"),
+      (2, "idle | null", "invented | null"),
+      (2, '"live": false', '"live": "yes"'),
+      (2, '"retainedSessions": 0', '"retainedSessions": true'),
+      (3, "status", "state"),
+      (3, "pending", "invented state"),
     ]
-    cases = {
-      "wrong_columns": 'desiredActive | viewers | reason\n--------------+---------+-------\nfalse | 0 | "no_viewers"\n',
-      "non_boolean": 'desiredActive | viewerCount | reason\n--------------+-------------+-------\nyes | 0 | "no_viewers"\n',
-      "non_integer": 'desiredActive | viewerCount | reason\n--------------+-------------+-------\nfalse | zero | "no_viewers"\n',
-      "missing_current_row": 'desiredActive | viewerCount | reason\n--------------+-------------+-------\n',
-    }
-    for name, malformed_desired in cases.items():
-      with self.subTest(name=name):
-        outputs = iter([malformed_desired, *valid[1:]])
-
-        def runner(args, _timeout):
-          if list(args[1:]) == ["login", "show"]:
-            return monitor.CommandResult(0, f"You are logged in as {EXPECTED_IDENTITY}\n", "")
-          return monitor.CommandResult(0, next(outputs), "")
-
-        result = monitor.collect_spacetime(spacetime_config(), runner)
-        self.assertFalse(result["ok"])
+    for index, old, new in cases:
+      with self.subTest(query=index, invalid=new):
+        outputs = self.spacetime_outputs()
+        self.assertIn(old, outputs[index])
+        outputs[index] = outputs[index].replace(old, new)
+        result = self.collect_outputs(outputs)
+        self.assertFalse(result["ok"], result)
         self.assertTrue(result["operator_identity_verified"])
+    outputs = self.spacetime_outputs()
+    outputs[0] = "desiredActive | viewerCount | reason\n"
+    self.assertFalse(self.collect_outputs(outputs)["ok"])
 
-    per_query_cases = {
-      "phone_columns": [valid[0], 'streamState | desiredActive | healthJson\n------------+---------------+----------\n"idle" | false | "{}"\n', valid[2], valid[3]],
-      "phone_boolean": [valid[0], 'streamState | desiredActive | statusJson\n------------+---------------+-----------\n"idle" | 0 | "{}"\n', valid[2], valid[3]],
-      "relay_integer": [valid[0], valid[1], 'videoClients | streamVerdict | lastFrameAgoMillis | statusJson\n-------------+---------------+--------------------+-----------\nzero | "idle" | -1 | "{}"\n', valid[3]],
-      "relay_unknown_enum": [valid[0], valid[1], 'videoClients | streamVerdict | lastFrameAgoMillis | statusJson\n-------------+---------------+--------------------+-----------\n0 | "safe_but_unapproved" | -1 | "{}"\n', valid[3]],
-      "relay_json_type": [valid[0], valid[1], 'videoClients | streamVerdict | lastFrameAgoMillis | statusJson\n-------------+---------------+--------------------+-----------\n0 | "idle" | -1 | "{"live":"yes"}"\n', valid[3]],
-      "command_columns": [*valid[:3], 'state\n-----\n'],
-    }
-    for name, query_outputs in per_query_cases.items():
-      with self.subTest(name=name):
-        outputs = iter(query_outputs)
+  def test_spacetime_uses_absolute_capture_and_report_times(self):
+    outputs = self.spacetime_outputs()
+    old = (datetime.now(timezone.utc) - timedelta(seconds=20)).isoformat()
+    fields = outputs[2].splitlines()
+    fields[1] = fields[1].replace(" | null | ", f' | (some = "{old}") | ')
+    fields[1] = fields[1].rsplit(" | ", 1)[0] + " | " + old
+    outputs[2] = "\n".join(fields) + "\n"
+    result = self.collect_outputs(outputs)
+    self.assertTrue(result["ok"], result)
+    self.assertGreaterEqual(result["relay_last_frame_ago_millis"], 20000)
+    self.assertGreaterEqual(result["relay_report_age_millis"], 20000)
 
-        def runner(args, _timeout):
-          if list(args[1:]) == ["login", "show"]:
-            return monitor.CommandResult(0, f"You are logged in as {EXPECTED_IDENTITY}\n", "")
-          return monitor.CommandResult(0, next(outputs), "")
+  def test_cli_optional_timestamp_shapes(self):
+    now = datetime.now(timezone.utc)
+    for value in ("(none = ())", '(some = "")', "null"):
+      self.assertIsNone(monitor._optional_frame_age(value, now))
+    value = (now - timedelta(milliseconds=3001)).isoformat()
+    self.assertEqual(3001, monitor._optional_frame_age(f'(some = "{value}")', now))
+    for value in ('(some = 123)', '(some = "invalid")', '(other = ())'):
+      with self.assertRaises(RuntimeError):
+        monitor._optional_frame_age(value, now)
 
-        result = monitor.collect_spacetime(spacetime_config(), runner)
-        self.assertFalse(result["ok"])
-        self.assertTrue(result["operator_identity_verified"])
+  def test_report_timestamps_reject_unknown_and_unbounded_future(self):
+    for value in ("", "not-a-time", "2026-09-06T12:00:00",
+                  (datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat()):
+      with self.subTest(value=value):
+        outputs = self.spacetime_outputs()
+        header, row = outputs[2].splitlines()
+        outputs[2] = header + "\n" + row.rsplit(" | ", 1)[0] + " | " + value + "\n"
+        self.assertFalse(self.collect_outputs(outputs)["ok"])
 
-    outputs = iter([*valid[:3], 'status\n------\n"invented state"\n'])
+  def test_warm_projection_requires_bounded_matching_count_and_expiry(self):
+    now = datetime.now(timezone.utc)
+    for raw in ({"retainedSessions": 0, "expiresAt": now.isoformat()},
+                {"retainedSessions": 1, "expiresAt": ""},
+                {"retainedSessions": 1, "expiresAt": (now + timedelta(minutes=31)).isoformat()},
+                {"retainedSessions": 1, "expiresAt": (now - timedelta(seconds=1)).isoformat()},
+                {"retainedSessions": -1, "expiresAt": ""}):
+      with self.subTest(raw=raw):
+        with self.assertRaises(RuntimeError):
+          monitor._page_warm_status({"pageOpenWarm": raw}, now.isoformat(), now)
+    raw = {"retainedSessions": 1, "expiresAt": (now + timedelta(seconds=1)).isoformat()}
+    self.assertEqual(1000, monitor._page_warm_status({"pageOpenWarm": raw}, now.isoformat(), now)["remaining_millis"])
+    self.assertEqual(0, monitor._page_warm_status({"pageOpenWarm": raw}, now.isoformat(), now + timedelta(seconds=1))["remaining_millis"])
 
-    def invalid_status_runner(args, _timeout):
-      if list(args[1:]) == ["login", "show"]:
-        return monitor.CommandResult(0, f"You are logged in as {EXPECTED_IDENTITY}\n", "")
-      return monitor.CommandResult(0, next(outputs), "")
+  def warm_snapshot(self):
+    snapshot = healthy_snapshot(active=True)
+    snapshot["spacetime"].update({
+      "relay_video_clients": 0, "relay_stream_verdict": "waiting_keyframe",
+      "relay_last_frame_ago_millis": 60000,
+      "page_open_warm": {"retained_sessions": 1, "remaining_millis": 60000},
+    })
+    snapshot["spacetime"]["relay_status"]["live"] = False
+    snapshot["pixel"]["health"]["stream_verdict"] = "waiting_keyframe"
+    snapshot["pixel"]["health"]["visible_frame_age_millis"] = 60000
+    snapshot["pixel"]["health"]["stream_pipeline"]["last_frame_sent_ago_millis"] = 60000
+    return snapshot
 
-    invalid_status = monitor.collect_spacetime(spacetime_config(), invalid_status_runner)
-    self.assertFalse(invalid_status["ok"])
-    self.assertEqual("spacetime_data_invalid", invalid_status["error"])
+  def test_intentional_warmth_does_not_require_browser_frames(self):
+    result = monitor.evaluate_snapshot(self.warm_snapshot(), default_thresholds(), [])
+    self.assertEqual("healthy_warm", result["status"], result)
+    self.assertEqual("warm_no_viewer", result["viewer_mode"])
+    self.assertIsNone(result["frame_age_millis"])
+
+  def test_warmth_never_hides_expiry_missing_evidence_or_device_failure(self):
+    for case in ("expired", "missing", "stale_report", "missing_report", "future_report",
+                 "phone_disconnected", "capture_stopped", "failed_recovery", "no_demand"):
+      with self.subTest(case=case):
+        snapshot = self.warm_snapshot()
+        state, health = snapshot["spacetime"], snapshot["pixel"]["health"]
+        if case == "expired":
+          state["page_open_warm"]["remaining_millis"] = 0
+        elif case == "missing":
+          state["page_open_warm"] = None
+        elif case == "stale_report":
+          state["relay_report_age_millis"] = 5001
+        elif case == "missing_report":
+          del state["relay_report_age_millis"]
+        elif case == "future_report":
+          state["relay_report_age_millis"] = -1
+        elif case == "phone_disconnected":
+          state["relay_status"]["phone_connected"] = False
+        elif case == "capture_stopped":
+          health["stream_pipeline"]["encoder_running"] = False
+        elif case == "failed_recovery":
+          health["recovery"]["stream_stage"] = "failed"
+        elif case == "no_demand":
+          state["desired_active"] = False
+          state["viewer_count"] = 0
+        self.assertEqual("degraded", monitor.evaluate_snapshot(snapshot, default_thresholds(), [])["status"])
+
+  def test_active_viewer_cannot_borrow_warm_freshness_exemption(self):
+    snapshot = self.warm_snapshot()
+    snapshot["spacetime"]["relay_video_clients"] = 1
+    result = monitor.evaluate_snapshot(snapshot, default_thresholds(), [])
+    self.assertEqual("degraded", result["status"])
+    self.assertIn("relay_frame_stale", result["failures"])
+
+  def test_frame_warning_and_exact_failure_boundaries(self):
+    for age in (1000, 1500, 1501, 2000, 3000, 3001):
+      with self.subTest(age=age):
+        snapshot = healthy_snapshot(active=True)
+        snapshot["spacetime"]["relay_last_frame_ago_millis"] = age
+        snapshot["pixel"]["health"]["visible_frame_age_millis"] = age
+        snapshot["pixel"]["health"]["stream_pipeline"]["last_frame_sent_ago_millis"] = age
+        result = monitor.evaluate_snapshot(snapshot, default_thresholds(), [])
+        self.assertEqual("degraded" if age > 3000 else "healthy_live", result["status"], result)
+        if 1500 < age <= 3000:
+          self.assertTrue(any("early-warning" in value for value in result["warnings"]))
+
+  def test_frame_limits_cannot_weaken_product_contract(self):
+    config = json.loads((MODULE_PATH.parent / "ticket_health_monitor.config.json").read_text())
+    for value in (3000, {"warning": 3000, "failure": 3000}, {"warning": 1000, "failure": 3001},
+                  {"warning": True, "failure": 3000}, {"warning": 1000, "failure": float("inf")}):
+      with self.subTest(value=value):
+        config["thresholds"]["relay_frame_age_millis"] = value
+        with self.assertRaises(ValueError):
+          monitor.validate_config(config)
 
   def test_unknown_spacetime_state_does_not_invent_live_or_idle_failures(self):
     snapshot = healthy_snapshot(active=False)

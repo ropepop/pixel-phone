@@ -19,6 +19,186 @@ import java.nio.file.Path
 @OptIn(ExperimentalCoroutinesApi::class)
 class PhoneAutomationBridgeTest {
   @Test
+  fun physicalRevealWaitsForEveryExactHelperOwner() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    PhoneAutomationServiceBridge.registerPhysicalVisibilityBlocker("first")
+    PhoneAutomationServiceBridge.registerPhysicalVisibilityBlocker("second")
+    val reveal = async { PhoneAutomationServiceBridge.awaitPhysicalVisibilityUnblocked() }
+    runCurrent()
+    assertFalse(reveal.isCompleted)
+
+    PhoneAutomationServiceBridge.clearPhysicalVisibilityBlocker("first")
+    PhoneAutomationServiceBridge.clearPhysicalVisibilityBlocker("first")
+    PhoneAutomationServiceBridge.clearPhysicalVisibilityBlocker("unrelated")
+    runCurrent()
+    assertEquals(setOf("second"), PhoneAutomationServiceBridge.currentPhysicalVisibilityBlockers())
+    assertFalse(reveal.isCompleted)
+
+    PhoneAutomationServiceBridge.clearPhysicalVisibilityBlocker("second")
+    runCurrent()
+    assertTrue(reveal.await())
+  }
+
+  @Test
+  fun helperStopTimeoutCannotAuthorizeRevealOrForgetOwnership() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    PhoneAutomationServiceBridge.registerPhysicalVisibilityBlocker("unproved")
+
+    assertFalse(PhoneAutomationServiceBridge.awaitPhysicalVisibilityUnblocked(timeoutMillis = 100L))
+    assertEquals(setOf("unproved"), PhoneAutomationServiceBridge.currentPhysicalVisibilityBlockers())
+  }
+
+  @Test
+  fun visibilitySettingsAndCancelledWaiterDoNotClearLiveHelperOwnership() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    PhoneAutomationServiceBridge.registerPhysicalVisibilityBlocker("owned")
+    val reveal = async { PhoneAutomationServiceBridge.awaitPhysicalVisibilityUnblocked() }
+    runCurrent()
+    reveal.cancel()
+    runCurrent()
+    PhoneAutomationServiceBridge.configurePhysicalVisibility(true)
+    PhoneAutomationServiceBridge.recordPhysicalVisibilityTouch(1_000L)
+    PhoneAutomationServiceBridge.revokePhysicalVisibility(1_100L)
+    PhoneAutomationServiceBridge.configurePhysicalVisibility(false)
+
+    assertEquals(setOf("owned"), PhoneAutomationServiceBridge.currentPhysicalVisibilityBlockers())
+    assertFalse(PhoneAutomationServiceBridge.awaitPhysicalVisibilityUnblocked(timeoutMillis = 0L))
+    PhoneAutomationServiceBridge.clearPhysicalVisibilityBlocker("owned")
+    assertTrue(PhoneAutomationServiceBridge.awaitPhysicalVisibilityUnblocked(timeoutMillis = 0L))
+  }
+
+  @Test
+  fun physicalDownAndUpEachKeepThePhoneVisibleForNinetySeconds() {
+    PhoneAutomationServiceBridge.resetForTests()
+    PhoneAutomationServiceBridge.configurePhysicalVisibility(true)
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(true, 1_000L)
+    val down = PhoneAutomationServiceBridge.currentPhysicalVisibleWindow()
+    assertEquals(91_000L, down.deadlineUptimeMillis)
+
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(false, 1_075L)
+    val up = PhoneAutomationServiceBridge.currentPhysicalVisibleWindow()
+    assertEquals(91_075L, up.deadlineUptimeMillis)
+    assertEquals(down.generation + 1L, up.generation)
+    assertEquals(1L, PhoneAutomationServiceBridge.currentRootPhysicalTouchState().touchBeginCount)
+  }
+
+  @Test
+  fun duplicateRuntimeDeliveryAndOlderTouchesDoNotMoveTheWindow() {
+    PhoneAutomationServiceBridge.resetForTests()
+    PhoneAutomationServiceBridge.configurePhysicalVisibility(true)
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(true, 1_000L)
+    val down = PhoneAutomationServiceBridge.currentPhysicalVisibleWindow()
+    PhoneAutomationServiceBridge.recordPhysicalVisibilityTouch(1_000L, active = true)
+    PhoneAutomationServiceBridge.recordPhysicalVisibilityTouch(900L, active = false)
+    assertEquals(down, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow())
+
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(false, 1_075L)
+    val up = PhoneAutomationServiceBridge.currentPhysicalVisibleWindow()
+    PhoneAutomationServiceBridge.recordPhysicalVisibilityTouch(1_075L, active = false)
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(false, 1_100L)
+    assertEquals(up, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow())
+  }
+
+  @Test
+  fun syntheticInputAndAccessibilityEventsCannotGrantOrRenewVisibility() {
+    PhoneAutomationServiceBridge.resetForTests()
+    PhoneAutomationServiceBridge.configurePhysicalVisibility(true)
+    val dark = PhoneAutomationServiceBridge.currentPhysicalVisibleWindow()
+    PhoneAutomationServiceBridge.markNonTouchInput("ticket:action", 4_000L, 1_000L)
+    PhoneAutomationServiceBridge.recordTouchInteractionStarted(1_000L)
+    PhoneAutomationServiceBridge.recordTouchInteractionEnded(1_100L)
+    assertEquals(dark, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow())
+
+    PhoneAutomationServiceBridge.recordPhysicalVisibilityTouch(2_000L)
+    val visible = PhoneAutomationServiceBridge.currentPhysicalVisibleWindow()
+    PhoneAutomationServiceBridge.markNonTouchInput("ticket:next", 4_000L, 3_000L)
+    PhoneAutomationServiceBridge.clearNonTouchInputTailForBrowserCriticalAction(3_100L)
+    assertEquals(visible, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow())
+  }
+
+  @Test
+  fun disablingClearsVisibilityAndReenablingNeedsAFreshContact() {
+    PhoneAutomationServiceBridge.resetForTests()
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(true, 500L)
+    assertEquals(0L, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow().deadlineUptimeMillis)
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(false, 600L)
+    PhoneAutomationServiceBridge.configurePhysicalVisibility(true)
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(true, 1_000L)
+    val visible = PhoneAutomationServiceBridge.currentPhysicalVisibleWindow()
+    PhoneAutomationServiceBridge.configurePhysicalVisibility(true)
+    assertEquals(visible, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow())
+
+    PhoneAutomationServiceBridge.configurePhysicalVisibility(false)
+    assertEquals(0L, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow().deadlineUptimeMillis)
+    PhoneAutomationServiceBridge.configurePhysicalVisibility(true)
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(false, 1_100L)
+    assertEquals(0L, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow().deadlineUptimeMillis)
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(true, 1_200L)
+    assertEquals(91_200L, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow().deadlineUptimeMillis)
+  }
+
+  @Test
+  fun sideButtonRevokesAndTheHeldContactCannotReopenVisibility() {
+    PhoneAutomationServiceBridge.resetForTests()
+    PhoneAutomationServiceBridge.configurePhysicalVisibility(true)
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(true, 1_000L)
+    PhoneAutomationServiceBridge.revokePhysicalVisibility(1_100L)
+    val revoked = PhoneAutomationServiceBridge.currentPhysicalVisibleWindow()
+    assertEquals(0L, revoked.deadlineUptimeMillis)
+
+    PhoneAutomationServiceBridge.recordPhysicalVisibilityTouch(1_050L, active = true)
+    PhoneAutomationServiceBridge.recordPhysicalVisibilityTouch(1_100L, active = true)
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(true, 1_150L)
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(false, 1_200L)
+    PhoneAutomationServiceBridge.recordPhysicalVisibilityTouch(1_200L, active = false)
+    PhoneAutomationServiceBridge.revokePhysicalVisibility(1_100L)
+    PhoneAutomationServiceBridge.revokePhysicalVisibility(1_050L)
+    assertEquals(revoked, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow())
+
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(true, 1_300L)
+    assertEquals(91_300L, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow().deadlineUptimeMillis)
+  }
+
+  @Test
+  fun sourceLossDoesNotRenewVisibilityOrUndoPowerRevocation() {
+    PhoneAutomationServiceBridge.resetForTests()
+    PhoneAutomationServiceBridge.configurePhysicalVisibility(true)
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(true, 1_000L)
+    val visible = PhoneAutomationServiceBridge.currentPhysicalVisibleWindow()
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(false, 1_050L, available = false)
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(false, 1_060L)
+    assertEquals(visible, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow())
+
+    PhoneAutomationServiceBridge.revokePhysicalVisibility(1_100L)
+    val revoked = PhoneAutomationServiceBridge.currentPhysicalVisibleWindow()
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(false, 1_200L, available = false)
+    PhoneAutomationServiceBridge.recordPhysicalVisibilityTouch(1_300L, active = false)
+    assertEquals(revoked, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow())
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(true, 1_400L)
+    assertEquals(91_400L, PhoneAutomationServiceBridge.currentPhysicalVisibleWindow().deadlineUptimeMillis)
+  }
+
+  @Test
+  fun rootTouchOccurrenceSurvivesReleaseAndSourceRestart() {
+    PhoneAutomationServiceBridge.resetForTests()
+    fun record(active: Boolean, available: Boolean = true) =
+      PhoneAutomationServiceBridge.recordRootPhysicalTouchState(active, 100L, available)
+    record(false)
+    record(true)
+    record(true)
+    record(false)
+    assertEquals(1L, PhoneAutomationServiceBridge.currentRootPhysicalTouchState().touchBeginCount)
+    record(false, available = false)
+    record(false)
+    assertEquals(1L, PhoneAutomationServiceBridge.currentRootPhysicalTouchState().touchBeginCount)
+    record(true)
+    record(false)
+    val final = PhoneAutomationServiceBridge.currentRootPhysicalTouchState()
+    assertFalse(final.active)
+    assertEquals(2L, final.touchBeginCount)
+  }
+
+  @Test
   fun accessibilityPermissionRequiresGlobalAccessibilityToggle() {
     assertFalse(
       PhoneAutomationServiceBridge.hasEnabledAccessibilityPermission(
@@ -195,7 +375,8 @@ class PhoneAutomationBridgeTest {
       PhoneAutomationRootPhysicalTouchState(
         available = true,
         active = true,
-        observedAtUptimeMillis = 55L
+        observedAtUptimeMillis = 55L,
+        touchBeginCount = 1L
       ),
       PhoneAutomationServiceBridge.currentRootPhysicalTouchState()
     )
@@ -205,7 +386,8 @@ class PhoneAutomationBridgeTest {
         PhoneAutomationRootPhysicalTouchState(
           available = true,
           active = true,
-          observedAtUptimeMillis = 55L
+          observedAtUptimeMillis = 55L,
+          touchBeginCount = 1L
         )
       ),
       observed
@@ -282,11 +464,35 @@ class PhoneAutomationBridgeTest {
     assertTrue(PhoneAutomationServiceBridge.isNonTouchInputSuppressed(1_100L))
 
     PhoneAutomationServiceBridge.clearNonTouchInputTailForBrowserCriticalAction(
-      reason = "ticket_slider",
       observedAtUptimeMillis = 1_100L
     )
 
     assertFalse(PhoneAutomationServiceBridge.isNonTouchInputSuppressed(1_101L))
+  }
+
+  @Test
+  fun completedPhysicalTouchThenCleanupDoesNotPublishAnotherDarkeningIntent() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    val events = mutableListOf<PhoneAutomationNonTouchInputEvent>()
+    backgroundScope.launch { PhoneAutomationServiceBridge.nonTouchInputEvents.toList(events) }
+    runCurrent()
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(false, 900L, true)
+    PhoneAutomationServiceBridge.markNonTouchInput("ticket:action", 4_000L, 1_000L)
+    runCurrent()
+    assertEquals(1, events.size)
+    assertEquals(0L, events.single().touchBeginCount)
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(true, 1_050L, true)
+    PhoneAutomationServiceBridge.recordRootPhysicalTouchState(false, 1_075L, true)
+    PhoneAutomationServiceBridge.clearNonTouchInputTailForBrowserCriticalAction(1_100L)
+    runCurrent()
+    assertEquals("cleanup must not undo the completed physical tap", 1, events.size)
+    assertFalse(PhoneAutomationServiceBridge.isNonTouchInputSuppressed(1_101L))
+    assertEquals(1L, PhoneAutomationServiceBridge.currentRootPhysicalTouchState().touchBeginCount)
+    PhoneAutomationServiceBridge.markNonTouchInput("ticket:next_action", 250L, 1_200L)
+    runCurrent()
+    assertEquals(2, events.size)
+    assertEquals(1L, events.last().touchBeginCount)
+    assertEquals(0L, events.first().touchBeginCount)
   }
 
   @Test
@@ -318,28 +524,6 @@ class PhoneAutomationBridgeTest {
     assertEquals(listOf(true), secondHost.syncedVisibility)
   }
 
-  @Test
-  fun panelSleepBrightnessShieldRequestSurvivesAccessibilityReconnect() = runTest {
-    PhoneAutomationServiceBridge.resetForTests()
-
-    assertFalse(PhoneAutomationServiceBridge.setPanelSleepBrightnessShieldVisible(true))
-    assertTrue(PhoneAutomationServiceBridge.isPanelSleepBrightnessShieldRequested())
-
-    val firstHost = FakeAccessibilityHost()
-    PhoneAutomationServiceBridge.bindAccessibilityService(firstHost)
-    assertEquals(listOf(true), firstHost.syncedPanelSleepBrightnessShieldVisibility)
-    assertTrue(PhoneAutomationServiceBridge.setPanelSleepBrightnessShieldVisible(true))
-    assertEquals(listOf(true), firstHost.requestedPanelSleepBrightnessShieldVisibility)
-
-    PhoneAutomationServiceBridge.unbindAccessibilityService(firstHost)
-
-    val secondHost = FakeAccessibilityHost()
-    PhoneAutomationServiceBridge.bindAccessibilityService(secondHost)
-    assertEquals(listOf(true), secondHost.syncedPanelSleepBrightnessShieldVisibility)
-    assertTrue(PhoneAutomationServiceBridge.setPanelSleepBrightnessShieldVisible(false))
-    assertFalse(PhoneAutomationServiceBridge.isPanelSleepBrightnessShieldRequested())
-    assertEquals(listOf(false), secondHost.requestedPanelSleepBrightnessShieldVisibility)
-  }
 
   @Test
   fun blackoutSuppressionHidesOverlayAndIgnoresShowRequests() = runTest {
@@ -717,7 +901,6 @@ class PhoneAutomationBridgeTest {
     assertTrue(recover.contains("clearFocusedViviControlCodeInputOnMainThread(VIVI_CONTROL_CODE_PACKAGE)"))
     assertTrue(recover.indexOf("clearFocusedViviControlCodeInputOnMainThread") < recover.indexOf("controller.setShowMode(previousMode)"))
     assertTrue(recover.contains("return false"))
-    assertTrue(unbind.indexOf("restoreViviControlCodeKeyboardModeOnMainThread(null)") < unbind.indexOf("syncPanelSleepBrightnessShieldVisibility(false)"))
   }
 
   @Test
@@ -731,8 +914,6 @@ class PhoneAutomationBridgeTest {
 
     assertTrue(fullStroke.contains("if (ticketSliderStroke != null)"))
     assertTrue(fullStroke.contains("TicketSliderGestureDispatchResult.REJECTED"))
-    assertTrue(fullStroke.contains("ticketSliderBrightnessShieldSuspended = true"))
-    assertTrue(fullStroke.contains("ticketSliderBrightnessShieldSuspended = false"))
     assertTrue(fullStroke.contains("focusedInputWindow(expectedPackageName)"))
     assertTrue(fullStroke.contains("ticketInputFenceGenerationsAreCurrent("))
     assertTrue(fullStroke.contains("focusedWindow.windowId != expectedWindowId"))
@@ -742,19 +923,6 @@ class PhoneAutomationBridgeTest {
     assertTrue(focusedWindow.contains("window.isFocused"))
     assertTrue(focusedWindow.contains("focused.singleOrNull()"))
     assertFalse(focusedWindow.contains("rootInActiveWindow"))
-    assertTrue(fullStroke.contains("PhoneAutomationServiceBridge.isPanelSleepBrightnessShieldRequested()"))
-    assertTrue(fullStroke.contains("hidePanelSleepBrightnessShield()"))
-    assertTrue(fullStroke.contains("showPanelSleepBrightnessShield()"))
-    assertTrue(fullStroke.indexOf("hidePanelSleepBrightnessShield()") < fullStroke.indexOf("dispatchTerminalTicketSliderStroke("))
-    assertTrue(fullStroke.indexOf("dispatchTerminalTicketSliderStroke(") < fullStroke.indexOf("showPanelSleepBrightnessShield()"))
-    assertTrue(fullStroke.indexOf("val result = try {") < fullStroke.indexOf("delay(TICKET_SLIDER_INPUT_WINDOW_SETTLE_MILLIS)"))
-    assertTrue(fullStroke.contains("TICKET_SLIDER_INPUT_WINDOW_SETTLE_MILLIS"))
-    assertTrue(source.contains("TICKET_SLIDER_INPUT_WINDOW_SETTLE_MILLIS = 120L"))
-    assertTrue(fullStroke.contains("if (!brightnessShieldRestored)"))
-    val shieldSetter = source.substringAfter("private fun setPanelSleepBrightnessShieldVisibleOnMainThread(")
-      .substringBefore("private fun showPanelSleepBrightnessShield()")
-    assertTrue(shieldSetter.contains("visible && ticketSliderBrightnessShieldSuspended"))
-    assertTrue(shieldSetter.contains("return true"))
     assertEquals(1, Regex("GestureDescription\\.StrokeDescription\\(").findAll(fullStroke).count())
     assertTrue(fullStroke.contains("durationMillis.coerceIn(700L, 1_100L)"))
     assertTrue(fullStroke.contains("lineTo(end.first.toFloat(), end.second.toFloat())"))
@@ -850,8 +1018,6 @@ private data class RecordedTicketSliderFullStroke(
 private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
   val syncedVisibility = mutableListOf<Boolean>()
   val requestedVisibility = mutableListOf<Boolean>()
-  val syncedPanelSleepBrightnessShieldVisibility = mutableListOf<Boolean>()
-  val requestedPanelSleepBrightnessShieldVisibility = mutableListOf<Boolean>()
   val selectorPresencePackages = mutableListOf<String>()
   var selectorPresence = false
   var visibleNodes: List<PhoneAutomationVisibleNode> = emptyList()
@@ -884,16 +1050,6 @@ private class FakeAccessibilityHost : PhoneAutomationAccessibilityHost {
 
   override suspend fun setBlackoutOverlayVisible(visible: Boolean): Boolean {
     requestedVisibility += visible
-    return true
-  }
-
-  override fun syncPanelSleepBrightnessShieldVisibility(visible: Boolean): Boolean {
-    syncedPanelSleepBrightnessShieldVisibility += visible
-    return true
-  }
-
-  override suspend fun setPanelSleepBrightnessShieldVisible(visible: Boolean): Boolean {
-    requestedPanelSleepBrightnessShieldVisibility += visible
     return true
   }
 

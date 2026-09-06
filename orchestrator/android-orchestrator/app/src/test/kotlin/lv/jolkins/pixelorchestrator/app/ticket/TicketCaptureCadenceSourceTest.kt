@@ -52,11 +52,12 @@ class TicketCaptureCadenceSourceTest {
 
   @Test
   fun immediateRefreshIsCoalescedAndThereIsNoRuntimeCadenceCommand() {
-    assertTrue(scheduler.contains("immediateCaptureBlockedUntilMillis"))
+    assertFalse(scheduler.contains("immediateCapturePending"))
     assertTrue(scheduler.contains("nextDeadlineMillis = nowMillis + intervalMillis()"))
     assertTrue(scheduler.contains("FIXED_FPS = 1"))
     assertTrue(engine.contains("fun requestImmediateRefresh(reason: String): Boolean"))
-    assertTrue(helper.contains("requestImmediateSyncFrame(syncFrameRequested, cadenceScheduler, frameWaitLock)"))
+    assertTrue(helper.contains("requestNextSyncFrame(syncFrameRequested, frameWaitLock)"))
+    assertTrue(helper.contains("cadenceScheduler.restartPeriodFrom((captureStartUs + 999L) / 1_000L)"))
     assertFalse(scheduler.contains("isLegacyCommandFps"))
     assertFalse(helper.contains("cmd.startsWith(\"cadence:\")"))
     assertFalse(engine.contains("requestCadence"))
@@ -85,7 +86,8 @@ class TicketCaptureCadenceSourceTest {
     assertFalse(helper.contains("current codec input exceeded drain deadline"))
     assertTrue(helper.contains("if (codecInputLedger.size() == 0)"))
     assertFalse(helper.contains("long drainTimeoutUs = sent < 3"))
-    assertTrue(helper.contains("MediaFormat.KEY_OPERATING_RATE, encoderFps"))
+    assertTrue(helper.contains("MediaFormat.KEY_OPERATING_RATE, 30"))
+    assertTrue(helper.contains("MediaFormat.KEY_FRAME_RATE, encoderFps"))
     assertTrue(service.contains("STREAM_WATCHDOG_NO_ENCODER_RESTART_MILLIS = 3_000L"))
     assertTrue(service.contains("STREAM_WATCHDOG_STALE_FRAME_RESTART_MILLIS = 3_000L"))
 
@@ -118,7 +120,7 @@ class TicketCaptureCadenceSourceTest {
     val steadyBranch = helper.substring(steadyBranchStart, steadyBranchEnd)
 
     val surfacePost = steadyBranch.indexOf(
-      "drawBitmap(inputSurface, source.bitmap, sourceCrop, destination, paint);"
+      "drawBitmap(inputSurface, packet.source.bitmap, packet.sourceCrop, destination, paint);"
     )
     val boundaryDrainStart = steadyBranch.indexOf("startupPrimer.beginBoundaryDrain();")
     val gatedDrain = steadyBranch.indexOf(

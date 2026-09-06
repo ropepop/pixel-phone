@@ -23,6 +23,19 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class TicketSpacetimeKeyframeSubscriptionTest {
   @Test
+  fun independentlySettledResultCannotBeOverwrittenOrReleasedByALateCallback() {
+    val ledger = TicketSpacetimeSubscribedCommandLedger()
+    ledger.claim("action")
+    val done = TicketSpacetimeCommandResult(true, "complete", "streaming")
+    ledger.settle("action", done)
+    ledger.record("action", TicketSpacetimeCommandResult(false, "running", "streaming", terminal = false))
+    ledger.release("action")
+    assertEquals(done, ledger.peek("action"))
+    assertEquals(1, ledger.acknowledgedSize())
+    assertFalse(ledger.claim("action"))
+  }
+
+  @Test
   fun sharedLedgerRetainsEveryTerminalResultThroughDurableAck() {
     val ledger = TicketSpacetimeSubscribedCommandLedger()
     repeat(200) { index ->

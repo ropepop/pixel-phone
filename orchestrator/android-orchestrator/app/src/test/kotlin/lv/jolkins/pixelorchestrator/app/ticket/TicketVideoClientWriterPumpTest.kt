@@ -272,7 +272,7 @@ class TicketVideoClientWriterPumpTest {
 
   @Test
   fun productionBoundedWriteWindowDoesNotCloseAFeasibleWriteAtTheOld250Millis() = runTest {
-    val usefulnessMillis = 1_250L
+    val usefulnessMillis = 3_000L
     val state = state(slowCloseMillis = usefulnessMillis)
     state.markConfigReady()
     val first = state.offer(frame(1, keyFrame = true), 1L)
@@ -301,10 +301,13 @@ class TicketVideoClientWriterPumpTest {
     assertTrue(closeDecisions.isEmpty())
     assertFalse(state.snapshot().closed)
 
-    advanceTimeBy(1_000L)
+    advanceTimeBy(2_749L)
+    runCurrent()
+    assertTrue(closeDecisions.isEmpty())
+    advanceTimeBy(1L)
     runCurrent()
     advanceUntilIdle()
-    assertEquals(1_250L, closeDecisions.single().blockedMillis)
+    assertEquals(3_000L, closeDecisions.single().blockedMillis)
     assertTrue(state.snapshot().closed)
   }
 

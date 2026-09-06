@@ -100,6 +100,7 @@ internal class TicketSpacetimeSubscribedCommandLedger(
   @Synchronized fun record(commandId: String, result: TicketSpacetimeCommandResult) {
     require(commandId.isNotBlank())
     pruneAcknowledged(nowMillis())
+    if (acknowledgedAtMillis.containsKey(commandId)) return
     owned.add(commandId)
     results[commandId] = result
     acknowledgedAtMillis.remove(commandId)
@@ -122,6 +123,7 @@ internal class TicketSpacetimeSubscribedCommandLedger(
   }
 
   @Synchronized fun release(commandId: String) {
+    if (acknowledgedAtMillis.containsKey(commandId)) return
     results.remove(commandId)
     owned.remove(commandId)
     acknowledgedAtMillis.remove(commandId)
@@ -137,6 +139,17 @@ internal class TicketSpacetimeSubscribedCommandLedger(
     val result = results[commandId] ?: return null
     if (!result.terminal) results.remove(commandId)
     return result
+  }
+
+  @Synchronized fun settle(commandId: String, terminal: TicketSpacetimeCommandResult) {
+    require(terminal.terminal)
+    val now = nowMillis()
+    pruneAcknowledged(now)
+    owned.add(commandId)
+    results[commandId] = terminal
+    acknowledgedAtMillis.remove(commandId)
+    acknowledgedAtMillis[commandId] = now
+    pruneAcknowledged(now)
   }
 
   @Synchronized fun acknowledge(commandId: String) {
@@ -550,7 +563,7 @@ internal class TicketSpacetimeKeyframeSubscription(
   }
 
   private fun enqueueSubscribedCommand(command: TicketSpacetimeCommand): Boolean {
-    return if (command.commandType == "ticket_action_v3") {
+    return if (command.commandType in setOf("ticket_action_v3", "generate_control_code", "control_code_browser_capture", "vivi_reauth")) {
       priorityCommands.trySend(command).isSuccess
     } else {
       commands.trySend(command).isSuccess
@@ -807,7 +820,7 @@ private const val SUBSCRIBED_COMMAND_ACK_TOMBSTONE_CAPACITY = 1_024
 private const val SUBSCRIBED_COMMAND_ACK_TOMBSTONE_TTL_MILLIS = 15 * 60_000L
 private val LIVE_TICKET_COMMAND_TYPES = setOf(
   "start", "activity", "keyframe", "recover_stream", "ticket_action_v3",
-  "generate_control_code", "control_code_browser_capture", "control_code_result_ack",
+  "generate_control_code", "control_code_browser_capture", "control_code_result_ack", "vivi_reauth",
   "control_exit", "generate_rigassatiksme_qr_batch", "rigassatiksme_login_start",
   "rigassatiksme_login_sms", "cancel_rigassatiksme_login"
 )

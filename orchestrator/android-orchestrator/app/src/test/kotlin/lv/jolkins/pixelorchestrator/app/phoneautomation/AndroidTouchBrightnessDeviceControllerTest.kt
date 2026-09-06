@@ -12,6 +12,21 @@ import lv.jolkins.pixelorchestrator.rootexec.RootResult
 
 class AndroidTouchBrightnessDeviceControllerTest {
   @Test
+  fun matchingRequestedBrightnessCannotSkipOpeningBlankGate() = runTest {
+    val matching = "mode=0\nvalue=127\ndisplay_percentage=50\npanel_brightness=1969\npanel_actual_brightness=1969\npanel_max_brightness=3939\n"
+    val root = QueuedRootExecutor(ArrayDeque(listOf(
+      okResult(matching + "panel_backlight_power=4"),
+      okResult(""),
+      okResult(matching + "panel_backlight_power=0")
+    )))
+    val controller = AndroidTouchBrightnessDeviceController(ContextWrapper(null), root)
+    assertTrue(controller.restoreBrightnessState(ScreenBrightnessState(mode = 0, value = 127)).success)
+    assertEquals(3, root.scripts.size)
+    val command = root.scripts[1]
+    assertTrue(command.lastIndexOf("echo 0 >") > command.lastIndexOf("panel_write_index="))
+  }
+
+  @Test
   fun restoreBrightnessSucceedsWhenTheSystemValueMatchesEvenIfDisplayPercentageUsesOemScaling() = runTest {
     val rootExecutor = QueuedRootExecutor(
       scriptResults = ArrayDeque(
@@ -20,6 +35,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
           okResult(stdout = ""),
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=3
               display_percentage=18.776789
@@ -49,6 +65,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
           okResult(stdout = ""),
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=255
               display_percentage=67.0
@@ -78,6 +95,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
         listOf(
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=0
               display_percentage=0.0
@@ -90,6 +108,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
           okResult(stdout = ""),
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=51
               display_percentage=20.0
@@ -123,6 +142,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
         listOf(
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=0
               display_percentage=0.0
@@ -135,6 +155,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
           okResult(stdout = ""),
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=51
               display_percentage=20.0
@@ -147,6 +168,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
           okResult(stdout = ""),
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=51
               display_percentage=20.0
@@ -174,222 +196,10 @@ class AndroidTouchBrightnessDeviceControllerTest {
     assertTrue(setScripts.all { it.contains("panel_writes=${'$'}(( (1500 + 50 - 1) / 50 ))") })
   }
 
-  @Test
-  fun setBrightnessPercentAllowsRealPanelZero() = runTest {
-    val rootExecutor = QueuedRootExecutor(
-      scriptResults = ArrayDeque(
-        listOf(
-          okResult(stdout = ""),
-          okResult(stdout = ""),
-          okResult(stdout = ""),
-          okResult(
-            stdout = """
-              mode=0
-              value=127
-              display_percentage=50.0
-              panel_path=/sys/class/backlight/panel0-backlight
-              panel_brightness=0
-              panel_actual_brightness=0
-              panel_max_brightness=3939
-            """.trimIndent()
-          )
-        )
-      )
-    )
-    val controller = AndroidTouchBrightnessDeviceController(
-      context = ContextWrapper(null),
-      rootExecutor = rootExecutor
-    )
 
-    val result = controller.setBrightnessPercent(0)
 
-    assertTrue(result.success)
-    assertTrue(rootExecutor.scripts.any { it.contains("panel_max * 0 + 50") })
-  }
 
-  @Test
-  fun setBrightnessPercentDoesNotTreatPanelOneAsPanelZero() = runTest {
-    val rootExecutor = QueuedRootExecutor(
-      scriptResults = ArrayDeque(
-        listOf(
-          okResult(
-            stdout = """
-              mode=0
-              value=1
-              display_percentage=0.0
-              panel_path=/sys/class/backlight/panel0-backlight
-              panel_brightness=1
-              panel_actual_brightness=1
-              panel_max_brightness=3939
-            """.trimIndent()
-          ),
-          okResult(stdout = ""),
-          okResult(
-            stdout = """
-              mode=0
-              value=0
-              display_percentage=0.0
-              panel_path=/sys/class/backlight/panel0-backlight
-              panel_brightness=0
-              panel_actual_brightness=0
-              panel_max_brightness=3939
-            """.trimIndent()
-          )
-        )
-      )
-    )
-    val controller = AndroidTouchBrightnessDeviceController(
-      context = ContextWrapper(null),
-      rootExecutor = rootExecutor
-    )
 
-    val result = controller.setBrightnessPercent(0)
-
-    assertTrue(result.success)
-    assertEquals(3, rootExecutor.scripts.size)
-    assertTrue(rootExecutor.scripts[1].contains("screen_brightness 0"))
-  }
-
-  @Test
-  fun setBrightnessPercentZeroUsesShortPanelHoldWhenPanelAlreadyReadsZero() = runTest {
-    val rootExecutor = QueuedRootExecutor(
-      scriptResults = ArrayDeque(
-        listOf(
-          okResult(
-            stdout = """
-              mode=0
-              value=0
-              display_percentage=0.0
-              panel_path=/sys/class/backlight/panel0-backlight
-              panel_brightness=0
-              panel_actual_brightness=0
-              panel_max_brightness=3939
-            """.trimIndent()
-          ),
-          okResult(stdout = ""),
-          okResult(
-            stdout = """
-              mode=0
-              value=0
-              display_percentage=0.0
-              panel_path=/sys/class/backlight/panel0-backlight
-              panel_brightness=0
-              panel_actual_brightness=0
-              panel_max_brightness=3939
-            """.trimIndent()
-          )
-        )
-      )
-    )
-    val controller = AndroidTouchBrightnessDeviceController(
-      context = ContextWrapper(null),
-      rootExecutor = rootExecutor
-    )
-
-    val result = controller.setBrightnessPercent(0)
-
-    assertTrue(result.success)
-    assertEquals(3, rootExecutor.scripts.size)
-    assertFalse(
-      "reasserting an already-sleeping panel must not touch Android brightness settings because that can rebound the panel",
-      rootExecutor.scripts[1].contains("screen_brightness")
-    )
-    assertTrue(rootExecutor.scripts[1].contains("panel_writes=$(( (250 + 50 - 1) / 50 ))"))
-    assertFalse(rootExecutor.scripts[1].contains("panel_writes=$(( (1500 + 50 - 1) / 50 ))"))
-    assertFalse(rootExecutor.scripts[1].contains("if [ \"${'$'}panel_current\" = \"${'$'}panel_target\" ]"))
-  }
-
-  @Test
-  fun panelSleepWakeClampWritesAndroidAndRawBrightnessEvenWhenPanelWasAlreadyZero() = runTest {
-    val rootExecutor = QueuedRootExecutor(
-      scriptResults = ArrayDeque(
-        listOf(
-          okResult(stdout = ""),
-          okResult(
-            stdout = """
-              mode=0
-              value=0
-              display_percentage=0.0
-              panel_path=/sys/class/backlight/panel0-backlight
-              panel_brightness=0
-              panel_actual_brightness=0
-              panel_max_brightness=3939
-            """.trimIndent()
-          )
-        )
-      )
-    )
-    val controller = AndroidTouchBrightnessDeviceController(
-      context = ContextWrapper(null),
-      rootExecutor = rootExecutor
-    )
-
-    val result = controller.clampPanelSleepForWake()
-
-    assertTrue(result.success)
-    assertEquals(2, rootExecutor.scripts.size)
-    assertTrue(rootExecutor.scripts[0].contains("settings put system screen_brightness_mode 0"))
-    assertTrue(rootExecutor.scripts[0].contains("cmd display set-brightness 0 --unit percentage"))
-    assertTrue(rootExecutor.scripts[0].contains("settings put system screen_brightness 0"))
-    assertTrue(rootExecutor.scripts[0].contains("panel_writes=${'$'}(( (250 + 50 - 1) / 50 ))"))
-    assertTrue(
-      rootExecutor.scripts[0].indexOf("echo \"${'$'}panel_target\" > \"${'$'}panel_dir/brightness\"") <
-        rootExecutor.scripts[0].indexOf("settings put system screen_brightness_mode 0")
-    )
-  }
-
-  @Test
-  fun setBrightnessPercentZeroClampsPanelAroundInitialAndroidBrightnessWrites() = runTest {
-    val rootExecutor = QueuedRootExecutor(
-      scriptResults = ArrayDeque(
-        listOf(
-          okResult(
-            stdout = """
-              mode=0
-              value=1
-              display_percentage=0.0
-              panel_path=/sys/class/backlight/panel0-backlight
-              panel_brightness=1
-              panel_actual_brightness=1
-              panel_max_brightness=3939
-            """.trimIndent()
-          ),
-          okResult(stdout = ""),
-          okResult(
-            stdout = """
-              mode=0
-              value=0
-              display_percentage=0.0
-              panel_path=/sys/class/backlight/panel0-backlight
-              panel_brightness=0
-              panel_actual_brightness=0
-              panel_max_brightness=3939
-            """.trimIndent()
-          )
-        )
-      )
-    )
-    val controller = AndroidTouchBrightnessDeviceController(
-      context = ContextWrapper(null),
-      rootExecutor = rootExecutor
-    )
-
-    val result = controller.setBrightnessPercent(0)
-
-    assertTrue(result.success)
-    assertTrue(rootExecutor.scripts[1].contains("screen_brightness 0"))
-    assertTrue(rootExecutor.scripts[1].contains("panel_writes=${'$'}(( (1500 + 50 - 1) / 50 ))"))
-    assertTrue(
-      "initial panel-sleep writes must clamp the real backlight before Android brightness settings can rebound it",
-      rootExecutor.scripts[1].indexOf("echo \"${'$'}panel_target\" > \"${'$'}panel_dir/brightness\"") <
-        rootExecutor.scripts[1].indexOf("settings put system screen_brightness_mode 0")
-    )
-    assertTrue(
-      "initial panel-sleep writes must clamp the real backlight again after Android brightness settings",
-      rootExecutor.scripts[1].lastIndexOf("echo \"${'$'}panel_target\" > \"${'$'}panel_dir/brightness\"") >
-        rootExecutor.scripts[1].lastIndexOf("settings put system screen_brightness 0")
-    )
-  }
 
   @Test
   fun restoreWithoutCapturedPanelDataDoesNotTreatPanelZeroAsAlreadyRestored() = runTest {
@@ -398,6 +208,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
         listOf(
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=127
               display_percentage=50.0
@@ -410,6 +221,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
           okResult(stdout = ""),
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=127
               display_percentage=50.0
@@ -430,7 +242,8 @@ class AndroidTouchBrightnessDeviceControllerTest {
     val result = controller.restoreBrightnessState(ScreenBrightnessState(mode = 0, value = 127))
 
     assertTrue(result.success)
-    assertTrue(rootExecutor.scripts.any { it.contains("settings put system screen_brightness") })
+    assertFalse(rootExecutor.scripts.any { it.contains("settings put system screen_brightness") })
+    assertFalse(rootExecutor.scripts.any { it.contains("1500 -gt 0") })
     assertTrue(rootExecutor.scripts.any { it.contains("panel_target") })
   }
 
@@ -441,6 +254,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
         listOf(
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=0
               display_percentage=0.0
@@ -453,6 +267,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
           okResult(stdout = ""),
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=127
               display_percentage=50.0
@@ -496,6 +311,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
         listOf(
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=0
               display_percentage=0.0
@@ -508,6 +324,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
           okResult(stdout = ""),
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=127
               display_percentage=50.0
@@ -520,6 +337,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
           okResult(stdout = ""),
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=127
               display_percentage=50.0
@@ -561,6 +379,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
   fun restoreRetriesWhenTheFirstPostCommandReadIsUnavailableThenSucceeds() = runTest {
     val matchingVerification = okResult(
       stdout = """
+        panel_backlight_power=0
         mode=0
         value=171
         display_percentage=67.0
@@ -619,6 +438,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
   fun restoreFailsWhenDisplayBrightnessStaysZeroEvenIfPanelMatches() = runTest {
     val failedVerification = okResult(
       stdout = """
+        panel_backlight_power=0
         mode=0
         value=0
         display_percentage=0.0
@@ -633,6 +453,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
         listOf(
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=0
               display_percentage=0.0
@@ -670,6 +491,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
   fun restoreFailsWhenTinySavedValueLeavesDisplayBrightnessAtZero() = runTest {
     val failedVerification = okResult(
       stdout = """
+        panel_backlight_power=0
         mode=0
         value=1
         display_percentage=0.0
@@ -684,6 +506,7 @@ class AndroidTouchBrightnessDeviceControllerTest {
         listOf(
           okResult(
             stdout = """
+              panel_backlight_power=0
               mode=0
               value=0
               display_percentage=0.0

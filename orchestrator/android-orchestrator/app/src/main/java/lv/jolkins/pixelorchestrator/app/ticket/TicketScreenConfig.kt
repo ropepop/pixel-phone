@@ -218,6 +218,7 @@ data class TicketHardwareH264Health(
   val lastStartAgoMillis: Long? = null,
   val helperFrameRecord: String = "thf1",
   val lastFrameSourceToServiceMillis: Long? = null,
+  val lastFrameStageMillis: Map<String, Long> = emptyMap(),
   val secureLayerCaptureEnabled: Boolean = true,
   val protectedContentCaptureEnabled: Boolean = true,
   val lastCaptureDurationMillis: Long? = null,
@@ -303,6 +304,8 @@ data class TicketBrightnessGuardHealth(
 @Serializable
 data class TicketActionPanelDarkLeaseHealth(
   val active: Boolean = false,
+  val protectionMode: String = "dark",
+  val physicalVisibleWindowRemainingMillis: Long = 0L,
   val ownerActionId: String = "",
   val ageMillis: Long? = null,
   val lastZeroConfirmationAgoMillis: Long? = null,

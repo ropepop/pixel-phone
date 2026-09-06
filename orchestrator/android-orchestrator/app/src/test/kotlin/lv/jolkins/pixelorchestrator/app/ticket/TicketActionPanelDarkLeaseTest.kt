@@ -10,6 +10,9 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationRootPhysicalTouchState
 import lv.jolkins.pixelorchestrator.rootexec.RootExecutor
 import lv.jolkins.pixelorchestrator.rootexec.RootResult
@@ -20,6 +23,164 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TicketActionPanelDarkLeaseTest {
+  @Test
+  fun batchedAcquisitionKeepsTheBudgetForBothObservations() = runTest {
+    val verifier = DelayedBudgetedVerifier(1_200L)
+    val lease = TicketActionPanelDarkLease(
+      actionId = "batched-verifier-budget", scope = backgroundScope,
+      clampRootExecutor = SuccessfulLaunchRootExecutor(), verifyRootExecutor = verifier,
+      physicalTouchState = { readyNoTouch(testScheduler.currentTime + 1_000L) },
+      onSnapshotChanged = {}, ownerProcessId = 4321,
+      uptimeClock = { testScheduler.currentTime + 1_000L }
+    )
+    assertTrue(lease.acquire())
+    assertEquals(listOf(2_000L), verifier.timeouts)
+    assertTrue(testScheduler.currentTime < TicketActionPanelDarkLease.PANEL_DARK_ACQUIRE_TIMEOUT_MILLIS)
+    lease.release("test_complete")
+  }
+
+  @Test
+  fun lateBatchedProofCannotExtendTheAcquisitionDeadline() = runTest {
+    val verifier = DelayedBudgetedVerifier(3_100L, honorTimeout = false)
+    val lease = TicketActionPanelDarkLease(
+      actionId = "batched-verifier-deadline", scope = backgroundScope,
+      clampRootExecutor = SuccessfulLaunchRootExecutor(), verifyRootExecutor = verifier,
+      physicalTouchState = { readyNoTouch(testScheduler.currentTime + 1_000L) },
+      onSnapshotChanged = {}, ownerProcessId = 4321,
+      uptimeClock = { testScheduler.currentTime + 1_000L }
+    )
+    assertFalse(lease.acquire())
+    assertFalse(lease.snapshot().active)
+    lease.release("test_complete")
+  }
+
+  private class DelayedBudgetedVerifier(
+    private val delayMillis: Long,
+    private val honorTimeout: Boolean = true
+  ) : RootExecutor {
+    val timeouts = mutableListOf<Long>()
+    override suspend fun isRootAvailable() = true
+    override suspend fun run(command: String, timeout: Duration): RootResult = error("unexpected run")
+    override suspend fun runScript(script: String, timeout: Duration): RootResult {
+      if (script.contains("echo helper_stopped=1")) return RootResult(
+        exitCode = 0, stdout = "helper_stopped=1\nreadiness_removed=1\ntelemetry_removed=1\nwait_fifo_removed=1\nlaunch_marker_removed=1\n",
+        stderr = "", command = "script", durationMs = 1L
+      )
+      timeouts += timeout.inWholeMilliseconds
+      return if (honorTimeout) {
+        withTimeoutOrNull(timeout.inWholeMilliseconds) { delay(delayMillis); provenZeroResult() }
+          ?: unavailableResult()
+      } else {
+        delay(delayMillis)
+        provenZeroResult()
+      }
+    }
+  }
+
+  @Test
+  fun touchCancelsStalledAcquisitionVerificationBeforeExactStop() = runTest {
+    var touch = readyNoTouch(1_000L)
+    val verifier = SuspendedAcquisitionVerifyRootExecutor()
+    val lease = TicketActionPanelDarkLease(
+      actionId = "touch-during-stalled-acquire", scope = backgroundScope,
+      clampRootExecutor = SuccessfulLaunchRootExecutor(), verifyRootExecutor = verifier,
+      physicalTouchState = { touch }, onSnapshotChanged = {}, ownerProcessId = 4321,
+      uptimeClock = { testScheduler.currentTime + 1_000L }
+    )
+    val acquisition = async { lease.acquire() }
+    advanceTimeBy(TicketActionPanelDarkLease.PANEL_DARK_ACQUIRE_POLL_MILLIS)
+    runCurrent()
+    assertTrue(verifier.verificationStarted.isCompleted)
+    touch = touch.copy(active = false, touchBeginCount = 1L)
+    advanceTimeBy(TicketActionPanelDarkLease.PHYSICAL_TOUCH_POLL_MILLIS)
+    runCurrent()
+    assertTrue(verifier.verificationCancelled)
+    assertTrue(verifier.exactStopStarted.isCompleted)
+    assertFalse(verifier.verificationResult.isCompleted)
+    assertFalse(acquisition.await())
+    assertFalse(lease.snapshot().active)
+    assertTrue(lease.snapshot().physicalTouchPreempted)
+    assertEquals("physical_touch_during_acquire", lease.snapshot().releaseReason)
+    lease.release("test_complete")
+  }
+
+  @Test
+  fun completedTouchBetweenSamplesBlocksMutationAndFinalSuccess() = runTest {
+    var touch = readyNoTouch(1_000L).copy(touchBeginCount = 3L)
+    val verifier = ZeroRootExecutor()
+    val lease = TicketActionPanelDarkLease(
+      actionId = "remembered-touch", scope = backgroundScope,
+      clampRootExecutor = SuccessfulLaunchRootExecutor(), verifyRootExecutor = verifier,
+      physicalTouchState = { touch }, onSnapshotChanged = {}, ownerProcessId = 4321,
+      uptimeClock = { testScheduler.currentTime + 1_000L }
+    )
+    assertTrue(lease.acquire())
+    runCurrent()
+    // Both down and up have reached the bridge before either consumer gets another turn.
+    touch = touch.copy(active = false, touchBeginCount = 4L)
+    assertFalse(lease.beforeMutationAllowed())
+    assertTrue(lease.snapshot().physicalTouchPreempted)
+    assertFalse(lease.releaseAfterFinalConvergence("terminal").safe)
+    assertEquals(1, verifier.stopCalls)
+  }
+
+  @Test
+  fun monitorRemembersCompletedTouchDuringVisualWait() = runTest {
+    var touch = readyNoTouch(1_000L)
+    val lease = TicketActionPanelDarkLease(
+      actionId = "remembered-monitor-touch", scope = backgroundScope,
+      clampRootExecutor = SuccessfulLaunchRootExecutor(), verifyRootExecutor = ZeroRootExecutor(),
+      physicalTouchState = { touch }, onSnapshotChanged = {}, ownerProcessId = 4321,
+      uptimeClock = { testScheduler.currentTime + 1_000L }
+    )
+    assertTrue(lease.acquire())
+    runCurrent()
+    touch = touch.copy(active = false, touchBeginCount = 1L)
+    advanceTimeBy(TicketActionPanelDarkLease.PHYSICAL_TOUCH_POLL_MILLIS)
+    runCurrent()
+    assertTrue(lease.snapshot().physicalTouchPreempted)
+    assertFalse(lease.snapshot().active)
+    lease.release("test_complete")
+  }
+
+  @Test
+  fun completedTouchInsideBatchedAcquisitionProofCannotAuthorizeLease() = runTest {
+    var touch = readyNoTouch(1_000L)
+    val verifier = ZeroRootExecutor { call ->
+      if (call == 1) touch = touch.copy(active = false, touchBeginCount = 1L)
+    }
+    val lease = TicketActionPanelDarkLease(
+      actionId = "acquire-proof-touch", scope = backgroundScope,
+      clampRootExecutor = SuccessfulLaunchRootExecutor(), verifyRootExecutor = verifier,
+      physicalTouchState = { touch }, onSnapshotChanged = {}, ownerProcessId = 4321,
+      uptimeClock = { testScheduler.currentTime + 1_000L }
+    )
+    assertFalse(lease.acquire())
+    assertTrue(lease.snapshot().physicalTouchPreempted)
+    assertFalse(lease.snapshot().active)
+    assertEquals(1, verifier.stopCalls)
+  }
+
+  @Test
+  fun completedTouchInsideFreshMutationProofCannotAuthorizeMutation() = runTest {
+    var touch = readyNoTouch(1_000L)
+    var now = 1_000L
+    val verifier = ZeroRootExecutor { call ->
+      if (call == 2) touch = touch.copy(active = false, touchBeginCount = 1L)
+    }
+    val lease = TicketActionPanelDarkLease(
+      actionId = "refresh-proof-touch", scope = backgroundScope,
+      clampRootExecutor = SuccessfulLaunchRootExecutor(), verifyRootExecutor = verifier,
+      physicalTouchState = { touch }, onSnapshotChanged = {}, ownerProcessId = 4321,
+      uptimeClock = { now }
+    )
+    assertTrue(lease.acquire())
+    now += TicketActionPanelDarkLease.PANEL_DARK_MAX_ZERO_CONFIRMATION_AGE_MILLIS + 1L
+    assertFalse(lease.beforeMutationAllowed())
+    assertTrue(lease.snapshot().physicalTouchPreempted)
+    lease.release("test_complete")
+  }
+
   @Test
   fun leaseHoldsAcrossAnActionAndExactlyStopsDetachedHelperOnRelease() = runTest {
     val helper = SuccessfulLaunchRootExecutor()
@@ -49,7 +210,7 @@ class TicketActionPanelDarkLeaseTest {
     runCurrent()
 
     assertTrue(helper.completed)
-    assertEquals(2, verifier.stopCalls)
+    assertEquals(1, verifier.stopCalls)
     assertFalse(lease.snapshot().active)
     assertTrue(lease.snapshot().mutationMayHaveDispatched)
     assertEquals("terminal_complete", lease.snapshot().releaseReason)
@@ -169,8 +330,8 @@ class TicketActionPanelDarkLeaseTest {
     val helper = SuccessfulLaunchRootExecutor()
     val verifier = SequencedVerifyRootExecutor(listOf(
       "helper_ready=0\npanel_dark=1\n",
-      "helper_ready=1\npanel_dark=1\n",
-      "helper_ready=1\npanel_dark=1\n"
+      "helper_ready=1\npanel_dark=1\npanel_confirmations=2\n",
+      "helper_ready=1\npanel_dark=1\npanel_confirmations=2\n"
     ))
     val lease = TicketActionPanelDarkLease(
       actionId = "action-readiness",
@@ -191,7 +352,7 @@ class TicketActionPanelDarkLeaseTest {
     )
 
     assertTrue(lease.acquire())
-    assertEquals(3, verifier.calls)
+    assertEquals(2, verifier.calls)
     assertTrue(helper.started.isCompleted)
     assertTrue(lease.snapshot().active)
 
@@ -202,7 +363,6 @@ class TicketActionPanelDarkLeaseTest {
   fun spawnAcknowledgementFailsClosedWhenHelperNeverBecomesReady() = runTest {
     val helper = SuccessfulLaunchRootExecutor()
     val verifier = SequencedVerifyRootExecutor(listOf("helper_ready=0\npanel_dark=1\n"))
-    var now = 6_000L
     val lease = TicketActionPanelDarkLease(
       actionId = "action-no-helper",
       scope = backgroundScope,
@@ -212,12 +372,12 @@ class TicketActionPanelDarkLeaseTest {
         PhoneAutomationRootPhysicalTouchState(
           available = true,
           active = false,
-          observedAtUptimeMillis = now
+          observedAtUptimeMillis = testScheduler.currentTime + 6_000L
         )
       },
       onSnapshotChanged = {},
       ownerProcessId = 4321,
-      uptimeClock = { now.also { now += TicketActionPanelDarkLease.PANEL_DARK_ACQUIRE_POLL_MILLIS } },
+      uptimeClock = { testScheduler.currentTime + 6_000L },
       helperToken = "test-never-ready-token"
     )
 
@@ -260,7 +420,7 @@ class TicketActionPanelDarkLeaseTest {
     assertEquals("", lease.snapshot().failure)
     assertTrue(lease.beforeMutationAllowed())
     lease.release("test_complete")
-    assertEquals(2, verifier.stopCalls)
+    assertEquals(1, verifier.stopCalls)
   }
 
   @Test
@@ -375,6 +535,37 @@ class TicketActionPanelDarkLeaseTest {
       val parserOutput = parser.inputStream.bufferedReader().use { it.readText() }
       assertEquals("$label syntax: $parserOutput", 0, parser.waitFor())
     }
+  }
+
+  @Test
+  fun batchedAcquisitionNeedsTwoSuccessfulDistinctReadbacks() {
+    val single = TicketActionPanelDarkLease.panelDarkVerifyScript("batch-test")
+    val batch = TicketActionPanelDarkLease.panelDarkVerifyScript("batch-test", 2)
+    assertTrue(batch.contains(single))
+    fun run(observation: String): Pair<Int, String> {
+      val process = ProcessBuilder("sh", "-c", batch.replace(single, observation))
+        .redirectErrorStream(true).start()
+      val output = process.inputStream.bufferedReader().use { it.readText() }
+      return process.waitFor() to output
+    }
+    val good = run("echo helper_ready=1; echo panel_dark=1; exit 0")
+    assertEquals(0, good.first)
+    assertTrue(good.second.contains("panel_confirmations=2"))
+    val secondReadFails = run("""
+      echo helper_ready=1
+      if [ "${'$'}confirmations" -eq 0 ]; then echo panel_dark=1; exit 0; fi
+      echo panel_dark=0
+      exit 1
+    """.trimIndent())
+    assertEquals(1, secondReadFails.first)
+    assertTrue(secondReadFails.second.contains("panel_dark=0"))
+    assertFalse(secondReadFails.second.contains("panel_confirmations="))
+    val changedIdentity = run("""
+      if [ "${'$'}confirmations" -gt 0 ]; then echo helper_ready=0; exit 74; fi
+      echo helper_ready=1; echo panel_dark=1; exit 0
+    """.trimIndent())
+    assertEquals(74, changedIdentity.first)
+    assertFalse(changedIdentity.second.contains("panel_confirmations="))
   }
 
   @Test
@@ -638,9 +829,9 @@ class TicketActionPanelDarkLeaseTest {
     runCurrent()
     val finalization = release.await()
     assertTrue(helper.completed)
-    assertEquals(2, verifier.stopCalls)
+    assertEquals(1, verifier.stopCalls)
     assertTrue(finalization.safe)
-    assertTrue(finalization.freshZeroProven)
+    assertTrue(finalization.freshDarkProven)
     assertTrue(finalization.exactHelperStopProven)
     assertEquals("terminal_complete", lease.snapshot().releaseReason)
   }
@@ -681,7 +872,7 @@ class TicketActionPanelDarkLeaseTest {
     runCurrent()
     val finalization = release.await()
     assertTrue(finalization.safe)
-    assertTrue(finalization.freshZeroProven)
+    assertTrue(finalization.freshDarkProven)
     assertTrue(finalization.exactHelperStopProven)
     assertTrue(helper.completed)
   }
@@ -708,7 +899,7 @@ class TicketActionPanelDarkLeaseTest {
 
     val finalization = lease.releaseAfterFinalConvergence("terminal_complete")
     assertTrue(finalization.safe)
-    assertTrue(finalization.freshZeroProven)
+    assertTrue(finalization.freshDarkProven)
     assertTrue(finalization.exactHelperStopProven)
     assertTrue(helper.completed)
   }
@@ -786,7 +977,7 @@ class TicketActionPanelDarkLeaseTest {
     val finalization = release.await()
 
     assertFalse(finalization.safe)
-    assertFalse(finalization.freshZeroProven)
+    assertFalse(finalization.freshDarkProven)
     assertTrue(finalization.exactHelperStopProven)
     assertEquals("panel_dark_zero_lost", finalization.snapshot.failure)
     assertTrue(finalization.snapshot.mutationMayHaveDispatched)
@@ -816,7 +1007,7 @@ class TicketActionPanelDarkLeaseTest {
     val finalization = release.await()
 
     assertFalse(finalization.safe)
-    assertTrue(finalization.freshZeroProven)
+    assertTrue(finalization.freshDarkProven)
     assertFalse(finalization.exactHelperStopProven)
     assertEquals("panel_dark_helper_stop_unproved", finalization.snapshot.failure)
   }
@@ -852,10 +1043,31 @@ class TicketActionPanelDarkLeaseTest {
     val finalization = release.await()
 
     assertFalse(finalization.safe)
-    assertTrue(finalization.freshZeroProven)
+    assertTrue(finalization.freshDarkProven)
     assertTrue(finalization.exactHelperStopProven)
     assertTrue(finalization.snapshot.physicalTouchPreempted)
     assertEquals("physical_touch_at_mutation_boundary", finalization.snapshot.releaseReason)
+  }
+
+  @Test
+  fun completedTouchDuringExactShutdownCannotPublishSuccess() = runTest {
+    var touch = readyNoTouch(1_000L)
+    val verifier = TouchOnStopVerifyRootExecutor {
+      touch = touch.copy(active = false, touchBeginCount = touch.touchBeginCount + 1L)
+    }
+    val lease = TicketActionPanelDarkLease(
+      actionId = "completed-touch-during-stop", scope = backgroundScope,
+      clampRootExecutor = SuccessfulLaunchRootExecutor(), verifyRootExecutor = verifier,
+      physicalTouchState = { touch }, onSnapshotChanged = {}, ownerProcessId = 4321,
+      uptimeClock = { testScheduler.currentTime + 1_000L }
+    )
+    assertTrue(lease.acquire())
+    lease.markMutationMayHaveDispatched()
+    val finalization = lease.releaseAfterFinalConvergence("terminal_complete")
+    assertFalse(finalization.safe)
+    assertTrue(finalization.freshDarkProven)
+    assertTrue(finalization.exactHelperStopProven)
+    assertTrue(finalization.snapshot.physicalTouchPreempted)
   }
 
   @Test
@@ -884,7 +1096,7 @@ class TicketActionPanelDarkLeaseTest {
     val finalization = release.await()
 
     assertTrue(finalization.safe)
-    assertTrue(finalization.freshZeroProven)
+    assertTrue(finalization.freshDarkProven)
     assertTrue(finalization.exactHelperStopProven)
     assertEquals(0, verifier.verificationsAfterStop)
     assertEquals("", finalization.snapshot.failure)
@@ -966,7 +1178,6 @@ class TicketActionPanelDarkLeaseTest {
     val verifier = ResultSequencedVerifyRootExecutor(
       listOf(
         provenZeroResult(),
-        provenZeroResult(),
         unavailableResult(),
         provenZeroResult()
       )
@@ -1001,7 +1212,7 @@ class TicketActionPanelDarkLeaseTest {
   fun verifierUnavailabilityFailsClosedOnceTheLastZeroProofIsStale() = runTest {
     val helper = SuccessfulLaunchRootExecutor()
     val verifier = ResultSequencedVerifyRootExecutor(
-      listOf(provenZeroResult(), provenZeroResult(), unavailableResult())
+      listOf(provenZeroResult(), unavailableResult())
     )
     val lease = TicketActionPanelDarkLease(
       actionId = "action-stale-verifier",
@@ -1033,7 +1244,7 @@ class TicketActionPanelDarkLeaseTest {
   fun aDefinitiveNonzeroPanelReadingStillFailsImmediately() = runTest {
     val helper = SuccessfulLaunchRootExecutor()
     val verifier = ResultSequencedVerifyRootExecutor(
-      listOf(provenZeroResult(), provenZeroResult(), nonzeroPanelResult())
+      listOf(provenZeroResult(), nonzeroPanelResult())
     )
     val lease = TicketActionPanelDarkLease(
       actionId = "action-panel-nonzero",
@@ -1076,12 +1287,12 @@ class TicketActionPanelDarkLeaseTest {
     )
 
     assertTrue(lease.acquire())
-    assertEquals(2, verifier.verificationCalls)
+    assertEquals(1, verifier.verificationCalls)
     now += TicketActionPanelDarkLease.PANEL_DARK_MAX_ZERO_CONFIRMATION_AGE_MILLIS + 1L
     assertTrue(lease.beforeMutationAllowed())
     runCurrent()
 
-    assertEquals(3, verifier.verificationCalls)
+    assertEquals(2, verifier.verificationCalls)
     assertEquals(now, lease.snapshot().lastZeroConfirmedAtUptimeMillis)
     assertEquals("", lease.snapshot().failure)
     assertTrue(lease.snapshot().active)
@@ -1092,7 +1303,7 @@ class TicketActionPanelDarkLeaseTest {
   fun staleMutationBoundaryStillFailsClosedWhenFreshVerificationIsUnavailable() = runTest {
     val helper = SuccessfulLaunchRootExecutor()
     val verifier = ResultSequencedVerifyRootExecutor(
-      listOf(provenZeroResult(), provenZeroResult(), unavailableResult())
+      listOf(provenZeroResult(), unavailableResult())
     )
     var now = 50_000L
     val lease = TicketActionPanelDarkLease(
@@ -1112,7 +1323,7 @@ class TicketActionPanelDarkLeaseTest {
     assertFalse(lease.beforeMutationAllowed())
     runCurrent()
 
-    assertEquals(3, verifier.verificationCalls)
+    assertEquals(2, verifier.verificationCalls)
     assertEquals("panel_dark_verifier_unavailable", lease.snapshot().failure)
     assertEquals("panel_dark_zero_proof_stale_at_mutation_boundary", lease.snapshot().releaseReason)
     lease.release("test_complete")
@@ -1122,7 +1333,7 @@ class TicketActionPanelDarkLeaseTest {
   fun staleMutationBoundaryStillFailsImmediatelyOnAFreshNonzeroReading() = runTest {
     val helper = SuccessfulLaunchRootExecutor()
     val verifier = ResultSequencedVerifyRootExecutor(
-      listOf(provenZeroResult(), provenZeroResult(), nonzeroPanelResult())
+      listOf(provenZeroResult(), nonzeroPanelResult())
     )
     var now = 60_000L
     val lease = TicketActionPanelDarkLease(
@@ -1142,7 +1353,7 @@ class TicketActionPanelDarkLeaseTest {
     assertFalse(lease.beforeMutationAllowed())
     runCurrent()
 
-    assertEquals(3, verifier.verificationCalls)
+    assertEquals(2, verifier.verificationCalls)
     assertEquals("panel_dark_zero_lost", lease.snapshot().failure)
     assertEquals("panel_dark_zero_lost", lease.snapshot().releaseReason)
     lease.release("test_complete")
@@ -1152,7 +1363,7 @@ class TicketActionPanelDarkLeaseTest {
   fun staleMutationBoundaryStillFailsImmediatelyWhenTheExactHelperIsUnready() = runTest {
     val helper = SuccessfulLaunchRootExecutor()
     val verifier = ResultSequencedVerifyRootExecutor(
-      listOf(provenZeroResult(), provenZeroResult(), helperUnreadyResult())
+      listOf(provenZeroResult(), helperUnreadyResult())
     )
     var now = 65_000L
     val lease = TicketActionPanelDarkLease(
@@ -1172,7 +1383,7 @@ class TicketActionPanelDarkLeaseTest {
     assertFalse(lease.beforeMutationAllowed())
     runCurrent()
 
-    assertEquals(3, verifier.verificationCalls)
+    assertEquals(2, verifier.verificationCalls)
     assertEquals("panel_dark_helper_identity_lost", lease.snapshot().failure)
     assertEquals("panel_dark_helper_identity_lost", lease.snapshot().releaseReason)
     lease.release("test_complete")
@@ -1220,11 +1431,11 @@ class TicketActionPanelDarkLeaseTest {
   fun controlCodeCleanupCanCommitOnlyAfterBothSurfaceAndPanelFinalizationProofs() {
     val safe = TicketActionPanelDarkLeaseFinalization(
       safe = true,
-      freshZeroProven = true,
+      freshDarkProven = true,
       exactHelperStopProven = true,
       snapshot = TicketActionPanelDarkLeaseSnapshot(releaseReason = "terminal")
     )
-    val unsafe = safe.copy(safe = false, freshZeroProven = false)
+    val unsafe = safe.copy(safe = false, freshDarkProven = false)
 
     assertTrue(ticketControlCodeCleanupMayCommitAfterPanelFinalization(true, safe))
     assertFalse(ticketControlCodeCleanupMayCommitAfterPanelFinalization(false, safe))
@@ -1255,6 +1466,35 @@ class TicketActionPanelDarkLeaseTest {
         mutationMayHaveDispatched = false
       )
     )
+  }
+
+  @Test
+  fun ongoingCommandLatchesCompletedTouchWithoutWaitingForSuspendedVerifier() = runTest {
+    val verifier = BlockingBoundaryVerifyRootExecutor()
+    var now = 70_000L
+    var touch = readyNoTouch(now)
+    val lease = TicketActionPanelDarkLease(
+      actionId = "ongoing-touch-during-refresh", scope = backgroundScope,
+      clampRootExecutor = SuccessfulLaunchRootExecutor(), verifyRootExecutor = verifier,
+      physicalTouchState = { touch }, onSnapshotChanged = {}, ownerProcessId = 4321,
+      uptimeClock = { now }
+    )
+    assertTrue(lease.acquire())
+    now += TicketActionPanelDarkLease.PANEL_DARK_MAX_ZERO_CONFIRMATION_AGE_MILLIS + 1L
+    val refreshedBoundary = async { lease.beforeMutationAllowed() }
+    runCurrent()
+    assertTrue(verifier.boundaryVerificationStarted.isCompleted)
+    assertFalse(refreshedBoundary.isCompleted)
+
+    touch = touch.copy(active = false, touchBeginCount = 1L)
+    assertFalse(lease.ongoingCommandAllowed())
+    assertTrue(lease.snapshot().physicalTouchPreempted)
+    assertFalse(refreshedBoundary.isCompleted)
+    assertFalse(verifier.boundaryVerificationResult.isCompleted)
+
+    verifier.boundaryVerificationResult.complete(provenZeroResult())
+    assertFalse(refreshedBoundary.await())
+    lease.release("test_complete")
   }
 
   @Test
@@ -1367,7 +1607,32 @@ class TicketActionPanelDarkLeaseTest {
     override suspend fun runScript(script: String, timeout: Duration): RootResult = result.await()
   }
 
-  private class ZeroRootExecutor : RootExecutor {
+  private class SuspendedAcquisitionVerifyRootExecutor : RootExecutor {
+    private val mutex = Mutex()
+    val verificationStarted = CompletableDeferred<Unit>()
+    val verificationResult = CompletableDeferred<RootResult>()
+    val exactStopStarted = CompletableDeferred<Unit>()
+    var verificationCancelled = false
+    override suspend fun isRootAvailable(): Boolean = true
+    override suspend fun run(command: String, timeout: Duration): RootResult = error("unexpected")
+    override suspend fun runScript(script: String, timeout: Duration): RootResult = mutex.withLock {
+      if (script.contains("echo helper_stopped=1")) {
+        assertTrue(verificationCancelled)
+        assertTrue(script.contains("remove_launch=1"))
+        exactStopStarted.complete(Unit)
+        RootResult(0, "helper_stopped=1\nreadiness_removed=1\ntelemetry_removed=1\nwait_fifo_removed=1\nlaunch_marker_removed=1\n", "", "script", 0L)
+      } else {
+        verificationStarted.complete(Unit)
+        try {
+          verificationResult.await()
+        } finally {
+          verificationCancelled = true
+        }
+      }
+    }
+  }
+
+  private class ZeroRootExecutor(private val onVerification: (Int) -> Unit = {}) : RootExecutor {
     var stopCalls = 0
     var verificationCalls = 0
 
@@ -1382,13 +1647,14 @@ class TicketActionPanelDarkLeaseTest {
         stopCalls += 1
       } else {
         verificationCalls += 1
+        onVerification(verificationCalls)
       }
       return RootResult(
         exitCode = 0,
         stdout = if (isStop) {
           "helper_stopped=1\nreadiness_removed=1\ntelemetry_removed=1\nwait_fifo_removed=1\nlaunch_marker_removed=1\n"
         } else {
-          "helper_ready=1\npanel_dark=1\n"
+          "helper_ready=1\npanel_dark=1\npanel_confirmations=2\n"
         },
         stderr = "",
         command = "script",
@@ -1439,7 +1705,7 @@ class TicketActionPanelDarkLeaseTest {
         stdout = if (isStop) {
           "helper_stopped=1\nreadiness_removed=1\ntelemetry_removed=1\nwait_fifo_removed=1\nlaunch_marker_removed=1\n"
         } else {
-          "helper_ready=1\npanel_dark=1\n"
+          "helper_ready=1\npanel_dark=1\npanel_confirmations=2\n"
         },
         stderr = "",
         command = "script",
@@ -1578,7 +1844,7 @@ class TicketActionPanelDarkLeaseTest {
         stdout = if (isStop) {
           "helper_stopped=1\nreadiness_removed=1\ntelemetry_removed=1\nwait_fifo_removed=1\nlaunch_marker_removed=1\n"
         } else {
-          "helper_ready=1\npanel_dark=1\n"
+          "helper_ready=1\npanel_dark=1\npanel_confirmations=2\n"
         },
         stderr = "",
         command = "script",
@@ -1603,7 +1869,7 @@ class TicketActionPanelDarkLeaseTest {
         stdout = if (isStop) {
           "helper_stopped=0\nreadiness_removed=0\nlaunch_marker_removed=0\n"
         } else {
-          "helper_ready=1\npanel_dark=1\n"
+          "helper_ready=1\npanel_dark=1\npanel_confirmations=2\n"
         },
         stderr = "",
         command = "script",
@@ -1659,7 +1925,7 @@ class TicketActionPanelDarkLeaseTest {
         )
       }
       verificationCalls += 1
-      if (verificationCalls <= 2) return provenZeroResult()
+      if (verificationCalls <= 1) return provenZeroResult()
       boundaryVerificationStarted.complete(Unit)
       return boundaryVerificationResult.await()
     }
@@ -1674,7 +1940,7 @@ class TicketActionPanelDarkLeaseTest {
 
     fun provenZeroResult() = RootResult(
       exitCode = 0,
-      stdout = "helper_ready=1\npanel_dark=1\n",
+      stdout = "helper_ready=1\npanel_dark=1\npanel_confirmations=2\n",
       stderr = "",
       command = "script",
       durationMs = 1L

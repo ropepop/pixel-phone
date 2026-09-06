@@ -711,6 +711,26 @@ class TicketVisualActionClassifierTest {
   }
 
   @Test
+  fun sliderEdgesExcludeCompactPaddingAndDarkPageBorders() {
+    val pixels = unactivatedDetailFrame()
+    fill(pixels, 0, 164, 192, 204, LIGHT, 192)
+    fill(pixels, 0, 164, 6, 204, DARK, 192)
+    fill(pixels, 186, 164, 192, 204, DARK, 192)
+    fill(pixels, 14, 171, 178, 193, YELLOW, 192)
+    fill(pixels, 15, 172, 38, 192, DARK, 192)
+    fill(pixels, 24, 180, 31, 183, LIGHT, 192)
+    for (input in listOf(pixels, upscaleToProbe(pixels))) {
+      val result = TicketVisualActionClassifier.classify(input)
+      assertEquals("unactivated_detail", result.state)
+      val bounds = result.sliderBounds!!
+      assertEquals(14, bounds.left)
+      assertEquals(171, bounds.top)
+      assertEquals(178, bounds.right)
+      assertEquals(193, bounds.bottom)
+    }
+  }
+
+  @Test
   fun highResolutionUnactivatedDetailKeepsDatesOutOfIdentityAndPreservesGeometry() {
     val low = rawTicketFrame()
     fill(low, 4, 43, 44, 47, YELLOW)

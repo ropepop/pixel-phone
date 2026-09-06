@@ -3,9 +3,8 @@ package lv.jolkins.pixelorchestrator.app.ticket;
 /**
  * Monotonic, fixed one-frame-per-second scheduler for the rooted capture helper.
  *
- * <p>Deadlines stay on the original monotonic timeline. When capture work runs
- * long, expired ticks are counted and skipped; the caller receives at most one
- * capture decision and never enters a catch-up loop.</p>
+ * <p>Every capture starts a full new one-second interval. Slow work and proof
+ * refreshes cannot compress the following interval or cause catch-up frames.</p>
  */
 public final class TicketCaptureCadenceScheduler {
   public static final int FIXED_FPS = 1;
@@ -17,8 +16,6 @@ public final class TicketCaptureCadenceScheduler {
   private long skippedTicks;
   private long lastLatenessMillis;
   private long lastSkippedTicks;
-  private boolean immediateCapturePending;
-  private long immediateCaptureBlockedUntilMillis;
   private boolean ordinaryCaptureDemandGated;
   private boolean ordinaryCaptureOpportunityPending;
   private long ordinaryCaptureOpportunityValidUntilMillis;
@@ -45,8 +42,7 @@ public final class TicketCaptureCadenceScheduler {
     if (
       ordinaryCaptureDemandGated &&
       !ordinaryCaptureOpportunityPending &&
-      !proofBypass &&
-      !immediateCapturePending
+      !proofBypass
     ) {
       return WAIT_UNTIL_SIGNAL_MILLIS;
     }
@@ -79,6 +75,13 @@ public final class TicketCaptureCadenceScheduler {
     return ordinaryCaptureDemandGated;
   }
 
+  /** Warm helpers begin parked; an absent viewer must not trigger continuous encoding. */
+  public synchronized void parkOrdinaryCapture() {
+    ordinaryCaptureDemandGated = true;
+    ordinaryCaptureOpportunityPending = false;
+    ordinaryCaptureOpportunityValidUntilMillis = 0L;
+  }
+
   public synchronized boolean ordinaryCaptureOpportunityPending(long nowMillis) {
     expireOrdinaryCaptureOpportunity(nowMillis);
     return ordinaryCaptureOpportunityPending;
@@ -100,33 +103,11 @@ public final class TicketCaptureCadenceScheduler {
   }
 
   /**
-   * Makes one capture immediately due without changing the fixed cadence.
-   * Repeated requests before that capture share the same pending grant. Once
-   * consumed, the refresh starts a new one-second period; requests inside that
-   * period coalesce onto the already-produced refresh instead of adding frames.
-   */
-  public synchronized boolean requestImmediateCapture(long nowMillis) {
-    if (!immediateCapturePending && nowMillis < immediateCaptureBlockedUntilMillis) {
-      return false;
-    }
-    boolean newlyPending = !immediateCapturePending;
-    immediateCapturePending = true;
-    nextDeadlineMillis = Math.min(nextDeadlineMillis, nowMillis);
-    return newlyPending;
-  }
-
-  public synchronized boolean hasImmediateCapturePending() {
-    return immediateCapturePending;
-  }
-
-  /**
    * Starts the steady one-second period from the first picture actually exposed to the viewer.
    * Internal encoder priming does not become part of the externally visible cadence.
    */
   public synchronized void restartPeriodFrom(long presentedAtMillis) {
-    nextDeadlineMillis = presentedAtMillis + intervalMillis();
-    immediateCaptureBlockedUntilMillis = nextDeadlineMillis;
-    immediateCapturePending = false;
+    nextDeadlineMillis = Math.max(nextDeadlineMillis, presentedAtMillis + intervalMillis());
   }
 
   /**
@@ -139,11 +120,10 @@ public final class TicketCaptureCadenceScheduler {
 
   public synchronized CaptureDecision beginCapture(long nowMillis, boolean proofBypass) {
     expireOrdinaryCaptureOpportunity(nowMillis);
-    boolean effectiveProofBypass = proofBypass || immediateCapturePending;
     if (
       ordinaryCaptureDemandGated &&
       !ordinaryCaptureOpportunityPending &&
-      !effectiveProofBypass
+      !proofBypass
     ) {
       throw new IllegalStateException("ordinary capture is waiting for demand");
     }
@@ -156,7 +136,6 @@ public final class TicketCaptureCadenceScheduler {
       ordinaryCaptureOpportunityPending = false;
       ordinaryCaptureOpportunityValidUntilMillis = 0L;
     }
-    boolean immediate = immediateCapturePending;
     long lateness = Math.max(0L, nowMillis - nextDeadlineMillis);
     long expiredTicks = lateness == 0L
       ? 0L
@@ -167,23 +146,10 @@ public final class TicketCaptureCadenceScheduler {
     skippedTicks += expiredTicks;
     lastLatenessMillis = lateness;
     lastSkippedTicks = expiredTicks;
-    if (immediate) {
-      // An event refresh starts a fresh one-second period. Requests in that period
-      // coalesce onto the already-produced frame rather than exceeding 1 FPS.
-      nextDeadlineMillis = nowMillis + intervalMillis();
-      immediateCaptureBlockedUntilMillis = nextDeadlineMillis;
-    } else {
-      // A partially late capture still owns the next future tick. At an exact
-      // deadline, advance one interval; otherwise advance past the expired
-      // ticks but leave the first future deadline intact.
-      long intervalsToAdvance = (lateness / intervalMillis()) + 1L;
-      nextDeadlineMillis += intervalsToAdvance * intervalMillis();
-    }
-    immediateCapturePending = false;
+    nextDeadlineMillis = nowMillis + intervalMillis();
     return new CaptureDecision(
       lateness,
       expiredTicks,
-      immediate,
       ordinaryDemandOpportunityConsumed
     );
   }
@@ -217,18 +183,15 @@ public final class TicketCaptureCadenceScheduler {
   public static final class CaptureDecision {
     public final long latenessMillis;
     public final long skippedTicks;
-    public final boolean immediate;
     public final boolean ordinaryDemandOpportunityConsumed;
 
     CaptureDecision(
       long latenessMillis,
       long skippedTicks,
-      boolean immediate,
       boolean ordinaryDemandOpportunityConsumed
     ) {
       this.latenessMillis = latenessMillis;
       this.skippedTicks = skippedTicks;
-      this.immediate = immediate;
       this.ordinaryDemandOpportunityConsumed = ordinaryDemandOpportunityConsumed;
     }
   }
