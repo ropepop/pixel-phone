@@ -1,24 +1,23 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
-internal class TicketControlCodeSubmitVisualProof(
-  private val requiredSamples: Int = 2,
-  private val expectedResult: String = TicketControlCodeVisualClassifier.CONTROL_POPUP_VALUE_READY
-) {
-  private var lastProbeId: Long = 0L
-  private var consecutiveReadySamples: Int = 0
+/** One pair proves both the popup state and, when required, its input targets. */
+internal class TicketControlCodeSubmitVisualProof {
+  private var previous: TicketControlCodeVisualProbe? = null
+  private var lastProbeId = 0L
 
-  fun observe(probeId: Long, result: String): Boolean {
-    if (probeId <= lastProbeId) {
-      return false
-    }
-    lastProbeId = probeId
-    consecutiveReadySamples = if (
-      result == expectedResult
-    ) {
-      consecutiveReadySamples + 1
-    } else {
-      0
-    }
-    return consecutiveReadySamples >= requiredSamples
+  fun observe(current: TicketControlCodeVisualProbe?, requireGeometry: Boolean): Boolean {
+    val before = previous
+    previous = null
+    if (current == null || current.probeId <= lastProbeId) return false
+    lastProbeId = current.probeId
+    if (current.result !in setOf(
+        TicketControlCodeVisualClassifier.CONTROL_POPUP_STATIC_READY,
+        TicketControlCodeVisualClassifier.CONTROL_POPUP_VALUE_READY,
+        TicketControlCodeVisualClassifier.CONTROL_POPUP_KEYBOARD_READY
+      )) return false
+    previous = current
+    return before != null && before.result == current.result && (!requireGeometry ||
+      current.inputBounds != null && current.submitBounds != null &&
+      current.inputBounds == before.inputBounds && current.submitBounds == before.submitBounds)
   }
 }

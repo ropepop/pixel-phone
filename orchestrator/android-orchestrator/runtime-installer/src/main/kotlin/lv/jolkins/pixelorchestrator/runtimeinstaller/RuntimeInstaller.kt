@@ -71,15 +71,6 @@ class RuntimeInstaller(
         }
       } catch (error: Exception) {
         trace("bootstrap:artifact failure id=${entry.id} error=${error::class.java.name}:${error.message ?: "(no message)"}")
-        if (rootfsArtifactId != null && entry.id == rootfsArtifactId) {
-          trace("bootstrap:artifact rootfs fallback: attempting legacy seed from $LEGACY_PIHOLE_ROOTFS")
-          if (seedRootfsFromLegacyIfAvailable(config.runtime.rootfsPath)) {
-            trace("bootstrap:artifact rootfs fallback: legacy seed successful")
-            installed += entry.id
-            return@forEach
-          }
-          trace("bootstrap:artifact rootfs fallback: legacy seed unavailable")
-        }
         if (entry.required) {
           throw error
         }
@@ -626,70 +617,6 @@ class RuntimeInstaller(
     if (!result.ok) {
       error("Rootfs extraction failed: ${result.stderr}")
     }
-  }
-
-  private suspend fun seedRootfsFromLegacyIfAvailable(rootfsPath: String): Boolean {
-    if (rootfsPath == LEGACY_PIHOLE_ROOTFS) {
-      return false
-    }
-
-    val quotedLegacyRootfs = ShellEscaper.singleQuote(LEGACY_PIHOLE_ROOTFS)
-    val quotedTargetRootfs = ShellEscaper.singleQuote(rootfsPath)
-    val command = """
-      set -eu
-      legacy_rootfs=$quotedLegacyRootfs
-      target_rootfs=$quotedTargetRootfs
-
-      unmount_if_mounted() {
-        target="${'$'}1"
-        if grep -F " ${'$'}{target} " /proc/mounts >/dev/null 2>&1; then
-          umount "${'$'}target" >/dev/null 2>&1 || umount -l "${'$'}target" >/dev/null 2>&1 || true
-        fi
-      }
-
-      [ -d "${'$'}legacy_rootfs" ] || exit 41
-      [ -x "${'$'}legacy_rootfs/usr/bin/env" ] || exit 42
-      [ -x "${'$'}legacy_rootfs/usr/bin/bash" ] || exit 43
-      [ -x "${'$'}legacy_rootfs/bin/sh" ] || exit 44
-
-      mkdir -p "${'$'}target_rootfs"
-      if [ ! -x "${'$'}target_rootfs/usr/bin/env" ] || [ ! -x "${'$'}target_rootfs/usr/bin/bash" ] || [ ! -x "${'$'}target_rootfs/bin/sh" ]; then
-        unmount_if_mounted "${'$'}target_rootfs/opt/adguardhome/conf"
-        unmount_if_mounted "${'$'}target_rootfs/opt/adguardhome/work"
-        unmount_if_mounted "${'$'}target_rootfs/dev/pts"
-        unmount_if_mounted "${'$'}target_rootfs/dev"
-        find "${'$'}target_rootfs" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-        for rel in usr bin sbin lib lib64 etc opt root home; do
-          if [ -e "${'$'}legacy_rootfs/${'$'}rel" ]; then
-            cp -a "${'$'}legacy_rootfs/${'$'}rel" "${'$'}target_rootfs/"
-          fi
-        done
-      fi
-
-      [ -e "${'$'}target_rootfs/bin" ] || { [ -d "${'$'}target_rootfs/usr/bin" ] && ln -s usr/bin "${'$'}target_rootfs/bin" || true; }
-      [ -e "${'$'}target_rootfs/sbin" ] || { [ -d "${'$'}target_rootfs/usr/sbin" ] && ln -s usr/sbin "${'$'}target_rootfs/sbin" || true; }
-      [ -e "${'$'}target_rootfs/lib" ] || { [ -d "${'$'}target_rootfs/usr/lib" ] && ln -s usr/lib "${'$'}target_rootfs/lib" || true; }
-
-      mkdir -p \
-        "${'$'}target_rootfs/etc" \
-        "${'$'}target_rootfs/etc/apt" \
-        "${'$'}target_rootfs/etc/apt/sources.list.d" \
-        "${'$'}target_rootfs/etc/cron.d" \
-        "${'$'}target_rootfs/var/log/adguardhome"
-
-      chroot "${'$'}target_rootfs" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-        /usr/bin/bash -c 'command -v mkdir >/dev/null'
-    """.trimIndent()
-
-    val result = rootExecutor.runScript(command, timeout = Duration.parse("1200s"))
-    if (!result.ok) {
-      trace(
-        "bootstrap:artifact rootfs fallback failed exit=${result.exitCode} stderr=${
-          result.stderr.lineSequence().firstOrNull().orEmpty()
-        }"
-      )
-    }
-    return result.ok
   }
 
   private suspend fun ensureRootfsUsable(rootfsPath: String) {
@@ -1386,7 +1313,6 @@ EOF_NOTIFIER_PYTHON
   }
 
   private companion object {
-    const val LEGACY_PIHOLE_ROOTFS = "${StackPaths.BASE}/chroots/pihole"
     const val ROOTFS_ARTIFACT_ID = "adguardhome-rootfs"
     const val DNS_RUNTIME_ASSET_ID = "dns-runtime-assets"
     const val DROPBEAR_ARTIFACT_ID = "dropbear-bundle"

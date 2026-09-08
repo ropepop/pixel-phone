@@ -10,7 +10,7 @@ class RuntimeHealthChecker(
 
   suspend fun check(config: StackConfigV1): HealthSnapshot {
     val probe = commandRunner.run(buildProbeCommand(config))
-    val parsed = if (probe.ok) parseProbeOutput(probe.stdout) else null
+    val parsed = if (probe.ok) parseProbeOutput(probe.stdout, config) else null
     val nowEpoch = System.currentTimeMillis() / 1000
     val rootValue = parsed?.idU?.trim().orEmpty()
     val listenersOutput = parsed?.listeners.orEmpty()
@@ -776,7 +776,7 @@ class RuntimeHealthChecker(
     return maxOf(30L, maxBackoffSeconds + maxPollSeconds + 5L)
   }
 
-  private fun parseProbeOutput(stdout: String): ParsedProbe? {
+  private fun parseProbeOutput(stdout: String, config: StackConfigV1): ParsedProbe? {
     var section: ProbeSection = ProbeSection.NONE
     var seenId = false
     var seenListeners = false
@@ -1411,15 +1411,17 @@ class RuntimeHealthChecker(
     }
 
     if (
-      !seenId || !seenListeners || !seenDdns || !seenDdnsLastIpv4 || !seenSupervisorLoopHeartbeat || !seenTrainPid || !seenTrainTunnelEnabled || !seenTrainTunnelSupervisorPid ||
+      !seenId || !seenListeners || !seenSupervisorLoopHeartbeat ||
+      (isModuleEnabled(config, "ddns") && config.ddns.enabled && (!seenDdns || !seenDdnsLastIpv4)) ||
+      (isModuleEnabled(config, "train_bot") && (!seenTrainPid || !seenTrainTunnelEnabled || !seenTrainTunnelSupervisorPid ||
       !seenTrainTunnelPid || !seenTrainTunnelPublicBaseUrl || !seenTrainBotPublicRootCode ||
       !seenTrainBotPublicAppCode || !seenTrainBotTunnelProbeAvailable || !seenTrainHeartbeat ||
-      !seenTrainScheduleRequired || !seenTrainScheduleFresh || !seenTrainScheduleServiceDate || !seenTrainScheduleRows ||
-      !seenSatiksmePid || !seenSatiksmeTunnelEnabled || !seenSatiksmeTunnelSupervisorPid || !seenSatiksmeTunnelPid ||
+      !seenTrainScheduleRequired || !seenTrainScheduleFresh || !seenTrainScheduleServiceDate || !seenTrainScheduleRows)) ||
+      (isModuleEnabled(config, "satiksme_bot") && (!seenSatiksmePid || !seenSatiksmeTunnelEnabled || !seenSatiksmeTunnelSupervisorPid || !seenSatiksmeTunnelPid ||
       !seenSatiksmeTunnelPublicBaseUrl || !seenSatiksmePublicRootCode || !seenSatiksmePublicAppCode ||
-      !seenSatiksmeTunnelProbeAvailable || !seenSatiksmeHeartbeat ||
-      !seenNotifierPid || !seenNotifierHeartbeat || !seenNotifierHelperHealthy || !seenNotifierHelperReason ||
-      !seenSubscriptionPid || !seenSubscriptionHeartbeat ||
+      !seenSatiksmeTunnelProbeAvailable || !seenSatiksmeHeartbeat)) ||
+      (isModuleEnabled(config, "site_notifier") && (!seenNotifierPid || !seenNotifierHeartbeat || !seenNotifierHelperHealthy || !seenNotifierHelperReason)) ||
+      (isModuleEnabled(config, "subscription_bot") && (!seenSubscriptionPid || !seenSubscriptionHeartbeat)) ||
       !seenVpnHealth || !seenVpnEnabledEffective ||
       !seenVpnTailscaledLive || !seenVpnTailscaledSock || !seenVpnTailnetIpv4 ||
       !seenVpnGuardChainIpv4 || !seenVpnGuardChainIpv6 ||
@@ -1434,9 +1436,10 @@ class RuntimeHealthChecker(
       !seenManagementWifiEnabled || !seenManagementWifiConnected || !seenManagementWifiIpv4 ||
       !seenManagementMobileIface || !seenManagementMobileIpv4 || !seenManagementActiveTransport ||
       !seenManagementPublicIpv4Candidate || !seenManagementNetworkFingerprint ||
-      !seenRemoteDohTokenizedCode || !seenRemoteDohBareCode || !seenRemoteIdentityInjectCode ||
+      (isModuleEnabled(config, "remote") && (config.remote.dohEnabled || config.remote.dotEnabled) &&
+      (!seenRemoteDohTokenizedCode || !seenRemoteDohBareCode || !seenRemoteIdentityInjectCode ||
       !seenRemotePublicBaseUrl || !seenRemotePublicRootCode || !seenRemotePublicProbeAvailable ||
-      !seenRemotePublicDohTokenizedCode || !seenRemotePublicDohBareCode || !seenRemotePublicIdentityInjectCode ||
+      !seenRemotePublicDohTokenizedCode || !seenRemotePublicDohBareCode || !seenRemotePublicIdentityInjectCode)) ||
       !seenEnd
     ) {
       return null
@@ -1749,7 +1752,45 @@ class RuntimeHealthChecker(
         "https://${config.remote.hostname}:${config.remote.httpsPort}"
       }
     )
-    return """
+    val managementMarkers = listOf(
+      "vpn_health" to MARKER_VPN_HEALTH,
+      "vpn_enabled" to MARKER_VPN_ENABLED_EFFECTIVE,
+      "tailscaled_live" to MARKER_VPN_TAILSCALED_LIVE,
+      "tailscaled_sock" to MARKER_VPN_TAILSCALED_SOCK,
+      "tailnet_ipv4" to MARKER_VPN_TAILNET_IPV4,
+      "guard_chain_ipv4" to MARKER_VPN_GUARD_CHAIN_IPV4,
+      "guard_chain_ipv6" to MARKER_VPN_GUARD_CHAIN_IPV6,
+      "management_enabled" to MARKER_MANAGEMENT_ENABLED,
+      "management_healthy" to MARKER_MANAGEMENT_HEALTHY,
+      "management_reason" to MARKER_MANAGEMENT_REASON,
+      "management_auth_consistent" to MARKER_MANAGEMENT_AUTH_CONSISTENT,
+      "management_auth_warning_reason" to MARKER_MANAGEMENT_AUTH_WARNING_REASON,
+      "ssh_listener" to MARKER_MANAGEMENT_SSH_LISTENER,
+      "ssh_auth_mode" to MARKER_MANAGEMENT_SSH_AUTH_MODE,
+      "ssh_password_auth_requested" to MARKER_MANAGEMENT_SSH_PASSWORD_AUTH_REQUESTED,
+      "ssh_password_auth_ready" to MARKER_MANAGEMENT_SSH_PASSWORD_AUTH_READY,
+      "ssh_key_auth_requested" to MARKER_MANAGEMENT_SSH_KEY_AUTH_REQUESTED,
+      "ssh_key_auth_ready" to MARKER_MANAGEMENT_SSH_KEY_AUTH_READY,
+      "pm_path" to MARKER_MANAGEMENT_PM_PATH,
+      "am_path" to MARKER_MANAGEMENT_AM_PATH,
+      "logcat_path" to MARKER_MANAGEMENT_LOGCAT_PATH,
+      "wireless_debug_enabled" to MARKER_MANAGEMENT_WIRELESS_DEBUG_ENABLED,
+      "wireless_debug_tls_port" to MARKER_MANAGEMENT_WIRELESS_DEBUG_TLS_PORT,
+      "wireless_debug_live" to MARKER_MANAGEMENT_WIRELESS_DEBUG_LIVE,
+      "wireless_debug_live_ports" to MARKER_MANAGEMENT_WIRELESS_DEBUG_LIVE_PORTS,
+      "wireless_debug_healthy" to MARKER_MANAGEMENT_WIRELESS_DEBUG_HEALTHY,
+      "wireless_debug_reason" to MARKER_MANAGEMENT_WIRELESS_DEBUG_REASON,
+      "wifi_enabled" to MARKER_MANAGEMENT_WIFI_ENABLED,
+      "wifi_connected" to MARKER_MANAGEMENT_WIFI_CONNECTED,
+      "wifi_ipv4" to MARKER_MANAGEMENT_WIFI_IPV4,
+      "mobile_iface" to MARKER_MANAGEMENT_MOBILE_IFACE,
+      "mobile_ipv4" to MARKER_MANAGEMENT_MOBILE_IPV4,
+      "active_transport" to MARKER_MANAGEMENT_ACTIVE_TRANSPORT,
+      "public_ipv4_candidate" to MARKER_MANAGEMENT_PUBLIC_IPV4_CANDIDATE,
+      "network_fingerprint" to MARKER_MANAGEMENT_NETWORK_FINGERPRINT
+    ).joinToString("\n") { (key, marker) -> "        marker[\"$key\"] = \"$marker\"" }
+    return buildString {
+      append("""
       set +e
       rootfs_path=$rootfsPath
       resolve_probe_curl() {
@@ -1823,6 +1864,8 @@ class RuntimeHealthChecker(
       id -u 2>/dev/null || true
       printf '$MARKER_LISTENERS\n'
       ss -ltn 2>/dev/null || true
+      """)
+      if (isModuleEnabled(config, "ddns") && config.ddns.enabled) append("""
       printf '$MARKER_DDNS_EPOCH\n'
       if [ -f /data/local/pixel-stack/run/ddns-last-sync-epoch ]; then
         cat /data/local/pixel-stack/run/ddns-last-sync-epoch 2>/dev/null || true
@@ -1831,10 +1874,14 @@ class RuntimeHealthChecker(
       if [ -f /data/local/pixel-stack/run/ddns-last-ipv4 ]; then
         cat /data/local/pixel-stack/run/ddns-last-ipv4 2>/dev/null || true
       fi
+      """)
+      append("""
       printf '$MARKER_SUPERVISOR_LOOP_HEARTBEAT\n'
       if [ -r $supervisorStateFile ]; then
         sed -n 's/.*"supervisorLoopHeartbeatEpochSeconds"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' $supervisorStateFile 2>/dev/null | sed -n '1p'
       fi
+      """)
+      if (isModuleEnabled(config, "train_bot")) append("""
       printf '$MARKER_TRAIN_BOT_PID\n'
       train_pid=""
       if [ -r $trainPidFile ]; then
@@ -1995,6 +2042,10 @@ class RuntimeHealthChecker(
       printf '%s\n' "${'$'}train_service_date"
       printf '$MARKER_TRAIN_BOT_SCHEDULE_ROWS\n'
       printf '%s\n' "${'$'}train_schedule_rows"
+      """)
+      append("""
+      """)
+      if (isModuleEnabled(config, "satiksme_bot")) append("""
       printf '$MARKER_SATIKSME_BOT_PID\n'
       satiksme_pid=""
       if [ -r $satiksmePidFile ]; then
@@ -2083,6 +2134,10 @@ class RuntimeHealthChecker(
       if [ -f $satiksmeHeartbeatFile ]; then
         cat $satiksmeHeartbeatFile 2>/dev/null || true
       fi
+      """)
+      append("""
+      """)
+      if (isModuleEnabled(config, "site_notifier")) append("""
       printf '$MARKER_SITE_NOTIFIER_PID\n'
       notifier_pid=""
       if [ -r $notifierPidFile ]; then
@@ -2122,6 +2177,10 @@ class RuntimeHealthChecker(
         fi
       fi
       printf '%s\n' "${'$'}notifier_health_reason"
+      """)
+      append("""
+      """)
+      if (isModuleEnabled(config, "subscription_bot")) append("""
       printf '$MARKER_SUBSCRIPTION_BOT_PID\n'
       subscription_pid=""
       if [ -r $subscriptionPidFile ]; then
@@ -2139,122 +2198,36 @@ class RuntimeHealthChecker(
       if [ -f $subscriptionHeartbeatFile ]; then
         cat $subscriptionHeartbeatFile 2>/dev/null || true
       fi
+      """)
+      append("""
       management_report=""
       set +e
       management_report=${'$'}(PIXEL_MANAGEMENT_HEALTH_REPORT=1 sh /data/local/pixel-stack/bin/pixel-management-health.sh --report 2>/dev/null)
       management_health_rc=${'$'}?
       set -e
-      management_extract() {
-        key="${'$'}1"
-        line=${'$'}(printf '%s\n' "${'$'}management_report" | grep -m 1 "^${'$'}key=" 2>/dev/null || true)
-        case "${'$'}line" in
-          "${'$'}key="*)
-            printf '%s\n' "${'$'}{line#*=}"
-            ;;
-        esac
-      }
-      vpn_health_value=${'$'}(management_extract vpn_health)
-      if [ -z "${'$'}vpn_health_value" ]; then
-        if [ ${if (config.vpn.enabled || (config.modules["vpn"]?.enabled ?: false)) "1" else "0"} -eq 1 ]; then
-          vpn_health_value="0"
-        else
-          vpn_health_value="1"
-        fi
-      fi
-      management_enabled_value=${'$'}(management_extract management_enabled)
-      if [ -z "${'$'}management_enabled_value" ]; then
-        if [ ${if (config.vpn.enabled || (config.modules["vpn"]?.enabled ?: false)) "1" else "0"} -eq 1 ]; then
-          management_enabled_value="1"
-        else
-          management_enabled_value="0"
-        fi
-      fi
-      management_healthy_value=${'$'}(management_extract management_healthy)
-      if [ -z "${'$'}management_healthy_value" ]; then
-        if [ "${'$'}management_enabled_value" = "1" ] && [ "${'$'}management_health_rc" -ne 0 ]; then
-          management_healthy_value="0"
-        else
-          management_healthy_value="1"
-        fi
-      fi
-      management_reason_value=${'$'}(management_extract management_reason)
-      if [ -z "${'$'}management_reason_value" ]; then
-        if [ "${'$'}management_enabled_value" = "1" ]; then
-          management_reason_value="unknown"
-        else
-          management_reason_value="disabled"
-        fi
-      fi
-      printf '$MARKER_VPN_HEALTH\n'
-      printf '%s\n' "${'$'}vpn_health_value"
-      printf '$MARKER_VPN_ENABLED_EFFECTIVE\n'
-      printf '%s\n' "${'$'}(management_extract vpn_enabled)"
-      printf '$MARKER_VPN_TAILSCALED_LIVE\n'
-      printf '%s\n' "${'$'}(management_extract tailscaled_live)"
-      printf '$MARKER_VPN_TAILSCALED_SOCK\n'
-      printf '%s\n' "${'$'}(management_extract tailscaled_sock)"
-      printf '$MARKER_VPN_TAILNET_IPV4\n'
-      printf '%s\n' "${'$'}(management_extract tailnet_ipv4)"
-      printf '$MARKER_VPN_GUARD_CHAIN_IPV4\n'
-      printf '%s\n' "${'$'}(management_extract guard_chain_ipv4)"
-      printf '$MARKER_VPN_GUARD_CHAIN_IPV6\n'
-      printf '%s\n' "${'$'}(management_extract guard_chain_ipv6)"
-      printf '$MARKER_MANAGEMENT_ENABLED\n'
-      printf '%s\n' "${'$'}management_enabled_value"
-      printf '$MARKER_MANAGEMENT_HEALTHY\n'
-      printf '%s\n' "${'$'}management_healthy_value"
-      printf '$MARKER_MANAGEMENT_REASON\n'
-      printf '%s\n' "${'$'}management_reason_value"
-      printf '$MARKER_MANAGEMENT_AUTH_CONSISTENT\n'
-      printf '%s\n' "${'$'}(management_extract management_auth_consistent)"
-      printf '$MARKER_MANAGEMENT_AUTH_WARNING_REASON\n'
-      printf '%s\n' "${'$'}(management_extract management_auth_warning_reason)"
-      printf '$MARKER_MANAGEMENT_SSH_LISTENER\n'
-      printf '%s\n' "${'$'}(management_extract ssh_listener)"
-      printf '$MARKER_MANAGEMENT_SSH_AUTH_MODE\n'
-      printf '%s\n' "${'$'}(management_extract ssh_auth_mode)"
-      printf '$MARKER_MANAGEMENT_SSH_PASSWORD_AUTH_REQUESTED\n'
-      printf '%s\n' "${'$'}(management_extract ssh_password_auth_requested)"
-      printf '$MARKER_MANAGEMENT_SSH_PASSWORD_AUTH_READY\n'
-      printf '%s\n' "${'$'}(management_extract ssh_password_auth_ready)"
-      printf '$MARKER_MANAGEMENT_SSH_KEY_AUTH_REQUESTED\n'
-      printf '%s\n' "${'$'}(management_extract ssh_key_auth_requested)"
-      printf '$MARKER_MANAGEMENT_SSH_KEY_AUTH_READY\n'
-      printf '%s\n' "${'$'}(management_extract ssh_key_auth_ready)"
-      printf '$MARKER_MANAGEMENT_PM_PATH\n'
-      printf '%s\n' "${'$'}(management_extract pm_path)"
-      printf '$MARKER_MANAGEMENT_AM_PATH\n'
-      printf '%s\n' "${'$'}(management_extract am_path)"
-      printf '$MARKER_MANAGEMENT_LOGCAT_PATH\n'
-      printf '%s\n' "${'$'}(management_extract logcat_path)"
-      printf '$MARKER_MANAGEMENT_WIRELESS_DEBUG_ENABLED\n'
-      printf '%s\n' "${'$'}(management_extract wireless_debug_enabled)"
-      printf '$MARKER_MANAGEMENT_WIRELESS_DEBUG_TLS_PORT\n'
-      printf '%s\n' "${'$'}(management_extract wireless_debug_tls_port)"
-      printf '$MARKER_MANAGEMENT_WIRELESS_DEBUG_LIVE\n'
-      printf '%s\n' "${'$'}(management_extract wireless_debug_live)"
-      printf '$MARKER_MANAGEMENT_WIRELESS_DEBUG_LIVE_PORTS\n'
-      printf '%s\n' "${'$'}(management_extract wireless_debug_live_ports)"
-      printf '$MARKER_MANAGEMENT_WIRELESS_DEBUG_HEALTHY\n'
-      printf '%s\n' "${'$'}(management_extract wireless_debug_healthy)"
-      printf '$MARKER_MANAGEMENT_WIRELESS_DEBUG_REASON\n'
-      printf '%s\n' "${'$'}(management_extract wireless_debug_reason)"
-      printf '$MARKER_MANAGEMENT_WIFI_ENABLED\n'
-      printf '%s\n' "${'$'}(management_extract wifi_enabled)"
-      printf '$MARKER_MANAGEMENT_WIFI_CONNECTED\n'
-      printf '%s\n' "${'$'}(management_extract wifi_connected)"
-      printf '$MARKER_MANAGEMENT_WIFI_IPV4\n'
-      printf '%s\n' "${'$'}(management_extract wifi_ipv4)"
-      printf '$MARKER_MANAGEMENT_MOBILE_IFACE\n'
-      printf '%s\n' "${'$'}(management_extract mobile_iface)"
-      printf '$MARKER_MANAGEMENT_MOBILE_IPV4\n'
-      printf '%s\n' "${'$'}(management_extract mobile_ipv4)"
-      printf '$MARKER_MANAGEMENT_ACTIVE_TRANSPORT\n'
-      printf '%s\n' "${'$'}(management_extract active_transport)"
-      printf '$MARKER_MANAGEMENT_PUBLIC_IPV4_CANDIDATE\n'
-      printf '%s\n' "${'$'}(management_extract public_ipv4_candidate)"
-      printf '$MARKER_MANAGEMENT_NETWORK_FINGERPRINT\n'
-      printf '%s\n' "${'$'}(management_extract network_fingerprint)"
+      printf '%s\n' "${'$'}management_report" | awk -v expected_enabled=${if (config.vpn.enabled || (config.modules["vpn"]?.enabled ?: false)) "1" else "0"} -v health_rc="${'$'}management_health_rc" '
+        BEGIN {
+$managementMarkers
+        }
+        {
+          separator = index($0, "=")
+          if (separator == 0) next
+          key = substr($0, 1, separator - 1)
+          if (key in marker && !(key in value)) value[key] = substr($0, separator + 1)
+        }
+        END {
+          if (value["vpn_health"] == "") value["vpn_health"] = expected_enabled ? "0" : "1"
+          if (value["management_enabled"] == "") value["management_enabled"] = expected_enabled ? "1" : "0"
+          if (value["management_healthy"] == "") value["management_healthy"] = (value["management_enabled"] == "1" && health_rc != 0) ? "0" : "1"
+          if (value["management_reason"] == "") value["management_reason"] = (value["management_enabled"] == "1") ? "unknown" : "disabled"
+          for (key in marker) {
+            print marker[key]
+            print value[key]
+          }
+        }
+      '
+      """)
+      if (isModuleEnabled(config, "remote") && (config.remote.dohEnabled || config.remote.dotEnabled)) append("""
       remote_doh_tokenized_code="000"
       remote_doh_bare_code="000"
       remote_identity_inject_code="000"
@@ -2322,8 +2295,11 @@ class RuntimeHealthChecker(
       printf '%s\n' "${'$'}remote_public_doh_bare_code"
       printf '$MARKER_REMOTE_PUBLIC_IDENTITY_INJECT_CODE\n'
       printf '%s\n' "${'$'}remote_public_identity_inject_code"
+      """)
+      append("""
       printf '$MARKER_END\n'
-    """.trimIndent()
+      """)
+    }.trimIndent()
   }
 
   companion object {

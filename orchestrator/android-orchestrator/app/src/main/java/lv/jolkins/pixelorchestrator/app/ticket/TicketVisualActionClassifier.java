@@ -125,34 +125,6 @@ public final class TicketVisualActionClassifier {
     }
   }
 
-  private static final class ViviHomeDetection {
-    final Bounds ticketsTabBounds;
-    final String diagnostic;
-
-    ViviHomeDetection(Bounds ticketsTabBounds, String diagnostic) {
-      this.ticketsTabBounds = ticketsTabBounds;
-      this.diagnostic = diagnostic;
-    }
-  }
-
-  private static final class ViviProfileDetection {
-    final boolean proved;
-    final String diagnostic;
-
-    ViviProfileDetection(boolean proved, String diagnostic) {
-      this.proved = proved;
-      this.diagnostic = diagnostic;
-    }
-  }
-
-  private static final class ViviOtherTabDetection {
-    final boolean proved;
-
-    ViviOtherTabDetection(boolean proved) {
-      this.proved = proved;
-    }
-  }
-
   private static final class NavigationGlyphStats {
     int pixels = 0;
     int left = SAMPLE_WIDTH;
@@ -196,10 +168,10 @@ public final class TicketVisualActionClassifier {
   public static String selectedBottomNavigationTab(int[] pixels) {
     int[] geometryPixels = geometryPixels(pixels);
     if (geometryPixels == null) return "";
-    if (detectViviHome(geometryPixels).ticketsTabBounds != null) return "home";
-    if (detectViviProfile(geometryPixels).proved) return "profile";
-    if (detectViviOtherBottomTab(geometryPixels, false).proved) return "menu";
-    if (detectViviOtherBottomTab(geometryPixels, true).proved) return "tickets";
+    if (detectViviHome(geometryPixels) != null) return "home";
+    if (detectViviProfile(geometryPixels)) return "profile";
+    if (detectViviOtherBottomTab(geometryPixels, false)) return "menu";
+    if (detectViviOtherBottomTab(geometryPixels, true)) return "tickets";
     return "";
   }
 
@@ -236,21 +208,21 @@ public final class TicketVisualActionClassifier {
     // action. The body-independent route authority is exposed separately by
     // selectedBottomNavigationTab() and must never turn a popup, login, or detail view into a
     // generic navigation state.
-    ViviHomeDetection home = detectViviHome(geometryPixels);
-    boolean homeBlocked = home.ticketsTabBounds != null && blocksViviHomeProof(
+    Bounds home = detectViviHome(geometryPixels);
+    boolean homeBlocked = home != null && blocksViviHomeProof(
       ordinary,
       activated,
       slider,
       geometryPixels
     );
-    if (home.ticketsTabBounds != null && !homeBlocked) {
+    if (home != null && !homeBlocked) {
       return new Result(
         "vivi_home",
         "",
         null,
         null,
         null,
-        home.ticketsTabBounds,
+        home,
         new ArrayList<>()
       );
     }
@@ -342,78 +314,13 @@ public final class TicketVisualActionClassifier {
       ordinary.equals(TicketControlCodeVisualClassifier.GENERATED)) {
       return new Result("blocked", "", null, null, null, new ArrayList<>());
     }
-    if (detectViviProfile(geometryPixels).proved) {
+    if (detectViviProfile(geometryPixels)) {
       return new Result("vivi_profile", "", null, null, null, new ArrayList<>());
     }
-    if (detectViviOtherBottomTab(geometryPixels, false).proved) {
+    if (detectViviOtherBottomTab(geometryPixels, false)) {
       return new Result("vivi_other_tab", "", null, null, null, new ArrayList<>());
     }
     return unknown();
-  }
-
-  /** Content-free phone-local explanation for an unrecognized registration surface. */
-  public static String registrationDiagnostic(int[] pixels) {
-    int[] geometryPixels = geometryPixels(pixels);
-    if (geometryPixels == null) {
-      return "invalid_action_probe";
-    }
-    int[] compact = downsample(
-      geometryPixels,
-      SAMPLE_WIDTH,
-      SAMPLE_HEIGHT,
-      TicketControlCodeVisualClassifier.SAMPLE_WIDTH,
-      TicketControlCodeVisualClassifier.SAMPLE_HEIGHT
-    );
-    return TicketControlCodeVisualClassifier.registrationSliderDiagnostic(compact);
-  }
-
-  /** Aggregate phone-local diagnostics with no ticket content or coordinates. */
-  public static String visualDiagnostic(int[] pixels) {
-    int[] geometryPixels = geometryPixels(pixels);
-    if (geometryPixels == null) {
-      return "invalid_action_probe";
-    }
-    int[] compact = downsample(
-      geometryPixels,
-      SAMPLE_WIDTH,
-      SAMPLE_HEIGHT,
-      TicketControlCodeVisualClassifier.SAMPLE_WIDTH,
-      TicketControlCodeVisualClassifier.SAMPLE_HEIGHT
-    );
-    int registrationBands = yellowBands(geometryPixels).size();
-    String dateDiagnostic = "date_probe_not_list";
-    if (registrationBands > 0) {
-      int dateWidth = pixels.length == PROBE_WIDTH * PROBE_HEIGHT ? PROBE_WIDTH : SAMPLE_WIDTH;
-      int dateHeight = pixels.length == PROBE_WIDTH * PROBE_HEIGHT ? PROBE_HEIGHT : SAMPLE_HEIGHT;
-      dateDiagnostic = TicketVisualDateGlyphRecognizer.safeDiagnostic(pixels, dateWidth, dateHeight);
-    }
-    return TicketControlCodeVisualClassifier.registrationSliderDiagnostic(compact) + "_" +
-      dateDiagnostic + "_registration_bands_" + Math.min(registrationBands, 9);
-  }
-
-  /** Content-free diagnostic for prove_current; never invokes the date glyph recognizer. */
-  public static String currentVisualDiagnostic(int[] pixels) {
-    int[] geometryPixels = geometryPixels(pixels);
-    if (geometryPixels == null) {
-      return "invalid_action_probe";
-    }
-    int[] compact = downsample(
-      geometryPixels,
-      SAMPLE_WIDTH,
-      SAMPLE_HEIGHT,
-      TicketControlCodeVisualClassifier.SAMPLE_WIDTH,
-      TicketControlCodeVisualClassifier.SAMPLE_HEIGHT
-    );
-    ViviHomeDetection home = detectViviHome(geometryPixels);
-    String homeDiagnostic = home.ticketsTabBounds != null && blocksViviHomeProof(
-      TicketControlCodeVisualClassifier.classify(compact),
-      TicketControlCodeVisualClassifier.classifyForActivatedTicket(compact),
-      TicketControlCodeVisualClassifier.registrationSliderBounds(compact),
-      geometryPixels
-    ) ? "reject_blocked_surface" : home.diagnostic;
-    return TicketControlCodeVisualClassifier.registrationSliderDiagnostic(compact) +
-      "_date_probe_disabled_registration_bands_" + Math.min(yellowBands(geometryPixels).size(), 9) +
-      "_vivi_home_gate_" + homeDiagnostic;
   }
 
   private static int[] geometryPixels(int[] pixels) {
@@ -536,60 +443,24 @@ public final class TicketVisualActionClassifier {
     // Build the wordmark from glyph-height connected components so that separator never stretches
     // the proved tap geometry. Multiple components are required by some antialiased/theme variants,
     // while the current production wordmark can rasterize as one connected component.
-    boolean[] visited = new boolean[foreground.length];
     boolean[] glyphForeground = new boolean[foreground.length];
-    int[] component = new int[(searchRight - searchLeft) * (searchBottom - searchTop)];
     int candidateComponents = 0;
     int foregroundCount = 0;
     int left = searchRight;
     int top = searchBottom;
     int right = -1;
     int bottom = -1;
-    for (int y = searchTop; y < searchBottom; y++) {
-      for (int x = searchLeft; x < searchRight; x++) {
-        int start = y * SAMPLE_WIDTH + x;
-        if (!foreground[start] || visited[start]) continue;
-        int head = 0;
-        int tail = 0;
-        int componentLeft = x;
-        int componentTop = y;
-        int componentRight = x + 1;
-        int componentBottom = y + 1;
-        component[tail++] = start;
-        visited[start] = true;
-        while (head < tail) {
-          int current = component[head++];
-          int currentX = current % SAMPLE_WIDTH;
-          int currentY = current / SAMPLE_WIDTH;
-          componentLeft = Math.min(componentLeft, currentX);
-          componentTop = Math.min(componentTop, currentY);
-          componentRight = Math.max(componentRight, currentX + 1);
-          componentBottom = Math.max(componentBottom, currentY + 1);
-          for (int offsetY = -1; offsetY <= 1; offsetY++) {
-            for (int offsetX = -1; offsetX <= 1; offsetX++) {
-              if (offsetX == 0 && offsetY == 0) continue;
-              int adjacentX = currentX + offsetX;
-              int adjacentY = currentY + offsetY;
-              if (adjacentX < searchLeft || adjacentX >= searchRight ||
-                adjacentY < searchTop || adjacentY >= searchBottom) continue;
-              int adjacent = adjacentY * SAMPLE_WIDTH + adjacentX;
-              if (!foreground[adjacent] || visited[adjacent]) continue;
-              visited[adjacent] = true;
-              component[tail++] = adjacent;
-            }
-          }
-        }
-        int componentWidth = componentRight - componentLeft;
-        int componentHeight = componentBottom - componentTop;
-        if (componentWidth < 2 || componentHeight < 4 || tail < 6) continue;
-        candidateComponents += 1;
-        foregroundCount += tail;
-        left = Math.min(left, componentLeft);
-        top = Math.min(top, componentTop);
-        right = Math.max(right, componentRight);
-        bottom = Math.max(bottom, componentBottom);
-        for (int index = 0; index < tail; index++) glyphForeground[component[index]] = true;
-      }
+    for (PixelComponent component : pixelComponents(foreground,
+      new Bounds(searchLeft, searchTop, searchRight, searchBottom), true)) {
+      Bounds bounds = component.bounds;
+      if (bounds.right - bounds.left < 2 || bounds.bottom - bounds.top < 4 || component.points.length < 6) continue;
+      candidateComponents += 1;
+      foregroundCount += component.points.length;
+      left = Math.min(left, bounds.left);
+      top = Math.min(top, bounds.top);
+      right = Math.max(right, bounds.right);
+      bottom = Math.max(bottom, bounds.bottom);
+      for (int point : component.points) glyphForeground[point] = true;
     }
     if (candidateComponents == 0 || candidateComponents > 8) return null;
 
@@ -787,36 +658,21 @@ public final class TicketVisualActionClassifier {
     int right = Math.min(SAMPLE_WIDTH, Math.max(track.left + height * 2, coarse.left + (coarse.right - coarse.left) / 3));
     int top = Math.max(0, coarse.top - 4);
     int bottom = Math.min(SAMPLE_HEIGHT, coarse.bottom + 4);
-    boolean[] seen = new boolean[SAMPLE_WIDTH * SAMPLE_HEIGHT];
-    int[] queue = new int[(right - left) * (bottom - top)];
+    boolean[] foreground = new boolean[SAMPLE_WIDTH * SAMPLE_HEIGHT];
+    for (int y = top; y < bottom; y++) for (int x = left; x < right; x++) {
+      int point = y * SAMPLE_WIDTH + x;
+      foreground[point] = luminance(pixels[point]) <= 90 && !isRegistrationColor(pixels[point]);
+    }
     Bounds thumb = null;
     int bestArea = 0;
-    for (int y = top; y < bottom; y++) for (int x = left; x < right; x++) {
-      int seed = y * SAMPLE_WIDTH + x;
-      if (seen[seed] || luminance(pixels[seed]) > 90 || isRegistrationColor(pixels[seed])) continue;
-      int head = 0, tail = 0;
-      queue[tail++] = seed;
-      seen[seed] = true;
-      int minX = x, maxX = x, minY = y, maxY = y;
-      boolean edge = false;
-      while (head < tail) {
-        int point = queue[head++], px = point % SAMPLE_WIDTH, py = point / SAMPLE_WIDTH;
-        minX = Math.min(minX, px); maxX = Math.max(maxX, px);
-        minY = Math.min(minY, py); maxY = Math.max(maxY, py);
-        if (px == left || px == right - 1 || py == top || py == bottom - 1) edge = true;
-        int[] neighbors = {point - 1, point + 1, point - SAMPLE_WIDTH, point + SAMPLE_WIDTH};
-        for (int next : neighbors) {
-          int nx = next % SAMPLE_WIDTH, ny = next / SAMPLE_WIDTH;
-          if (nx < left || nx >= right || ny < top || ny >= bottom || seen[next]) continue;
-          seen[next] = true;
-          if (luminance(pixels[next]) <= 90 && !isRegistrationColor(pixels[next])) queue[tail++] = next;
-        }
-      }
+    for (PixelComponent component : pixelComponents(foreground, new Bounds(left, top, right, bottom), false)) {
+      Bounds bounds = component.bounds;
       // Page chrome touches the search boundary; text is too short to be the round thumb.
-      if (edge || maxY - minY + 1 < height * 2 / 3 || maxX - minX + 1 > height * 3 ||
-          maxY < track.top || minY >= track.bottom || tail <= bestArea) continue;
-      bestArea = tail;
-      thumb = new Bounds(minX, minY, maxX + 1, maxY + 1);
+      if (bounds.left == left || bounds.right == right || bounds.top == top || bounds.bottom == bottom ||
+          bounds.bottom - bounds.top < height * 2 / 3 || bounds.right - bounds.left > height * 3 ||
+          bounds.bottom <= track.top || bounds.top >= track.bottom || component.points.length <= bestArea) continue;
+      bestArea = component.points.length;
+      thumb = bounds;
     }
     if (thumb == null) return null;
     return new Bounds(Math.min(track.left, thumb.left), Math.min(track.top, thumb.top),
@@ -1067,7 +923,7 @@ public final class TicketVisualActionClassifier {
       return null;
     }
     if (!navigationSeparatorProved &&
-      !neutralProfileAndMenuRejection(pixels, background, navigationTop).isEmpty()
+      !neutralProfileAndMenuProved(pixels, background, navigationTop)
     ) {
       return null;
     }
@@ -1148,53 +1004,15 @@ public final class TicketVisualActionClassifier {
    * The returned diagnostic is one bounded gate code with no pixels, text, coordinates, or ticket
    * data.</p>
    */
-  private static ViviHomeDetection detectViviHome(int[] pixels) {
+  private static Bounds detectViviHome(int[] pixels) {
     if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT) {
-      return rejectViviHome("invalid_probe");
+      return null;
     }
 
-    int[] bottomLuminances = new int[SAMPLE_WIDTH * 22];
-    int bottomIndex = 0;
-    for (int y = 262; y < 284; y++) {
-      for (int x = 0; x < SAMPLE_WIDTH; x++) {
-        bottomLuminances[bottomIndex++] = luminance(pixels[y * SAMPLE_WIDTH + x]);
-      }
-    }
-    Arrays.sort(bottomLuminances);
-    int navigationBackground = bottomLuminances[bottomLuminances.length / 2];
+    int navigationBackground = navigationBackground(pixels);
 
-    int selectedHomePixels = 0;
-    int selectedHomeLeft = 38;
-    int selectedHomeTop = 283;
-    int selectedHomeRight = -1;
-    int selectedHomeBottom = -1;
-    for (int y = 258; y < 283; y++) {
-      for (int x = 8; x < 38; x++) {
-        if (!isRegistrationColor(pixels[y * SAMPLE_WIDTH + x])) continue;
-        selectedHomePixels += 1;
-        selectedHomeLeft = Math.min(selectedHomeLeft, x);
-        selectedHomeTop = Math.min(selectedHomeTop, y);
-        selectedHomeRight = Math.max(selectedHomeRight, x + 1);
-        selectedHomeBottom = Math.max(selectedHomeBottom, y + 1);
-      }
-    }
-    // The current selected Home outline retains fourteen orange samples after the two bounded
-    // production reductions. Six retain margin for antialiasing drift while still requiring all
-    // three peer-navigation glyphs below to be independently present and neutral.
-    if (selectedHomePixels < 6) {
-      return rejectViviHome("selected_home_sparse");
-    }
-    int selectedHomeWidth = selectedHomeRight - selectedHomeLeft;
-    int selectedHomeHeight = selectedHomeBottom - selectedHomeTop;
-    int selectedHomeArea = selectedHomeWidth * selectedHomeHeight;
-    if (selectedHomePixels > 96 ||
-      selectedHomeWidth < 4 || selectedHomeWidth > 24 ||
-      selectedHomeHeight < 3 || selectedHomeHeight > 20 ||
-      selectedHomeArea < 20 ||
-      selectedHomePixels * 100 > selectedHomeArea * 65
-    ) {
-      return rejectViviHome("selected_home_shape");
-    }
+    NavigationGlyphStats selectedHome = navigationGlyphStats(pixels, navigationBackground, 258, 8, 38, true);
+    if (!validHomeNavigationGlyph(selectedHome)) return null;
 
     // Peer glyphs begin below the optional separator. Starting at 262 ignores that thin dynamic
     // edge without requiring it to exist or measuring any content above navigation.
@@ -1212,7 +1030,7 @@ public final class TicketVisualActionClassifier {
         }
       }
     }
-    if (selectedTicketPixels >= 4) return rejectViviHome("selected_ticket_conflict");
+    if (selectedTicketPixels >= 4) return null;
 
     boolean[] visited = new boolean[neutralTicket.length];
     boolean[] ticketGlyph = new boolean[neutralTicket.length];
@@ -1252,8 +1070,8 @@ public final class TicketVisualActionClassifier {
         }
       }
     }
-    if (ticketGlyphComponents < 1) return rejectViviHome("ticket_components_missing");
-    if (ticketGlyphComponents > 6) return rejectViviHome("ticket_components_ambiguous");
+    if (ticketGlyphComponents < 1) return null;
+    if (ticketGlyphComponents > 6) return null;
 
     int glyphPixels = 0;
     int glyphLeft = 82;
@@ -1275,20 +1093,20 @@ public final class TicketVisualActionClassifier {
       }
     }
     if (glyphRight <= glyphLeft || glyphBottom <= glyphTop) {
-      return rejectViviHome("ticket_bounds_unproved");
+      return null;
     }
     int glyphWidth = glyphRight - glyphLeft;
     int glyphHeight = glyphBottom - glyphTop;
     int glyphArea = glyphWidth * glyphHeight;
-    if (glyphPixels < 12) return rejectViviHome("ticket_pixels_sparse");
-    if (glyphWidth < 14) return rejectViviHome("ticket_width_narrow");
-    if (glyphWidth > 30) return rejectViviHome("ticket_width_wide");
-    if (glyphHeight < 5) return rejectViviHome("ticket_height_short");
-    if (glyphHeight > 14) return rejectViviHome("ticket_height_tall");
-    if (glyphWidth * 100 < glyphHeight * 160) return rejectViviHome("ticket_aspect_tall");
-    if (glyphWidth * 100 > glyphHeight * 500) return rejectViviHome("ticket_aspect_wide");
-    if (glyphPixels * 100 < glyphArea * 8) return rejectViviHome("ticket_density_sparse");
-    if (glyphPixels * 100 > glyphArea * 65) return rejectViviHome("ticket_density_dense");
+    if (glyphPixels < 12) return null;
+    if (glyphWidth < 14) return null;
+    if (glyphWidth > 30) return null;
+    if (glyphHeight < 5) return null;
+    if (glyphHeight > 14) return null;
+    if (glyphWidth * 100 < glyphHeight * 160) return null;
+    if (glyphWidth * 100 > glyphHeight * 500) return null;
+    if (glyphPixels * 100 < glyphArea * 8) return null;
+    if (glyphPixels * 100 > glyphArea * 65) return null;
 
     int activeRows = 0;
     int activeColumns = 0;
@@ -1303,29 +1121,18 @@ public final class TicketVisualActionClassifier {
       if (x < firstThirdEnd) leftThirdInk += count;
       if (x >= lastThirdStart) rightThirdInk += count;
     }
-    if (activeRows < 5) return rejectViviHome("ticket_rows_sparse");
-    if (activeColumns < 4) return rejectViviHome("ticket_columns_sparse");
-    if (leftThirdInk < 3) return rejectViviHome("ticket_left_edge_sparse");
-    if (rightThirdInk < 3) return rejectViviHome("ticket_right_edge_sparse");
+    if (activeRows < 5) return null;
+    if (activeColumns < 4) return null;
+    if (leftThirdInk < 3) return null;
+    if (rightThirdInk < 3) return null;
 
-    String peerRejection = neutralProfileAndMenuRejection(
-      pixels,
-      navigationBackground,
-      ticketTop
-    );
-    if (!peerRejection.isEmpty()) return rejectViviHome(peerRejection);
+    if (!neutralProfileAndMenuProved(pixels, navigationBackground, ticketTop)) return null;
 
     // Input uses the box centre. Returning the proved silhouette rather than the whole tab keeps
     // the mapped device tap centred on the live Tickets glyph (about x=405 on the current Pixel).
-    return new ViviHomeDetection(
-      new Bounds(glyphLeft, glyphTop, glyphRight, glyphBottom),
-      "proved_bottom_navigation"
-    );
+    return new Bounds(glyphLeft, glyphTop, glyphRight, glyphBottom);
   }
 
-  private static ViviHomeDetection rejectViviHome(String diagnostic) {
-    return new ViviHomeDetection(null, "reject_" + diagnostic);
-  }
 
   /**
    * Proves that Profile is the one selected ViVi bottom tab.
@@ -1335,20 +1142,12 @@ public final class TicketVisualActionClassifier {
    * This is the logout workflow's authority to inspect account controls, not generic Ticket tap
    * authority.</p>
    */
-  private static ViviProfileDetection detectViviProfile(int[] pixels) {
+  private static boolean detectViviProfile(int[] pixels) {
     if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT) {
-      return rejectViviProfile("invalid_probe");
+      return false;
     }
     int navigationTop = 262;
-    int[] bottomLuminances = new int[SAMPLE_WIDTH * 22];
-    int bottomIndex = 0;
-    for (int y = navigationTop; y < 284; y++) {
-      for (int x = 0; x < SAMPLE_WIDTH; x++) {
-        bottomLuminances[bottomIndex++] = luminance(pixels[y * SAMPLE_WIDTH + x]);
-      }
-    }
-    Arrays.sort(bottomLuminances);
-    int navigationBackground = bottomLuminances[bottomLuminances.length / 2];
+    int navigationBackground = navigationBackground(pixels);
 
     NavigationGlyphStats selectedProfile = navigationGlyphStats(
       pixels,
@@ -1363,12 +1162,12 @@ public final class TicketVisualActionClassifier {
       selectedProfile.width() > 24 || selectedProfile.height() < 7 ||
       selectedProfile.height() > 22 || selectedProfile.area() < 49 ||
       selectedProfile.pixels * 100 > selectedProfile.area() * 70
-    ) return rejectViviProfile("selected_profile_shape");
+    ) return false;
 
     int selectedPeerPixels = selectedNavigationPixels(pixels, navigationTop, 8, 40) +
       selectedNavigationPixels(pixels, navigationTop, 46, 84) +
       selectedNavigationPixels(pixels, navigationTop, 152, 186);
-    if (selectedPeerPixels >= 4) return rejectViviProfile("peer_selected_conflict");
+    if (selectedPeerPixels >= 4) return false;
 
     NavigationGlyphStats home = navigationGlyphStats(
       pixels,
@@ -1378,10 +1177,7 @@ public final class TicketVisualActionClassifier {
       40,
       false
     );
-    if (!home.present() || home.pixels < 6 || home.pixels > 96 ||
-      home.width() < 4 || home.width() > 24 || home.height() < 3 || home.height() > 20 ||
-      home.area() < 20 || home.pixels * 100 > home.area() * 65
-    ) return rejectViviProfile("peer_home_shape");
+    if (!validHomeNavigationGlyph(home)) return false;
 
     NavigationGlyphStats tickets = navigationGlyphStats(
       pixels,
@@ -1396,57 +1192,27 @@ public final class TicketVisualActionClassifier {
       tickets.height() > 14 || tickets.area() < 70 ||
       tickets.pixels * 100 < tickets.area() * 8 ||
       tickets.pixels * 100 > tickets.area() * 65
-    ) return rejectViviProfile("peer_ticket_shape");
+    ) return false;
 
-    int menuRows = 0;
-    NavigationGlyphStats menu = new NavigationGlyphStats();
-    for (int y = navigationTop; y < 283; y++) {
-      int run = 0;
-      int longestRun = 0;
-      for (int x = 152; x < 186; x++) {
-        int pixel = pixels[y * SAMPLE_WIDTH + x];
-        if (isNeutralNavigationInk(pixel, navigationBackground)) {
-          run += 1;
-          longestRun = Math.max(longestRun, run);
-          menu.add(x, y);
-        } else {
-          run = 0;
-        }
-      }
-      if (longestRun >= 10) menuRows += 1;
-    }
-    if (!menu.present() || menuRows < 2 || menuRows > 8 || menu.pixels < 20 ||
-      menu.width() < 10 || menu.width() > 30
-    ) return rejectViviProfile("peer_menu_shape");
-    return new ViviProfileDetection(true, "proved_bottom_navigation");
+    NavigationGlyphStats menu = navigationGlyphStats(pixels, navigationBackground, navigationTop, 152, 186, false);
+    return validMenuNavigationGlyph(pixels, menu, navigationBackground, navigationTop, false);
   }
 
-  private static ViviProfileDetection rejectViviProfile(String diagnostic) {
-    return new ViviProfileDetection(false, "reject_" + diagnostic);
-  }
 
   /**
    * Proves either the Tickets or Menu lower tab as selected while the other three glyphs remain
    * neutral. The two routes deliberately share one state: re-authentication only needs proof that
    * it may select Profile, and no Ticket action is authorized from this generic state.
    */
-  private static ViviOtherTabDetection detectViviOtherBottomTab(
+  private static boolean detectViviOtherBottomTab(
     int[] pixels,
     boolean ticketsSelected
   ) {
     if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT) {
-      return new ViviOtherTabDetection(false);
+      return false;
     }
     int navigationTop = 262;
-    int[] bottomLuminances = new int[SAMPLE_WIDTH * 22];
-    int bottomIndex = 0;
-    for (int y = navigationTop; y < 284; y++) {
-      for (int x = 0; x < SAMPLE_WIDTH; x++) {
-        bottomLuminances[bottomIndex++] = luminance(pixels[y * SAMPLE_WIDTH + x]);
-      }
-    }
-    Arrays.sort(bottomLuminances);
-    int navigationBackground = bottomLuminances[bottomLuminances.length / 2];
+    int navigationBackground = navigationBackground(pixels);
 
     NavigationGlyphStats home = navigationGlyphStats(
       pixels, navigationBackground, navigationTop, 8, 40, false
@@ -1463,14 +1229,14 @@ public final class TicketVisualActionClassifier {
     if (!validHomeNavigationGlyph(home) || !validTicketNavigationGlyph(tickets) ||
       !validProfileNavigationGlyph(profile) ||
       !validMenuNavigationGlyph(pixels, menu, navigationBackground, navigationTop, !ticketsSelected)
-    ) return new ViviOtherTabDetection(false);
+    ) return false;
 
     int selectedPeers = selectedNavigationPixels(pixels, navigationTop, 8, 40) +
       selectedNavigationPixels(pixels, navigationTop, 106, 140) +
       (ticketsSelected
         ? selectedNavigationPixels(pixels, navigationTop, 152, 186)
         : selectedNavigationPixels(pixels, navigationTop, 46, 84));
-    return new ViviOtherTabDetection(selectedPeers < 4);
+    return selectedPeers < 4;
   }
 
   private static boolean validHomeNavigationGlyph(NavigationGlyphStats value) {
@@ -1570,70 +1336,24 @@ public final class TicketVisualActionClassifier {
       looksLikeLogin(geometryPixels);
   }
 
-  private static String neutralProfileAndMenuRejection(
-    int[] pixels,
-    int navigationBackground,
-    int navigationTop
-  ) {
-    int profilePixels = 0;
-    int profileLeft = 140;
-    int profileTop = 283;
-    int profileRight = -1;
-    int profileBottom = -1;
-    int selectedOtherPixels = 0;
-    for (int y = navigationTop; y < 283; y++) {
-      for (int x = 106; x < 140; x++) {
-        int pixel = pixels[y * SAMPLE_WIDTH + x];
-        if (isRegistrationColor(pixel)) selectedOtherPixels += 1;
-        if (isNeutralNavigationInk(pixel, navigationBackground)) {
-          profilePixels += 1;
-          profileLeft = Math.min(profileLeft, x);
-          profileTop = Math.min(profileTop, y);
-          profileRight = Math.max(profileRight, x + 1);
-          profileBottom = Math.max(profileBottom, y + 1);
-        }
-      }
-      for (int x = 152; x < 186; x++) {
-        if (isRegistrationColor(pixels[y * SAMPLE_WIDTH + x])) selectedOtherPixels += 1;
-      }
-    }
-    if (selectedOtherPixels >= 4 || profileRight <= profileLeft || profileBottom <= profileTop) {
-      return selectedOtherPixels >= 4 ? "peer_selected_conflict" : "peer_profile_missing";
-    }
-    int profileWidth = profileRight - profileLeft;
-    int profileHeight = profileBottom - profileTop;
-    if (profilePixels < 10 || profilePixels > 180 ||
-      profileWidth < 7 || profileWidth > 24 ||
-      profileHeight < 7 || profileHeight > 22
-    ) {
-      return "peer_profile_shape";
-    }
+  private static boolean neutralProfileAndMenuProved(int[] pixels, int background, int top) {
+    if (selectedNavigationPixels(pixels, top, 106, 140) +
+      selectedNavigationPixels(pixels, top, 152, 186) >= 4) return false;
+    NavigationGlyphStats profile = navigationGlyphStats(pixels, background, top, 106, 140, false);
+    NavigationGlyphStats menu = navigationGlyphStats(pixels, background, top, 152, 186, false);
+    return validProfileNavigationGlyph(profile) && validMenuNavigationGlyph(pixels, menu, background, top, false);
+  }
 
-    int menuRows = 0;
-    int menuPixels = 0;
-    int menuLeft = 186;
-    int menuRight = -1;
-    for (int y = navigationTop; y < 283; y++) {
-      int run = 0;
-      int longestRun = 0;
-      for (int x = 152; x < 186; x++) {
-        if (isNeutralNavigationInk(pixels[y * SAMPLE_WIDTH + x], navigationBackground)) {
-          run += 1;
-          longestRun = Math.max(longestRun, run);
-          menuPixels += 1;
-          menuLeft = Math.min(menuLeft, x);
-          menuRight = Math.max(menuRight, x + 1);
-        } else {
-          run = 0;
-        }
+  private static int navigationBackground(int[] pixels) {
+    int[] luminances = new int[SAMPLE_WIDTH * 22];
+    int index = 0;
+    for (int y = 262; y < 284; y++) {
+      for (int x = 0; x < SAMPLE_WIDTH; x++) {
+        luminances[index++] = luminance(pixels[y * SAMPLE_WIDTH + x]);
       }
-      if (longestRun >= 10) menuRows += 1;
     }
-    if (menuRows < 2 || menuRows > 8) return "peer_menu_rows";
-    if (menuPixels < 20) return "peer_menu_pixels";
-    if (menuRight <= menuLeft) return "peer_menu_missing";
-    if (menuRight - menuLeft < 10 || menuRight - menuLeft > 30) return "peer_menu_width";
-    return "";
+    Arrays.sort(luminances);
+    return luminances[luminances.length / 2];
   }
 
   private static boolean isNeutralNavigationInk(int pixel, int navigationBackground) {
@@ -1920,7 +1640,6 @@ public final class TicketVisualActionClassifier {
     List<Bounds> closeGlyphs
   ) {
     boolean[] foreground = new boolean[SAMPLE_WIDTH * SAMPLE_HEIGHT];
-    boolean[] visited = new boolean[foreground.length];
     for (int y = searchTop; y < searchBottom; y++) {
       for (int x = searchLeft; x < searchRight; x++) {
         int index = y * SAMPLE_WIDTH + x;
@@ -1940,45 +1659,62 @@ public final class TicketVisualActionClassifier {
       }
     }
 
-    int[] component = new int[(searchRight - searchLeft) * (searchBottom - searchTop)];
-    for (int y = searchTop; y < searchBottom; y++) {
-      for (int x = searchLeft; x < searchRight; x++) {
-        int start = y * SAMPLE_WIDTH + x;
-        if (!foreground[start] || visited[start]) continue;
-        int head = 0;
-        int tail = 0;
-        int left = x;
-        int top = y;
-        int right = x + 1;
-        int bottom = y + 1;
-        component[tail++] = start;
-        visited[start] = true;
-        while (head < tail) {
-          int current = component[head++];
-          int currentX = current % SAMPLE_WIDTH;
-          int currentY = current / SAMPLE_WIDTH;
-          left = Math.min(left, currentX);
-          top = Math.min(top, currentY);
-          right = Math.max(right, currentX + 1);
-          bottom = Math.max(bottom, currentY + 1);
-          for (int offsetY = -1; offsetY <= 1; offsetY++) {
-            for (int offsetX = -1; offsetX <= 1; offsetX++) {
-              if (offsetX == 0 && offsetY == 0) continue;
-              int adjacentX = currentX + offsetX;
-              int adjacentY = currentY + offsetY;
-              if (adjacentX < searchLeft || adjacentX >= searchRight ||
-                adjacentY < searchTop || adjacentY >= searchBottom) continue;
-              int adjacent = adjacentY * SAMPLE_WIDTH + adjacentX;
-              if (!foreground[adjacent] || visited[adjacent]) continue;
-              visited[adjacent] = true;
-              component[tail++] = adjacent;
-            }
-          }
-        }
-        Bounds bounds = new Bounds(left, top, right, bottom);
-        if (looksLikeDetailCloseX(component, tail, bounds)) closeGlyphs.add(bounds);
+    for (PixelComponent component : pixelComponents(foreground,
+      new Bounds(searchLeft, searchTop, searchRight, searchBottom), true)) {
+      if (looksLikeDetailCloseX(component.points, component.points.length, component.bounds)) {
+        closeGlyphs.add(component.bounds);
       }
     }
+  }
+
+  private static final class PixelComponent {
+    final Bounds bounds;
+    final int[] points;
+
+    PixelComponent(Bounds bounds, int[] points) {
+      this.bounds = bounds;
+      this.points = points;
+    }
+  }
+
+  /** One bounded component walk; each detector retains its own color and shape proof. */
+  private static List<PixelComponent> pixelComponents(boolean[] foreground, Bounds search, boolean diagonal) {
+    List<PixelComponent> components = new ArrayList<>();
+    boolean[] visited = new boolean[foreground.length];
+    int[] queue = new int[(search.right - search.left) * (search.bottom - search.top)];
+    for (int y = search.top; y < search.bottom; y++) for (int x = search.left; x < search.right; x++) {
+      int seed = y * SAMPLE_WIDTH + x;
+      if (!foreground[seed] || visited[seed]) continue;
+      int head = 0;
+      int tail = 0;
+      int left = x;
+      int top = y;
+      int right = x + 1;
+      int bottom = y + 1;
+      queue[tail++] = seed;
+      visited[seed] = true;
+      while (head < tail) {
+        int point = queue[head++];
+        int px = point % SAMPLE_WIDTH;
+        int py = point / SAMPLE_WIDTH;
+        left = Math.min(left, px);
+        top = Math.min(top, py);
+        right = Math.max(right, px + 1);
+        bottom = Math.max(bottom, py + 1);
+        for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+          if ((dx == 0 && dy == 0) || (!diagonal && dx != 0 && dy != 0)) continue;
+          int nx = px + dx;
+          int ny = py + dy;
+          if (nx < search.left || nx >= search.right || ny < search.top || ny >= search.bottom) continue;
+          int next = ny * SAMPLE_WIDTH + nx;
+          if (!foreground[next] || visited[next]) continue;
+          visited[next] = true;
+          queue[tail++] = next;
+        }
+      }
+      components.add(new PixelComponent(new Bounds(left, top, right, bottom), Arrays.copyOf(queue, tail)));
+    }
+    return components;
   }
 
   private static boolean looksLikeDetailCloseX(int[] component, int count, Bounds bounds) {
@@ -2216,14 +1952,4 @@ public final class TicketVisualActionClassifier {
     return (red * 54 + green * 183 + blue * 19) >> 8;
   }
 
-  private static String visualHash(int[] pixels, Bounds bounds) {
-    long hash = 0xcbf29ce484222325L;
-    for (int y = bounds.top; y < bounds.bottom; y += 4) {
-      for (int x = bounds.left; x < bounds.right; x += 4) {
-        hash ^= (luminance(pixels[y * SAMPLE_WIDTH + x]) / 32);
-        hash *= 0x100000001b3L;
-      }
-    }
-    return Long.toUnsignedString(hash, 36);
-  }
 }

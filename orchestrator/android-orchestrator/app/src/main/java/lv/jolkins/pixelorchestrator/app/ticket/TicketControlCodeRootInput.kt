@@ -1,7 +1,6 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
 internal object TicketControlCodeRootInput {
-  const val HELPER_ASSET = "ticket-root-keyboard"
   const val HELPER_PATH = "/data/local/pixel-stack/bin/pixel-ticket-root-keyboard"
   private val digitsPattern = Regex("^[0-9]{2,8}${'$'}")
 

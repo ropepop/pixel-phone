@@ -28,7 +28,6 @@ private const val VIVI_REAUTH_FULL_RESET_REQUEST_PREFIX = "vivi-full-reset-"
 private const val VIVI_REAUTH_LOGOUT_LOGIN_REQUEST_PREFIX = "vivi-logout-login-"
 private const val VIVI_REAUTH_LOGOUT_REDETECT_LOGIN_REQUEST_PREFIX =
   "vivi-logout-redetect-login-"
-private const val VIVI_REAUTH_LEGACY_REQUEST_PREFIX = "vivi-reauth-"
 
 private fun ticketViviReauthRequestIdInNamespace(value: String, prefix: String): Boolean =
   value.startsWith(prefix) && value.length > prefix.length
@@ -42,12 +41,6 @@ internal fun ticketViviReauthRequest(command: TicketSpacetimeCommand): TicketViv
     var logoutInApp = false
     var redetectAfterLogin = false
     val resetAppData = when (version.intOrNull) {
-      1 -> {
-        if (payload.keys != setOf("version", "requestId", "credentialRevision")) {
-          return@runCatching null
-        }
-        false
-      }
       2 -> {
         if (payload.keys != setOf("version", "requestId", "credentialRevision", "resetAppData")) {
           return@runCatching null
@@ -98,8 +91,7 @@ internal fun ticketViviReauthRequest(command: TicketSpacetimeCommand): TicketViv
     val requiredPrefix = when {
       resetAppData -> VIVI_REAUTH_FULL_RESET_REQUEST_PREFIX
       redetectAfterLogin -> VIVI_REAUTH_LOGOUT_REDETECT_LOGIN_REQUEST_PREFIX
-      logoutInApp -> VIVI_REAUTH_LOGOUT_LOGIN_REQUEST_PREFIX
-      else -> VIVI_REAUTH_LEGACY_REQUEST_PREFIX
+      else -> VIVI_REAUTH_LOGOUT_LOGIN_REQUEST_PREFIX
     }
     if (!ticketViviReauthRequestIdInNamespace(requestId, requiredPrefix)) {
       return@runCatching null
@@ -141,17 +133,6 @@ private val TICKET_VIVI_REAUTH_SIGNED_IN_STATES = setOf(
   TicketVisualPhoneState.VIVI_OTHER_TAB
 )
 
-internal fun ticketViviReauthPreflightAuthenticatedState(
-  state: TicketVisualPhoneState?
-): Boolean = state in TICKET_VIVI_REAUTH_SIGNED_IN_STATES
-
-internal fun ticketViviReauthPreflightAuthenticatedObservation(
-  observation: TicketVisualActionObservation?
-): Boolean = observation != null && (
-  ticketViviReauthPreflightAuthenticatedState(observation.state) ||
-    ticketViviLogoutBottomRouteObservation(observation)
-  )
-
 internal fun ticketViviLogoutLoginStartObservation(
   observation: TicketVisualActionObservation?
 ): Boolean = ticketViviReauthTerminalReadyObservation(observation)
@@ -171,13 +152,7 @@ internal fun ticketViviLogoutBottomRouteObservation(
   return true
 }
 
-/**
- * Dispatches one route mutation exactly once and trusts only its proved successor.
- *
- * Accessibility and shell actions can report `false` even after ViVi has accepted them. Replaying
- * such an action would be unsafe, so the immediate acknowledgement is deliberately ignored. The
- * caller must supply a bounded, exact successor observation and stops if that proof is absent.
- */
+/** A lost acknowledgement cannot justify replaying an input; prove its successor instead. */
 internal suspend fun <T : Any> ticketViviReauthDispatchOnceThenProve(
   dispatch: suspend () -> Boolean,
   observeSuccessor: suspend () -> T?,
@@ -232,235 +207,148 @@ internal fun ticketViviReauthRestoredTarget(
   observation?.state == target.state &&
   observation.currentAnchor == target.detailAnchor
 
-internal enum class TicketViviReauthRedetectTargetKind(val journalPhase: String) {
-  CLOSE_WRONG_DETAIL("ticket_redetect_detail_close_dispatching"),
-  TICKETS_TAB("ticket_redetect_tickets_tab_dispatching"),
-  SINGLE_USE_TICKETS_TAB("ticket_redetect_single_use_tab_dispatching"),
-  TIME_TICKETS_TAB("ticket_redetect_time_tab_dispatching"),
-  LATEST_UNACTIVATED_DETAIL("ticket_redetect_latest_detail_dispatching")
+// All post-login navigation shares one bounded executor. The mode changes only
+// the allowed destination and whether a proved absence may lead to latest-ticket search.
+internal enum class TicketViviNavigationMode { EXACT, ORIGINAL, LATEST }
+
+internal enum class TicketViviNavigationKind(val restorePhase: String, val latestPhase: String) {
+  CLOSE_DETAIL("", "ticket_redetect_detail_close_dispatching"),
+  TICKETS_TAB("ticket_restore_tickets_tab_dispatching", "ticket_redetect_tickets_tab_dispatching"),
+  SINGLE_USE_TAB("ticket_restore_single_use_tab_dispatching", "ticket_redetect_single_use_tab_dispatching"),
+  TIME_TAB("ticket_restore_time_tab_dispatching", "ticket_redetect_time_tab_dispatching"),
+  UNUSED_DETAIL("ticket_restore_detail_dispatching", "ticket_redetect_latest_detail_dispatching"),
+  ACTIVATED_DETAIL("ticket_restore_detail_dispatching", "")
 }
 
-internal data class TicketViviReauthRedetectTarget(
-  val kind: TicketViviReauthRedetectTargetKind,
+internal data class TicketViviNavigationTarget(
+  val kind: TicketViviNavigationKind,
   val bounds: TicketVisualProbeBounds,
   val selectedAnchor: String = ""
 )
 
-/**
- * Selects only controls already proved by the visual Ticket classifier. The latest-card branch
- * requires one unique latest card with its non-activating registration control; the slider is
- * never returned by this function.
- */
-internal fun ticketViviReauthRedetectTarget(
+internal fun ticketViviNavigationTarget(
+  mode: TicketViviNavigationMode,
+  original: TicketViviReauthReturnTarget?,
   observation: TicketVisualActionObservation
-): TicketViviReauthRedetectTarget? = when (observation.state) {
-  TicketVisualPhoneState.ACTIVATED_DETAIL,
-  TicketVisualPhoneState.UNACTIVATED_DETAIL -> observation.backBounds?.let {
-    TicketViviReauthRedetectTarget(TicketViviReauthRedetectTargetKind.CLOSE_WRONG_DETAIL, it)
+): TicketViviNavigationTarget? {
+  fun target(kind: TicketViviNavigationKind, bounds: TicketVisualProbeBounds?) =
+    bounds?.let { TicketViviNavigationTarget(kind, it) }
+  return when (observation.state) {
+    TicketVisualPhoneState.ACTIVATED_DETAIL,
+    TicketVisualPhoneState.UNACTIVATED_DETAIL ->
+      if (mode == TicketViviNavigationMode.LATEST) {
+        target(TicketViviNavigationKind.CLOSE_DETAIL, observation.backBounds)
+      } else null
+    TicketVisualPhoneState.VIVI_HOME ->
+      if (mode != TicketViviNavigationMode.LATEST || ticketViviLogoutBottomRouteObservation(observation)) {
+        target(TicketViviNavigationKind.TICKETS_TAB, observation.ticketsTabBounds)
+      } else null
+    TicketVisualPhoneState.VIVI_PROFILE,
+    TicketVisualPhoneState.VIVI_OTHER_TAB,
+    TicketVisualPhoneState.UNKNOWN ->
+      if (mode != TicketViviNavigationMode.EXACT && ticketViviLogoutBottomRouteObservation(observation)) {
+        target(TicketViviNavigationKind.TICKETS_TAB, observation.ticketsTabBounds)
+      } else null
+    TicketVisualPhoneState.TICKETS_TIME_EMPTY ->
+      if (mode != TicketViviNavigationMode.EXACT) {
+        target(TicketViviNavigationKind.SINGLE_USE_TAB,
+          observation.singleUseTicketsNavigationBoundsFor(TicketVisualActionTarget.REDETECT_LATEST))
+      } else null
+    TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY ->
+      target(TicketViviNavigationKind.TIME_TAB,
+        observation.timeTicketsNavigationBoundsFor(TicketVisualActionTarget.REDETECT_LATEST))
+    TicketVisualPhoneState.TICKET_LIST -> {
+      val activated = mode != TicketViviNavigationMode.LATEST &&
+        original?.state == TicketVisualPhoneState.ACTIVATED_DETAIL
+      if (!activated && mode != TicketViviNavigationMode.LATEST &&
+        original?.state != TicketVisualPhoneState.UNACTIVATED_DETAIL) return null
+      val card = if (activated) observation.uniqueActivatedDetailCard()
+        else observation.latestRegistrationCard()
+      if (card == null || mode == TicketViviNavigationMode.LATEST && card.anchor.isBlank()) return null
+      val bounds = if (activated) card.activatedDetailBounds else card.registrationBounds
+      bounds?.let { TicketViviNavigationTarget(
+        if (activated) TicketViviNavigationKind.ACTIVATED_DETAIL else TicketViviNavigationKind.UNUSED_DETAIL,
+        it, card.anchor
+      ) }
+    }
+    else -> null
   }
-  TicketVisualPhoneState.VIVI_HOME,
-  TicketVisualPhoneState.VIVI_PROFILE,
-  TicketVisualPhoneState.VIVI_OTHER_TAB,
-  TicketVisualPhoneState.UNKNOWN -> observation.ticketsTabBounds
-    ?.takeIf { ticketViviLogoutBottomRouteObservation(observation) }
-    ?.let {
-      TicketViviReauthRedetectTarget(TicketViviReauthRedetectTargetKind.TICKETS_TAB, it)
-    }
-  TicketVisualPhoneState.TICKETS_TIME_EMPTY ->
-    observation.singleUseTicketsNavigationBoundsFor(TicketVisualActionTarget.REDETECT_LATEST)?.let {
-      TicketViviReauthRedetectTarget(
-        TicketViviReauthRedetectTargetKind.SINGLE_USE_TICKETS_TAB,
-        it
-      )
-    }
-  TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY ->
-    observation.timeTicketsNavigationBoundsFor(TicketVisualActionTarget.REDETECT_LATEST)?.let {
-      TicketViviReauthRedetectTarget(TicketViviReauthRedetectTargetKind.TIME_TICKETS_TAB, it)
-    }
-  TicketVisualPhoneState.TICKET_LIST -> observation.latestRegistrationCard()
-    ?.takeIf { it.anchor.isNotBlank() }
-    ?.let { card ->
-      card.registrationBounds?.let {
-        TicketViviReauthRedetectTarget(
-          TicketViviReauthRedetectTargetKind.LATEST_UNACTIVATED_DETAIL,
-          it,
-          card.anchor
-        )
-      }
-    }
-  else -> null
-}
-
-internal fun ticketViviReauthV4OriginalRestoreTarget(
-  returnTarget: TicketViviReauthReturnTarget,
-  observation: TicketVisualActionObservation
-): TicketViviReauthRestoreTarget? {
-  ticketViviReauthRestoreTarget(returnTarget, observation)?.let { return it }
-  if (observation.state == TicketVisualPhoneState.TICKETS_TIME_EMPTY) {
-    return observation.singleUseTicketsNavigationBoundsFor(TicketVisualActionTarget.REDETECT_LATEST)
-      ?.let {
-        TicketViviReauthRestoreTarget(
-          TicketViviReauthRestoreTargetKind.SINGLE_USE_TICKETS_TAB,
-          it
-        )
-      }
-  }
-  return observation.ticketsTabBounds
-    ?.takeIf {
-      observation.state in setOf(
-        TicketVisualPhoneState.VIVI_HOME,
-        TicketVisualPhoneState.VIVI_PROFILE,
-        TicketVisualPhoneState.VIVI_OTHER_TAB,
-        TicketVisualPhoneState.UNKNOWN
-      ) && ticketViviLogoutBottomRouteObservation(observation)
-    }
-    ?.let { TicketViviReauthRestoreTarget(TicketViviReauthRestoreTargetKind.TICKETS_TAB, it) }
-}
-
-internal fun ticketViviReauthRedetectedLatest(
-  before: TicketVisualActionObservation,
-  selectedAnchor: String,
-  observation: TicketVisualActionObservation?
-): Boolean {
-  val selectedCard = before.latestRegistrationCard()
-  if (before.state != TicketVisualPhoneState.TICKET_LIST ||
-    selectedCard?.anchor != selectedAnchor || selectedCard?.registrationBounds == null ||
-    selectedAnchor.isBlank() || observation == null || observation.probeId <= before.probeId ||
-    !ticketViviReauthTerminalReadyObservation(observation) ||
-    observation?.state != TicketVisualPhoneState.UNACTIVATED_DETAIL
-  ) return false
-  return ticketVisualObservationAfterCardSelection(observation, selectedAnchor).currentAnchor ==
-    selectedAnchor
 }
 
 internal fun ticketViviReauthOriginalTargetVisuallyAbsent(
   target: TicketViviReauthReturnTarget,
   observation: TicketVisualActionObservation
-): Boolean {
-  if (observation.state != TicketVisualPhoneState.TICKET_LIST) return false
-  return when (target.state) {
-    TicketVisualPhoneState.UNACTIVATED_DETAIL ->
-      observation.cards.none { it.latest && it.registrationBounds != null }
-    TicketVisualPhoneState.ACTIVATED_DETAIL ->
-      observation.cards.none { it.activatedDetailBounds != null }
-    else -> false
-  }
+): Boolean = observation.state == TicketVisualPhoneState.TICKET_LIST && when (target.state) {
+  TicketVisualPhoneState.UNACTIVATED_DETAIL ->
+    observation.cards.none { it.latest && it.registrationBounds != null }
+  TicketVisualPhoneState.ACTIVATED_DETAIL -> observation.cards.none { it.activatedDetailBounds != null }
+  else -> false
 }
 
-internal fun ticketViviReauthNoTicketProven(
-  navigationFromState: TicketVisualPhoneState,
-  observation: TicketVisualActionObservation,
-  streamEpoch: Long,
-  frameSequence: Long
-): Boolean = ticketVisualRedetectLatestNotDetectedProof(
-  TicketVisualActionTarget.REDETECT_LATEST,
-  navigationFromState,
-  observation,
-  streamEpoch,
-  frameSequence
-)
+internal enum class TicketViviReauthRestoreTransitionStatus { WAITING, PROVED, REJECTED }
 
-internal enum class TicketViviReauthRestoreTargetKind(val journalPhase: String) {
-  TICKETS_TAB("ticket_restore_tickets_tab_dispatching"),
-  SINGLE_USE_TICKETS_TAB("ticket_restore_single_use_tab_dispatching"),
-  TIME_TICKETS_TAB("ticket_restore_time_tab_dispatching"),
-  LATEST_UNACTIVATED_DETAIL("ticket_restore_detail_dispatching"),
-  UNIQUE_ACTIVATED_DETAIL("ticket_restore_detail_dispatching")
-}
-
-internal data class TicketViviReauthRestoreTarget(
-  val kind: TicketViviReauthRestoreTargetKind,
-  val bounds: TicketVisualProbeBounds
-)
-
-/**
- * Returns only visually proved, non-activating navigation targets. Opening the orange control on
- * the latest unused card reveals its detail; ticket activation remains a separate slider gesture.
- */
-internal fun ticketViviReauthRestoreTarget(
-  returnTarget: TicketViviReauthReturnTarget,
-  observation: TicketVisualActionObservation
-): TicketViviReauthRestoreTarget? = when (observation.state) {
-  TicketVisualPhoneState.VIVI_HOME -> observation.ticketsTabBounds?.let {
-    TicketViviReauthRestoreTarget(TicketViviReauthRestoreTargetKind.TICKETS_TAB, it)
-  }
-  TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY ->
-    observation.timeTicketsNavigationBoundsFor(TicketVisualActionTarget.OPEN_LATEST_UNACTIVATED)?.let {
-      TicketViviReauthRestoreTarget(TicketViviReauthRestoreTargetKind.TIME_TICKETS_TAB, it)
-    }
-  TicketVisualPhoneState.TICKET_LIST ->
-    when (returnTarget.state) {
-      TicketVisualPhoneState.UNACTIVATED_DETAIL ->
-        observation.latestRegistrationCard()?.registrationBounds?.let {
-          TicketViviReauthRestoreTarget(
-            TicketViviReauthRestoreTargetKind.LATEST_UNACTIVATED_DETAIL,
-            it
-          )
-        }
-      TicketVisualPhoneState.ACTIVATED_DETAIL ->
-        observation.uniqueActivatedDetailCard()?.activatedDetailBounds?.let {
-          TicketViviReauthRestoreTarget(
-            TicketViviReauthRestoreTargetKind.UNIQUE_ACTIVATED_DETAIL,
-            it
-          )
-        }
-      else -> null
-    }
-  else -> null
-}
-
-internal enum class TicketViviReauthRestoreTransitionStatus {
-  WAITING,
-  PROVED,
-  REJECTED
-}
-
-/**
- * Reconciles one already-dispatched navigation tap without ever authorizing a replay. An
- * unchanged or still-unclassified frame may be observed again, but only the exact successor for
- * that one target kind can advance the flow.
- */
-internal fun ticketViviReauthRestoreTransitionStatus(
-  returnTarget: TicketViviReauthReturnTarget,
-  dispatchedKind: TicketViviReauthRestoreTargetKind,
+/** A dispatched target accepts only its fresh successor; waiting never authorizes another tap. */
+internal fun ticketViviNavigationTransition(
+  mode: TicketViviNavigationMode,
+  original: TicketViviReauthReturnTarget?,
+  target: TicketViviNavigationTarget,
   before: TicketVisualActionObservation,
   after: TicketVisualActionObservation?
 ): TicketViviReauthRestoreTransitionStatus {
   if (after == null || after.probeId <= before.probeId) {
     return TicketViviReauthRestoreTransitionStatus.WAITING
   }
-  val expectedDetailKind = when (returnTarget.state) {
-    TicketVisualPhoneState.UNACTIVATED_DETAIL ->
-      TicketViviReauthRestoreTargetKind.LATEST_UNACTIVATED_DETAIL
-    TicketVisualPhoneState.ACTIVATED_DETAIL ->
-      TicketViviReauthRestoreTargetKind.UNIQUE_ACTIVATED_DETAIL
-    else -> return TicketViviReauthRestoreTransitionStatus.REJECTED
+  if (mode == TicketViviNavigationMode.EXACT) {
+    val expectedKind = when (original?.state) {
+      TicketVisualPhoneState.UNACTIVATED_DETAIL -> TicketViviNavigationKind.UNUSED_DETAIL
+      TicketVisualPhoneState.ACTIVATED_DETAIL -> TicketViviNavigationKind.ACTIVATED_DETAIL
+      else -> return TicketViviReauthRestoreTransitionStatus.REJECTED
+    }
+    val nextKind = ticketViviNavigationTarget(mode, original, after)?.kind
+    val proved = when (target.kind) {
+      TicketViviNavigationKind.TICKETS_TAB -> before.state == TicketVisualPhoneState.VIVI_HOME &&
+        nextKind in setOf(TicketViviNavigationKind.TIME_TAB, expectedKind)
+      TicketViviNavigationKind.TIME_TAB -> before.state == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY &&
+        nextKind == expectedKind
+      TicketViviNavigationKind.UNUSED_DETAIL,
+      TicketViviNavigationKind.ACTIVATED_DETAIL -> before.state == TicketVisualPhoneState.TICKET_LIST &&
+        target.kind == expectedKind && ticketViviReauthRestoredTarget(original, after)
+      else -> false
+    }
+    return when {
+      proved -> TicketViviReauthRestoreTransitionStatus.PROVED
+      nextKind == target.kind || after.state == TicketVisualPhoneState.UNKNOWN ->
+        TicketViviReauthRestoreTransitionStatus.WAITING
+      else -> TicketViviReauthRestoreTransitionStatus.REJECTED
+    }
   }
-  val nextKind = ticketViviReauthRestoreTarget(returnTarget, after)?.kind
-  val proved = when (dispatchedKind) {
-    TicketViviReauthRestoreTargetKind.TICKETS_TAB ->
-      before.state == TicketVisualPhoneState.VIVI_HOME &&
-        nextKind in setOf(TicketViviReauthRestoreTargetKind.TIME_TICKETS_TAB, expectedDetailKind)
-    TicketViviReauthRestoreTargetKind.SINGLE_USE_TICKETS_TAB -> false
-    TicketViviReauthRestoreTargetKind.TIME_TICKETS_TAB ->
-      before.state == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY &&
-        nextKind == expectedDetailKind
-    TicketViviReauthRestoreTargetKind.LATEST_UNACTIVATED_DETAIL ->
-      before.state == TicketVisualPhoneState.TICKET_LIST &&
-        dispatchedKind == expectedDetailKind &&
-        ticketViviReauthRestoredTarget(returnTarget, after)
-    TicketViviReauthRestoreTargetKind.UNIQUE_ACTIVATED_DETAIL ->
-      before.state == TicketVisualPhoneState.TICKET_LIST &&
-        dispatchedKind == expectedDetailKind &&
-        ticketViviReauthRestoredTarget(returnTarget, after)
+  if (after.state == TicketVisualPhoneState.UNKNOWN ||
+    after.state == before.state && after.currentAnchor == before.currentAnchor
+  ) return TicketViviReauthRestoreTransitionStatus.WAITING
+  if (mode == TicketViviNavigationMode.ORIGINAL && original != null &&
+    ticketViviReauthRestoredTarget(original, after)
+  ) return TicketViviReauthRestoreTransitionStatus.PROVED
+  val proved = when (target.kind) {
+    TicketViviNavigationKind.CLOSE_DETAIL -> before.state in setOf(
+      TicketVisualPhoneState.ACTIVATED_DETAIL, TicketVisualPhoneState.UNACTIVATED_DETAIL
+    ) && ticketViviLogoutBottomRouteObservation(after)
+    TicketViviNavigationKind.TICKETS_TAB -> ticketViviLogoutBottomRouteObservation(before) &&
+      after.state in setOf(TicketVisualPhoneState.TICKET_LIST,
+        TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY, TicketVisualPhoneState.TICKETS_TIME_EMPTY)
+    TicketViviNavigationKind.SINGLE_USE_TAB -> before.state == TicketVisualPhoneState.TICKETS_TIME_EMPTY &&
+      after.state in setOf(TicketVisualPhoneState.TICKET_LIST, TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY)
+    TicketViviNavigationKind.TIME_TAB -> before.state == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY &&
+      after.state in setOf(TicketVisualPhoneState.TICKET_LIST, TicketVisualPhoneState.TICKETS_TIME_EMPTY)
+    TicketViviNavigationKind.UNUSED_DETAIL,
+    TicketViviNavigationKind.ACTIVATED_DETAIL -> before.state == TicketVisualPhoneState.TICKET_LIST &&
+      ticketViviReauthTerminalReadyObservation(after) &&
+      (mode == TicketViviNavigationMode.ORIGINAL ||
+        after.state == TicketVisualPhoneState.UNACTIVATED_DETAIL && target.selectedAnchor.isNotBlank() &&
+        before.latestRegistrationCard()?.anchor == target.selectedAnchor &&
+        ticketVisualObservationAfterCardSelection(after, target.selectedAnchor).currentAnchor == target.selectedAnchor)
   }
-  if (proved) return TicketViviReauthRestoreTransitionStatus.PROVED
-
-  val unchangedTarget = ticketViviReauthRestoreTarget(returnTarget, after)?.kind == dispatchedKind
-  if (unchangedTarget || after.state == TicketVisualPhoneState.UNKNOWN) {
-    return TicketViviReauthRestoreTransitionStatus.WAITING
-  }
-  return TicketViviReauthRestoreTransitionStatus.REJECTED
+  return if (proved) TicketViviReauthRestoreTransitionStatus.PROVED
+    else TicketViviReauthRestoreTransitionStatus.REJECTED
 }
 
 /**
@@ -468,11 +356,6 @@ internal fun ticketViviReauthRestoreTransitionStatus(
  * refresh that exact initial surface, and the refresh preserves all ViVi app data. Full reset has
  * its own destructive one-shot contract and must never inherit this extra lifecycle mutation.
  */
-internal fun ticketViviSafeReauthShouldRefreshInitialDeviceLink(
-  resetAppData: Boolean,
-  surface: PhoneAutomationViviAuthSurface
-): Boolean = !resetAppData && surface == PhoneAutomationViviAuthSurface.DEVICE_LINK
-
 internal data class TicketViviReauthJournal(
   val requestId: String = "",
   val credentialRevision: String = "",

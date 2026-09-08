@@ -13,8 +13,7 @@ internal enum class TicketVisualActionTarget(val wireName: String, val activates
   REGISTER_CURRENT("register_current", activatesTicket = true),
   SHOW_RECENT_ACTIVATED("show_recent_activated"),
   RETURN_TO_LATEST_UNACTIVATED("return_to_latest_unactivated"),
-  REDETECT_LATEST("redetect_latest"),
-  PROVE_CURRENT("prove_current");
+  REDETECT_LATEST("redetect_latest");
 
   companion object {
     fun fromWireName(value: String): TicketVisualActionTarget? = entries.firstOrNull {
@@ -40,20 +39,14 @@ internal data class TicketVisualActionRequest(
   val scheduleId: String,
   /** Opaque Spacetime policy revision that admitted a context-switch command. */
   val policyRevision: String,
-  /** Spacetime-owned business deadline. Pixel echoes it but never derives a local window. */
+  /** Spacetime-owned business deadline validated when decoding an admitted command. */
   val switchExpiresAt: String,
   val flow: String = "",
   val refreshActivationAttemptId: String = "",
   val refreshActivationRevision: String = "",
   val commandId: String = "",
   val commandRevision: String = ""
-) {
-  val hasSpacetimeSwitchAuthority: Boolean
-    get() = policyRevision.isNotBlank() && switchExpiresAt.isNotBlank()
-
-  val isActivationExpiryRefresh: Boolean
-    get() = flow == "activation_expiry_reset"
-}
+)
 
 internal data class TicketVisualActionSnapshot(
   val actionId: String = "",
@@ -61,8 +54,6 @@ internal data class TicketVisualActionSnapshot(
   val status: String = "idle",
   val phase: String = "idle",
   val currentView: TicketVisualActionView = TicketVisualActionView.UNKNOWN,
-  val switchAvailable: Boolean = false,
-  val switchExpiresAt: String = "",
   val streamEpoch: Long = 0L,
   val frameSequence: Long = 0L,
   val reason: String = "",
@@ -70,17 +61,16 @@ internal data class TicketVisualActionSnapshot(
   val interactionRevision: String = "",
   val activationRevision: String = "",
   val activationAttemptId: String = "",
-  val sliderRegion: TicketSliderRegionV3? = null,
   /** Typed unencoded observation was verified on the phone; video is presentation only. */
   val semanticProof: Boolean = false,
   val terminal: Boolean = false,
-  val ok: Boolean = false
+  val ok: Boolean = false,
+  /** In-memory private proof carried to the action owner; never part of the wire result. */
+  val proofObservation: TicketVisualActionObservation? = null
 )
 
-internal data class TicketSliderRegionV3(
-  val proofActionId: String,
-  val streamEpoch: Long,
-  val frameSequence: Long,
+/** Only an old terminal journal may echo geometry into its original settlement fingerprint. */
+internal data class RetainedTicketSliderGeometry(
   val leftBasisPoints: Int,
   val topBasisPoints: Int,
   val rightBasisPoints: Int,
@@ -94,17 +84,14 @@ internal data class TicketActionFinalizationEnvelope(
   val flow: String,
   val refreshActivationAttemptId: String,
   val refreshActivationRevision: String,
-  val action: TicketVisualActionSnapshot
+  val action: TicketVisualActionSnapshot,
+  val retainedGeometry: RetainedTicketSliderGeometry? = null
 )
 
 internal data class TicketVisualSwitchAnchors(
   val recentActivatedAnchor: String = "",
   val latestUnactivatedAnchor: String = ""
-) {
-  /** Visual readiness only. Spacetime remains the sole switch policy and expiry authority. */
-  val visuallyReady: Boolean
-    get() = recentActivatedAnchor.isNotBlank() && latestUnactivatedAnchor.isNotBlank()
-}
+)
 
 internal data class TicketVisualActionJournalState(
   val commandId: String = "",
@@ -134,7 +121,7 @@ internal data class TicketVisualActionJournalState(
   val completedAt: String = "",
   val terminalOk: Boolean = false,
   val semanticProof: Boolean = false,
-  /** Privacy-safe encoded-frame geometry retained until both terminal reducers are acknowledged. */
+  /** Storage compatibility only: preserve an old terminal's exact settlement fingerprint. */
   val sliderLeftBasisPoints: Int = -1,
   val sliderTopBasisPoints: Int = -1,
   val sliderRightBasisPoints: Int = -1,
@@ -157,9 +144,8 @@ internal fun ticketVisualActionJournalWriteProved(
 }
 
 /**
- * A retained success is acknowledgement-only replay of an already proved terminal view. Keep
- * passive prove_current compatible with every sanitized view, but never let an older navigation
- * journal reintroduce list-only success after the target's terminal contract becomes stricter.
+ * A retained success only acknowledges an already proved terminal view. An older navigation
+ * journal cannot reintroduce list-only success after the target's terminal contract changes.
  */
 internal fun ticketVisualTerminalViewCompatible(
   target: TicketVisualActionTarget,
@@ -171,7 +157,6 @@ internal fun ticketVisualTerminalViewCompatible(
   TicketVisualActionTarget.OPEN_LATEST_AND_REGISTER,
   TicketVisualActionTarget.REGISTER_CURRENT -> view == TicketVisualActionView.ACTIVATED_CURRENT
   TicketVisualActionTarget.SHOW_RECENT_ACTIVATED -> view == TicketVisualActionView.RECENT_ACTIVATED
-  TicketVisualActionTarget.PROVE_CURRENT -> true
 }
 
 internal fun retainedTicketVisualTerminalSnapshot(
@@ -231,15 +216,6 @@ internal fun retainedTicketVisualTerminalSnapshot(
     currentView = retainedView,
     streamEpoch = retainedStreamEpoch,
     frameSequence = retainedFrameSequence,
-    switchAvailable = journal.terminalOk && retainedTerminalValid &&
-      request.hasSpacetimeSwitchAuthority,
-    switchExpiresAt = if (journal.terminalOk && retainedTerminalValid &&
-      request.hasSpacetimeSwitchAuthority
-    ) {
-      request.switchExpiresAt
-    } else {
-      ""
-    },
     reason = when {
       expectedNegativeCandidate && !expectedNegativeValid ->
         "ticket_action_frame_watermark_unproved"
@@ -251,7 +227,6 @@ internal fun retainedTicketVisualTerminalSnapshot(
     interactionRevision = journal.interactionRevision,
     activationRevision = journal.activationRevision,
     activationAttemptId = journal.activationAttemptId,
-    sliderRegion = journal.retainedSliderRegionOrNull().takeIf { retainedTerminalValid },
     semanticProof = journal.semanticProof,
     terminal = true,
     ok = journal.terminalOk && retainedTerminalValid
@@ -269,10 +244,9 @@ internal fun ticketVisualLatestNotDetectedJournalHasBoundProof(
   journal.sliderLeftBasisPoints == -1 && journal.sliderTopBasisPoints == -1 &&
   journal.sliderRightBasisPoints == -1 && journal.sliderBottomBasisPoints == -1
 
-internal fun TicketVisualActionJournalState.retainedSliderRegionOrNull(): TicketSliderRegionV3? {
+private fun TicketVisualActionJournalState.retainedSliderGeometry(): RetainedTicketSliderGeometry? {
   if (!terminalOk || terminalView != TicketVisualActionView.LATEST_UNACTIVATED.wireName ||
     target !in setOf(
-      TicketVisualActionTarget.PROVE_CURRENT.wireName,
       TicketVisualActionTarget.OPEN_LATEST_UNACTIVATED.wireName,
       TicketVisualActionTarget.RETURN_TO_LATEST_UNACTIVATED.wireName,
       TicketVisualActionTarget.REDETECT_LATEST.wireName
@@ -282,10 +256,7 @@ internal fun TicketVisualActionJournalState.retainedSliderRegionOrNull(): Ticket
     sliderLeftBasisPoints >= sliderRightBasisPoints ||
     sliderTopBasisPoints >= sliderBottomBasisPoints
   ) return null
-  return TicketSliderRegionV3(
-    proofActionId = actionId,
-    streamEpoch = streamEpoch,
-    frameSequence = frameSequence,
+  return RetainedTicketSliderGeometry(
     leftBasisPoints = sliderLeftBasisPoints,
     topBasisPoints = sliderTopBasisPoints,
     rightBasisPoints = sliderRightBasisPoints,
@@ -334,11 +305,11 @@ internal fun ticketActionFinalizationEnvelope(
       interactionRevision = journal.interactionRevision,
       activationRevision = journal.activationRevision.takeIf { journal.terminalOk }.orEmpty(),
       activationAttemptId = journal.activationAttemptId,
-      sliderRegion = journal.retainedSliderRegionOrNull(),
       semanticProof = journal.semanticProof,
       terminal = true,
       ok = journal.terminalOk
-    )
+    ),
+    retainedGeometry = journal.retainedSliderGeometry()
   )
 }
 
@@ -492,8 +463,7 @@ internal data class TicketVisualCardAnchor(
     TicketVisualActionTarget.RETURN_TO_LATEST_UNACTIVATED,
     TicketVisualActionTarget.REDETECT_LATEST -> registrationBounds
     TicketVisualActionTarget.SHOW_RECENT_ACTIVATED -> activatedDetailBounds
-    TicketVisualActionTarget.REGISTER_CURRENT,
-    TicketVisualActionTarget.PROVE_CURRENT -> null
+    TicketVisualActionTarget.REGISTER_CURRENT -> null
   }
 }
 
@@ -575,8 +545,6 @@ internal data class TicketVisualActionObservation(
     }
     return if (anchor.isNotBlank()) cards.singleOrNull { it.anchor == anchor } else null
   }
-
-  fun latestCard(): TicketVisualCardAnchor? = cards.singleOrNull { it.latest }
   fun latestRegistrationCard(): TicketVisualCardAnchor? = cards.singleOrNull {
     it.latest && it.registrationBounds != null
   }
@@ -600,23 +568,6 @@ internal data class TicketVisualActionObservation(
     return uniqueActivatedDetailCard()
   }
 
-  /**
-   * Control-code recovery may encounter a ticket activated before Pixel began retaining visual
-   * anchors. Only that compatibility case may use one unambiguous registered-status target.
-   * A nonblank card anchor must still match exactly; a detail anchor retains the unique-target
-   * selection and is checked again against the reopened detail signature by the caller.
-   */
-  fun activatedCardForControlCode(
-    anchors: TicketVisualSwitchAnchors
-  ): TicketVisualCardAnchor? {
-    val rememberedAnchor = anchors.recentActivatedAnchor
-    if (rememberedAnchor.isBlank()) return uniqueActivatedDetailCard()
-    cardFor(TicketVisualActionTarget.SHOW_RECENT_ACTIVATED, anchors)
-      ?.takeIf { it.activatedDetailBounds != null }
-      ?.let { return it }
-    if (!rememberedAnchor.startsWith("d_")) return null
-    return uniqueActivatedDetailCard()
-  }
 }
 
 internal fun ticketVisualObservationsAgree(
@@ -683,92 +634,6 @@ internal class TicketVisualObservationConsensus {
   }
 }
 
-internal enum class TicketSemanticSliderStabilizationStatus {
-  PROVED,
-  MISSING,
-  UNSTABLE,
-  FENCE_CHANGED
-}
-
-internal data class TicketSemanticSliderStabilizationResult(
-  val status: TicketSemanticSliderStabilizationStatus,
-  val bounds: TicketViviGraphicBounds? = null,
-  val readCount: Int = 0
-)
-
-private data class TicketSemanticSliderSample(
-  val bounds: TicketViviGraphicBounds? = null,
-  val fenceCurrent: Boolean
-)
-
-/**
- * Accepts only two consecutive, identical, non-null semantic slider snapshots. A null sample
- * breaks consecutiveness, while every read is fenced on both sides so a focus or generation
- * change can never be hidden by a later matching snapshot.
- */
-internal suspend fun awaitStableTicketSemanticSliderBounds(
-  timeoutMillis: Long,
-  pollMillis: Long,
-  elapsedRealtimeMillis: () -> Long,
-  stillCurrent: suspend () -> Boolean,
-  readBounds: suspend () -> TicketViviGraphicBounds?,
-  waitForNextSample: suspend (Long) -> Unit
-): TicketSemanticSliderStabilizationResult {
-  val startedAtMillis = elapsedRealtimeMillis()
-  val deadlineMillis = startedAtMillis + timeoutMillis.coerceAtLeast(1L)
-  var previous: TicketViviGraphicBounds? = null
-  var sawNonNull = false
-  var readCount = 0
-  while (elapsedRealtimeMillis() < deadlineMillis) {
-    val sampleBudgetMillis = deadlineMillis - elapsedRealtimeMillis()
-    val sample = withTimeoutOrNull(sampleBudgetMillis.coerceAtLeast(1L)) {
-      if (!stillCurrent()) {
-        return@withTimeoutOrNull TicketSemanticSliderSample(fenceCurrent = false)
-      }
-      readCount += 1
-      val current = readBounds()
-      TicketSemanticSliderSample(
-        bounds = current,
-        fenceCurrent = stillCurrent()
-      )
-    } ?: break
-    if (!sample.fenceCurrent) {
-      return TicketSemanticSliderStabilizationResult(
-        TicketSemanticSliderStabilizationStatus.FENCE_CHANGED,
-        readCount = readCount
-      )
-    }
-    if (elapsedRealtimeMillis() >= deadlineMillis) break
-    val current = sample.bounds
-    if (current == null) {
-      previous = null
-    } else {
-      sawNonNull = true
-      if (current == previous) {
-        return TicketSemanticSliderStabilizationResult(
-          status = TicketSemanticSliderStabilizationStatus.PROVED,
-          bounds = current,
-          readCount = readCount
-        )
-      }
-      previous = current
-    }
-    val remainingMillis = deadlineMillis - elapsedRealtimeMillis()
-    if (remainingMillis <= 0L) break
-    withTimeoutOrNull(remainingMillis.coerceAtLeast(1L)) {
-      waitForNextSample(minOf(pollMillis.coerceAtLeast(1L), remainingMillis))
-    } ?: break
-  }
-  return TicketSemanticSliderStabilizationResult(
-    status = if (sawNonNull) {
-      TicketSemanticSliderStabilizationStatus.UNSTABLE
-    } else {
-      TicketSemanticSliderStabilizationStatus.MISSING
-    },
-    readCount = readCount
-  )
-}
-
 internal fun ticketVisualObservationIsFreshForDispatch(
   observation: TicketVisualActionObservation,
   nowMillis: Long,
@@ -781,18 +646,6 @@ internal fun ticketVisualObservationIsFreshForDispatch(
     nowMillis - capturedAtMillis <= maxAgeMillis.coerceAtLeast(0L)
 }
 
-/** The encoded picture must be the exact observed capture or later in the same stream. */
-internal fun ticketVisualFrameMatchesRegistrationObservation(
-  observation: TicketVisualActionObservation,
-  proofStreamEpoch: Long,
-  frameEpoch: Long,
-  frameCaptureStartUs: Long,
-  nowMillis: Long,
-  maxAgeMillis: Long
-): Boolean = ticketVisualObservationIsFreshForDispatch(observation, nowMillis, maxAgeMillis) &&
-  proofStreamEpoch > 0L && frameEpoch == proofStreamEpoch &&
-  frameCaptureStartUs >= observation.captureStartUs &&
-  frameCaptureStartUs / 1_000L <= nowMillis
 
 private fun boundsAgree(
   first: TicketVisualProbeBounds?,
@@ -837,19 +690,6 @@ internal fun ticketVisualRedetectLatestNotDetectedObservation(
   observation.timeTicketsTabBounds == null &&
   observation.cards.isEmpty()
 
-internal fun ticketVisualRedetectLatestNotDetectedProof(
-  target: TicketVisualActionTarget,
-  navigationFromState: TicketVisualPhoneState,
-  observation: TicketVisualActionObservation,
-  streamEpoch: Long,
-  frameSequence: Long
-): Boolean = ticketVisualRedetectLatestNotDetectedObservation(
-  target,
-  navigationFromState,
-  observation
-) &&
-  streamEpoch > 0L && frameSequence > 0L
-
 internal fun ticketVisualLatestNotDetectedTerminalHasBoundProof(
   snapshot: TicketVisualActionSnapshot
 ): Boolean = !snapshot.ok && snapshot.terminal &&
@@ -857,13 +697,8 @@ internal fun ticketVisualLatestNotDetectedTerminalHasBoundProof(
   snapshot.status == "failed" && snapshot.phase == "failed" &&
   snapshot.currentView == TicketVisualActionView.UNKNOWN &&
   snapshot.reason == "ticket_action_latest_not_detected" &&
-  (snapshot.semanticProof || (snapshot.streamEpoch > 0L && snapshot.frameSequence > 0L)) &&
-  snapshot.sliderRegion == null
+  (snapshot.semanticProof || (snapshot.streamEpoch > 0L && snapshot.frameSequence > 0L))
 
-internal fun ticketRegistrationProofMatchesVisualAnchor(
-  proof: TicketRegistrationProof,
-  visualAnchor: String
-): Boolean = proof.ticketAnchor.isNotBlank() && proof.ticketAnchor == visualAnchor
 
 internal fun ticketRegistrationProofMatchesVisualDetail(
   proof: TicketRegistrationProof,
@@ -891,24 +726,6 @@ internal fun ticketRegistrationProofRevisionForRegisterCurrent(
   )
 }
 
-/**
- * A geometry refresh for the same exact visual-action revision must retain the already-proved
- * phone-local ticket identity. A geometry-only update must never erase the identity that
- * register_current is required to reconcile before dispatch.
- */
-internal fun ticketRegistrationProofPreservingExactIdentity(
-  prior: TicketRegistrationProof?,
-  next: TicketRegistrationProof
-): TicketRegistrationProof {
-  val exactPrior = prior?.takeIf {
-    it.interactionRevision.isNotBlank() &&
-      it.interactionRevision == next.interactionRevision
-  } ?: return next
-  return next.copy(
-    ticketAnchor = next.ticketAnchor.ifBlank { exactPrior.ticketAnchor },
-    detailAnchor = next.detailAnchor.ifBlank { exactPrior.detailAnchor }
-  )
-}
 
 /** Keeps the durable list-card identity separate from the fresh phone-local detail signature. */
 internal fun ticketVisualProvenTicketAnchor(
@@ -996,19 +813,6 @@ internal fun ticketVisualActivationObservationAfterCompletedGesture(
   observation
 }
 
-internal fun ticketVisualPostGestureFailureReason(
-  observation: TicketVisualActionObservation?,
-  provenAnchor: String
-): String = if (
-  observation?.state == TicketVisualPhoneState.UNACTIVATED_DETAIL &&
-  provenAnchor.isNotBlank() &&
-  observation.currentAnchor.isNotBlank() &&
-  observation.currentAnchor == provenAnchor
-) {
-  "ticket_action_gesture_completed_no_transition"
-} else {
-  "ticket_action_post_gesture_visual_unproved"
-}
 
 /**
  * A registration started from prove_current has only the detail signature (d_...) as its recent
@@ -1026,25 +830,7 @@ internal fun ticketVisualObservationAfterRecentActivatedSelection(
   ticketVisualObservationAfterCardSelection(observation, selectedCardAnchor)
 }
 
-internal fun ticketVisualControlCodeActivatedDetailProved(
-  observation: TicketVisualActionObservation,
-  anchors: TicketVisualSwitchAnchors
-): Boolean {
-  if (observation.state != TicketVisualPhoneState.ACTIVATED_DETAIL ||
-    observation.currentAnchor.isBlank()
-  ) return false
-  val rememberedAnchor = anchors.recentActivatedAnchor
-  return !rememberedAnchor.startsWith("d_") || observation.currentAnchor == rememberedAnchor
-}
 
-/** A failed control-code lookup may return only to the exact detail it started from. */
-internal fun ticketVisualControlCodeUnactivatedDetailRestored(
-  initial: TicketVisualActionObservation,
-  restored: TicketVisualActionObservation
-): Boolean = initial.state == TicketVisualPhoneState.UNACTIVATED_DETAIL &&
-  restored.state == TicketVisualPhoneState.UNACTIVATED_DETAIL &&
-  initial.currentAnchor.isNotBlank() &&
-  restored.currentAnchor == initial.currentAnchor
 
 internal fun ticketVisualTerminalIntendedAnchor(
   prior: TicketVisualActionJournalState,

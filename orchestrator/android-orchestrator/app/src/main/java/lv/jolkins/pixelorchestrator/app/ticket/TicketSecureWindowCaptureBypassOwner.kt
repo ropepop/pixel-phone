@@ -96,9 +96,6 @@ internal class TicketSecureWindowCaptureBypassOwner(
     acceptingOwnership = false
   }
 
-  suspend fun ensure(reason: String): TicketSecureWindowCaptureBypassLease? =
-    ensureWithResult(reason).lease
-
   /**
    * Performs read, durable original-state save, enable, and final proof in one idempotent root
    * transaction. Session-start callers may preserve an existing lease; they still perform the
@@ -324,7 +321,7 @@ internal class TicketSecureWindowCaptureBypassOwner(
     }
     if (!before.savedOriginalValid) {
       if (!before.liveInactive) {
-        return restoreUnownedToSafeDefaults(reason, before)
+        return restoreSettings(reason, before, SAFE_DEBUGGABLE_VALUE, SAFE_SECURE_WINDOWS_VALUE)
       }
       if (before.liveInactive && !before.stateFilePresent) {
         state = TicketSecureWindowCaptureBypassSnapshot(
@@ -344,77 +341,30 @@ internal class TicketSecureWindowCaptureBypassOwner(
       return failedRestore(reason, before, "saved_original_unavailable")
     }
 
-    // These two commands are intentionally independent. Failure of the first must not prevent the
-    // second restoration attempt.
-    val secureAttempt = runRestoreOperation(
-      restoreSecureWindowsScript(before.savedDisableSecureWindows)
-    )
-    val debuggableAttempt = runRestoreOperation(
-      restoreDebuggableScript(before.savedDebuggable)
-    )
-    val after = runCatchingReadback()
-    val secureProved = after.ok && after.disableSecureWindows == before.savedDisableSecureWindows
-    val debuggableProved = after.ok && after.debuggable == before.savedDebuggable
-    val bothProved = secureProved && debuggableProved
-    val clearResult = if (bothProved) runRestoreOperation(CLEAR_SAVED_STATE_SCRIPT) else null
-    val cleared = clearResult?.ok == true
-    val cleanupRequired = !cleared
-    val result = TicketSecureWindowCaptureBypassReleaseResult(
-      secureWindowsRestored = secureProved,
-      debuggableRestored = debuggableProved,
-      stateFileCleared = cleared,
-      cleanupRequired = cleanupRequired,
-      detail = buildString {
-        append("secure_attempt=").append(secureAttempt.ok)
-        append(" debuggable_attempt=").append(debuggableAttempt.ok)
-        append(" secure_proved=").append(secureProved)
-        append(" debuggable_proved=").append(debuggableProved)
-        append(" state_cleared=").append(cleared)
-      }
-    )
-    state = TicketSecureWindowCaptureBypassSnapshot(
-      active = after.liveActive,
-      cleanupRequired = cleanupRequired,
-      message = if (result.ok) {
-        "Secure-window capture bypass is inactive"
-      } else {
-        "Secure-window capture bypass restoration is unproved"
-      },
-      lastFailure = if (result.ok) "" else "restore_unproved"
-    )
-    onEvent(
-      if (result.ok) "secure_window_capture_bypass_disabled" else "secure_window_capture_bypass_disable_failed",
-      "reason=$reason ${result.detail}"
-    )
-    return result
+    return restoreSettings(reason, before, before.savedDebuggable, before.savedDisableSecureWindows)
   }
 
-  private suspend fun restoreUnownedToSafeDefaults(
+  private suspend fun restoreSettings(
     reason: String,
-    before: TicketSecureWindowCaptureBypassReadback
+    before: TicketSecureWindowCaptureBypassReadback,
+    debuggable: String,
+    secureWindows: String
   ): TicketSecureWindowCaptureBypassReleaseResult {
-    val secureAttempt = runRestoreOperation(restoreSecureWindowsScript(SAFE_SECURE_WINDOWS_VALUE))
-    val debuggableAttempt = runRestoreOperation(restoreDebuggableScript(SAFE_DEBUGGABLE_VALUE))
-    val after = runCatchingReadback()
-    val secureProved = after.ok && after.disableSecureWindows == SAFE_SECURE_WINDOWS_VALUE
-    val debuggableProved = after.ok && after.debuggable == SAFE_DEBUGGABLE_VALUE
+    // Both writes, independent readback and conditional state removal share one
+    // transaction. A failed first write must never skip the second restoration.
+    val transaction = runRestoreOperation(restoreSettingsTransaction(debuggable, secureWindows))
+    val after = readbackFromResult(transaction)
+    val secureProved = transaction.ok && after.ok && after.disableSecureWindows == secureWindows
+    val debuggableProved = transaction.ok && after.ok && after.debuggable == debuggable
     val bothProved = secureProved && debuggableProved
-    val clearResult = if (bothProved && before.stateFilePresent) {
-      runRestoreOperation(CLEAR_SAVED_STATE_SCRIPT)
-    } else {
-      null
-    }
-    val stateCleared = if (before.stateFilePresent) clearResult?.ok == true else bothProved
-    val cleanupRequired = !stateCleared
+    val stateCleared = bothProved && !after.stateFilePresent
     val result = TicketSecureWindowCaptureBypassReleaseResult(
       secureWindowsRestored = secureProved,
       debuggableRestored = debuggableProved,
       stateFileCleared = stateCleared,
-      cleanupRequired = cleanupRequired,
+      cleanupRequired = !stateCleared,
       detail = buildString {
-        append("unowned_safe_restore=true")
-        append(" secure_attempt=").append(secureAttempt.ok)
-        append(" debuggable_attempt=").append(debuggableAttempt.ok)
+        append("saved_original=").append(before.savedOriginalValid)
         append(" secure_proved=").append(secureProved)
         append(" debuggable_proved=").append(debuggableProved)
         append(" state_cleared=").append(stateCleared)
@@ -422,16 +372,16 @@ internal class TicketSecureWindowCaptureBypassOwner(
     )
     state = TicketSecureWindowCaptureBypassSnapshot(
       active = after.liveActive,
-      cleanupRequired = cleanupRequired,
+      cleanupRequired = !stateCleared,
       message = if (result.ok) {
-        "Secure-window capture bypass was normalized to the safe inactive state"
+        "Secure-window capture bypass settings were restored"
       } else {
-        "Unowned secure-window capture bypass cleanup is unproved"
+        "Secure-window capture bypass restoration is unproved"
       },
-      lastFailure = if (result.ok) "" else "unowned_active_restore_unproved"
+      lastFailure = if (result.ok) "" else "restore_unproved"
     )
     onEvent(
-      if (result.ok) "secure_window_capture_bypass_unowned_disabled" else "secure_window_capture_bypass_disable_failed",
+      if (result.ok) "secure_window_capture_bypass_disabled" else "secure_window_capture_bypass_disable_failed",
       "reason=$reason ${result.detail}"
     )
     return result
@@ -510,7 +460,8 @@ internal class TicketSecureWindowCaptureBypassOwner(
     val disableSecureWindows = values["disable_secure_windows"].orEmpty()
     val stateFilePresent = values["state_file_present"] == "1"
     return TicketSecureWindowCaptureBypassReadback(
-      ok = debuggable in TicketSecureWindowCaptureBypassReadback.VALID_DEBUGGABLE_VALUES &&
+      ok = values["state_file_present"] in setOf("0", "1") &&
+        debuggable in TicketSecureWindowCaptureBypassReadback.VALID_DEBUGGABLE_VALUES &&
         disableSecureWindows in TicketSecureWindowCaptureBypassReadback.VALID_SECURE_VALUES,
       debuggable = debuggable,
       disableSecureWindows = disableSecureWindows,
@@ -537,13 +488,18 @@ internal class TicketSecureWindowCaptureBypassOwner(
   private fun failureSummary(result: RootResult): String =
     "exit_${result.exitCode}_duration_${result.durationMs.coerceAtLeast(0L)}ms"
 
-  private fun restoreSecureWindowsScript(value: String): String = when (value) {
-    "null" -> "$RESTORE_SECURE_WINDOWS_PREFIX\nsettings delete secure disable_secure_windows\n"
-    else -> "$RESTORE_SECURE_WINDOWS_PREFIX\nsettings put secure disable_secure_windows $value\n"
-  }
-
-  private fun restoreDebuggableScript(value: String): String =
-    "$RESET_DEBUGGABLE_FUNCTION\n# ticket_secure_capture_restore_debuggable\nreset_debuggable $value\n"
+  private fun restoreSettingsTransaction(debuggable: String, secureWindows: String): String = """
+# ticket_secure_capture_restore_transaction
+$RESET_DEBUGGABLE_FUNCTION
+${if (secureWindows == "null") "settings delete secure disable_secure_windows" else "settings put secure disable_secure_windows $secureWindows"} >/dev/null 2>&1 || true
+reset_debuggable $debuggable >/dev/null 2>&1 || true
+$READ_LIVE_STATE
+if [ "${'$'}debuggable" = "$debuggable" ] && [ "${'$'}disable_secure_windows" = "$secureWindows" ]; then
+  rm -f "$STATE_FILE" >/dev/null 2>&1 || true
+fi
+$READ_SAVED_STATE
+$PRINT_READBACK
+""".trimIndent()
 
   private companion object {
     val DEFAULT_COMMAND_TIMEOUT: Duration = 5.seconds
@@ -568,11 +524,13 @@ reset_debuggable() {
 }
 """
 
-    const val READBACK_SCRIPT = """
-# ticket_secure_capture_readback
-state_file="$STATE_FILE"
+    const val READ_LIVE_STATE = """
 debuggable="${'$'}(getprop ro.debuggable 2>/dev/null | tr -d '\r')"
 disable_secure_windows="${'$'}(settings get secure disable_secure_windows 2>/dev/null | tr -d '\r')"
+"""
+
+    const val READ_SAVED_STATE = """
+state_file="$STATE_FILE"
 saved_debuggable=""
 saved_disable_secure_windows=""
 state_file_present=0
@@ -581,6 +539,9 @@ if [ -r "${'$'}state_file" ]; then
   saved_debuggable="${'$'}(sed -n '1p' "${'$'}state_file" 2>/dev/null | tr -d '\r')"
   saved_disable_secure_windows="${'$'}(sed -n '2p' "${'$'}state_file" 2>/dev/null | tr -d '\r')"
 fi
+"""
+
+    const val PRINT_READBACK = """
 printf 'debuggable=%s\n' "${'$'}debuggable"
 printf 'disable_secure_windows=%s\n' "${'$'}disable_secure_windows"
 printf 'state_file_present=%s\n' "${'$'}state_file_present"
@@ -588,31 +549,41 @@ printf 'saved_debuggable=%s\n' "${'$'}saved_debuggable"
 printf 'saved_disable_secure_windows=%s\n' "${'$'}saved_disable_secure_windows"
 """
 
+    const val SAVE_STATE_FUNCTION = """
+save_state() {
+  temporary_state="${STATE_FILE}.tmp.${'$'}${'$'}"
+  printf '%s\n%s\n' "${'$'}saved_debuggable" "${'$'}saved_disable_secure_windows" > "${'$'}temporary_state" || return 1
+  chmod 600 "${'$'}temporary_state" >/dev/null 2>&1 || true
+  mv "${'$'}temporary_state" "${'$'}state_file" || return 1
+  state_file_present=1
+}
+"""
+
+    const val READBACK_SCRIPT = """
+# ticket_secure_capture_readback
+$READ_LIVE_STATE
+$READ_SAVED_STATE
+$PRINT_READBACK
+"""
+
     const val ACQUIRE_SCRIPT = """
 # ticket_secure_capture_acquire
 $RESET_DEBUGGABLE_FUNCTION
+$SAVE_STATE_FUNCTION
 state_dir="/data/local/pixel-stack/apps/ticket-screen/state"
-state_file="$STATE_FILE"
 mkdir -p "${'$'}state_dir" || exit 20
 
-debuggable="${'$'}(getprop ro.debuggable 2>/dev/null | tr -d '\r')"
-disable_secure_windows="${'$'}(settings get secure disable_secure_windows 2>/dev/null | tr -d '\r')"
+$READ_LIVE_STATE
 case "${'$'}debuggable" in 0|1) ;; *) exit 21 ;; esac
 case "${'$'}disable_secure_windows" in 0|1|null) ;; *) exit 21 ;; esac
 
-state_file_present=0
-saved_debuggable=""
-saved_disable_secure_windows=""
-if [ -r "${'$'}state_file" ]; then
-  state_file_present=1
-  saved_debuggable="${'$'}(sed -n '1p' "${'$'}state_file" 2>/dev/null | tr -d '\r')"
-  saved_disable_secure_windows="${'$'}(sed -n '2p' "${'$'}state_file" 2>/dev/null | tr -d '\r')"
+$READ_SAVED_STATE
+if [ "${'$'}state_file_present" = "1" ]; then
   case "${'$'}saved_debuggable" in 0|1) ;; *) exit 21 ;; esac
   if [ -z "${'$'}saved_disable_secure_windows" ]; then
     # v311 and earlier stored only ro.debuggable; their established release value was zero.
-    printf '%s\n0\n' "${'$'}saved_debuggable" > "${STATE_FILE}.tmp.${'$'}${'$'}" || exit 21
-    chmod 600 "${STATE_FILE}.tmp.${'$'}${'$'}" >/dev/null 2>&1 || true
-    mv "${STATE_FILE}.tmp.${'$'}${'$'}" "${'$'}state_file" || exit 21
+    saved_disable_secure_windows=0
+    save_state || exit 21
   else
     case "${'$'}saved_disable_secure_windows" in 0|1|null) ;; *) exit 21 ;; esac
   fi
@@ -625,11 +596,7 @@ if [ "${'$'}debuggable" = "1" ] && [ "${'$'}disable_secure_windows" = "1" ]; the
     # recoverable ownership exactly as the former active-ownership transaction did.
     saved_debuggable=0
     saved_disable_secure_windows=0
-    temporary_state="${STATE_FILE}.tmp.${'$'}${'$'}"
-    printf '%s\n%s\n' "${'$'}saved_debuggable" "${'$'}saved_disable_secure_windows" > "${'$'}temporary_state" || exit 26
-    chmod 600 "${'$'}temporary_state" >/dev/null 2>&1 || true
-    mv "${'$'}temporary_state" "${'$'}state_file" || exit 26
-    state_file_present=1
+    save_state || exit 26
     acquire_outcome=ownership_established
   fi
 else
@@ -639,11 +606,7 @@ else
     [ "${'$'}disable_secure_windows" != "1" ] || exit 27
     saved_debuggable="${'$'}debuggable"
     saved_disable_secure_windows="${'$'}disable_secure_windows"
-    temporary_state="${STATE_FILE}.tmp.${'$'}${'$'}"
-    printf '%s\n%s\n' "${'$'}saved_debuggable" "${'$'}saved_disable_secure_windows" > "${'$'}temporary_state" || exit 21
-    chmod 600 "${'$'}temporary_state" >/dev/null 2>&1 || true
-    mv "${'$'}temporary_state" "${'$'}state_file" || exit 21
-    state_file_present=1
+    save_state || exit 21
   fi
   reset_debuggable 1 || exit 22
   settings put secure disable_secure_windows 1 || exit 23
@@ -652,32 +615,23 @@ fi
 
 # Final live proof is part of this same transaction. Kotlin validates these exact values and the
 # saved original before admitting an ownership generation.
-debuggable="${'$'}(getprop ro.debuggable 2>/dev/null | tr -d '\r')"
-disable_secure_windows="${'$'}(settings get secure disable_secure_windows 2>/dev/null | tr -d '\r')"
-saved_debuggable="${'$'}(sed -n '1p' "${'$'}state_file" 2>/dev/null | tr -d '\r')"
-saved_disable_secure_windows="${'$'}(sed -n '2p' "${'$'}state_file" 2>/dev/null | tr -d '\r')"
+$READ_LIVE_STATE
+$READ_SAVED_STATE
 case "${'$'}debuggable" in 1) ;; *) exit 28 ;; esac
 case "${'$'}disable_secure_windows" in 1) ;; *) exit 28 ;; esac
 case "${'$'}saved_debuggable" in 0|1) ;; *) exit 28 ;; esac
 case "${'$'}saved_disable_secure_windows" in 0|1|null) ;; *) exit 28 ;; esac
 printf 'acquire_outcome=%s\n' "${'$'}acquire_outcome"
-printf 'debuggable=%s\n' "${'$'}debuggable"
-printf 'disable_secure_windows=%s\n' "${'$'}disable_secure_windows"
-printf 'state_file_present=1\n'
-printf 'saved_debuggable=%s\n' "${'$'}saved_debuggable"
-printf 'saved_disable_secure_windows=%s\n' "${'$'}saved_disable_secure_windows"
+$PRINT_READBACK
 """
 
     const val ESTABLISH_ACTIVE_OWNERSHIP_SCRIPT = """
 # ticket_secure_capture_establish_active_ownership
+$SAVE_STATE_FUNCTION
 state_dir="/data/local/pixel-stack/apps/ticket-screen/state"
-state_file="$STATE_FILE"
 mkdir -p "${'$'}state_dir" || exit 24
-saved_debuggable=""
-saved_disable_secure_windows=""
-if [ -r "${'$'}state_file" ]; then
-  saved_debuggable="${'$'}(sed -n '1p' "${'$'}state_file" 2>/dev/null | tr -d '\r')"
-  saved_disable_secure_windows="${'$'}(sed -n '2p' "${'$'}state_file" 2>/dev/null | tr -d '\r')"
+$READ_SAVED_STATE
+if [ "${'$'}state_file_present" = "1" ]; then
   case "${'$'}saved_debuggable" in 0|1) ;; *) exit 25 ;; esac
   if [ -z "${'$'}saved_disable_secure_windows" ]; then
     # v311 stored only ro.debuggable and always restored the secure setting to zero.
@@ -691,19 +645,8 @@ else
   saved_debuggable=0
   saved_disable_secure_windows=0
 fi
-temporary_state="${STATE_FILE}.tmp.${'$'}${'$'}"
-printf '%s\n%s\n' "${'$'}saved_debuggable" "${'$'}saved_disable_secure_windows" > "${'$'}temporary_state" || exit 26
-chmod 600 "${'$'}temporary_state" >/dev/null 2>&1 || true
-mv "${'$'}temporary_state" "${'$'}state_file" || exit 26
+save_state || exit 26
 """
 
-    const val RESTORE_SECURE_WINDOWS_PREFIX = "# ticket_secure_capture_restore_secure_windows"
-
-    const val CLEAR_SAVED_STATE_SCRIPT = """
-# ticket_secure_capture_clear_saved_state
-state_file="$STATE_FILE"
-rm -f "${'$'}state_file" || exit 40
-[ ! -e "${'$'}state_file" ] || exit 41
-"""
   }
 }

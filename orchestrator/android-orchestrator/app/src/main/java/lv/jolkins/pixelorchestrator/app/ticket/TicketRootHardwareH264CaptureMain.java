@@ -17,11 +17,9 @@ import android.media.MediaFormat;
 import android.os.Bundle;
 import android.os.OutcomeReceiver;
 import android.os.SystemClock;
-import android.util.Base64;
 import android.view.Surface;
 import java.io.BufferedReader;
 import java.io.BufferedOutputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.lang.reflect.Constructor;
@@ -47,14 +45,13 @@ public final class TicketRootHardwareH264CaptureMain {
   private static final long STARTUP_PRIMER_FINAL_DRAIN_MILLIS = 300L;
   private static final long STARTUP_PRIMER_SETTLE_MILLIS = 100L;
   private static final long ARM_ACTIVATION_TIMEOUT_MILLIS = 5_000L;
+  private static final long ENCODER_INPUT_TIMEOUT_US = 3_000_000L;
   // The public viewer is an SDR canvas. Keep the encoder metadata truthful and apply only a
   // conservative display-referred lift here, after correcting the capture surface's R/B order.
   // No offset is used so black UI surfaces remain black instead of turning gray.
   private static final float HIGH_BRIGHTNESS_SDR_RED_GAIN = 1.08f;
   private static final float HIGH_BRIGHTNESS_SDR_GREEN_GAIN = 1.05f;
   private static final float HIGH_BRIGHTNESS_SDR_BLUE_GAIN = 1.03f;
-  private static final String PNG_BASE64_BEGIN = "PNG_BASE64_BEGIN";
-  private static final String PNG_BASE64_END = "PNG_BASE64_END";
 
   private TicketRootHardwareH264CaptureMain() {}
 
@@ -77,23 +74,13 @@ public final class TicketRootHardwareH264CaptureMain {
       intArg(args, "--bitrate", TicketScreenConfig.ROOT_HARDWARE_H264_BITRATE)
     );
     int frames = intArg(args, "--frames", 0);
-    boolean pngBase64 = hasFlag(args, "--png-base64");
     boolean awaitActivation = hasFlag(args, "--await-activation");
     long activationToken = longArg(args, "--activation-token", 0L);
-    long startupRequestedAtMillis = longArg(
-      args,
-      "--startup-requested-at-millis",
-      SystemClock.elapsedRealtime()
-    );
     long codecGeneration = longArg(args, "--codec-generation", 0L);
-    System.err.println(
-      "HELPER_STARTUP phase=main request_elapsed_ms=" +
-        Math.max(0L, SystemClock.elapsedRealtime() - startupRequestedAtMillis)
-    );
     if (width <= 0 || height <= 0 || sourceWidth <= 0 || sourceHeight <= 0) {
       throw new IllegalArgumentException("source and target dimensions are required");
     }
-    if (!pngBase64 && codecGeneration <= 0L) {
+    if (codecGeneration <= 0L) {
       throw new IllegalArgumentException("codec generation is required");
     }
     cropLeftSource = Math.max(0, Math.min(cropLeftSource, Math.max(0, sourceWidth - 1)));
@@ -108,20 +95,6 @@ public final class TicketRootHardwareH264CaptureMain {
     );
 
     exemptHiddenApis();
-    if (pngBase64) {
-      captureSecurePngBase64(
-        sourceWidth,
-        sourceHeight,
-        width,
-        height,
-        cropLeftSource,
-        cropTopSource,
-        cropRightSource,
-        cropBottomSource
-      );
-      return;
-    }
-
     // Construction only reflects hidden APIs and builds immutable capture parameters. It does
     // not acquire pixels; the first capture() remains below the exact activation-token gate.
     SurfaceCapture capture = new SecureScreenCapture(sourceWidth, sourceHeight);
@@ -141,7 +114,7 @@ public final class TicketRootHardwareH264CaptureMain {
     }
     TicketNewestFrameHandoff<PendingCapture> pendingFrames = new TicketNewestFrameHandoff<>();
     EncodingOwner encoding = new EncodingOwner(pendingFrames, width, height, bitrate, frames,
-      codecGeneration, startupRequestedAtMillis, awaitActivation, syncFrameRequested, frameWaitLock, cadenceScheduler);
+      codecGeneration, cadenceScheduler);
     encoding.start();
     Thread commandThread = null;
     try {
@@ -151,7 +124,6 @@ public final class TicketRootHardwareH264CaptureMain {
         captureActivated,
         activationLatch,
         activationToken,
-        startupRequestedAtMillis,
         frameWaitLock,
         cadenceScheduler,
         encoding
@@ -161,10 +133,7 @@ public final class TicketRootHardwareH264CaptureMain {
       // classes and configure MediaCodec, but it must not acquire a screen capture, post the
       // input Surface, dequeue codec output, or write anything to stdout.
       if (awaitActivation && !activationLatch.await(ARM_ACTIVATION_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
-        System.err.println(
-          "HELPER_STARTUP phase=activation_timeout request_elapsed_ms=" +
-            Math.max(0L, SystemClock.elapsedRealtime() - startupRequestedAtMillis)
-        );
+        System.err.println("capture_activation_timeout");
         return;
       }
       if (!captureActivated.get()) {
@@ -187,15 +156,12 @@ public final class TicketRootHardwareH264CaptureMain {
       int sent = 0;
       int startupVisibilityFrames = 1;
       int blockedOrBlankFrames = 0;
-      long lastMetricAt = 0L;
       long lastVisibilityProbeAt = 0L;
       boolean lastVisibilityVisible = true;
       while (frames <= 0 || sent < frames) {
         long started;
         ControlCodeVisualProbeRequest visualProbeRequest;
         boolean controlCodeVisualProbeActive;
-        TicketCaptureCadenceScheduler.CaptureDecision cadenceDecision = null;
-        boolean explicitSyncFrame;
         synchronized (frameWaitLock) {
           while (true) {
             started = SystemClock.elapsedRealtime();
@@ -205,7 +171,7 @@ public final class TicketRootHardwareH264CaptureMain {
               sent == 0 || syncFrameRequested.get() || controlCodeVisualProbeActive;
             long waitMillis = cadenceScheduler.waitMillis(started, proofBypass);
             if (waitMillis == 0L) {
-              cadenceDecision = cadenceScheduler.beginCapture(started, proofBypass);
+              cadenceScheduler.beginCapture(started, proofBypass);
               break;
             }
             if (waitMillis == TicketCaptureCadenceScheduler.WAIT_UNTIL_SIGNAL_MILLIS) {
@@ -214,22 +180,14 @@ public final class TicketRootHardwareH264CaptureMain {
               frameWaitLock.wait(waitMillis);
             }
           }
-          explicitSyncFrame = syncFrameRequested.getAndSet(false);
+          syncFrameRequested.set(false);
         }
         long captureAttemptId = captureAttemptSequence.incrementAndGet();
         long captureStartUs = monotonicTimeUs();
         // Anchor the minimum interval to the actual capture boundary, including sync-call cost.
         cadenceScheduler.restartPeriodFrom((captureStartUs + 999L) / 1_000L);
-        long captureStarted = captureStartUs / 1_000L;
         CapturedFrame source = capture.capture();
         long captureCompleteUs = monotonicTimeUs();
-        long captureFinished = captureCompleteUs / 1_000L;
-        if (sent == 0) {
-          System.err.println(
-            "HELPER_STARTUP phase=first_capture_done request_elapsed_ms=" +
-              Math.max(0L, captureFinished - startupRequestedAtMillis)
-          );
-        }
         if (source == null) {
           throw new IllegalStateException("ScreenCapture returned no bitmap");
         }
@@ -244,6 +202,7 @@ public final class TicketRootHardwareH264CaptureMain {
             lastVisibilityVisible = visible;
             if (visible) {
               blockedOrBlankFrames = 0;
+              System.err.println("VISIBILITY result=visible");
             } else {
               blockedOrBlankFrames += 1;
               boolean failure = sent >= startupVisibilityFrames && blockedOrBlankFrames >= 4;
@@ -256,12 +215,6 @@ public final class TicketRootHardwareH264CaptureMain {
                 throw new IllegalStateException("secure_screen_capture_blocked_or_blank");
               }
             }
-            if (sent == 0) {
-              System.err.println(
-                "HELPER_STARTUP phase=visibility_done request_elapsed_ms=" +
-                  Math.max(0L, SystemClock.elapsedRealtime() - startupRequestedAtMillis)
-              );
-            }
           }
           // Ticket recognition and codec work read the same immutable capture.
           // Publish media promptly instead of waiting for CPU recognition. The
@@ -270,18 +223,14 @@ public final class TicketRootHardwareH264CaptureMain {
             source.retain();
             handedToEncoder = true;
             pendingFrames.offer(new PendingCapture(source, sourceCrop, captureAttemptId,
-              captureStartUs, captureCompleteUs, explicitSyncFrame));
+              captureStartUs, captureCompleteUs));
           }
           if (controlCodeVisualProbeActive) {
-            long classificationStarted = SystemClock.elapsedRealtime();
             VisualProbeClassification visual = classifyControlCodeVisualState(
               source.bitmap,
               sourceCrop,
               visualProbeRequest.cleanup,
               visualProbeRequest.submitLayout,
-              "ticket_detail".equals(visualProbeRequest.reason) ||
-                visualProbeRequest.activatedTicket,
-              visualProbeRequest.activatedTicket,
               visualProbeRequest.ticketAction,
               visualProbeRequest.ticketCurrentOnly
             );
@@ -308,9 +257,7 @@ public final class TicketRootHardwareH264CaptureMain {
                 " visual_signature_epoch=" + visual.visualSignatureEpoch;
             String methodDiagnostic = visualProbeRequest.ticketAction
               ? " method=ticket_action_visual_probe capture_start_us=" + captureStartUs + extraDiagnostic
-              : " method=h264_bitmap_probe" + visualSignatureDiagnostic + extraDiagnostic;
-            methodDiagnostic += " capture_work_ms=" + (captureFinished - captureStarted) +
-              " classify_work_ms=" + (SystemClock.elapsedRealtime() - classificationStarted);
+              : " method=h264_bitmap_probe capture_start_us=" + captureStartUs + visualSignatureDiagnostic + extraDiagnostic;
             if (state.equals("generated")) {
               if (visualProbeRequest.generated.compareAndSet(false, true)) {
                 visualProbeRequest.lastReportMillis.set(started);
@@ -343,18 +290,12 @@ public final class TicketRootHardwareH264CaptureMain {
                 visualProbeRequest.untilMillis.set(0L);
               }
             }
-            if (sent == 0) {
-              System.err.println(
-                "HELPER_STARTUP phase=visual_probe_done request_elapsed_ms=" +
-                  Math.max(0L, SystemClock.elapsedRealtime() - startupRequestedAtMillis)
-              );
-            }
           }
           if (!(controlCodeVisualProbeActive && visualProbeRequest.ticketAction)) {
             // Reuse this ordinary capture, before any codec draw/drain. This is
             // current-view recognition only; date/list search stays command-owned.
             VisualProbeClassification current = classifyControlCodeVisualState(
-              source.bitmap, sourceCrop, false, false, false, false, true, true
+              source.bitmap, sourceCrop, false, false, true, true
             );
             System.err.println("PHONE_CONTROL_OBSERVATION method=ticket_action_visual_probe" +
               " capture_start_us=" + captureStartUs + " result=" + current.state +
@@ -364,7 +305,7 @@ public final class TicketRootHardwareH264CaptureMain {
             source.retain();
             handedToEncoder = true;
             pendingFrames.offer(new PendingCapture(source, sourceCrop, captureAttemptId,
-              captureStartUs, captureCompleteUs, explicitSyncFrame));
+              captureStartUs, captureCompleteUs));
           }
         } finally {
           // Release the recognition reader; the encoder retains its independent
@@ -374,23 +315,7 @@ public final class TicketRootHardwareH264CaptureMain {
         // Primer posts are internal encoder work for one captured source picture. Keep --frames
         // probe semantics and the public frame count tied to captured pictures, not primer posts.
         sent += 1;
-        long elapsed = SystemClock.elapsedRealtime() - started;
-        if (sent <= 3 || started - lastMetricAt >= 1_000L) {
-          lastMetricAt = started;
-          System.err.println(
-            "METRIC capture_ms=" + (captureFinished - captureStarted) +
-              " frame_ms=" + elapsed +
-              " fps_target=" + TicketCaptureCadenceScheduler.FIXED_FPS +
-              " frame_interval_ms=" + TicketCaptureCadenceScheduler.INTERVAL_MILLIS +
-              " deadline_misses=" + cadenceScheduler.deadlineMisses() +
-              " skipped_ticks=" + cadenceScheduler.skippedTicks() +
-              " deadline_late_ms=" + cadenceDecision.latenessMillis +
-              " last_skipped_ticks=" + cadenceDecision.skippedTicks +
-              " frame_dependency_mode=all_intra" +
-              " visibility=" + (visible ? "visible" : "blocked") +
-              " secure_layers=true protected_content=true method=secure_screen_capture"
-          );
-        }
+
       }
       pendingFrames.finish();
       encoding.join(8_000L);
@@ -408,12 +333,11 @@ public final class TicketRootHardwareH264CaptureMain {
     final CapturedFrame source;
     final Rect sourceCrop;
     final long captureAttemptId, captureStartUs, captureCompleteUs;
-    final boolean explicitSyncFrame;
     PendingCapture(CapturedFrame source, Rect sourceCrop, long captureAttemptId,
-        long captureStartUs, long captureCompleteUs, boolean explicitSyncFrame) {
+        long captureStartUs, long captureCompleteUs) {
       this.source = source; this.sourceCrop = sourceCrop;
       this.captureAttemptId = captureAttemptId; this.captureStartUs = captureStartUs;
-      this.captureCompleteUs = captureCompleteUs; this.explicitSyncFrame = explicitSyncFrame;
+      this.captureCompleteUs = captureCompleteUs;
     }
     @Override public void close() { source.close(); }
   }
@@ -426,21 +350,14 @@ public final class TicketRootHardwareH264CaptureMain {
     final int width, height, bitrate, frames;
     final int encoderFps = TicketCaptureCadenceScheduler.FIXED_FPS;
     long codecGeneration;
-    final long startupRequestedAtMillis;
-    final boolean awaitActivation;
-    final AtomicBoolean syncFrameRequested;
-    final Object frameWaitLock;
     final TicketCaptureCadenceScheduler cadenceScheduler;
     EncodingOwner(TicketNewestFrameHandoff<PendingCapture> pendingFrames, int width, int height,
-        int bitrate, int frames, long codecGeneration, long startupRequestedAtMillis,
-        boolean awaitActivation, AtomicBoolean syncFrameRequested, Object frameWaitLock,
+        int bitrate, int frames, long codecGeneration,
         TicketCaptureCadenceScheduler cadenceScheduler) {
       super("ticket-encoder");
       setDaemon(true);
       this.pendingFrames = pendingFrames; this.width = width; this.height = height;
       this.bitrate = bitrate; this.frames = frames; this.codecGeneration = codecGeneration;
-      this.startupRequestedAtMillis = startupRequestedAtMillis; this.awaitActivation = awaitActivation;
-      this.syncFrameRequested = syncFrameRequested; this.frameWaitLock = frameWaitLock;
       this.cadenceScheduler = cadenceScheduler;
     }
     @Override public void run() {
@@ -466,7 +383,6 @@ public final class TicketRootHardwareH264CaptureMain {
       Surface inputSurface = null;
       TicketH264EncoderOutputAssembler outputAssembler = new TicketH264EncoderOutputAssembler();
       TicketCodecInputLedger codecInputLedger = new TicketCodecInputLedger();
-      TicketEncoderOutputLiveness outputLiveness = new TicketEncoderOutputLiveness();
       TicketEncoderStartupPrimer startupPrimer = new TicketEncoderStartupPrimer(frames);
       Rect destination = new Rect(0, 0, width, height);
       Paint paint = hardwareColorCorrectionPaint();
@@ -497,15 +413,6 @@ public final class TicketRootHardwareH264CaptureMain {
       inputSurface = encoder.createInputSurface();
       encoder.start();
       System.err.println(
-        "HELPER_STARTUP phase=encoder_started request_elapsed_ms=" +
-          Math.max(0L, SystemClock.elapsedRealtime() - startupRequestedAtMillis)
-      );
-      System.err.println(
-        "HELPER_STARTUP phase=codec_armed request_elapsed_ms=" +
-          Math.max(0L, SystemClock.elapsedRealtime() - startupRequestedAtMillis) +
-          " activation_required=" + awaitActivation
-      );
-      System.err.println(
         "ENCODER_CONFIG name=" + safeDiagnosticValue(encoder.getName()) +
           " configured_profile=baseline configured_level=4 configured_bitrate_mode=" +
           (supportsCbrBitrateMode(encoder) ? "cbr" : "encoder_default") +
@@ -526,12 +433,8 @@ public final class TicketRootHardwareH264CaptureMain {
               continue;
             }
             if (sent > 0) requestSyncFrame(encoder);
-            boolean explicitSyncFrame = packet.explicitSyncFrame;
-            long drawStarted = 0L, drawFinished = 0L, encodeStarted = 0L;
-          StartupPrimerRun encoderRun;
-          encodeStarted = SystemClock.elapsedRealtime();
           if (sent == 0) {
-            encoderRun = runStartupPrimer(
+            runStartupPrimer(
               encoder,
               inputSurface,
               packet.source.bitmap,
@@ -548,30 +451,14 @@ public final class TicketRootHardwareH264CaptureMain {
               packet.captureCompleteUs,
               cadenceScheduler
             );
-            if (startupPrimer.inputPosts() > 0) {
-              System.err.println(
-                "HELPER_STARTUP phase=first_input request_elapsed_ms=" +
-                  Math.max(0L, startupPrimer.firstInputAtMillis() - startupRequestedAtMillis)
-              );
-            }
-            if (startupPrimer.firstKeyFrameForwarded()) {
-              System.err.println(
-                "HELPER_STARTUP phase=first_keyframe request_elapsed_ms=" +
-                  Math.max(0L, startupPrimer.firstKeyFrameAtMillis() - startupRequestedAtMillis)
-              );
-            }
-            drawStarted = 0L;
-            drawFinished = encoderRun.drawDurationMillis;
           } else {
             boolean closeStartupPrimerAfterDrain =
               startupPrimer.firstKeyFrameForwarded() && !startupPrimer.finished();
             if (closeStartupPrimerAfterDrain) {
               startupPrimer.beginBoundaryDrain();
             }
-            drawStarted = SystemClock.elapsedRealtime();
             drawBitmap(inputSurface, packet.source.bitmap, packet.sourceCrop, destination, paint);
             long codecInputUs = monotonicTimeUs();
-            drawFinished = codecInputUs / 1_000L;
             TicketCodecInputLedger.InputStage inputStage = new TicketCodecInputLedger.InputStage(
               packet.captureAttemptId,
               codecGeneration,
@@ -580,9 +467,7 @@ public final class TicketRootHardwareH264CaptureMain {
               codecInputUs
             );
             codecInputLedger.add(inputStage);
-            encoderRun = new StartupPrimerRun(
-              drawFinished - drawStarted,
-              drainEncoderUntilInputResolved(
+            drainEncoderUntilInputResolved(
                 encoder,
                 output,
                 outputAssembler,
@@ -590,7 +475,6 @@ public final class TicketRootHardwareH264CaptureMain {
                 codecInputLedger,
                 cadenceScheduler,
                 inputStage
-              )
             );
             if (
               startupPrimer.fallbackWaitingForFirstKeyFrame() &&
@@ -601,13 +485,6 @@ public final class TicketRootHardwareH264CaptureMain {
               // after a final sweep at the next rebased cadence boundary. A sibling primer output
               // can become ready just after this drain reports TRY_AGAIN.
               output.flush();
-              System.err.println(
-                "ENCODER_STARTUP_PRIMER state=first_keyframe result=fallback_keyframe" +
-                  " input_posts=" + startupPrimer.inputPosts() +
-                  " media_outputs=" + startupPrimer.mediaOutputs() +
-                  " suppressed_outputs=" + startupPrimer.suppressedMediaOutputs() +
-                  " first_keyframe_ms=" + startupPrimer.firstKeyFrameLatencyMillis()
-              );
             }
             if (
               closeStartupPrimerAfterDrain &&
@@ -618,31 +495,7 @@ public final class TicketRootHardwareH264CaptureMain {
               // Surface post. Keep the newest IDR from the whole resulting drain, expose exactly
               // that one boundary picture, then open the following steady period.
               startupPrimer.finish();
-              logStartupPrimerComplete(
-                startupPrimer.fallbackWaitingForFirstKeyFrame() ? "fallback_keyframe" : "keyframe",
-                startupPrimer
-              );
             }
-          }
-          TicketEncoderDrainProgress drainProgress = encoderRun.drainProgress;
-          boolean steadyEncoderDrain = sent >= 3;
-          boolean scheduledPeriodicDrain =
-            !explicitSyncFrame;
-          if (
-            outputLiveness.noteDrain(
-              steadyEncoderDrain,
-              scheduledPeriodicDrain,
-              drainProgress.madeCodecProgress,
-              drainProgress.encodedFrameOutputs,
-              SystemClock.elapsedRealtime()
-            )
-          ) {
-            requestNextSyncFrame(syncFrameRequested, frameWaitLock);
-            System.err.println(
-              "ENCODER_LIVENESS state=sync_requested fps_target=" +
-                TicketCaptureCadenceScheduler.FIXED_FPS +
-                " consecutive_empty_drains=" + outputLiveness.consecutiveEmptyDrains()
-            );
           }
           output.flush();
 
@@ -664,14 +517,11 @@ public final class TicketRootHardwareH264CaptureMain {
         100_000L,
         startupPrimer.finished() ? null : startupPrimer,
         codecInputLedger,
-        cadenceScheduler
+        cadenceScheduler,
+        monotonicTimeUs() + ENCODER_INPUT_TIMEOUT_US
       );
       if (!startupPrimer.finished()) {
         startupPrimer.finish();
-        logStartupPrimerComplete(
-          startupPrimer.firstKeyFrameForwarded() ? "keyframe_eos" : "fallback_eos_no_keyframe",
-          startupPrimer
-        );
       }
       outputAssembler.reset();
       codecInputLedger.clear();
@@ -692,7 +542,6 @@ public final class TicketRootHardwareH264CaptureMain {
     AtomicBoolean captureActivated,
     CountDownLatch activationLatch,
     long activationToken,
-    long startupRequestedAtMillis,
     Object frameWaitLock,
     TicketCaptureCadenceScheduler cadenceScheduler,
     EncodingOwner encoding
@@ -709,10 +558,6 @@ public final class TicketRootHardwareH264CaptureMain {
           }
           if (cmd.equals("activate:" + activationToken) && activationToken > 0L) {
             if (captureActivated.compareAndSet(false, true)) {
-              System.err.println(
-                "HELPER_STARTUP phase=activation request_elapsed_ms=" +
-                  Math.max(0L, SystemClock.elapsedRealtime() - startupRequestedAtMillis)
-              );
               activationLatch.countDown();
             }
           } else if (cmd.equals("keyframe")) {
@@ -734,11 +579,8 @@ public final class TicketRootHardwareH264CaptureMain {
             }
           } else if (
             cmd.startsWith("control_code_visual_probe:") ||
-            cmd.startsWith("control_code_request_visual_probe:") ||
             cmd.startsWith("control_code_submit_visual_probe:") ||
             cmd.startsWith("control_code_cleanup_visual_probe:") ||
-            cmd.startsWith("ticket_detail_visual_probe:") ||
-            cmd.startsWith("ticket_activated_visual_probe:") ||
             cmd.startsWith("ticket_action_visual_probe:") ||
             cmd.startsWith("ticket_current_visual_probe:")
           ) {
@@ -749,16 +591,13 @@ public final class TicketRootHardwareH264CaptureMain {
             }
             boolean cleanup = cmd.startsWith("control_code_cleanup_visual_probe:");
             boolean submitLayout = cmd.startsWith("control_code_submit_visual_probe:");
-            boolean ticketDetail = cmd.startsWith("ticket_detail_visual_probe:");
-            boolean activatedTicket = cmd.startsWith("ticket_activated_visual_probe:");
             boolean ticketCurrentOnly = cmd.startsWith("ticket_current_visual_probe:");
             boolean ticketAction = cmd.startsWith("ticket_action_visual_probe:") || ticketCurrentOnly;
             controlCodeVisualProbeRequest.set(new ControlCodeVisualProbeRequest(
               probeId,
-              ticketAction ? "ticket_action" : (activatedTicket ? "ticket_activated" : (ticketDetail ? "ticket_detail" : (cleanup ? "control_code_cleanup" : (submitLayout ? "control_code_submit_layout" : "control_code_after_ok")))),
+              ticketAction ? "ticket_action" : (cleanup ? "control_code_cleanup" : (submitLayout ? "control_code_submit_layout" : "control_code_after_ok")),
               cleanup,
               submitLayout,
-              activatedTicket,
               ticketAction,
               ticketCurrentOnly,
               SystemClock.elapsedRealtime() + CONTROL_CODE_VISUAL_PROBE_MILLIS
@@ -780,7 +619,6 @@ public final class TicketRootHardwareH264CaptureMain {
     final String reason;
     final boolean cleanup;
     final boolean submitLayout;
-    final boolean activatedTicket;
     final boolean ticketAction;
     final boolean ticketCurrentOnly;
     final AtomicLong untilMillis;
@@ -792,7 +630,6 @@ public final class TicketRootHardwareH264CaptureMain {
       String reason,
       boolean cleanup,
       boolean submitLayout,
-      boolean activatedTicket,
       boolean ticketAction,
       boolean ticketCurrentOnly,
       long untilMillis
@@ -801,14 +638,13 @@ public final class TicketRootHardwareH264CaptureMain {
       this.reason = reason;
       this.cleanup = cleanup;
       this.submitLayout = submitLayout;
-      this.activatedTicket = activatedTicket;
       this.ticketAction = ticketAction;
       this.ticketCurrentOnly = ticketCurrentOnly;
       this.untilMillis = new AtomicLong(untilMillis);
     }
 
     static ControlCodeVisualProbeRequest idle() {
-      return new ControlCodeVisualProbeRequest(0L, "idle", false, false, false, false, false, 0L);
+      return new ControlCodeVisualProbeRequest(0L, "idle", false, false, false, false, 0L);
     }
   }
 
@@ -824,7 +660,7 @@ public final class TicketRootHardwareH264CaptureMain {
     }
   }
 
-  private static StartupPrimerRun runStartupPrimer(
+  private static void runStartupPrimer(
     MediaCodec encoder,
     Surface inputSurface,
     Bitmap source,
@@ -841,24 +677,21 @@ public final class TicketRootHardwareH264CaptureMain {
     long captureCompleteUs,
     TicketCaptureCadenceScheduler cadenceScheduler
   ) throws Exception {
-    TicketEncoderDrainProgress drainProgress = TicketEncoderDrainProgress.empty();
-    long drawDurationMillis = 0L;
 
     while (primer.canPostAnotherInput() && !primer.firstKeyFrameForwarded()) {
       long nowMillis = SystemClock.elapsedRealtime();
       long waitMillis = primer.millisUntilNextInput(nowMillis);
       if (waitMillis > 0L) {
-        drainProgress = drainProgress.plus(
-          drainEncoder(
-            encoder,
-            output,
-            outputAssembler,
-            false,
-            Math.min(STARTUP_PRIMER_DRAIN_POLL_MILLIS, waitMillis) * 1_000L,
-            primer,
-            codecInputLedger,
-            cadenceScheduler
-          )
+        drainEncoder(
+          encoder,
+          output,
+          outputAssembler,
+          false,
+          Math.min(STARTUP_PRIMER_DRAIN_POLL_MILLIS, waitMillis) * 1_000L,
+          primer,
+          codecInputLedger,
+          cadenceScheduler,
+          monotonicTimeUs() + ENCODER_INPUT_TIMEOUT_US
         );
         if (primer.firstKeyFrameForwarded()) {
           output.flush();
@@ -867,11 +700,9 @@ public final class TicketRootHardwareH264CaptureMain {
       }
 
       requestSyncFrame(encoder);
-      long drawStarted = SystemClock.elapsedRealtime();
       drawBitmap(inputSurface, source, sourceCrop, destination, paint);
       long codecInputUs = monotonicTimeUs();
       long inputPostedAt = codecInputUs / 1_000L;
-      drawDurationMillis += Math.max(0L, inputPostedAt - drawStarted);
       codecInputLedger.add(new TicketCodecInputLedger.InputStage(
         captureAttemptId,
         codecGeneration,
@@ -880,17 +711,16 @@ public final class TicketRootHardwareH264CaptureMain {
         codecInputUs
       ));
       primer.noteInputPosted(inputPostedAt);
-      drainProgress = drainProgress.plus(
-        drainEncoder(
-          encoder,
-          output,
-          outputAssembler,
-          false,
-          STARTUP_PRIMER_DRAIN_POLL_MILLIS * 1_000L,
-          primer,
-          codecInputLedger,
-          cadenceScheduler
-        )
+      drainEncoder(
+        encoder,
+        output,
+        outputAssembler,
+        false,
+        STARTUP_PRIMER_DRAIN_POLL_MILLIS * 1_000L,
+        primer,
+        codecInputLedger,
+        cadenceScheduler,
+        monotonicTimeUs() + ENCODER_INPUT_TIMEOUT_US
       );
       if (primer.firstKeyFrameForwarded()) {
         output.flush();
@@ -901,17 +731,16 @@ public final class TicketRootHardwareH264CaptureMain {
       long finalDrainDeadline = primer.lastInputAtMillis() + STARTUP_PRIMER_FINAL_DRAIN_MILLIS;
       while (!primer.firstKeyFrameForwarded() && SystemClock.elapsedRealtime() < finalDrainDeadline) {
         long remainingMillis = Math.max(1L, finalDrainDeadline - SystemClock.elapsedRealtime());
-        drainProgress = drainProgress.plus(
-          drainEncoder(
-            encoder,
-            output,
-            outputAssembler,
-            false,
-            Math.min(STARTUP_PRIMER_DRAIN_POLL_MILLIS, remainingMillis) * 1_000L,
-            primer,
-            codecInputLedger,
-            cadenceScheduler
-          )
+        drainEncoder(
+          encoder,
+          output,
+          outputAssembler,
+          false,
+          Math.min(STARTUP_PRIMER_DRAIN_POLL_MILLIS, remainingMillis) * 1_000L,
+          primer,
+          codecInputLedger,
+          cadenceScheduler,
+          monotonicTimeUs() + ENCODER_INPUT_TIMEOUT_US
         );
       }
       if (primer.firstKeyFrameForwarded()) {
@@ -928,70 +757,26 @@ public final class TicketRootHardwareH264CaptureMain {
         SystemClock.elapsedRealtime() < settleDeadline
       ) {
         long remainingMillis = Math.max(1L, settleDeadline - SystemClock.elapsedRealtime());
-        drainProgress = drainProgress.plus(
-          drainEncoder(
-            encoder,
-            output,
-            outputAssembler,
-            false,
-            Math.min(STARTUP_PRIMER_DRAIN_POLL_MILLIS, remainingMillis) * 1_000L,
-            primer,
-            codecInputLedger,
-            cadenceScheduler
-          )
+        drainEncoder(
+          encoder,
+          output,
+          outputAssembler,
+          false,
+          Math.min(STARTUP_PRIMER_DRAIN_POLL_MILLIS, remainingMillis) * 1_000L,
+          primer,
+          codecInputLedger,
+          cadenceScheduler,
+          monotonicTimeUs() + ENCODER_INPUT_TIMEOUT_US
         );
       }
       output.flush();
-      System.err.println(
-        "ENCODER_STARTUP_PRIMER state=first_keyframe result=keyframe" +
-          " input_limit=" + primer.inputLimit() +
-          " input_posts=" + primer.inputPosts() +
-          " media_outputs=" + primer.mediaOutputs() +
-          " suppressed_outputs=" + primer.suppressedMediaOutputs() +
-          " first_keyframe_ms=" + primer.firstKeyFrameLatencyMillis()
-      );
     } else {
       // Do not open the gate here. The vendor may have delayed rather than dropped these Surface
       // posts. The first ordinary one-FPS drain will forward one complete keyframe, suppress every
       // sibling it dequeues, and then finish the gate without relying on a residual frame count.
       primer.beginFallbackWait();
-      System.err.println(
-        "ENCODER_STARTUP_PRIMER state=fallback_wait result=no_keyframe" +
-          " input_limit=" + primer.inputLimit() +
-          " input_posts=" + primer.inputPosts() +
-          " media_outputs=" + primer.mediaOutputs() +
-          " suppressed_outputs=" + primer.suppressedMediaOutputs() +
-          " first_keyframe_ms=-1"
-      );
     }
 
-    return new StartupPrimerRun(drawDurationMillis, drainProgress);
-  }
-
-  private static void logStartupPrimerComplete(
-    String result,
-    TicketEncoderStartupPrimer primer
-  ) {
-    System.err.println(
-      "ENCODER_STARTUP_PRIMER state=complete result=" + result +
-        " input_posts=" + primer.inputPosts() +
-        " media_outputs=" + primer.mediaOutputs() +
-        " suppressed_outputs=" + primer.suppressedMediaOutputs() +
-        " first_keyframe_ms=" + primer.firstKeyFrameLatencyMillis()
-    );
-  }
-
-  private static final class StartupPrimerRun {
-    final long drawDurationMillis;
-    final TicketEncoderDrainProgress drainProgress;
-
-    StartupPrimerRun(
-      long drawDurationMillis,
-      TicketEncoderDrainProgress drainProgress
-    ) {
-      this.drawDurationMillis = drawDurationMillis;
-      this.drainProgress = drainProgress;
-    }
   }
 
   private static void extendUntil(AtomicLong value, long untilMillis) {
@@ -1091,82 +876,6 @@ public final class TicketRootHardwareH264CaptureMain {
     );
   }
 
-  private static void captureSecurePngBase64(
-      int sourceWidth,
-      int sourceHeight,
-      int targetWidth,
-      int targetHeight,
-      int cropLeftSource,
-      int cropTopSource,
-      int cropRightSource,
-      int cropBottomSource) throws Exception {
-    SurfaceCapture capture = new SecureScreenCapture(sourceWidth, sourceHeight);
-    CapturedFrame frame = capture.capture();
-    if (frame == null || frame.bitmap == null) {
-      throw new IllegalStateException("secure_screen_capture_returned_no_bitmap");
-    }
-    Bitmap readableSource = frame.bitmap;
-    Bitmap encodedSource = null;
-    boolean copiedSource = false;
-    try {
-      if (frame.bitmap.getConfig() == Bitmap.Config.HARDWARE) {
-        readableSource = frame.bitmap.copy(Bitmap.Config.ARGB_8888, false);
-        copiedSource = true;
-      }
-      Rect sourceCrop = sourceCropRect(
-        cropLeftSource,
-        cropTopSource,
-        cropRightSource,
-        cropBottomSource,
-        sourceWidth,
-        sourceHeight
-      );
-      boolean wholeSource = sourceCrop.left == 0 && sourceCrop.top == 0 &&
-        sourceCrop.right == readableSource.getWidth() &&
-        sourceCrop.bottom == readableSource.getHeight();
-      if (targetWidth > 0 && targetHeight > 0 &&
-          (targetWidth != readableSource.getWidth() || targetHeight != readableSource.getHeight() ||
-            !wholeSource)) {
-        encodedSource = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(encodedSource);
-        Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
-        canvas.drawBitmap(
-          readableSource,
-          sourceCrop,
-          new Rect(0, 0, targetWidth, targetHeight),
-          paint
-        );
-      } else {
-        encodedSource = readableSource;
-      }
-      ByteArrayOutputStream output = new ByteArrayOutputStream();
-      if (!encodedSource.compress(Bitmap.CompressFormat.PNG, 100, output)) {
-        throw new IllegalStateException("secure_screen_capture_png_encode_failed");
-      }
-      byte[] bytes = output.toByteArray();
-      System.out.println(PNG_BASE64_BEGIN);
-      System.out.print(Base64.encodeToString(bytes, Base64.NO_WRAP));
-      System.out.println();
-      System.out.println(PNG_BASE64_END);
-      System.err.println(
-        "PNG_METRIC bytes=" + bytes.length +
-          " source_width=" + sourceWidth +
-          " source_height=" + sourceHeight +
-          " target_width=" + encodedSource.getWidth() +
-          " target_height=" + encodedSource.getHeight() +
-          " method=secure_screen_capture"
-      );
-    } finally {
-      if (encodedSource != null && encodedSource != readableSource) {
-        encodedSource.recycle();
-      }
-      if (copiedSource && readableSource != null) {
-        readableSource.recycle();
-      }
-      frame.close();
-    }
-  }
-
   private static boolean frameLooksVisible(Bitmap source, Rect sourceCrop) {
     Bitmap readableSource = source;
     boolean copiedSource = false;
@@ -1206,8 +915,6 @@ public final class TicketRootHardwareH264CaptureMain {
     Rect sourceCrop,
     boolean cleanupProbe,
     boolean submitLayoutProbe,
-    boolean ticketDetailProbe,
-    boolean activatedTicketProbe,
     boolean ticketActionProbe,
     boolean ticketCurrentOnly
   ) {
@@ -1280,22 +987,6 @@ public final class TicketRootHardwareH264CaptureMain {
           TicketVisualActionClassifier.selectedBottomNavigationTab(pixels);
         String wire = result.wire() +
           (selectedBottomTab.isEmpty() ? "" : " bottom_tab=" + selectedBottomTab);
-        long registrationCards = result.cards.stream()
-          .filter(card -> card.registrationBounds != null)
-          .count();
-        long latestCards = result.cards.stream().filter(card -> card.latest).count();
-        String safeActionDiagnostic = result.state.equals("unknown")
-          ? (ticketCurrentOnly
-            ? TicketVisualActionClassifier.currentVisualDiagnostic(pixels)
-            : TicketVisualActionClassifier.visualDiagnostic(pixels))
-          : result.state.equals("ticket_list")
-          ? "list_cards_" + result.cards.size() +
-            "_registration_" + registrationCards + "_latest_" + latestCards +
-            "_" + TicketVisualActionClassifier.registrationDiagnostic(pixels)
-          : (result.state.endsWith("_detail") && result.backBounds == null)
-          ? "detail_close_unproved"
-          : "state_proved";
-        String diagnostic = " diagnostic=" + safeActionDiagnostic;
         return new VisualProbeClassification(
           result.state,
           "",
@@ -1304,21 +995,16 @@ public final class TicketRootHardwareH264CaptureMain {
           "",
           "",
           "",
-          (wire.substring(("state=" + result.state).length()).trim() + diagnostic).trim()
+          wire.substring(("state=" + result.state).length()).trim()
         );
       }
       String state;
-      if (activatedTicketProbe) {
-        state = TicketControlCodeVisualClassifier.classifyForActivatedTicket(pixels);
-      } else if (cleanupProbe) {
+      if (cleanupProbe) {
         state = TicketControlCodeVisualClassifier.classifyForCleanupHighResolution(pixels);
       } else {
         state = TicketControlCodeVisualClassifier.classify(pixels);
       }
       String sliderBounds = "";
-      if (ticketDetailProbe) {
-        sliderBounds = TicketControlCodeVisualClassifier.registrationSliderBounds(pixels);
-      }
       String closeBounds = cleanupProbe
         ? TicketControlCodeVisualClassifier.generatedResultCloseBoundsHighResolution(pixels)
         : "";
@@ -1384,7 +1070,7 @@ public final class TicketRootHardwareH264CaptureMain {
     return value.replace(' ', '_').replace('\n', '_').replace('\r', '_');
   }
 
-  private static TicketEncoderDrainProgress drainEncoder(
+  private static void drainEncoder(
     MediaCodec encoder,
     OutputStream output,
     TicketH264EncoderOutputAssembler outputAssembler,
@@ -1392,12 +1078,14 @@ public final class TicketRootHardwareH264CaptureMain {
     long timeoutUs,
     TicketEncoderStartupPrimer startupPrimer,
     TicketCodecInputLedger codecInputLedger,
-    TicketCaptureCadenceScheduler cadenceScheduler
+    TicketCaptureCadenceScheduler cadenceScheduler,
+    long deadlineUs
   )
     throws Exception {
     MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-    TicketEncoderDrainProgress drainProgress = TicketEncoderDrainProgress.empty();
     while (true) {
+      if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+      if (monotonicTimeUs() >= deadlineUs) throw new IllegalStateException("encoder_drain_deadline_exceeded");
       int index = encoder.dequeueOutputBuffer(info, timeoutUs);
       if (index == MediaCodec.INFO_TRY_AGAIN_LATER) {
         if (endOfStream) {
@@ -1408,7 +1096,7 @@ public final class TicketRootHardwareH264CaptureMain {
         if (codecInputLedger.size() == 0) {
           forwardSelectedBoundaryAccessUnit(output, startupPrimer, cadenceScheduler);
         }
-        return drainProgress;
+        return;
       }
       if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED || index == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED) {
         continue;
@@ -1476,14 +1164,6 @@ public final class TicketRootHardwareH264CaptureMain {
           ) {
             writeFrameRecord(output, frame, cadenceScheduler);
           }
-          // Progress describes fully assembled codec output, including intentionally suppressed
-          // primer media. Liveness must not restart a healthy encoder merely because its duplicate
-          // startup picture was kept off the public pipe.
-          drainProgress = drainProgress.plus(TicketEncoderDrainProgress.fromDequeuedAccessUnit(
-            data.length,
-            emitted == null ? 0 : emitted.payload.length,
-            emitted != null && emitted.containsVcl
-          ));
           if (eos) {
             outputAssembler.reset();
           }
@@ -1494,7 +1174,7 @@ public final class TicketRootHardwareH264CaptureMain {
       }
       if (eos) {
         forwardSelectedBoundaryAccessUnit(output, startupPrimer, cadenceScheduler);
-        return drainProgress;
+        return;
       }
       if (!endOfStream) {
         timeoutUs = 0L;
@@ -1502,7 +1182,7 @@ public final class TicketRootHardwareH264CaptureMain {
     }
   }
 
-  private static TicketEncoderDrainProgress drainEncoderUntilInputResolved(
+  private static void drainEncoderUntilInputResolved(
     MediaCodec encoder,
     OutputStream output,
     TicketH264EncoderOutputAssembler outputAssembler,
@@ -1511,26 +1191,26 @@ public final class TicketRootHardwareH264CaptureMain {
     TicketCaptureCadenceScheduler cadenceScheduler,
     TicketCodecInputLedger.InputStage inputStage
   ) throws Exception {
-    TicketEncoderDrainProgress progress = TicketEncoderDrainProgress.empty();
-    // Keep this input as the sole outstanding steady-state post until its complete AU arrives.
-    // Its source timestamps remain truthful, so downstream freshness admission can discard a late
-    // picture without corrupting the FIFO. Encoder liveness belongs to the service watchdog,
-    // which can terminate this helper externally if output genuinely stalls.
+    // Keep this input as the sole outstanding steady-state post. A stuck codec must
+    // reach EncodingOwner's cleanup/restart path; waiting for another input first
+    // would also prevent an externally requested encoder restart from taking effect.
     while (codecInputLedger.contains(inputStage)) {
-      progress = progress.plus(
-        drainEncoder(
-          encoder,
-          output,
-          outputAssembler,
-          false,
-          STARTUP_PRIMER_DRAIN_POLL_MILLIS * 1_000L,
-          startupPrimer,
-          codecInputLedger,
-          cadenceScheduler
-        )
+      if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+      if (monotonicTimeUs() - inputStage.codecInputUs > ENCODER_INPUT_TIMEOUT_US) {
+        throw new IllegalStateException("encoder_input_deadline_exceeded");
+      }
+      drainEncoder(
+        encoder,
+        output,
+        outputAssembler,
+        false,
+        STARTUP_PRIMER_DRAIN_POLL_MILLIS * 1_000L,
+        startupPrimer,
+        codecInputLedger,
+        cadenceScheduler,
+        inputStage.codecInputUs + ENCODER_INPUT_TIMEOUT_US
       );
     }
-    return progress;
   }
 
   static void forwardSelectedBoundaryAccessUnit(

@@ -18,13 +18,12 @@ class PhonePortraitLockSourceTest {
       Path.of("app/src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhonePortraitLock.kt"),
       Path.of("src/main/java/lv/jolkins/pixelorchestrator/app/phoneautomation/PhonePortraitLock.kt")
     )
-    val force = source.substringBetween("suspend fun force", "suspend fun verify")
-    val verify = source.substringBetween("suspend fun verify", "private const val OUTCOME_PREFIX")
+    val verify = source.substringAfter("private val ENSURE_VERIFIED_SCRIPT")
 
-    assertTrue(force.contains("cmd window user-rotation lock 0"))
-    assertTrue(force.contains("cmd window fixed-to-user-rotation enabled"))
-    assertTrue(force.contains("settings put system accelerometer_rotation 0"))
-    assertTrue(force.contains("settings put system user_rotation 0"))
+    assertTrue(verify.contains("cmd window user-rotation lock 0"))
+    assertTrue(verify.contains("cmd window fixed-to-user-rotation enabled"))
+    assertTrue(verify.contains("settings put system accelerometer_rotation 0"))
+    assertTrue(verify.contains("settings put system user_rotation 0"))
     assertTrue(verify.contains("mCurrentRotation=ROTATION_0"))
     assertTrue(verify.contains("mUserRotationMode=USER_ROTATION_LOCKED"))
     assertTrue(verify.contains("mFixedToUserRotation=true"))

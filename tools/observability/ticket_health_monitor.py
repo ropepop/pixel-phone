@@ -722,12 +722,15 @@ def _select_pixel_health(health: Mapping[str, Any]) -> dict[str, Any]:
   failure = _dig(health, "recovery", "lastDesiredRecoveryFailureReason")
   if failure not in (None, ""):
     failure = _enum(failure, RECOVERY_FAILURE_REASONS, "reported")
+  stream_failure = _dig(health, "recovery", "lastStreamRecoveryFailureReason")
+  if stream_failure not in (None, ""):
+    stream_failure = _enum(stream_failure, RECOVERY_FAILURE_REASONS, "reported")
   return {
     "ok": health.get("ok") if type(health.get("ok")) is bool else None,
     "session_state": _enum(health.get("sessionState"), PIXEL_SESSION_STATES, "other"),
     "stream_active": health.get("streamActive") if type(health.get("streamActive")) is bool else None,
     "stream_verdict": _enum(health.get("streamVerdict"), PIXEL_STREAM_VERDICTS, "other"),
-    "visible_frame_age_millis": _safe_int(_dig(health, "visibleFrame", "lastFrameAgoMillis")),
+    "visible_frame_age_millis": _safe_int(_dig(health, "streamPipeline", "lastFrameSentAgoMillis")),
     "hardware_h264": {
       "active": _dig(health, "hardwareH264", "active") if type(_dig(health, "hardwareH264", "active")) is bool else None,
       "available": _dig(health, "hardwareH264", "available") if type(_dig(health, "hardwareH264", "available")) is bool else None,
@@ -735,7 +738,7 @@ def _select_pixel_health(health: Mapping[str, Any]) -> dict[str, Any]:
     },
     "stream_pipeline": {
       "video_clients": _safe_int(_dig(health, "streamPipeline", "videoClients"), 0),
-      "encoder_running": _dig(health, "streamPipeline", "encoderRunning") if type(_dig(health, "streamPipeline", "encoderRunning")) is bool else None,
+      "encoder_running": _dig(health, "hardwareH264", "active") if type(_dig(health, "hardwareH264", "active")) is bool else None,
       "last_frame_sent_ago_millis": _safe_int(_dig(health, "streamPipeline", "lastFrameSentAgoMillis")),
     },
     "ticket_state": _enum(_dig(health, "ticketState", "state"), PIXEL_TICKET_STATES, "other"),
@@ -746,6 +749,7 @@ def _select_pixel_health(health: Mapping[str, Any]) -> dict[str, Any]:
       "desired_failure": failure,
       "stream_stage": _enum(_dig(health, "recovery", "streamStage"), RECOVERY_STAGE_STATES, "other"),
       "stream_result": _enum(_dig(health, "recovery", "lastStreamRecoveryResult"), RECOVERY_RESULT_STATES, "other"),
+      "stream_failure": stream_failure,
     },
   }
 
@@ -764,12 +768,20 @@ def _pixel_health_contract_valid(health: Mapping[str, Any]) -> bool:
   if not isinstance(hardware, Mapping) or type(hardware.get("active")) is not bool or type(hardware.get("available")) is not bool or not _raw_enum(hardware.get("lastVisibilityCheckResult"), HARDWARE_VISIBILITY_STATES):
     return False
   if not isinstance(recovery, Mapping) or not all((
-    _raw_enum(recovery.get("desiredRecoveryStage"), RECOVERY_STAGE_STATES),
-    _raw_enum(recovery.get("lastDesiredRecoveryResult"), RECOVERY_RESULT_STATES),
     _raw_enum(recovery.get("streamStage"), RECOVERY_STAGE_STATES),
     _raw_enum(recovery.get("lastStreamRecoveryResult"), RECOVERY_RESULT_STATES),
-    recovery.get("lastDesiredRecoveryFailureReason") is None or isinstance(recovery.get("lastDesiredRecoveryFailureReason"), str),
+    recovery.get("lastStreamRecoveryFailureReason") is None or isinstance(recovery.get("lastStreamRecoveryFailureReason"), str),
   )):
+    return False
+  # Preserve V1 failure coverage while that release is still live. Remove these
+  # optional legacy fields after the coordinated V2 drain and deployment.
+  for field, allowed in (
+    ("desiredRecoveryStage", RECOVERY_STAGE_STATES),
+    ("lastDesiredRecoveryResult", RECOVERY_RESULT_STATES),
+  ):
+    if field in recovery and not _raw_enum(recovery[field], allowed):
+      return False
+  if recovery.get("lastDesiredRecoveryFailureReason") is not None and not isinstance(recovery["lastDesiredRecoveryFailureReason"], str):
     return False
   if not isinstance(ticket, Mapping) or not _raw_enum(ticket.get("state"), PIXEL_TICKET_STATES):
     return False
@@ -777,11 +789,9 @@ def _pixel_health_contract_valid(health: Mapping[str, Any]) -> bool:
     return False
   if health["streamActive"] is False:
     return True
-  frame, pipeline = health.get("visibleFrame"), health.get("streamPipeline")
+  pipeline = health.get("streamPipeline")
   return (
-    isinstance(frame, Mapping) and _safe_int(frame.get("lastFrameAgoMillis"), 0) is not None
-    and isinstance(pipeline, Mapping) and _safe_int(pipeline.get("videoClients"), 0) is not None
-    and type(pipeline.get("encoderRunning")) is bool
+    isinstance(pipeline, Mapping) and _safe_int(pipeline.get("videoClients"), 0) is not None
     and _safe_int(pipeline.get("lastFrameSentAgoMillis"), 0) is not None
   )
 
@@ -960,7 +970,7 @@ def _recovery_failed(value: Mapping[str, Any]) -> bool:
   return bool(
     value.get("desired_stage") == "failed" or value.get("desired_result") == "failed"
     or value.get("desired_failure") or value.get("stream_stage") in {"blocked", "failed"}
-    or value.get("stream_result") == "failed"
+    or value.get("stream_result") == "failed" or value.get("stream_failure")
   )
 
 

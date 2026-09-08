@@ -19,10 +19,6 @@ internal class TicketWebSocket(
   private val writeLock = Any()
   private var binaryFramesAllowed = binaryFramesInitiallyAllowed
 
-  fun sendText(value: String) {
-    sendFrame(opcode = OPCODE_TEXT, payload = value.toByteArray(Charsets.UTF_8))
-  }
-
   fun sendTextAtWrite(buildValue: () -> String): Boolean {
     return sendFrame(
       opcode = OPCODE_TEXT,
@@ -31,13 +27,6 @@ internal class TicketWebSocket(
     )
   }
 
-  fun sendConfigAndAllowBinary(value: String): Boolean {
-    return sendFrame(
-      opcode = OPCODE_TEXT,
-      payload = value.toByteArray(Charsets.UTF_8),
-      allowBinaryAfterSend = true
-    )
-  }
 
   fun sendConfigAndAllowBinaryIf(value: String, canSend: () -> Boolean): Boolean {
     return sendFrame(
@@ -49,15 +38,7 @@ internal class TicketWebSocket(
     )
   }
 
-  fun binaryFramesAllowed(): Boolean = synchronized(writeLock) {
-    open.get() && binaryFramesAllowed
-  }
-
   fun isOpen(): Boolean = open.get()
-
-  fun sendBinary(payload: ByteArray): Boolean {
-    return sendFrame(opcode = OPCODE_BINARY, payload = payload, requireBinaryAllowed = true)
-  }
 
   fun sendBinaryIf(payload: ByteArray, canSend: () -> Boolean): Boolean {
     return sendFrame(

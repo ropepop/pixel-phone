@@ -527,7 +527,7 @@ printf 'oversize interruption shm\n' > "${SUPERUSER_DB}-shm"
 
 INTERRUPTION_OUTPUT="${TEST_ROOT}/root-interruption.txt"
 PATH="${FAKE_BIN}:${PATH}" sh "${SCRIPT_PATH}" \
-  --superuser-only \
+  --frequent \
   --protected-list "${PROTECTED_LIST}" \
   --superuser-log-db "${SUPERUSER_DB}" \
   --root-recheck-command true \

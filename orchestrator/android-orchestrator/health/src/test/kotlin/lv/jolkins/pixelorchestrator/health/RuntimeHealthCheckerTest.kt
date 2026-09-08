@@ -10,6 +10,44 @@ import org.junit.Test
 class RuntimeHealthCheckerTest {
 
   @Test
+  fun acceptsOmittedDisabledProbesButRejectsMissingRequiredSections() {
+    val now = (System.currentTimeMillis() / 1000).toString()
+    val optionalModules = listOf("ddns", "train_bot", "satiksme_bot", "site_notifier", "subscription_bot", "remote")
+    val omittedPrefixes = listOf("DDNS_", "TRAIN_BOT_", "SATIKSME_BOT_", "SITE_NOTIFIER_", "SUBSCRIPTION_BOT_", "REMOTE_")
+    var omit = false
+    val output = probeOutput(
+      idU = "0", listeners = "LISTEN 0 128 0.0.0.0:2222\nLISTEN 0 128 0.0.0.0:9388\n",
+      ddnsEpoch = now, trainBotPid = "", trainBotHeartbeat = now,
+      siteNotifierPid = "", siteNotifierHeartbeat = now, vpnHealth = "1"
+    ).lineSequence().filter { line ->
+      if (line.startsWith("__PIXEL_HEALTH_")) {
+        omit = omittedPrefixes.any { line.startsWith("__PIXEL_HEALTH_$it") }
+      }
+      !omit
+    }.joinToString("\n")
+    val config = StackConfigV1(modules = (optionalModules + "dns").associateWith {
+      lv.jolkins.pixelorchestrator.coreconfig.ModuleConfig(enabled = false)
+    })
+    fun check(text: String, settings: StackConfigV1 = config) = runBlocking {
+      RuntimeHealthChecker(CommandRunner { CommandResult(ok = true, stdout = text, stderr = "") }).check(settings)
+    }
+
+    val healthy = check(output)
+    assertTrue(healthy.rootGranted)
+    assertTrue(healthy.supervisorHealthy)
+    assertTrue(healthy.moduleHealth["ticket_screen"]?.healthy == true)
+    for (module in optionalModules) {
+      val enabled = config.copy(
+        modules = config.modules + (module to lv.jolkins.pixelorchestrator.coreconfig.ModuleConfig(enabled = true)),
+        remote = config.remote.copy(dohEnabled = true)
+      )
+      assertFalse(check(output, enabled).rootGranted, "Missing enabled module must invalidate the report: $module")
+    }
+    assertFalse(check(output.replace("__PIXEL_HEALTH_DONE__", "")).rootGranted)
+    assertFalse(check(output.replace("__PIXEL_HEALTH_MANAGEMENT_SSH_LISTENER__", "")).rootGranted)
+  }
+
+  @Test
   fun buildProbeCommandIsShellParsable() {
     val checker = RuntimeHealthChecker(CommandRunner { CommandResult(ok = true, stdout = "", stderr = "") })
     val method = RuntimeHealthChecker::class.java.getDeclaredMethod("buildProbeCommand", StackConfigV1::class.java)

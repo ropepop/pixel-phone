@@ -84,15 +84,6 @@ final class TicketH264EncoderOutputAssembler {
     discardUntilFinal = false;
   }
 
-  /** Explicit EOF/flush operation; incomplete output is never emitted. */
-  void flush() {
-    reset();
-  }
-
-  boolean hasPending() {
-    return hasPending || discardUntilFinal;
-  }
-
   boolean consumeOverflowed() {
     boolean value = overflowed;
     overflowed = false;
@@ -116,138 +107,94 @@ final class TicketH264EncoderOutputAssembler {
   }
 
   private EmittedAccessUnit emit(byte[] data, boolean codecConfig, boolean keyFrame) {
+    NalUnits units;
     if (framingMode == FramingMode.UNKNOWN) {
-      if (!codecConfig) {
-        return null;
-      }
-      framingMode = detectCodecConfigFraming(data);
-      if (framingMode == FramingMode.UNKNOWN) {
-        return null;
+      if (!codecConfig) return null;
+      NalUnits annex = parse(data, FramingMode.ANNEX_B);
+      NalUnits lengths = parse(data, FramingMode.LENGTH_PREFIXED);
+      boolean annexConfig = annex != null && annex.hasParameterSet();
+      boolean lengthConfig = lengths != null && lengths.hasParameterSet();
+      if (annexConfig == lengthConfig) return null;
+      framingMode = annexConfig ? FramingMode.ANNEX_B : FramingMode.LENGTH_PREFIXED;
+      units = annexConfig ? annex : lengths;
+    } else {
+      units = parse(data, framingMode);
+    }
+    if (units == null) return null;
+    if (units.sps != null) sps = units.sps;
+    if (units.pps != null) pps = units.pps;
+    if (units.idr) {
+      if (sps == null || pps == null) return null;
+      if (units.sps == null) units.nals.add(0, sps);
+      if (units.pps == null) {
+        int afterSps = 0;
+        for (int i = 0; i < units.nals.size(); i++) {
+          byte[] nal = units.nals.get(i);
+          if ((nal[startCodeLengthAt(nal, 0)] & 0x1f) == 7) afterSps = i + 1;
+        }
+        units.nals.add(afterSps, pps);
       }
     }
-    byte[] annexB = toAnnexB(data, framingMode);
-    if (annexB.length == 0) {
-      return null;
+    ByteArrayOutputStream output = new ByteArrayOutputStream(data.length);
+    for (byte[] nal : units.nals) output.write(nal, 0, nal.length);
+    byte[] assembled = output.toByteArray();
+    if (!endsWith(assembled, ACCESS_UNIT_DELIMITER)) {
+      output.write(ACCESS_UNIT_DELIMITER, 0, ACCESS_UNIT_DELIMITER.length);
     }
-    rememberParameterSets(annexB);
-    boolean containsVcl = containsNalTypeInRange(annexB, 1, 5);
-    boolean idrKeyFrame = containsNalTypeInRange(annexB, 5, 5);
-    if (idrKeyFrame) {
-      annexB = makeIdrSelfContained(annexB);
-      if (annexB.length == 0) {
-        return null;
-      }
-    }
-    byte[] payload = endsWith(annexB, ACCESS_UNIT_DELIMITER)
-      ? annexB
-      : append(annexB, ACCESS_UNIT_DELIMITER);
-    if (payload.length > TicketH264FrameRecord.MAX_PAYLOAD_BYTES) {
+    if (output.size() > MAX_ASSEMBLY_BYTES) {
       overflowed = true;
       return null;
     }
-    return new EmittedAccessUnit(
-      payload,
-      codecConfig,
-      keyFrame,
-      containsVcl,
-      idrKeyFrame
-    );
+    return new EmittedAccessUnit(output.toByteArray(), codecConfig, keyFrame, units.vcl, units.idr);
   }
 
-  private void rememberParameterSets(byte[] annexB) {
-    for (byte[] nal : splitAnnexB(annexB)) {
-      int type = nalType(nal);
-      if (type == 7) {
-        sps = nal;
-      } else if (type == 8) {
-        pps = nal;
-      }
-    }
-  }
-
-  private byte[] makeIdrSelfContained(byte[] annexB) {
-    List<byte[]> nals = splitAnnexB(annexB);
-    boolean hasSps = nals.stream().anyMatch(nal -> nalType(nal) == 7);
-    boolean hasPps = nals.stream().anyMatch(nal -> nalType(nal) == 8);
-    if ((!hasSps && sps == null) || (!hasPps && pps == null)) {
-      return new byte[0];
-    }
-    if (!hasSps) {
-      nals.add(0, sps);
-    }
-    if (!hasPps) {
-      int insertAt = 0;
-      for (int index = 0; index < nals.size(); index += 1) {
-        if (nalType(nals.get(index)) == 7) insertAt = index + 1;
-      }
-      nals.add(insertAt, pps);
-    }
-    ByteArrayOutputStream output = new ByteArrayOutputStream(annexB.length + 128);
-    for (byte[] nal : nals) {
-      output.write(nal, 0, nal.length);
-    }
-    return output.toByteArray();
-  }
-
-  private static List<byte[]> splitAnnexB(byte[] annexB) {
-    List<byte[]> nals = new ArrayList<>();
+  /** Parse and validate once; configuration detection rejects ambiguous framing. */
+  private static NalUnits parse(byte[] data, FramingMode mode) {
+    NalUnits units = new NalUnits();
     int offset = 0;
-    while (offset < annexB.length) {
-      int startCodeLength = startCodeLengthAt(annexB, offset);
-      if (startCodeLength == 0 || offset + startCodeLength >= annexB.length) {
-        return new ArrayList<>();
+    while (offset < data.length) {
+      int headerAt;
+      int end;
+      byte[] nal;
+      if (mode == FramingMode.LENGTH_PREFIXED) {
+        if (data.length - offset < 4) return null;
+        int length = readInt(data, offset);
+        if (length <= 0 || length > data.length - offset - 4) return null;
+        headerAt = offset + 4;
+        end = headerAt + length;
+        nal = Arrays.copyOfRange(data, offset, end);
+        System.arraycopy(START_CODE, 0, nal, 0, START_CODE.length);
+      } else {
+        int prefix = startCodeLengthAt(data, offset);
+        if (prefix == 0 || offset + prefix >= data.length) return null;
+        headerAt = offset + prefix;
+        int next = findStartCode(data, headerAt + 1);
+        end = next < 0 ? data.length : next;
+        nal = Arrays.copyOfRange(data, offset, end);
       }
-      int next = findStartCode(annexB, offset + startCodeLength + 1);
-      int end = next < 0 ? annexB.length : next;
-      nals.add(Arrays.copyOfRange(annexB, offset, end));
+      int header = data[headerAt] & 0xff;
+      int type = header & 0x1f;
+      if ((header & 0x80) != 0 || type == 0) return null;
+      units.nals.add(nal);
+      if (type == 7) units.sps = nal;
+      if (type == 8) units.pps = nal;
+      units.vcl |= type >= 1 && type <= 5;
+      units.idr |= type == 5;
       offset = end;
     }
-    return nals;
+    return units.nals.isEmpty() ? null : units;
   }
 
-  private static int nalType(byte[] nalWithStartCode) {
-    int startCodeLength = startCodeLengthAt(nalWithStartCode, 0);
-    if (startCodeLength == 0 || startCodeLength >= nalWithStartCode.length) return 0;
-    return nalWithStartCode[startCodeLength] & 0x1f;
-  }
+  private static final class NalUnits {
+    final List<byte[]> nals = new ArrayList<>();
+    byte[] sps;
+    byte[] pps;
+    boolean vcl;
+    boolean idr;
 
-  private static FramingMode detectCodecConfigFraming(byte[] data) {
-    byte[] converted = tryConvertLengthPrefixed(data);
-    boolean lengthPrefixedConfig = converted != null && containsParameterSet(converted);
-    boolean annexBConfig = startsWithStartCode(data) && containsParameterSet(data);
-    if (lengthPrefixedConfig == annexBConfig) {
-      return FramingMode.UNKNOWN;
+    boolean hasParameterSet() {
+      return sps != null || pps != null;
     }
-    return lengthPrefixedConfig ? FramingMode.LENGTH_PREFIXED : FramingMode.ANNEX_B;
-  }
-
-  private static byte[] toAnnexB(byte[] data, FramingMode mode) {
-    if (mode == FramingMode.LENGTH_PREFIXED) {
-      byte[] converted = tryConvertLengthPrefixed(data);
-      return converted == null ? new byte[0] : converted;
-    }
-    return startsWithStartCode(data) ? Arrays.copyOf(data, data.length) : new byte[0];
-  }
-
-  private static byte[] tryConvertLengthPrefixed(byte[] data) {
-    ByteArrayOutputStream converted = new ByteArrayOutputStream(data.length + START_CODE.length);
-    int offset = 0;
-    int nalCount = 0;
-    while (offset + 4 <= data.length) {
-      int length = readInt(data, offset);
-      if (length <= 0 || length > data.length - offset - 4) {
-        return null;
-      }
-      offset += 4;
-      converted.write(START_CODE, 0, START_CODE.length);
-      converted.write(data, offset, length);
-      offset += length;
-      nalCount += 1;
-    }
-    if (nalCount == 0 || offset != data.length) {
-      return null;
-    }
-    return converted.toByteArray();
   }
 
   private static int readInt(byte[] data, int offset) {
@@ -255,61 +202,6 @@ final class TicketH264EncoderOutputAssembler {
       ((data[offset + 1] & 0xff) << 16) |
       ((data[offset + 2] & 0xff) << 8) |
       (data[offset + 3] & 0xff);
-  }
-
-  private static boolean startsWithStartCode(byte[] data) {
-    return startCodeLengthAt(data, 0) > 0;
-  }
-
-  private static boolean containsParameterSet(byte[] annexB) {
-    int offset = 0;
-    boolean found = false;
-    while (offset < annexB.length) {
-      int startCodeLength = startCodeLengthAt(annexB, offset);
-      if (startCodeLength == 0) {
-        return false;
-      }
-      int nalOffset = offset + startCodeLength;
-      if (nalOffset >= annexB.length) {
-        return false;
-      }
-      int header = annexB[nalOffset] & 0xff;
-      int nalType = header & 0x1f;
-      if ((header & 0x80) != 0 || nalType == 0) {
-        return false;
-      }
-      found |= nalType == 7 || nalType == 8;
-      int next = findStartCode(annexB, nalOffset + 1);
-      if (next < 0) {
-        return found;
-      }
-      offset = next;
-    }
-    return found;
-  }
-
-  private static boolean containsNalTypeInRange(byte[] annexB, int minimumNalType, int maximumNalType) {
-    int offset = 0;
-    while (offset < annexB.length) {
-      int startCodeLength = startCodeLengthAt(annexB, offset);
-      if (startCodeLength == 0) {
-        return false;
-      }
-      int nalOffset = offset + startCodeLength;
-      if (nalOffset >= annexB.length) {
-        return false;
-      }
-      int nalType = annexB[nalOffset] & 0x1f;
-      if (nalType >= minimumNalType && nalType <= maximumNalType) {
-        return true;
-      }
-      int next = findStartCode(annexB, nalOffset + 1);
-      if (next < 0) {
-        return false;
-      }
-      offset = next;
-    }
-    return false;
   }
 
   private static int findStartCode(byte[] data, int from) {
@@ -353,12 +245,6 @@ final class TicketH264EncoderOutputAssembler {
       }
     }
     return true;
-  }
-
-  private static byte[] append(byte[] first, byte[] second) {
-    byte[] result = Arrays.copyOf(first, first.length + second.length);
-    System.arraycopy(second, 0, result, first.length, second.length);
-    return result;
   }
 
   private enum FramingMode {

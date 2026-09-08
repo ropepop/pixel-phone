@@ -49,91 +49,21 @@ internal fun ticketSliderGestureContract(
   )
 }
 
-/**
- * A rooted visual probe confirms that the current frame still contains the registration
- * control and its full horizontal travel. Its dark-thumb check makes the visual registration
- * band's height a proven symmetric horizontal-inset proxy; the accessibility hierarchy supplies
- * the precise slider-row center. Preserve that visual height while translating the rectangle
- * onto the semantic center, so split Flutter text nodes cannot move the gesture above the real
- * control or shrink its horizontal travel.
- */
-internal fun ticketSliderGestureBoundsAfterVisualProof(
-  hierarchyBounds: TicketViviGraphicBounds,
+/** The current rooted observation owns slider geometry; Android owns input readiness. */
+internal fun ticketVisualSliderGestureBounds(
   visualBounds: TicketViviGraphicBounds,
   displayWidth: Int,
   displayHeight: Int
-): TicketViviGraphicBounds? {
-  if (
-    displayWidth <= 0 || displayHeight <= 0 ||
-    hierarchyBounds.left < 0 || hierarchyBounds.top < 0 ||
-    hierarchyBounds.right > displayWidth || hierarchyBounds.bottom > displayHeight ||
-    hierarchyBounds.width < 220 || hierarchyBounds.height < 24 ||
-    hierarchyBounds.width < hierarchyBounds.height * 2 ||
-    visualBounds.left < 0 || visualBounds.top < 0 ||
-    visualBounds.right > displayWidth || visualBounds.bottom > displayHeight ||
-    visualBounds.width < 220 || visualBounds.height < 24 ||
-    visualBounds.width < visualBounds.height * 3
-  ) {
-    return null
-  }
-  val horizontalOverlap = minOf(hierarchyBounds.right, visualBounds.right) -
-    maxOf(hierarchyBounds.left, visualBounds.left)
-  val requiredHorizontalOverlap = (minOf(hierarchyBounds.width, visualBounds.width) + 1) / 2
-  if (horizontalOverlap < requiredHorizontalOverlap) return null
-  val hierarchyCenterX = (hierarchyBounds.left + hierarchyBounds.right) / 2
-  if (hierarchyCenterX !in visualBounds.left..visualBounds.right) return null
-  val hierarchyCenterY = (hierarchyBounds.top + hierarchyBounds.bottom) / 2
-  val verticalOverlap = minOf(hierarchyBounds.bottom, visualBounds.bottom) -
-    maxOf(hierarchyBounds.top, visualBounds.top)
-  val requiredVerticalOverlap = (minOf(hierarchyBounds.height, visualBounds.height) + 1) / 2
-  if (hierarchyCenterY !in visualBounds.top..visualBounds.bottom && verticalOverlap < requiredVerticalOverlap) {
-    return null
-  }
-  val translatedTop = hierarchyCenterY - visualBounds.height / 2
-  val translatedBottom = translatedTop + visualBounds.height
-  if (translatedTop < 0 || translatedBottom > displayHeight) return null
-  return TicketViviGraphicBounds(
-    left = visualBounds.left,
-    top = translatedTop,
-    right = visualBounds.right,
-    bottom = translatedBottom
-  )
+): TicketViviGraphicBounds? = visualBounds.takeIf {
+  displayWidth > 0 && displayHeight > 0 &&
+    it.left >= 0 && it.top >= 0 &&
+    it.right <= displayWidth && it.bottom <= displayHeight &&
+    it.width >= 220 && it.height >= 24 && it.width >= it.height * 3
 }
 
-/**
- * The browser binds an unactivated slider to the stream epoch/frame that proved its geometry.
- * A reset can finish before the rooted H.264 stream settles on its final epoch, so a stale row
- * must be revalidated before it is exposed to the browser again.
- */
-internal fun ticketRegistrationProofRequiresRefresh(
-  status: String,
-  interactionRevision: String,
-  proofRevision: String,
-  proofEpoch: Long,
-  proofFrameSequence: Long,
-  currentEpoch: Long,
-  currentFrameSequence: Long,
-  hasSliderBounds: Boolean
-): Boolean {
-  if (status != "unactivated_ready") return false
-  if (interactionRevision.isBlank() || proofRevision != interactionRevision) return true
-  if (!hasSliderBounds) return true
-  if (proofEpoch <= 0L || proofFrameSequence <= 0L) return true
-  if (currentEpoch <= 0L || currentFrameSequence <= 0L) return true
-  return proofEpoch != currentEpoch || proofFrameSequence > currentFrameSequence
-}
 
 internal val TicketRegistrationProof.hasSliderBounds: Boolean
   get() = sliderRight > sliderLeft && sliderBottom > sliderTop
-
-internal fun TicketRegistrationProof.toGraphicBounds(): TicketViviGraphicBounds {
-  return TicketViviGraphicBounds(
-    left = sliderLeft,
-    top = sliderTop,
-    right = sliderRight,
-    bottom = sliderBottom
-  )
-}
 
 /**
  * Stable activation identity for a command attempt.  It is derived only from identifiers that

@@ -61,19 +61,16 @@ def raw_pixel_health(active: bool) -> dict:
       "lastVisibilityCheckResult": "visible" if active else "idle",
     },
     "recovery": {
-      "desiredRecoveryStage": "idle",
-      "lastDesiredRecoveryResult": "none",
-      "lastDesiredRecoveryFailureReason": None,
       "streamStage": "healthy",
       "lastStreamRecoveryResult": "none",
+      "lastStreamRecoveryFailureReason": None,
     },
     "ticketState": {"state": "live" if active else "stopped"},
     "viviState": {"state": "TICKET_DETAIL"},
   }
   if active:
     health.update({
-      "visibleFrame": {"lastFrameAgoMillis": 100},
-      "streamPipeline": {"videoClients": 1, "encoderRunning": True, "lastFrameSentAgoMillis": 100},
+      "streamPipeline": {"videoClients": 1, "lastFrameSentAgoMillis": 100},
     })
   return health
 
@@ -834,7 +831,7 @@ class TicketHealthMonitorTest(unittest.TestCase):
     mistyped_idle = raw_pixel_health(active=False)
     mistyped_idle["streamActive"] = "false"
     missing_live_frame = raw_pixel_health(active=True)
-    del missing_live_frame["visibleFrame"]["lastFrameAgoMillis"]
+    del missing_live_frame["streamPipeline"]["lastFrameSentAgoMillis"]
     mistyped_live_pipeline = raw_pixel_health(active=True)
     mistyped_live_pipeline["streamPipeline"]["videoClients"] = "1"
     missing_live_ticket = raw_pixel_health(active=True)
@@ -847,9 +844,33 @@ class TicketHealthMonitorTest(unittest.TestCase):
       with self.subTest(health=malformed):
         self.assertFalse(monitor._pixel_health_contract_valid(malformed))
 
+  def test_current_health_uses_one_frame_and_encoder_owner(self):
+    raw = raw_pixel_health(active=True)
+    # Retired copies cannot override the canonical fields, even during cutover.
+    raw["visibleFrame"] = {"lastFrameAgoMillis": 60000}
+    raw["streamPipeline"]["encoderRunning"] = False
+    self.assertTrue(monitor._pixel_health_contract_valid(raw))
+    selected = monitor._select_pixel_health(raw)
+    self.assertEqual(100, selected["visible_frame_age_millis"])
+    self.assertTrue(selected["stream_pipeline"]["encoder_running"])
+    del raw["streamPipeline"]["lastFrameSentAgoMillis"]
+    self.assertFalse(monitor._pixel_health_contract_valid(raw))
+
+  def test_current_and_pre_cutover_recovery_failures_remain_bounded(self):
+    for field in ("lastStreamRecoveryFailureReason", "lastDesiredRecoveryFailureReason"):
+      with self.subTest(field=field):
+        raw = raw_pixel_health(active=False)
+        raw["recovery"][field] = "private email@example.com"
+        self.assertTrue(monitor._pixel_health_contract_valid(raw))
+        health = monitor._select_pixel_health(raw)
+        self.assertTrue(monitor._recovery_failed(health["recovery"]))
+        self.assertNotIn("email@example.com", json.dumps(health))
+        raw["recovery"][field] = 42
+        self.assertFalse(monitor._pixel_health_contract_valid(raw))
+
   def test_pixel_collection_and_evaluator_fail_closed_on_invalid_live_contract(self):
     malformed = raw_pixel_health(active=True)
-    malformed["streamPipeline"]["encoderRunning"] = "true"
+    malformed["hardwareH264"]["active"] = "true"
     collected = collect_pixel_with_health(malformed)
     snapshot = healthy_snapshot(active=True)
     snapshot["pixel"] = collected

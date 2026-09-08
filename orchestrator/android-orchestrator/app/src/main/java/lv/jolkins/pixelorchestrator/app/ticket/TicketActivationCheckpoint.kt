@@ -32,18 +32,6 @@ internal data class TicketActivationCheckpoint(
   val stage: TicketActivationCheckpointStage
 )
 
-internal enum class TicketActivationRecoveryAction {
-  NONE,
-  COMMIT_PROVEN_RESULT,
-  NEEDS_ATTENTION
-}
-
-internal enum class TicketActivationRecoveryScreen {
-  ACTIVATED,
-  UNUSED,
-  AMBIGUOUS
-}
-
 /** A raw-input event watermark; a quick physical down/up changes it even when the final state is idle. */
 internal data class TicketActivationPhysicalTouchFence(
   val observedAtUptimeMillis: Long
@@ -125,44 +113,6 @@ internal fun ticketActivationCheckpointSafeToClearAfterTerminalFinalization(
   }
 }
 
-/**
- * Decides what a restarted worker may do.  Once Android has accepted the physical gesture, an
- * unused or ambiguous screen is never treated as permission to send that gesture again.
- */
-internal fun ticketActivationRecoveryAction(
-  checkpoint: TicketActivationCheckpoint?,
-  screen: TicketActivationRecoveryScreen
-): TicketActivationRecoveryAction {
-  checkpoint ?: return if (screen == TicketActivationRecoveryScreen.ACTIVATED) {
-    TicketActivationRecoveryAction.COMMIT_PROVEN_RESULT
-  } else {
-    TicketActivationRecoveryAction.NONE
-  }
-  return when (checkpoint.stage) {
-    TicketActivationCheckpointStage.FRESH_TICKET_PROVEN -> when (screen) {
-      TicketActivationRecoveryScreen.ACTIVATED -> TicketActivationRecoveryAction.COMMIT_PROVEN_RESULT
-      TicketActivationRecoveryScreen.UNUSED,
-      TicketActivationRecoveryScreen.AMBIGUOUS -> TicketActivationRecoveryAction.NEEDS_ATTENTION
-    }
-    TicketActivationCheckpointStage.ACTIVATION_DISPATCHING -> when (screen) {
-      TicketActivationRecoveryScreen.ACTIVATED -> TicketActivationRecoveryAction.COMMIT_PROVEN_RESULT
-      TicketActivationRecoveryScreen.UNUSED,
-      TicketActivationRecoveryScreen.AMBIGUOUS -> TicketActivationRecoveryAction.NEEDS_ATTENTION
-    }
-    // This stage is written only after Android reported a completed stroke and two fresh frames
-    // proved the exact same unactivated detail. The one allowed same-action retry must be prepared
-    // in the same live run; a restarted Pixel never turns this checkpoint into replay authority.
-    TicketActivationCheckpointStage.NO_TRANSITION_PROVEN ->
-      TicketActivationRecoveryAction.NEEDS_ATTENTION
-    TicketActivationCheckpointStage.ACTIVATION_PROVEN -> when (screen) {
-      TicketActivationRecoveryScreen.ACTIVATED -> TicketActivationRecoveryAction.COMMIT_PROVEN_RESULT
-      TicketActivationRecoveryScreen.UNUSED,
-      TicketActivationRecoveryScreen.AMBIGUOUS -> TicketActivationRecoveryAction.NEEDS_ATTENTION
-    }
-    TicketActivationCheckpointStage.NEEDS_ATTENTION ->
-      TicketActivationRecoveryAction.NEEDS_ATTENTION
-  }
-}
 
 internal interface TicketActivationCheckpointBackend {
   fun load(): TicketActivationCheckpoint?

@@ -23,10 +23,7 @@ final class TicketEncoderStartupPrimer {
   private final int inputLimit;
   private int inputPosts;
   private int mediaOutputs;
-  private int suppressedMediaOutputs;
-  private long firstInputAtMillis = -1L;
   private long lastInputAtMillis = -1L;
-  private long firstKeyFrameAtMillis = -1L;
   private boolean firstKeyFrameForwarded;
   private boolean fallbackWaitingForFirstKeyFrame;
   private boolean boundaryDrainActive;
@@ -63,9 +60,6 @@ final class TicketEncoderStartupPrimer {
       throw new IllegalStateException("startup primer input is not due");
     }
     inputPosts += 1;
-    if (firstInputAtMillis < 0L) {
-      firstInputAtMillis = nowMillis;
-    }
     lastInputAtMillis = nowMillis;
   }
 
@@ -87,7 +81,6 @@ final class TicketEncoderStartupPrimer {
     mediaOutputs += 1;
     if (idrKeyFrame && !firstKeyFrameForwarded) {
       firstKeyFrameForwarded = true;
-      firstKeyFrameAtMillis = nowMillis;
       return OutputDisposition.FORWARD;
     }
 
@@ -95,7 +88,6 @@ final class TicketEncoderStartupPrimer {
       return OutputDisposition.BUFFER_BOUNDARY;
     }
 
-    suppressedMediaOutputs += 1;
     return OutputDisposition.SUPPRESS;
   }
 
@@ -129,11 +121,7 @@ final class TicketEncoderStartupPrimer {
     if (!boundaryDrainActive || frame == null || frame.payload.length == 0) {
       throw new IllegalStateException("startup primer boundary access unit is not valid");
     }
-    if (boundaryAccessUnit != null) {
-      // Output order is input order for the baseline all-intra encoder. Retain the newest IDR so
-      // delayed primer siblings cannot burst ahead of the picture posted at this boundary.
-      suppressedMediaOutputs += 1;
-    }
+    // The all-intra encoder emits input order; only the newest boundary IDR is retained.
     boundaryAccessUnit = frame;
   }
 
@@ -193,26 +181,8 @@ final class TicketEncoderStartupPrimer {
     return mediaOutputs;
   }
 
-  int suppressedMediaOutputs() {
-    return suppressedMediaOutputs;
-  }
-
   long lastInputAtMillis() {
     return lastInputAtMillis;
   }
 
-  long firstKeyFrameAtMillis() {
-    return firstKeyFrameAtMillis;
-  }
-
-  long firstInputAtMillis() {
-    return firstInputAtMillis;
-  }
-
-  long firstKeyFrameLatencyMillis() {
-    if (firstInputAtMillis < 0L || firstKeyFrameAtMillis < 0L) {
-      return -1L;
-    }
-    return Math.max(0L, firstKeyFrameAtMillis - firstInputAtMillis);
-  }
 }

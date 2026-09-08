@@ -199,17 +199,6 @@ Usage: $(basename "$0") [options]
 - `--validate-only`
 - `--vpn-auth-key-file`
 
-### `scripts/android/release_runtime_artifacts.sh`
-
-**Usage snippets**
-
-_No `Usage:` lines detected in source._
-
-**Long options found in source**
-
-- `--action`
-- `--runtime-bundle-dir`
-
 ### `scripts/android/runtime_asset_freshness.sh`
 
 **Usage snippets**

@@ -473,8 +473,7 @@ class SupervisorService : Service() {
     portraitLockMaintenanceJob = serviceScope.launch(Dispatchers.IO) {
       while (isActive) {
         val executor = SuRootExecutor()
-        PhonePortraitLock.force(executor)
-        if (!PhonePortraitLock.verify(executor)) {
+        if (!PhonePortraitLock.ensureVerified(executor)) {
           Log.w(TAG, "phone portrait lock was not verified")
         }
         delay(PORTRAIT_LOCK_MAINTENANCE_INTERVAL_MILLIS)

@@ -1,20 +1,5 @@
 {
   "files": {
-    "data/local/pixel-stack/conf/adguardhome.env": {
-      "mode": 384,
-      "sha256": "ccbc6f01e7414f69d20c8e0a0e8499a10c563dbe4dc1b17143efbce4653ff927",
-      "size": 1823
-    },
-    "data/local/pixel-stack/conf/adguardhome/remote-admin-password": {
-      "mode": 384,
-      "sha256": "e3b767c1023cf63936d6dd2692bfd42f03926550407c5f8db21f6418c2e6258a",
-      "size": 25
-    },
-    "data/local/pixel-stack/conf/adguardhome/remote-admin-password.hash": {
-      "mode": 384,
-      "sha256": "33c22d25f4a75588293b59cfd42af6f26c659b6018f5ae83894919d5e6f3c615",
-      "size": 60
-    },
     "data/local/pixel-stack/conf/apps/codex-mv-test": {
       "mode": 420,
       "sha256": "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2",
@@ -95,11 +80,6 @@
       "sha256": "28ad686dc207890746c88d4e1df2ba5edd24f54ae88ac8df725226db306edcc3",
       "size": 690
     },
-    "data/local/pixel-stack/conf/apps/ticket-screen-vivi-login.env": {
-      "mode": 384,
-      "sha256": "ab74618f098ed6402b8773485dca1c3ddb20539954a3defd3f90b3908c7f52e9",
-      "size": 78
-    },
     "data/local/pixel-stack/conf/apps/ticket-screen.env": {
       "mode": 384,
       "sha256": "71ce94b8a9ce2a68c8f143f6d1b00ad2966890859f92ac6c879d47ec69ca86ae",
@@ -150,16 +130,6 @@
       "sha256": "60744545d99819a56164245a5b14f7c9f777a4e1d9f4f481affb98e77b2aaea7",
       "size": 6689
     },
-    "data/local/pixel-stack/conf/pihole-rooted.env": {
-      "mode": 384,
-      "sha256": "f11fb51223107054fae58b79aae65b9b5302372c88ab256533e6834ff16acff3",
-      "size": 1357
-    },
-    "data/local/pixel-stack/conf/pihole-rooted/remote-admin-password": {
-      "mode": 384,
-      "sha256": "e3b767c1023cf63936d6dd2692bfd42f03926550407c5f8db21f6418c2e6258a",
-      "size": 25
-    },
     "data/local/pixel-stack/conf/runtime/components/satiksme_bot/release-manifest.json": {
       "mode": 384,
       "sha256": "4cf05b6d58aa7be6a9a40a7bcabb07cc657e1c153e089a1dd87c8a8c195ab8d6",
@@ -207,5 +177,5 @@
     }
   },
   "profile": "pixel",
-  "updatedEpochSeconds": 1784685116
+  "updatedEpochSeconds": 1788846420
 }

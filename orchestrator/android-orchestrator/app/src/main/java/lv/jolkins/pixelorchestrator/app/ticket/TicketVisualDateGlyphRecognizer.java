@@ -37,7 +37,7 @@ public final class TicketVisualDateGlyphRecognizer {
   private static final int RANGE_ROW_TOLERANCE = 5;
   private static final char[] HEX = "0123456789abcdef".toCharArray();
   private static final Map<Character, List<String[]>> DIGITS = digitTemplates();
-  private static volatile List<RenderedGlyphTemplate> RUNTIME_DIGITS = embeddedFontDigitTemplates();
+  private static final List<RenderedGlyphTemplate> RUNTIME_DIGITS = embeddedFontDigitTemplates();
   private static final byte[] ANCHOR_SALT = loadOrCreateAnchorSalt();
 
   /**
@@ -98,22 +98,6 @@ public final class TicketVisualDateGlyphRecognizer {
 
   private TicketVisualDateGlyphRecognizer() {}
 
-  public static void installRuntimeDigitTemplates(List<RenderedGlyphTemplate> templates) {
-    if (templates == null || templates.isEmpty()) {
-      RUNTIME_DIGITS = Collections.emptyList();
-      return;
-    }
-    List<RenderedGlyphTemplate> accepted = new ArrayList<>();
-    for (RenderedGlyphTemplate template : templates) {
-      if (template != null && template.value >= '0' && template.value <= '9' &&
-        template.width > 0 && template.height > 0 &&
-        template.pixels.length == template.width * template.height
-      ) {
-        accepted.add(template);
-      }
-    }
-    RUNTIME_DIGITS = Collections.unmodifiableList(accepted);
-  }
 
   public static List<DateRange> recognize(int[] pixels, int width, int height) {
     if (pixels == null || width <= 0 || height <= 0 || pixels.length != width * height) {
@@ -166,63 +150,6 @@ public final class TicketVisualDateGlyphRecognizer {
       }
     }
     return accepted;
-  }
-
-  /** Phone-local aggregate diagnostics; never includes recognized glyphs, dates or geometry. */
-  public static String safeDiagnostic(int[] pixels, int width, int height) {
-    if (pixels == null || width <= 0 || height <= 0 || pixels.length != width * height) {
-      return "date_probe_invalid";
-    }
-    int[] luminances = new int[pixels.length];
-    for (int i = 0; i < pixels.length; i++) {
-      int pixel = pixels[i];
-      int red = (pixel >> 16) & 0xff;
-      int green = (pixel >> 8) & 0xff;
-      int blue = pixel & 0xff;
-      luminances[i] = (red * 54 + green * 183 + blue * 19) >> 8;
-    }
-    int darkDigits = 0;
-    int brightDigits = 0;
-    int darkRow = 0;
-    int brightRow = 0;
-    for (int thresholdIndex = 0; thresholdIndex < DARK_GLYPH_THRESHOLDS.length; thresholdIndex++) {
-      int darkThreshold = DARK_GLYPH_THRESHOLDS[thresholdIndex];
-      int brightThreshold = BRIGHT_GLYPH_THRESHOLDS[thresholdIndex];
-      boolean[] dark = new boolean[pixels.length];
-      boolean[] bright = new boolean[pixels.length];
-      for (int i = 0; i < pixels.length; i++) {
-        dark[i] = luminances[i] <= darkThreshold;
-        bright[i] = luminances[i] >= brightThreshold;
-      }
-      List<Component> darkComponents = components(dark, width, height);
-      List<Component> brightComponents = components(bright, width, height);
-      darkDigits = Math.max(darkDigits,
-        (int) darkComponents.stream().filter(value -> value.value != '.').count());
-      brightDigits = Math.max(brightDigits,
-        (int) brightComponents.stream().filter(value -> value.value != '.').count());
-      darkRow = Math.max(darkRow, maxDigitsInOneRow(darkComponents));
-      brightRow = Math.max(brightRow, maxDigitsInOneRow(brightComponents));
-    }
-    int rangeCount = recognize(pixels, width, height).size();
-    return "date_ranges_" + Math.min(rangeCount, 9) +
-      "_dark_digits_" + Math.min(darkDigits, 99) +
-      "_dark_row_" + Math.min(darkRow, 99) +
-      "_bright_digits_" + Math.min(brightDigits, 99) +
-      "_bright_row_" + Math.min(brightRow, 99);
-  }
-
-  private static int maxDigitsInOneRow(List<Component> components) {
-    int maximum = 0;
-    for (Component seed : components) {
-      int count = 0;
-      for (Component component : components) {
-        if (component.value != '.' &&
-          Math.abs(component.centerY() - seed.centerY()) <= Math.max(3, seed.bottom - seed.top)
-        ) count += 1;
-      }
-      maximum = Math.max(maximum, count);
-    }
-    return maximum;
   }
 
   private static List<DateRange> recognizePolarity(boolean[] foreground, int width, int height) {
@@ -290,10 +217,6 @@ public final class TicketVisualDateGlyphRecognizer {
     return recognizeGlyph(dark, width, height, false);
   }
 
-  /** Test-only entry point for fail-closed zero topology fixtures. */
-  static boolean looksLikeTopologyZeroForTest(boolean[] dark, int width, int height) {
-    return looksLikeTopologyZero(dark, width, height);
-  }
 
   private static char recognizeGlyph(boolean[] dark, int width, int height, boolean allowTopology) {
     if (dark == null || width <= 0 || height <= 0 || dark.length != width * height) return '?';
@@ -397,91 +320,64 @@ public final class TicketVisualDateGlyphRecognizer {
    * Returns the vertical center of one adequately sized, four-connected enclosed background
    * counter. Any open outline, tiny enclosed speck, or second counter fails closed.
    */
-  private static int singleEnclosedCounterCenterY(boolean[] foreground, int width, int height) {
-    int area = width * height;
-    boolean[] exterior = new boolean[area];
-    int[] queue = new int[area];
-    int head = 0;
-    int tail = 0;
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
-        if (x != 0 && x != width - 1 && y != 0 && y != height - 1) continue;
-        int index = y * width + x;
-        if (!foreground[index] && !exterior[index]) {
-          exterior[index] = true;
-          queue[tail++] = index;
-        }
-      }
-    }
-    while (head < tail) {
-      int current = queue[head++];
-      int x = current % width;
-      int y = current / width;
-      int[] neighbors = {
-        x > 0 ? current - 1 : -1,
-        x + 1 < width ? current + 1 : -1,
-        y > 0 ? current - width : -1,
-        y + 1 < height ? current + width : -1,
-      };
-      for (int neighbor : neighbors) {
-        if (neighbor >= 0 && !foreground[neighbor] && !exterior[neighbor]) {
-          exterior[neighbor] = true;
-          queue[tail++] = neighbor;
-        }
-      }
-    }
+  private static final class Counter {
+    int count, yTotal;
+    int left = Integer.MAX_VALUE, top = Integer.MAX_VALUE, right = -1, bottom = -1;
+    boolean exterior;
+    int width() { return right - left + 1; }
+    int height() { return bottom - top + 1; }
+    int centerY() { return yTotal / count; }
+  }
 
-    boolean[] visited = new boolean[area];
-    int counterCount = 0;
-    int counterCenterY = -1;
-    int minimumCounterArea = Math.max(4, area / 40);
-    for (int start = 0; start < area; start++) {
-      if (foreground[start] || exterior[start] || visited[start]) continue;
-      head = 0;
-      tail = 0;
+  /** Four-connected background components; edge-connected components are exterior. */
+  private static List<Counter> enclosedCounters(boolean[] foreground, int width, int height) {
+    boolean[] visited = new boolean[foreground.length];
+    int[] queue = new int[foreground.length];
+    List<Counter> counters = new ArrayList<>();
+    for (int start = 0; start < foreground.length; start++) {
+      if (foreground[start] || visited[start]) continue;
+      Counter counter = new Counter();
+      int head = 0, tail = 0;
       queue[tail++] = start;
       visited[start] = true;
-      int count = 0;
-      int left = width;
-      int right = -1;
-      int top = height;
-      int bottom = -1;
-      int yTotal = 0;
       while (head < tail) {
         int current = queue[head++];
-        int x = current % width;
-        int y = current / width;
-        count += 1;
-        yTotal += y;
-        left = Math.min(left, x);
-        right = Math.max(right, x);
-        top = Math.min(top, y);
-        bottom = Math.max(bottom, y);
+        int x = current % width, y = current / width;
+        counter.count++;
+        counter.yTotal += y;
+        counter.left = Math.min(counter.left, x);
+        counter.right = Math.max(counter.right, x);
+        counter.top = Math.min(counter.top, y);
+        counter.bottom = Math.max(counter.bottom, y);
+        counter.exterior |= x == 0 || x == width - 1 || y == 0 || y == height - 1;
         int[] neighbors = {
-          x > 0 ? current - 1 : -1,
-          x + 1 < width ? current + 1 : -1,
-          y > 0 ? current - width : -1,
-          y + 1 < height ? current + width : -1,
+          x > 0 ? current - 1 : -1, x + 1 < width ? current + 1 : -1,
+          y > 0 ? current - width : -1, y + 1 < height ? current + width : -1
         };
         for (int neighbor : neighbors) {
-          if (neighbor >= 0 && !foreground[neighbor] && !exterior[neighbor] &&
-            !visited[neighbor]
-          ) {
+          if (neighbor >= 0 && !foreground[neighbor] && !visited[neighbor]) {
             visited[neighbor] = true;
             queue[tail++] = neighbor;
           }
         }
       }
-      int counterWidth = right - left + 1;
-      int counterHeight = bottom - top + 1;
-      if (count < minimumCounterArea || counterWidth < Math.max(2, (width + 3) / 4) ||
-        counterHeight < Math.max(3, (height + 3) / 4)
-      ) return -1;
-      counterCount += 1;
-      if (counterCount > 1) return -1;
-      counterCenterY = yTotal / Math.max(1, count);
+      if (!counter.exterior) counters.add(counter);
     }
-    return counterCount == 1 ? counterCenterY : -1;
+    return counters;
+  }
+
+  private static int singleEnclosedCounterCenterY(boolean[] foreground, int width, int height) {
+    List<Counter> counters = enclosedCounters(foreground, width, height);
+    if (counters.size() != 1) return -1;
+    Counter counter = counters.get(0);
+    return counter.count >= Math.max(4, width * height / 40) &&
+      counter.width() >= Math.max(2, (width + 3) / 4) &&
+      counter.height() >= Math.max(3, (height + 3) / 4) ? counter.centerY() : -1;
+  }
+
+  private static boolean digitCounterLargeEnough(Counter counter, int width, int height) {
+    return counter.count >= Math.max(2, width * height / 40) &&
+      counter.width() >= Math.max(1, width / 4) && counter.height() >= Math.max(1, height / 7);
   }
 
   private static boolean looksLikeTopologyEight(boolean[] foreground, int width, int height) {
@@ -511,91 +407,14 @@ public final class TicketVisualDateGlyphRecognizer {
       strongestBottomRow * 100 < width * 45
     ) return false;
 
-    boolean[] exterior = new boolean[area];
-    int[] queue = new int[area];
-    int head = 0;
-    int tail = 0;
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
-        if (x != 0 && x != width - 1 && y != 0 && y != height - 1) continue;
-        int index = y * width + x;
-        if (!foreground[index] && !exterior[index]) {
-          exterior[index] = true;
-          queue[tail++] = index;
-        }
-      }
-    }
-    while (head < tail) {
-      int current = queue[head++];
-      int x = current % width;
-      int y = current / width;
-      int[] neighbors = {
-        x > 0 ? current - 1 : -1,
-        x + 1 < width ? current + 1 : -1,
-        y > 0 ? current - width : -1,
-        y + 1 < height ? current + width : -1,
-      };
-      for (int neighbor : neighbors) {
-        if (neighbor >= 0 && !foreground[neighbor] && !exterior[neighbor]) {
-          exterior[neighbor] = true;
-          queue[tail++] = neighbor;
-        }
-      }
-    }
-
-    boolean[] visitedHole = new boolean[area];
-    int[] holeCenters = new int[2];
-    int holeCount = 0;
-    int minimumHoleArea = Math.max(2, area / 40);
-    for (int start = 0; start < area; start++) {
-      if (foreground[start] || exterior[start] || visitedHole[start]) continue;
-      head = 0;
-      tail = 0;
-      queue[tail++] = start;
-      visitedHole[start] = true;
-      int count = 0;
-      int left = width;
-      int right = -1;
-      int top = height;
-      int bottom = -1;
-      int yTotal = 0;
-      while (head < tail) {
-        int current = queue[head++];
-        int x = current % width;
-        int y = current / width;
-        count += 1;
-        yTotal += y;
-        left = Math.min(left, x);
-        right = Math.max(right, x);
-        top = Math.min(top, y);
-        bottom = Math.max(bottom, y);
-        int[] neighbors = {
-          x > 0 ? current - 1 : -1,
-          x + 1 < width ? current + 1 : -1,
-          y > 0 ? current - width : -1,
-          y + 1 < height ? current + width : -1,
-        };
-        for (int neighbor : neighbors) {
-          if (neighbor >= 0 && !foreground[neighbor] && !exterior[neighbor] &&
-            !visitedHole[neighbor]
-          ) {
-            visitedHole[neighbor] = true;
-            queue[tail++] = neighbor;
-          }
-        }
-      }
-      int holeWidth = right - left + 1;
-      int holeHeight = bottom - top + 1;
-      if (count < minimumHoleArea || holeWidth < Math.max(1, width / 4) ||
-        holeHeight < Math.max(1, height / 7)
-      ) return false;
-      if (holeCount >= holeCenters.length) return false;
-      holeCenters[holeCount++] = yTotal / Math.max(1, count);
-    }
-    if (holeCount != 2) return false;
-    Arrays.sort(holeCenters);
-    return holeCenters[0] < height / 2 && holeCenters[1] >= height / 2 &&
-      holeCenters[1] - holeCenters[0] >= Math.max(2, height / 4);
+    List<Counter> counters = enclosedCounters(foreground, width, height);
+    if (counters.size() != 2 || counters.stream().anyMatch(counter ->
+      !digitCounterLargeEnough(counter, width, height)
+    )) return false;
+    int top = Math.min(counters.get(0).centerY(), counters.get(1).centerY());
+    int bottom = Math.max(counters.get(0).centerY(), counters.get(1).centerY());
+    return top < height / 2 && bottom >= height / 2 &&
+      bottom - top >= Math.max(2, height / 4);
   }
 
   private static boolean looksLikeTopologyNine(boolean[] foreground, int width, int height) {
@@ -636,89 +455,9 @@ public final class TicketVisualDateGlyphRecognizer {
       lowerRightInk < 3 || lowerRightInk < lowerLeftInk * 2
     ) return false;
 
-    boolean[] exterior = new boolean[area];
-    boolean[] visitedHole = new boolean[area];
-    int[] queue = new int[area];
-    int head = 0;
-    int tail = 0;
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
-        if (x != 0 && x != width - 1 && y != 0 && y != height - 1) continue;
-        int index = y * width + x;
-        if (!foreground[index] && !exterior[index]) {
-          exterior[index] = true;
-          queue[tail++] = index;
-        }
-      }
-    }
-    while (head < tail) {
-      int current = queue[head++];
-      int x = current % width;
-      int y = current / width;
-      int[] neighbors = {
-        x > 0 ? current - 1 : -1,
-        x + 1 < width ? current + 1 : -1,
-        y > 0 ? current - width : -1,
-        y + 1 < height ? current + width : -1,
-      };
-      for (int neighbor : neighbors) {
-        if (neighbor >= 0 && !foreground[neighbor] && !exterior[neighbor]) {
-          exterior[neighbor] = true;
-          queue[tail++] = neighbor;
-        }
-      }
-    }
-
-    int holeCount = 0;
-    int holeCenterY = -1;
-    int minimumHoleArea = Math.max(2, area / 40);
-    for (int start = 0; start < area; start++) {
-      if (foreground[start] || exterior[start] || visitedHole[start]) continue;
-      head = 0;
-      tail = 0;
-      queue[tail++] = start;
-      visitedHole[start] = true;
-      int count = 0;
-      int left = width;
-      int right = -1;
-      int top = height;
-      int bottom = -1;
-      int yTotal = 0;
-      while (head < tail) {
-        int current = queue[head++];
-        int x = current % width;
-        int y = current / width;
-        count += 1;
-        yTotal += y;
-        left = Math.min(left, x);
-        right = Math.max(right, x);
-        top = Math.min(top, y);
-        bottom = Math.max(bottom, y);
-        int[] neighbors = {
-          x > 0 ? current - 1 : -1,
-          x + 1 < width ? current + 1 : -1,
-          y > 0 ? current - width : -1,
-          y + 1 < height ? current + width : -1,
-        };
-        for (int neighbor : neighbors) {
-          if (neighbor >= 0 && !foreground[neighbor] && !exterior[neighbor] &&
-            !visitedHole[neighbor]
-          ) {
-            visitedHole[neighbor] = true;
-            queue[tail++] = neighbor;
-          }
-        }
-      }
-      int holeWidth = right - left + 1;
-      int holeHeight = bottom - top + 1;
-      if (count < minimumHoleArea || holeWidth < Math.max(1, width / 4) ||
-        holeHeight < Math.max(1, height / 7)
-      ) return false;
-      holeCount += 1;
-      if (holeCount > 1) return false;
-      holeCenterY = yTotal / Math.max(1, count);
-    }
-    return holeCount == 1 && holeCenterY >= 0 && holeCenterY * 100 < height * 55;
+    List<Counter> counters = enclosedCounters(foreground, width, height);
+    return counters.size() == 1 && digitCounterLargeEnough(counters.get(0), width, height) &&
+      counters.get(0).centerY() * 100 < height * 55;
   }
 
   private static char recognizeRenderedGlyph(boolean[] source, int width, int height) {

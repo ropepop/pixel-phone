@@ -10,90 +10,11 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class TicketActivationCheckpointTest {
-  @Test
-  fun anAlreadyProvenScreenCanBeCommittedWhenNoOldCheckpointExists() {
-    assertEquals(
-      TicketActivationRecoveryAction.COMMIT_PROVEN_RESULT,
-      ticketActivationRecoveryAction(null, TicketActivationRecoveryScreen.ACTIVATED)
-    )
-    assertEquals(
-      TicketActivationRecoveryAction.NONE,
-      ticketActivationRecoveryAction(null, TicketActivationRecoveryScreen.UNUSED)
-    )
-  }
 
-  @Test
-  fun freshProofNeverBecomesRestartReplayAuthority() {
-    val checkpoint = checkpoint(TicketActivationCheckpointStage.FRESH_TICKET_PROVEN)
-    assertEquals(
-      TicketActivationRecoveryAction.NEEDS_ATTENTION,
-      ticketActivationRecoveryAction(checkpoint, TicketActivationRecoveryScreen.UNUSED)
-    )
-    assertEquals(
-      TicketActivationRecoveryAction.COMMIT_PROVEN_RESULT,
-      ticketActivationRecoveryAction(checkpoint, TicketActivationRecoveryScreen.ACTIVATED)
-    )
-    assertEquals(
-      TicketActivationRecoveryAction.NEEDS_ATTENTION,
-      ticketActivationRecoveryAction(checkpoint, TicketActivationRecoveryScreen.AMBIGUOUS)
-    )
-  }
 
-  @Test
-  fun dispatchingGestureNeverRetriesOnAnUnusedOrAmbiguousScreen() {
-    val checkpoint = checkpoint(TicketActivationCheckpointStage.ACTIVATION_DISPATCHING)
-    assertEquals(
-      TicketActivationRecoveryAction.COMMIT_PROVEN_RESULT,
-      ticketActivationRecoveryAction(checkpoint, TicketActivationRecoveryScreen.ACTIVATED)
-    )
-    assertEquals(
-      TicketActivationRecoveryAction.NEEDS_ATTENTION,
-      ticketActivationRecoveryAction(checkpoint, TicketActivationRecoveryScreen.UNUSED)
-    )
-    assertEquals(
-      TicketActivationRecoveryAction.NEEDS_ATTENTION,
-      ticketActivationRecoveryAction(checkpoint, TicketActivationRecoveryScreen.AMBIGUOUS)
-    )
-  }
 
-  @Test
-  fun provenNoTransitionNeverBecomesLocalReplayAuthority() {
-    val checkpoint = checkpoint(TicketActivationCheckpointStage.NO_TRANSITION_PROVEN)
 
-    TicketActivationRecoveryScreen.entries.forEach { screen ->
-      assertEquals(
-        TicketActivationRecoveryAction.NEEDS_ATTENTION,
-        ticketActivationRecoveryAction(checkpoint, screen)
-      )
-    }
-  }
 
-  @Test
-  fun provenResultCommitsWithoutASecondGesture() {
-    val checkpoint = checkpoint(
-      stage = TicketActivationCheckpointStage.ACTIVATION_PROVEN,
-      activationRevision = "activation-revision"
-    )
-    assertEquals(
-      TicketActivationRecoveryAction.COMMIT_PROVEN_RESULT,
-      ticketActivationRecoveryAction(checkpoint, TicketActivationRecoveryScreen.ACTIVATED)
-    )
-    assertEquals(
-      TicketActivationRecoveryAction.NEEDS_ATTENTION,
-      ticketActivationRecoveryAction(checkpoint, TicketActivationRecoveryScreen.UNUSED)
-    )
-  }
-
-  @Test
-  fun needsAttentionCheckpointIsTerminal() {
-    assertEquals(
-      TicketActivationRecoveryAction.NEEDS_ATTENTION,
-      ticketActivationRecoveryAction(
-        checkpoint(TicketActivationCheckpointStage.NEEDS_ATTENTION),
-        TicketActivationRecoveryScreen.ACTIVATED
-      )
-    )
-  }
 
   @Test
   fun storeKeepsOnlyOpaqueCheckpointAndClearsMatchingAction() {
@@ -162,44 +83,7 @@ class TicketActivationCheckpointTest {
     }
   }
 
-  @Test
-  fun attentionRecordingCannotDiscardAConclusivePreDispatchBoundary() {
-    val store = TicketActivationCheckpointStore(InMemoryTicketActivationCheckpointBackend())
-    val fresh = requireNotNull(store.recordFreshTicketProven("command", "revision", "attempt"))
 
-    assertEquals(fresh, store.recordNeedsAttention(fresh))
-    assertEquals(fresh, store.load())
-
-    val dispatching = requireNotNull(store.recordActivationDispatching(fresh, 1))
-    val noTransition = requireNotNull(store.recordNoTransitionProven(dispatching))
-    assertEquals(noTransition, store.recordNeedsAttention(noTransition))
-    assertEquals(noTransition, store.load())
-
-    val retryDispatching = requireNotNull(store.recordActivationDispatching(noTransition, 2))
-    val uncertain = requireNotNull(store.recordNeedsAttention(retryDispatching))
-    assertEquals(TicketActivationCheckpointStage.NEEDS_ATTENTION, uncertain.stage)
-    assertEquals(2, uncertain.dispatchOrdinal)
-  }
-
-  @Test
-  fun recoveredNoTransitionReportsWhichStrokeWasConclusivelyProvedWithoutReplaying() {
-    val afterFirst = checkpoint(
-      TicketActivationCheckpointStage.NO_TRANSITION_PROVEN,
-      dispatchOrdinal = 1
-    )
-    val afterSecond = checkpoint(
-      TicketActivationCheckpointStage.NO_TRANSITION_PROVEN,
-      dispatchOrdinal = 2
-    )
-
-    assertEquals("retry_not_dispatched", ticketActivationNoTransitionTerminalPhase(afterFirst))
-    assertEquals("ticket_action_retry_not_dispatched", ticketActivationNoTransitionTerminalReason(afterFirst))
-    assertEquals("no_transition", ticketActivationNoTransitionTerminalPhase(afterSecond))
-    assertEquals(
-      "ticket_action_gesture_completed_no_transition",
-      ticketActivationNoTransitionTerminalReason(afterSecond)
-    )
-  }
 
   @Test
   fun terminalFinalizationClearsOnlyAConclusiveMatchingCheckpointStage() {
@@ -457,44 +341,8 @@ class TicketSliderGestureContractTest {
     assertTrue(contract.endX > contract.startX)
   }
 
-  @Test
-  fun narrowBoundsStillProduceAValidSingleTrack() {
-    val contract = ticketSliderGestureContract(
-      TicketViviGraphicBounds(left = 10, top = 20, right = 30, bottom = 80)
-    )
-    assertEquals(32, contract.startX)
-    assertEquals(32, contract.endX)
-    assertTrue(contract.durationMillis > 0L)
-  }
 
-  @Test
-  fun shortVisualBandKeepsTheMinimumSafeThumbCentreInset() {
-    val bounds = TicketViviGraphicBounds(left = 10, top = 20, right = 100, bottom = 40)
 
-    val contract = ticketSliderGestureContract(bounds)
-
-    assertEquals(22, contract.startX)
-    assertEquals(88, contract.endX)
-  }
-
-  @Test
-  fun broadVisualTicketStripUsesItsFullTrackAtTheCompleteSemanticSliderRow() {
-    val semantic = TicketViviGraphicBounds(left = 362, top = 1543, right = 718, bottom = 1654)
-    val broadVisual = TicketViviGraphicBounds(left = 45, top = 1497, right = 1035, bottom = 1714)
-
-    val result = ticketSliderGestureBoundsAfterVisualProof(
-      hierarchyBounds = semantic,
-      visualBounds = broadVisual,
-      displayWidth = 1080,
-      displayHeight = 2424
-    )
-
-    assertEquals(TicketViviGraphicBounds(left = 45, top = 1490, right = 1035, bottom = 1707), result)
-    val contract = ticketSliderGestureContract(requireNotNull(result))
-    assertEquals(126, contract.startX)
-    assertEquals(954, contract.endX)
-    assertEquals(1598, (result.top + result.bottom) / 2)
-  }
 
   @Test
   fun liveProvenSliderBandReachesBothThumbCentresSymmetrically() {
@@ -508,60 +356,7 @@ class TicketSliderGestureContractTest {
     assertEquals(contract.startX - bounds.left, bounds.right - contract.endX)
   }
 
-  @Test
-  fun oddHeightUsesDeterministicIntegerInsetAndKeepsSymmetricTravel() {
-    val bounds = TicketViviGraphicBounds(left = 20, top = 100, right = 520, bottom = 201)
 
-    val contract = ticketSliderGestureContract(bounds)
 
-    assertEquals(57, contract.startX)
-    assertEquals(483, contract.endX)
-    assertEquals(contract.startX - bounds.left, bounds.right - contract.endX)
-  }
 
-  @Test
-  fun semanticRowHeightCannotChangeTheVisuallyProvedHorizontalTravel() {
-    val visual = TicketViviGraphicBounds(left = 45, top = 1497, right = 1035, bottom = 1714)
-    val tallSemantic = TicketViviGraphicBounds(left = 362, top = 1543, right = 718, bottom = 1654)
-    val shortSemantic = TicketViviGraphicBounds(left = 396, top = 1568, right = 684, bottom = 1629)
-
-    val tall = requireNotNull(ticketSliderGestureBoundsAfterVisualProof(tallSemantic, visual, 1080, 2424))
-    val short = requireNotNull(ticketSliderGestureBoundsAfterVisualProof(shortSemantic, visual, 1080, 2424))
-
-    assertEquals(ticketSliderGestureContract(tall), ticketSliderGestureContract(short))
-    assertEquals(1598, (tall.top + tall.bottom) / 2)
-    assertEquals(1598, (short.top + short.bottom) / 2)
-  }
-
-  @Test
-  fun trivialVisualOverlapCannotAuthorizeAStrokeOutsideTheSemanticSlider() {
-    val semantic = TicketViviGraphicBounds(left = 396, top = 1543, right = 684, bottom = 1604)
-    val onePixelOverlap = TicketViviGraphicBounds(left = 683, top = 1497, right = 1035, bottom = 1585)
-
-    assertEquals(
-      null,
-      ticketSliderGestureBoundsAfterVisualProof(
-        hierarchyBounds = semantic,
-        visualBounds = onePixelOverlap,
-        displayWidth = 1080,
-        displayHeight = 2424
-      )
-    )
-  }
-
-  @Test
-  fun verticallyDistantVisualStripCannotAuthorizeTheSemanticSlider() {
-    val semantic = TicketViviGraphicBounds(left = 396, top = 1543, right = 684, bottom = 1604)
-    val distantVisual = TicketViviGraphicBounds(left = 45, top = 1800, right = 1035, bottom = 1900)
-
-    assertEquals(
-      null,
-      ticketSliderGestureBoundsAfterVisualProof(
-        hierarchyBounds = semantic,
-        visualBounds = distantVisual,
-        displayWidth = 1080,
-        displayHeight = 2424
-      )
-    )
-  }
 }

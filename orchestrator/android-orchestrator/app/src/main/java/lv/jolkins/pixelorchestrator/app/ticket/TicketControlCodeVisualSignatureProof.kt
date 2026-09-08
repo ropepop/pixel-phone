@@ -53,15 +53,6 @@ internal fun ticketControlCodeRestoredOriginalDetailMismatch(
   return ticketControlCodeFreshRawDetailMismatch(observation)
 }
 
-internal fun ticketControlCodeRestoredOriginalDetail(
-  observation: TicketVisualActionObservation?,
-  expectedAnchor: String,
-  expectedState: TicketVisualPhoneState
-): Boolean = ticketControlCodeRestoredOriginalDetailMismatch(
-  observation,
-  expectedAnchor,
-  expectedState
-) == null
 
 /**
  * Two distinct generated-specific frames must agree on both the close-badge geometry and the
@@ -109,16 +100,3 @@ internal class TicketGeneratedWithCloseProof(
     return consecutiveSamples >= requiredSamples
   }
 }
-
-/**
- * The durable pending bit survives a process restart, while the private visual result identity
- * intentionally does not. Without that volatile identity, generic cleanup must not inspect or
- * mutate the phone; a new request must establish fresh detail and result proof.
- */
-internal fun ticketControlCodeCleanupRequiresVisualReopen(
-  cleanupRequired: Boolean,
-  resultMode: TicketControlCodeVisualResultMode,
-  rawDetailAnchor: String
-): Boolean = cleanupRequired &&
-  resultMode == TicketControlCodeVisualResultMode.NONE &&
-  !ticketControlCodeDetailAnchorIsValid(rawDetailAnchor)

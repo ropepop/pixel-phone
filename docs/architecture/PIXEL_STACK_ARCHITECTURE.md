@@ -179,6 +179,10 @@ These boundaries are architectural constraints:
 
 ## Architecture Update Notes
 
+- 2026-09-08: The unused AdGuard Home and Pi-hole chroots, dedicated obsolete configuration, and five old DNS entrypoints were retired after live process/mount/listener/manifest checks and verification of a restricted recovery archive outside the phone. Approximately 3.6 GiB was reclaimed. Active platform artifacts and application rollback releases remain. Normal bootstrap already excludes DNS and must not repopulate these retired installations.
+
+- 2026-09-08: Portrait supervision and Ticket startup use the existing bounded verify/repair/verify transaction. Correct orientation is read without rewriting its settings; the ten-second supervision cadence and live WindowManager proof remain unchanged. General health checks omit disabled workload probes and translate the management report in one pass, preserving the existing fields and missing-report failure defaults. The obsolete `--superuser-only` cleanup alias and GitHub-release artifact tombstone are removed; current callers use `--frequent` and local artifact packaging. Bootstrap no longer falls back to copying a retired Pi-hole installation when an artifact fails.
+
 Future agents should append short notes here only when a change affects the whole-stack architecture but does not yet fit a stable section above. Promote recurring notes into the main sections during cleanup.
 
 - 2026-08-29: Frequent maintenance now replaces the root-history-only hourly loop. It synchronizes its owned asset, runs immediately and hourly with one lock-deferral retry, covers 24-hour action receipts and bounded allowlisted logs, and stores one path-free latest result. Root-history byte accounting is safe above 2 GiB. Ticket wrapper deploys no longer append unrelated global health, supervisor command telemetry is terminal and monotonic, and scheduled automation wake bookkeeping is not labeled as a measured manual action.

@@ -12,24 +12,12 @@ public final class TicketCaptureCadenceScheduler {
   public static final long WAIT_UNTIL_SIGNAL_MILLIS = -1L;
 
   private long nextDeadlineMillis;
-  private long deadlineMisses;
-  private long skippedTicks;
-  private long lastLatenessMillis;
-  private long lastSkippedTicks;
   private boolean ordinaryCaptureDemandGated;
   private boolean ordinaryCaptureOpportunityPending;
   private long ordinaryCaptureOpportunityValidUntilMillis;
 
   public TicketCaptureCadenceScheduler(long nowMillis) {
     nextDeadlineMillis = nowMillis;
-  }
-
-  public synchronized long intervalMillis() {
-    return INTERVAL_MILLIS;
-  }
-
-  public synchronized long waitMillis(long nowMillis) {
-    return waitMillis(nowMillis, false);
   }
 
   /**
@@ -71,20 +59,11 @@ public final class TicketCaptureCadenceScheduler {
     return newlyPending;
   }
 
-  public synchronized boolean ordinaryCaptureDemandGated() {
-    return ordinaryCaptureDemandGated;
-  }
-
   /** Warm helpers begin parked; an absent viewer must not trigger continuous encoding. */
   public synchronized void parkOrdinaryCapture() {
     ordinaryCaptureDemandGated = true;
     ordinaryCaptureOpportunityPending = false;
     ordinaryCaptureOpportunityValidUntilMillis = 0L;
-  }
-
-  public synchronized boolean ordinaryCaptureOpportunityPending(long nowMillis) {
-    expireOrdinaryCaptureOpportunity(nowMillis);
-    return ordinaryCaptureOpportunityPending;
   }
 
   /**
@@ -107,18 +86,13 @@ public final class TicketCaptureCadenceScheduler {
    * Internal encoder priming does not become part of the externally visible cadence.
    */
   public synchronized void restartPeriodFrom(long presentedAtMillis) {
-    nextDeadlineMillis = Math.max(nextDeadlineMillis, presentedAtMillis + intervalMillis());
+    nextDeadlineMillis = Math.max(nextDeadlineMillis, presentedAtMillis + INTERVAL_MILLIS);
   }
 
   /**
    * Advances the schedule and grants one capture at or after the current deadline.
-   * The returned decision is never a request for more than one capture.
    */
-  public synchronized CaptureDecision beginCapture(long nowMillis) {
-    return beginCapture(nowMillis, false);
-  }
-
-  public synchronized CaptureDecision beginCapture(long nowMillis, boolean proofBypass) {
+  public synchronized void beginCapture(long nowMillis, boolean proofBypass) {
     expireOrdinaryCaptureOpportunity(nowMillis);
     if (
       ordinaryCaptureDemandGated &&
@@ -136,22 +110,7 @@ public final class TicketCaptureCadenceScheduler {
       ordinaryCaptureOpportunityPending = false;
       ordinaryCaptureOpportunityValidUntilMillis = 0L;
     }
-    long lateness = Math.max(0L, nowMillis - nextDeadlineMillis);
-    long expiredTicks = lateness == 0L
-      ? 0L
-      : (lateness + intervalMillis() - 1L) / intervalMillis();
-    if (lateness > 0L) {
-      deadlineMisses += 1L;
-    }
-    skippedTicks += expiredTicks;
-    lastLatenessMillis = lateness;
-    lastSkippedTicks = expiredTicks;
-    nextDeadlineMillis = nowMillis + intervalMillis();
-    return new CaptureDecision(
-      lateness,
-      expiredTicks,
-      ordinaryDemandOpportunityConsumed
-    );
+    nextDeadlineMillis = nowMillis + INTERVAL_MILLIS;
   }
 
   private void expireOrdinaryCaptureOpportunity(long nowMillis) {
@@ -164,35 +123,4 @@ public final class TicketCaptureCadenceScheduler {
     }
   }
 
-  public synchronized long deadlineMisses() {
-    return deadlineMisses;
-  }
-
-  public synchronized long skippedTicks() {
-    return skippedTicks;
-  }
-
-  public synchronized long lastLatenessMillis() {
-    return lastLatenessMillis;
-  }
-
-  public synchronized long lastSkippedTicks() {
-    return lastSkippedTicks;
-  }
-
-  public static final class CaptureDecision {
-    public final long latenessMillis;
-    public final long skippedTicks;
-    public final boolean ordinaryDemandOpportunityConsumed;
-
-    CaptureDecision(
-      long latenessMillis,
-      long skippedTicks,
-      boolean ordinaryDemandOpportunityConsumed
-    ) {
-      this.latenessMillis = latenessMillis;
-      this.skippedTicks = skippedTicks;
-      this.ordinaryDemandOpportunityConsumed = ordinaryDemandOpportunityConsumed;
-    }
-  }
 }

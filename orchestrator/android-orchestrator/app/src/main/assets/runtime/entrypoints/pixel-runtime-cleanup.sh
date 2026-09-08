@@ -108,11 +108,6 @@ while [ "$#" -gt 0 ]; do
       RETIRED_DNS=1
       shift
       ;;
-    --superuser-only)
-      # One-release compatibility alias for the former root-history-only lane.
-      FREQUENT_MAINTENANCE=1
-      shift
-      ;;
     --frequent)
       FREQUENT_MAINTENANCE=1
       shift

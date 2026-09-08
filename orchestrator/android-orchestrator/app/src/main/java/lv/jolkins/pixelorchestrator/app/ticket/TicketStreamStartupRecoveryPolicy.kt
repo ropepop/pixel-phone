@@ -19,9 +19,12 @@ internal object TicketStreamStartupRecoveryPolicy {
     frameAgeMillis: Long?,
     encoderStartAgeMillis: Long?,
     liveFrameMaxAgeMillis: Long,
-    startupWaitMillis: Long
+    startupWaitMillis: Long,
+    captureFrameExpectedAgoMillis: Long? = null
   ): Boolean {
     if (encoderActive && ordinaryCaptureDemandGated && !captureFrameExpected) return true
+    if (encoderActive && ordinaryCaptureDemandGated && captureFrameExpectedAgoMillis != null &&
+      captureFrameExpectedAgoMillis < startupWaitMillis) return true
     if (firstUsefulFramePending) return true
     if (!encoderActive && encoderState != "starting" && encoderState != "restarting") return false
     if (frameAgeMillis != null && frameAgeMillis <= liveFrameMaxAgeMillis) return true

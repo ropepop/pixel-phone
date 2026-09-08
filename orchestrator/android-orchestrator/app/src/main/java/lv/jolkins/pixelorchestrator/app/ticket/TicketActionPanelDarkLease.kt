@@ -39,12 +39,9 @@ internal data class TicketActionPanelDarkLeaseSnapshot(
   val mutationMayHaveDispatched: Boolean = false,
   val launchExitCode: Int? = null,
   val launchDurationMillis: Long? = null,
-  val acquisitionVerificationMillis: Long? = null,
   val lastVerifierClassification: String = "not_run",
   val lastVerifierExitCode: Int? = null,
   val lastVerifierDurationMillis: Long? = null,
-  val helperStage: String = "not_observed",
-  val helperExitCode: Int? = null,
   val protectionMode: String = "dark"
 )
 
@@ -59,32 +56,6 @@ internal fun ticketControlCodeCleanupMayCommitAfterPanelFinalization(
   phoneSurfaceCleaned: Boolean,
   finalization: TicketActionPanelDarkLeaseFinalization?
 ): Boolean = phoneSurfaceCleaned && finalization?.safe == true
-
-internal fun ticketScheduledControlCleanupFailureReason(
-  leaseAcquired: Boolean,
-  finalizationSafe: Boolean?,
-  mutationMayHaveDispatched: Boolean
-): String = when {
-  mutationMayHaveDispatched -> "control_code_cleanup_attention_needed"
-  !leaseAcquired || finalizationSafe != true -> "control_code_panel_dark_unavailable"
-  else -> "control_code_cleanup_checkpoint_clear_unproved"
-}
-
-internal fun ticketVisualSuccessProofCurrentAfterPanelFinalization(
-  proofActionId: String,
-  expectedActionId: String,
-  proofGeneration: Long,
-  currentGeneration: Long,
-  proofStreamEpoch: Long,
-  proofFrameSequence: Long,
-  currentStreamEpoch: Long,
-  currentFrameSequence: Long,
-  latestKeyFrameEpoch: Long,
-  latestKeyFrameSequence: Long
-): Boolean = proofActionId.isNotBlank() && proofActionId == expectedActionId &&
-  proofGeneration == currentGeneration && proofStreamEpoch > 0L && proofFrameSequence > 0L &&
-  currentStreamEpoch == proofStreamEpoch && currentFrameSequence >= proofFrameSequence &&
-  latestKeyFrameEpoch == proofStreamEpoch && latestKeyFrameSequence >= proofFrameSequence
 
 private enum class TicketPanelDarkVerification {
   PROVEN,
@@ -109,9 +80,9 @@ private enum class TicketPanelDarkLaunchState {
 
 /**
  * Holds the physical backlight at zero for one Ticket action. TouchBrightnessRuntime remains the
- * physical-input authority: a trusted visibility grant reveals the same action after exact helper
- * shutdown. New mutations wait for finger-up; an already-dispatched mutation is never replayed.
- * Without configured continuation authority or a live grant, physical touch remains fail-closed.
+ * physical-input authority. An existing visibility grant permits visible work; a new physical
+ * touch cancels pending work and stops the exact helper before brightness can be restored.
+ * An already-dispatched mutation is never replayed.
  */
 internal class TicketActionPanelDarkLease(
   private val actionId: String,
@@ -124,7 +95,6 @@ internal class TicketActionPanelDarkLease(
   private val uptimeClock: () -> Long = SystemClock::uptimeMillis,
   private val helperToken: String = "ticket-panel-${UUID.randomUUID()}",
   private val physicalVisibleWindow: () -> TicketPhysicalVisibleWindow = { TicketPhysicalVisibleWindow() },
-  private val physicalTouchContinuationEnabled: Boolean = false,
   private val onDarkWriterStarting: () -> Unit = {},
   private val onDarkWriterStopped: () -> Unit = {}
 ) {
@@ -144,8 +114,6 @@ internal class TicketActionPanelDarkLease(
   @Volatile private var lastMutationMayHaveDispatchedAtUptimeMillis: Long? = null
   @Volatile private var acquiredTouchBeginCount: Long? = null
   @Volatile private var acquiredVisibleWindowGeneration: Long? = null
-  @Volatile private var visibleTransitionJob: Job? = null
-  @Volatile private var continuingPhysicalTouch = false
   @Volatile private var darkTransitionJob: Job? = null
   @Volatile private var darkTransitionStartedAtUptimeMillis = 0L
   @Volatile private var state = TicketActionPanelDarkLeaseSnapshot(ownerActionId = actionId)
@@ -176,9 +144,9 @@ internal class TicketActionPanelDarkLease(
 
     acquiredTouchBeginCount = touch.touchBeginCount
     val visibleWindow = physicalVisibleWindow()
+    acquiredVisibleWindowGeneration = visibleWindow.generation
     startTouchMonitor()
     if (visibleWindow.deadlineUptimeMillis > uptimeClock()) {
-      acquiredVisibleWindowGeneration = visibleWindow.generation
       updateState {
         if (it.physicalTouchPreempted || it.failure.isNotBlank()) it else it.copy(active = true, acquiredAtUptimeMillis = uptimeClock(),
           releaseReason = "active", protectionMode = "visible_window")
@@ -186,7 +154,7 @@ internal class TicketActionPanelDarkLease(
       return beforeMutationAllowed()
     }
     val acquired = acquireDarkHelper()
-    return if (snapshot().protectionMode in setOf("revealing", "visible_window")) beforeMutationAllowed() else acquired
+    return if (snapshot().protectionMode == "visible_window") beforeMutationAllowed() else acquired
   }
 
   /** Reacquire darkness for the same lease after visibility expires or is revoked. */
@@ -196,18 +164,17 @@ internal class TicketActionPanelDarkLease(
     ) return false
     val launchJob = synchronized(stateLock) {
       if (released.get() || state.physicalTouchPreempted || state.failure.isNotBlank()) return false
-      if (state.protectionMode == "revealing") return false
       helperStopProven = false
       helperLaunchState = TicketPanelDarkLaunchState.PENDING
       emergencyHelperStopScheduled.set(false)
       onDarkWriterStarting()
       val grantAfterRegistration = physicalVisibleWindow()
       if (grantAfterRegistration.deadlineUptimeMillis > uptimeClock()) {
-        acquiredVisibleWindowGeneration = grantAfterRegistration.generation
         helperStopProven = true
+        onDarkWriterStopped()
+        if (!physicalTouchClearAtMutationBoundary()) return false
         state = state.copy(active = true, protectionMode = "visible_window",
           acquiredAtUptimeMillis = state.acquiredAtUptimeMillis.takeIf { it > 0L } ?: uptimeClock())
-        onDarkWriterStopped()
         return@synchronized null
       }
       scope.launch(start = CoroutineStart.LAZY) {
@@ -270,7 +237,6 @@ internal class TicketActionPanelDarkLease(
         if (snapshot().physicalTouchPreempted) preemptForPhysicalTouch("physical_touch_during_acquire")
         return false
       }
-      if (snapshot().protectionMode in setOf("revealing", "visible_window")) return false
       if (helperLaunchState == TicketPanelDarkLaunchState.FAILED) break
       // The short root launcher and the exact detached-helper verifier are both authorities at
       // acquisition. Never let a pre-existing zero panel or a stale readiness record authorize an
@@ -292,7 +258,6 @@ internal class TicketActionPanelDarkLease(
         if (snapshot().physicalTouchPreempted) preemptForPhysicalTouch("physical_touch_during_acquire")
         return false
       }
-      if (snapshot().protectionMode in setOf("revealing", "visible_window")) return false
       if (uptimeClock() >= readyDeadline) {
         lastVerification = if (verification == TicketPanelDarkVerification.PROVEN) {
           TicketPanelDarkVerification.VERIFIER_UNAVAILABLE
@@ -303,7 +268,7 @@ internal class TicketActionPanelDarkLease(
       if (verification == TicketPanelDarkVerification.PROVEN) {
         val now = uptimeClock()
         updateState {
-          if (released.get() || it.protectionMode in setOf("revealing", "visible_window") || it.physicalTouchPreempted || it.failure.isNotBlank()) it else it.copy(
+          if (released.get() || it.physicalTouchPreempted || it.failure.isNotBlank()) it else it.copy(
             active = true,
             acquiredAtUptimeMillis = it.acquiredAtUptimeMillis.takeIf { age -> age > 0L } ?: now,
             lastZeroConfirmedAtUptimeMillis = now,
@@ -312,7 +277,6 @@ internal class TicketActionPanelDarkLease(
             protectionMode = "dark"
           )
         }
-        if (snapshot().protectionMode in setOf("revealing", "visible_window")) return false
         if (!snapshot().active) {
           stopHelperAndJoinBounded()
           return false
@@ -341,38 +305,6 @@ internal class TicketActionPanelDarkLease(
     return false
   }
 
-  /** Revealing changes protection for this lease; it never creates or repeats an action. */
-  private fun ensureVisibleTransitionStarted(window: TicketPhysicalVisibleWindow): Job? {
-    val job = synchronized(stateLock) {
-      if (released.get() || state.failure.isNotBlank() || state.physicalTouchPreempted) return@synchronized null
-      acquiredVisibleWindowGeneration = window.generation
-      if (state.protectionMode == "visible_window") return@synchronized null
-      if (state.protectionMode == "revealing") return@synchronized visibleTransitionJob
-      state = state.copy(active = true, protectionMode = "revealing",
-        acquiredAtUptimeMillis = state.acquiredAtUptimeMillis.takeIf { it > 0L } ?: uptimeClock())
-      // Cancel synchronously before the physical runtime is allowed to restore brightness.
-      verifyJob?.cancel()
-      darkTransitionJob?.cancel()
-      acquisitionVerificationJob?.cancel()
-      scope.launch(start = CoroutineStart.LAZY) {
-        darkTransitionJob?.cancelAndJoin()
-        verifyJob?.cancelAndJoin()
-        acquisitionVerificationJob?.cancelAndJoin()
-        val stopped = stopHelperAndJoinBounded()
-        synchronized(stateLock) {
-          if (stopped && !released.get() && state.failure.isBlank()) {
-            helperLaunchJob = null
-            state = state.copy(protectionMode = "visible_window", lastZeroConfirmedAtUptimeMillis = 0L)
-          }
-        }
-        onSnapshotChanged(snapshot())
-      }.also { visibleTransitionJob = it }
-    }
-    onSnapshotChanged(snapshot())
-    job?.start()
-    return job
-  }
-
   private fun visibleWindowStillValid(): Boolean {
     val visibleWindow = physicalVisibleWindow()
     return visibleWindow.generation == acquiredVisibleWindowGeneration &&
@@ -395,7 +327,7 @@ internal class TicketActionPanelDarkLease(
         var acquired = false
         try {
           acquired = withTimeoutOrNull(PANEL_DARK_ACQUIRE_TIMEOUT_MILLIS) { acquireDarkHelper() } == true
-          if (!acquired && !released.get() && snapshot().protectionMode != "revealing" && snapshot().failure.isBlank() && !snapshot().physicalTouchPreempted) {
+          if (!acquired && !released.get() && snapshot().failure.isBlank() && !snapshot().physicalTouchPreempted) {
             failDarkTransition()
           }
         } finally {
@@ -436,7 +368,7 @@ internal class TicketActionPanelDarkLease(
     } catch (cancelled: CancellationException) {
       currentCoroutineContext().ensureActive()
       val current = snapshot()
-      if (current.protectionMode == "revealing" || current.physicalTouchPreempted || current.failure.isNotBlank()) null else throw cancelled
+      if (current.physicalTouchPreempted || current.failure.isNotBlank()) null else throw cancelled
     } finally {
       if (acquisitionVerificationJob === pending) acquisitionVerificationJob = null
     }
@@ -462,32 +394,12 @@ internal class TicketActionPanelDarkLease(
       // monitor. This closes the scheduler window between a real finger-down event and the monitor
       // coroutine's next turn.
       if (!physicalTouchClearAtMutationBoundary()) return false
-      val lifted = withTimeoutOrNull(PHYSICAL_TOUCH_RELEASE_TIMEOUT_MILLIS) {
-        while (physicalTouchState().active) {
-          if (!physicalTouchClearAtMutationBoundary()) return@withTimeoutOrNull false
-          delay(PHYSICAL_TOUCH_POLL_MILLIS)
-        }
-        physicalTouchClearAtMutationBoundary()
-      } == true
-      if (!lifted) {
-        if (snapshot().failure.isBlank()) {
-          updateState { it.copy(active = false, failure = "physical_touch_release_timeout", releaseReason = "physical_touch_release_timeout") }
-          verifyJob?.cancel()
-          darkTransitionJob?.cancel()
-          visibleTransitionJob?.cancelAndJoin()
-          stopHelperAndJoinBounded()
-        }
-        return false
-      }
-      visibleTransitionJob?.join()
-      if (!physicalTouchClearAtMutationBoundary()) return false
-      if (physicalTouchState().active || snapshot().protectionMode == "revealing") continue
       if (snapshot().protectionMode == "visible_window" && visibleWindowStillValid()) {
         return snapshot().let { it.active && !it.physicalTouchPreempted && it.failure.isBlank() }
       }
       ensureDarkTransitionStarted()?.join()
       if (!physicalTouchClearAtMutationBoundary()) return false
-      if (snapshot().protectionMode in setOf("revealing", "visible_window") || physicalTouchState().active) continue
+      if (snapshot().protectionMode == "visible_window") continue
       if (snapshot().protectionMode != "dark") return false
       val current = snapshot()
       val zeroProofAge = if (current.lastZeroConfirmedAtUptimeMillis > 0L) {
@@ -558,20 +470,10 @@ internal class TicketActionPanelDarkLease(
       requestEmergencyHelperStop()
       return false
     }
-    if (physicalTouchOccurred(currentTouch)) {
-      val window = physicalVisibleWindow()
-      if (window.deadlineUptimeMillis > uptimeClock()) {
-        acquiredTouchBeginCount = currentTouch.touchBeginCount
-        continuingPhysicalTouch = currentTouch.active
-        ensureVisibleTransitionStarted(window)
-        return true
-      }
-      if (physicalTouchContinuationEnabled) {
-        acquiredTouchBeginCount = currentTouch.touchBeginCount
-        continuingPhysicalTouch = currentTouch.active
-        return true
-      }
-      if (continuingPhysicalTouch && acquiredTouchBeginCount == currentTouch.touchBeginCount) return true
+    val window = physicalVisibleWindow()
+    if (physicalTouchOccurred(currentTouch) ||
+      (window.deadlineUptimeMillis > uptimeClock() && window.generation != acquiredVisibleWindowGeneration)
+    ) {
       updateState {
         it.copy(
           active = false,
@@ -583,11 +485,6 @@ internal class TicketActionPanelDarkLease(
       darkTransitionJob?.cancel()
       requestEmergencyHelperStop()
       return false
-    }
-    continuingPhysicalTouch = false
-    if (snapshot().protectionMode in setOf("visible_window", "revealing")) {
-      val window = physicalVisibleWindow()
-      if (window.deadlineUptimeMillis > uptimeClock()) ensureVisibleTransitionStarted(window)
     }
     return true
   }
@@ -722,18 +619,8 @@ internal class TicketActionPanelDarkLease(
         return visibleFinalization
       }
       val freshDarkProven = requireSuccessProof && awaitFinalConvergenceTail()
-      val revealedFinalization = if (requireSuccessProof) {
-        visibleTransitionJob?.join()
-        commitVisibleFinalization(reason)
-      } else null
-      if (revealedFinalization != null) {
-        touchMonitorJob?.cancelAndJoin()
-        onSnapshotChanged(revealedFinalization.snapshot)
-        return revealedFinalization
-      }
       synchronized(stateLock) { released.compareAndSet(false, true) }
       withContext(NonCancellable) {
-        visibleTransitionJob?.cancelAndJoin()
         darkTransitionJob?.cancelAndJoin()
         // Freeze periodic verification, then require the complete helper-identity/raw-zero gate
         // while the helper and its root-only identity files still exist. Exact shutdown removes
@@ -744,24 +631,10 @@ internal class TicketActionPanelDarkLease(
         verifyJob?.cancelAndJoin()
         val preStopBoundaryClear = if (freshDarkProven) beforeMutationAllowed() else false
         val exactHelperStopProven = stopHelperAndJoinBounded()
-        val postStopTouchClear = if (freshDarkProven && preStopBoundaryClear) {
-          withTimeoutOrNull(PHYSICAL_TOUCH_RELEASE_TIMEOUT_MILLIS) {
-            while (true) {
-              if (!physicalTouchClearAtMutationBoundary()) return@withTimeoutOrNull false
-              if (!physicalTouchState().active) return@withTimeoutOrNull true
-              delay(PHYSICAL_TOUCH_POLL_MILLIS)
-            }
-            @Suppress("UNREACHABLE_CODE") false
-          } == true
-        } else {
-          false
-        }
+        val postStopTouchClear = freshDarkProven && preStopBoundaryClear && physicalTouchClearAtMutationBoundary()
         touchMonitorJob?.cancelAndJoin()
-        val visibleAfterStop = exactHelperStopProven && postStopTouchClear &&
-          physicalVisibleWindow().deadlineUptimeMillis > uptimeClock()
         updateState {
           it.copy(
-            protectionMode = if (visibleAfterStop) "visible_window" else it.protectionMode,
             active = false,
             releaseReason = if (it.physicalTouchPreempted || it.failure.isNotBlank()) {
               it.releaseReason
@@ -776,7 +649,7 @@ internal class TicketActionPanelDarkLease(
             postStopTouchClear &&
             !finalSnapshot.active && !finalSnapshot.physicalTouchPreempted &&
             finalSnapshot.failure.isBlank(),
-          freshDarkProven = freshDarkProven && !visibleAfterStop,
+          freshDarkProven = freshDarkProven,
           exactHelperStopProven = exactHelperStopProven,
           snapshot = finalSnapshot
         ).also { finalization = it }
@@ -995,12 +868,6 @@ internal class TicketActionPanelDarkLease(
         TicketPanelDarkVerification.PANEL_NOT_DARK
       else -> TicketPanelDarkVerification.VERIFIER_UNAVAILABLE
     }
-    val helperStage = outputLines.mapNotNull { line ->
-      line.takeIf { it.startsWith("helper_stage=") }?.substringAfter('=')
-    }.singleOrNull()?.takeIf { it in HELPER_HEALTH_STAGES }
-    val helperExitCode = outputLines.mapNotNull { line ->
-      line.takeIf { it.startsWith("helper_exit_code=") }?.substringAfter('=')
-    }.singleOrNull()?.toIntOrNull()?.takeIf { it in 0..255 }
     updateState {
       it.copy(
         lastZeroConfirmedAtUptimeMillis = if (
@@ -1013,11 +880,7 @@ internal class TicketActionPanelDarkLease(
         lastVerifierClassification = verification.healthToken,
         lastVerifierExitCode = result.exitCode,
         lastVerifierDurationMillis = result.durationMs.coerceAtLeast(0L),
-        acquisitionVerificationMillis = if (requiredConfirmations > 1) {
-          (it.acquisitionVerificationMillis ?: 0L) + result.durationMs.coerceAtLeast(0L)
-        } else it.acquisitionVerificationMillis,
-        helperStage = helperStage ?: it.helperStage,
-        helperExitCode = helperExitCode ?: it.helperExitCode
+
       )
     }
     return verification
@@ -1033,7 +896,6 @@ internal class TicketActionPanelDarkLease(
   companion object {
     internal const val PANEL_DARK_WRITE_INTERVAL_MILLIS = 5L
     internal const val PANEL_DARK_FINAL_CONVERGENCE_MILLIS = 2_500L
-    internal const val PHYSICAL_TOUCH_RELEASE_TIMEOUT_MILLIS = 10_000L
     internal const val PHYSICAL_TOUCH_POLL_MILLIS = 20L
     internal const val PANEL_DARK_VERIFY_INTERVAL_MILLIS = 250L
     internal const val PANEL_DARK_ACQUIRE_TIMEOUT_MILLIS = 3_000L
@@ -1061,18 +923,6 @@ internal class TicketActionPanelDarkLease(
     internal const val HELPER_PROCESS_MARKER = "pixel_ticket_action_panel_dark"
     internal const val HELPER_READINESS_DIRECTORY =
       "/data/local/pixel-stack/run/ticket-action-panel-dark"
-    internal val HELPER_HEALTH_STAGES = setOf(
-      "not_observed",
-      "unknown",
-      "invalid",
-      "launch_prepared",
-      "child_started",
-      "identity_ready",
-      "panel_ready",
-      "zero_written",
-      "ready"
-    )
-
     internal val EXACT_HELPER_CMDLINE_MATCH_FUNCTION = """
       exact_helper_cmdline_args_match() {
         cmdline_file="${'$'}1"
@@ -1095,189 +945,7 @@ internal class TicketActionPanelDarkLease(
       }
     """.trimIndent()
 
-    internal fun panelDarkLaunchScript(ownerProcessId: Int, helperToken: String): String {
-      require(helperToken.matches(Regex("[A-Za-z0-9._-]+"))) { "unsafe helper token" }
-      return """
-      owner_pid=${ownerProcessId.coerceAtLeast(1)}
-      helper_token='$helperToken'
-      readiness_dir='$HELPER_READINESS_DIRECTORY'
-      readiness_file="${'$'}readiness_dir/${'$'}helper_token.ready"
-      launch_file="${'$'}readiness_dir/${'$'}helper_token.launch"
-      stage_file="${'$'}readiness_dir/${'$'}helper_token.stage"
-      exit_file="${'$'}readiness_dir/${'$'}helper_token.exit"
-      wait_file="${'$'}readiness_dir/${'$'}helper_token.wait"
-      command -v nohup >/dev/null 2>&1 || exit 79
-      command -v mkfifo >/dev/null 2>&1 || exit 79
-      mkdir -p "${'$'}readiness_dir" 2>/dev/null || exit 78
-      chmod 700 "${'$'}readiness_dir" 2>/dev/null || exit 78
-      [ ! -e "${'$'}readiness_file" ] || exit 78
-      [ ! -e "${'$'}launch_file" ] || exit 78
-      [ ! -e "${'$'}stage_file" ] || exit 78
-      [ ! -e "${'$'}exit_file" ] || exit 78
-      [ ! -e "${'$'}wait_file" ] || exit 78
-      owner_start="${'$'}(
-        line=""
-        IFS= read -r line < "/proc/${'$'}owner_pid/stat" 2>/dev/null || exit 77
-        rest="${'$'}{line#*) }"
-        set -- ${'$'}rest
-        shift 19
-        printf '%s' "${'$'}{1:-}"
-      )"
-      [ -n "${'$'}owner_start" ] || exit 77
-      umask 077
-      printf "owner_pid=%s\nowner_start=%s\n" "${'$'}owner_pid" "${'$'}owner_start" \
-        > "${'$'}launch_file" 2>/dev/null || exit 78
-      printf '%s\n' launch_prepared > "${'$'}stage_file" 2>/dev/null || exit 78
-      mkfifo "${'$'}wait_file" 2>/dev/null || exit 78
-      [ -p "${'$'}wait_file" ] || exit 78
-      # This child program is one single-quoted sh argument. Keep its body free of single quotes;
-      # the generated-script test parses both layers and enforces that delimiter invariant.
-      nohup sh -c '
-        owner_pid="${'$'}1"
-        owner_start="${'$'}2"
-        helper_token="${'$'}3"
-        readiness_dir="${'$'}4"
-        readiness_file="${'$'}readiness_dir/${'$'}helper_token.ready"
-        launch_file="${'$'}readiness_dir/${'$'}helper_token.launch"
-        stage_file="${'$'}readiness_dir/${'$'}helper_token.stage"
-        exit_file="${'$'}readiness_dir/${'$'}helper_token.exit"
-        wait_file="${'$'}readiness_dir/${'$'}helper_token.wait"
-        helper_pid="${'$'}${'$'}"
-        umask 077
-        cleanup_helper_runtime() {
-          rm -f "${'$'}readiness_file" "${'$'}wait_file" 2>/dev/null || true
-        }
-        write_stage() {
-          case "${'$'}1" in
-            child_started|identity_ready|panel_ready|zero_written|ready) ;;
-            *) exit 78 ;;
-          esac
-          printf "%s\n" "${'$'}1" > "${'$'}stage_file" 2>/dev/null || exit 78
-        }
-        record_helper_exit() {
-          helper_exit_code="${'$'}?"
-          case "${'$'}helper_exit_code" in ""|*[!0-9]*) helper_exit_code=255 ;; esac
-          printf "%s\n" "${'$'}helper_exit_code" > "${'$'}exit_file" 2>/dev/null || true
-          cleanup_helper_runtime
-        }
-        # Install lifecycle recording before the first child-side operation. A force kill can
-        # intentionally leave the exit file absent; the last allowlisted stage still identifies
-        # how far the child reached without publishing commands, paths, or ticket content.
-        trap "" HUP
-        trap "cleanup_helper_runtime; exit 0" INT TERM
-        trap record_helper_exit EXIT
-        write_stage child_started
-        [ -p "${'$'}wait_file" ] || exit 78
-        exec 9<> "${'$'}wait_file" || exit 78
-        helper_start="${'$'}(
-          line=""
-          IFS= read -r line < "/proc/${'$'}helper_pid/stat" 2>/dev/null || exit 77
-          rest="${'$'}{line#*) }"
-          set -- ${'$'}rest
-          shift 19
-          printf "%s" "${'$'}{1:-}"
-        )"
-        [ -n "${'$'}helper_start" ] || exit 77
-        write_stage identity_ready
-        # nohup initially ignores HUP, so retain that disposition after the inner shell starts.
-        # Re-enabling HUP here would unnecessarily couple the helper to transport signals.
-        read_uptime_seconds() {
-          IFS=" " read -r uptime_value uptime_rest < /proc/uptime || return 1
-          uptime_seconds="${'$'}{uptime_value%%.*}"
-          case "${'$'}uptime_seconds" in ""|*[!0-9]*) return 1 ;; esac
-          printf "%s" "${'$'}uptime_seconds"
-        }
-        panel=""
-        for candidate in /sys/class/backlight/panel0-backlight /sys/class/backlight/*; do
-          if [ -f "${'$'}candidate/brightness" ]; then panel="${'$'}candidate"; break; fi
-        done
-        [ -n "${'$'}panel" ] || exit 75
-        write_stage panel_ready
-        readiness_published=0
-        helper_started_uptime="${'$'}(read_uptime_seconds)" || exit 77
-        helper_deadline_uptime=${'$'}((helper_started_uptime + ${PANEL_DARK_MAX_HOLD_MILLIS / 1_000L}))
-        while true; do
-          [ -f "${'$'}launch_file" ] || exit 0
-          helper_current_uptime="${'$'}(read_uptime_seconds)" || exit 77
-          [ "${'$'}helper_current_uptime" -lt "${'$'}helper_deadline_uptime" ] || exit 0
-          line=""
-          IFS= read -r line < "/proc/${'$'}owner_pid/stat" 2>/dev/null || exit 0
-          rest="${'$'}{line#*) }"
-          set -- ${'$'}rest
-          shift 19
-          [ "${'$'}{1:-}" = "${'$'}owner_start" ] || exit 0
-          panel_power=""
-          IFS= read -r panel_power < "${'$'}panel/bl_power" 2>/dev/null || panel_power=""
-          if [ "${'$'}readiness_published" != "1" ] || [ "${'$'}panel_power" != "4" ]; then
-            echo 0 > "${'$'}panel/brightness" 2>/dev/null || exit 76
-          fi
-          if [ "${'$'}readiness_published" != "1" ]; then
-            write_stage zero_written
-            printf "helper_pid=%s\nhelper_start=%s\nowner_pid=%s\nowner_start=%s\n" \
-              "${'$'}helper_pid" "${'$'}helper_start" "${'$'}owner_pid" "${'$'}owner_start" \
-              > "${'$'}readiness_file" 2>/dev/null || exit 78
-            write_stage ready
-            readiness_published=1
-          fi
-          helper_wait_tick=""
-          IFS= read -r -t${PANEL_DARK_WRITE_INTERVAL_MILLIS.toDouble() / 1_000.0} -u9 helper_wait_tick || true
-        done
-      ' $HELPER_PROCESS_MARKER "${'$'}owner_pid" "${'$'}owner_start" \
-        "${'$'}helper_token" "${'$'}readiness_dir" </dev/null >/dev/null 2>&1 &
-      helper_launcher_pid=${'$'}!
-      case "${'$'}helper_launcher_pid" in ''|*[!0-9]*) exit 79 ;; esac
-      # Do not poll readiness here. Each Android toybox sleep is an external process and the old
-      # 20-poll loop consumed most of the launch timeout under load. Lease acquisition separately
-      # requires two exact helper-identity and raw-zero proofs before authorizing any mutation.
-      echo helper_launched=1
-      """.trimIndent()
-    }
-
-    internal val CLEANUP_STALE_HELPERS_SCRIPT = """
-      readiness_dir='$HELPER_READINESS_DIRECTORY'
-      cleaned=0
-      stale_removed=0
-      cleanup_failed=0
-      candidate_count=0
-      for launch_file in "${'$'}readiness_dir"/*.launch; do
-        [ -f "${'$'}launch_file" ] || continue
-        candidate_count=${'$'}((candidate_count + 1))
-      done
-      for readiness_file in "${'$'}readiness_dir"/*.ready; do
-        [ -f "${'$'}readiness_file" ] || continue
-        helper_token="${'$'}{readiness_file##*/}"; helper_token="${'$'}{helper_token%.ready}"
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.launch" ] && continue
-        candidate_count=${'$'}((candidate_count + 1))
-      done
-      for stage_file in "${'$'}readiness_dir"/*.stage; do
-        [ -f "${'$'}stage_file" ] || continue
-        helper_token="${'$'}{stage_file##*/}"; helper_token="${'$'}{helper_token%.stage}"
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.launch" ] && continue
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.ready" ] && continue
-        candidate_count=${'$'}((candidate_count + 1))
-      done
-      for exit_file in "${'$'}readiness_dir"/*.exit; do
-        [ -f "${'$'}exit_file" ] || continue
-        helper_token="${'$'}{exit_file##*/}"; helper_token="${'$'}{helper_token%.exit}"
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.launch" ] && continue
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.ready" ] && continue
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.stage" ] && continue
-        candidate_count=${'$'}((candidate_count + 1))
-      done
-      for wait_file in "${'$'}readiness_dir"/*.wait; do
-        [ -e "${'$'}wait_file" ] || continue
-        helper_token="${'$'}{wait_file##*/}"; helper_token="${'$'}{helper_token%.wait}"
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.launch" ] && continue
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.ready" ] && continue
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.stage" ] && continue
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.exit" ] && continue
-        candidate_count=${'$'}((candidate_count + 1))
-      done
-      if [ "${'$'}candidate_count" -gt $MAX_HELPER_READINESS_FILES ]; then
-        echo candidate_limit_exceeded=${'$'}candidate_count
-        exit 78
-      fi
-
+    private val HELPER_IDENTITY_FUNCTIONS = """
       read_proc_start() {
         line=""
         IFS= read -r line < "/proc/${'$'}1/stat" 2>/dev/null || return 1
@@ -1324,6 +992,10 @@ internal class TicketActionPanelDarkLease(
         exact_helper_cmdline_args_match "${'$'}cmdline" || return 1
         original_helper_alive
       }
+    """.trimIndent()
+
+    private val HELPER_STOP_FUNCTIONS = """
+      ${HELPER_IDENTITY_FUNCTIONS.prependIndent("      ")}
       find_exact_helper() {
         helper_pid=""; helper_start=""; exact_count=0
         for cmdline in /proc/[0-9]*/cmdline; do
@@ -1359,6 +1031,143 @@ internal class TicketActionPanelDarkLease(
         fi
         ! original_helper_alive
       }
+    """.trimIndent()
+
+    internal fun panelDarkLaunchScript(ownerProcessId: Int, helperToken: String): String {
+      require(helperToken.matches(Regex("[A-Za-z0-9._-]+"))) { "unsafe helper token" }
+      return """
+      owner_pid=${ownerProcessId.coerceAtLeast(1)}
+      helper_token='$helperToken'
+      readiness_dir='$HELPER_READINESS_DIRECTORY'
+      readiness_file="${'$'}readiness_dir/${'$'}helper_token.ready"
+      launch_file="${'$'}readiness_dir/${'$'}helper_token.launch"
+      wait_file="${'$'}readiness_dir/${'$'}helper_token.wait"
+      command -v nohup >/dev/null 2>&1 || exit 79
+      command -v mkfifo >/dev/null 2>&1 || exit 79
+      mkdir -p "${'$'}readiness_dir" 2>/dev/null || exit 78
+      chmod 700 "${'$'}readiness_dir" 2>/dev/null || exit 78
+      [ ! -e "${'$'}readiness_file" ] || exit 78
+      [ ! -e "${'$'}launch_file" ] || exit 78
+      [ ! -e "${'$'}wait_file" ] || exit 78
+      owner_start="${'$'}(
+        line=""
+        IFS= read -r line < "/proc/${'$'}owner_pid/stat" 2>/dev/null || exit 77
+        rest="${'$'}{line#*) }"
+        set -- ${'$'}rest
+        shift 19
+        printf '%s' "${'$'}{1:-}"
+      )"
+      [ -n "${'$'}owner_start" ] || exit 77
+      umask 077
+      printf "owner_pid=%s\nowner_start=%s\n" "${'$'}owner_pid" "${'$'}owner_start" \
+        > "${'$'}launch_file" 2>/dev/null || exit 78
+      mkfifo "${'$'}wait_file" 2>/dev/null || exit 78
+      [ -p "${'$'}wait_file" ] || exit 78
+      # This child program is one single-quoted sh argument. Keep its body free of single quotes;
+      # the generated-script test parses both layers and enforces that delimiter invariant.
+      nohup sh -c '
+        owner_pid="${'$'}1"
+        owner_start="${'$'}2"
+        helper_token="${'$'}3"
+        readiness_dir="${'$'}4"
+        readiness_file="${'$'}readiness_dir/${'$'}helper_token.ready"
+        launch_file="${'$'}readiness_dir/${'$'}helper_token.launch"
+        wait_file="${'$'}readiness_dir/${'$'}helper_token.wait"
+        helper_pid="${'$'}${'$'}"
+        umask 077
+        cleanup_helper_runtime() {
+          rm -f "${'$'}readiness_file" "${'$'}wait_file" 2>/dev/null || true
+        }
+        trap "" HUP
+        trap "cleanup_helper_runtime; exit 0" INT TERM
+        trap cleanup_helper_runtime EXIT
+        [ -p "${'$'}wait_file" ] || exit 78
+        exec 9<> "${'$'}wait_file" || exit 78
+        helper_start="${'$'}(
+          line=""
+          IFS= read -r line < "/proc/${'$'}helper_pid/stat" 2>/dev/null || exit 77
+          rest="${'$'}{line#*) }"
+          set -- ${'$'}rest
+          shift 19
+          printf "%s" "${'$'}{1:-}"
+        )"
+        [ -n "${'$'}helper_start" ] || exit 77
+        # nohup initially ignores HUP, so retain that disposition after the inner shell starts.
+        # Re-enabling HUP here would unnecessarily couple the helper to transport signals.
+        read_uptime_seconds() {
+          IFS=" " read -r uptime_value uptime_rest < /proc/uptime || return 1
+          uptime_seconds="${'$'}{uptime_value%%.*}"
+          case "${'$'}uptime_seconds" in ""|*[!0-9]*) return 1 ;; esac
+          printf "%s" "${'$'}uptime_seconds"
+        }
+        panel=""
+        for candidate in /sys/class/backlight/panel0-backlight /sys/class/backlight/*; do
+          if [ -f "${'$'}candidate/brightness" ]; then panel="${'$'}candidate"; break; fi
+        done
+        [ -n "${'$'}panel" ] || exit 75
+        readiness_published=0
+        helper_started_uptime="${'$'}(read_uptime_seconds)" || exit 77
+        helper_deadline_uptime=${'$'}((helper_started_uptime + ${PANEL_DARK_MAX_HOLD_MILLIS / 1_000L}))
+        while true; do
+          [ -f "${'$'}launch_file" ] || exit 0
+          helper_current_uptime="${'$'}(read_uptime_seconds)" || exit 77
+          [ "${'$'}helper_current_uptime" -lt "${'$'}helper_deadline_uptime" ] || exit 0
+          line=""
+          IFS= read -r line < "/proc/${'$'}owner_pid/stat" 2>/dev/null || exit 0
+          rest="${'$'}{line#*) }"
+          set -- ${'$'}rest
+          shift 19
+          [ "${'$'}{1:-}" = "${'$'}owner_start" ] || exit 0
+          panel_power=""
+          IFS= read -r panel_power < "${'$'}panel/bl_power" 2>/dev/null || panel_power=""
+          if [ "${'$'}readiness_published" != "1" ] || [ "${'$'}panel_power" != "4" ]; then
+            echo 0 > "${'$'}panel/brightness" 2>/dev/null || exit 76
+          fi
+          if [ "${'$'}readiness_published" != "1" ]; then
+            printf "helper_pid=%s\nhelper_start=%s\nowner_pid=%s\nowner_start=%s\n" \
+              "${'$'}helper_pid" "${'$'}helper_start" "${'$'}owner_pid" "${'$'}owner_start" \
+              > "${'$'}readiness_file" 2>/dev/null || exit 78
+            readiness_published=1
+          fi
+          helper_wait_tick=""
+          IFS= read -r -t${PANEL_DARK_WRITE_INTERVAL_MILLIS.toDouble() / 1_000.0} -u9 helper_wait_tick || true
+        done
+      ' $HELPER_PROCESS_MARKER "${'$'}owner_pid" "${'$'}owner_start" \
+        "${'$'}helper_token" "${'$'}readiness_dir" </dev/null >/dev/null 2>&1 &
+      helper_launcher_pid=${'$'}!
+      case "${'$'}helper_launcher_pid" in ''|*[!0-9]*) exit 79 ;; esac
+      # Do not poll readiness here. Each Android toybox sleep is an external process and the old
+      # 20-poll loop consumed most of the launch timeout under load. Lease acquisition separately
+      # requires two exact helper-identity and raw-zero proofs before authorizing any mutation.
+      echo helper_launched=1
+      """.trimIndent()
+    }
+
+    internal val CLEANUP_STALE_HELPERS_SCRIPT = """
+      readiness_dir='$HELPER_READINESS_DIRECTORY'
+      cleaned=0
+      stale_removed=0
+      cleanup_failed=0
+      candidate_count=0
+      candidates=""
+      for candidate in "${'$'}readiness_dir"/*; do
+        case "${'$'}candidate" in
+          *.launch|*.ready|*.stage|*.exit) [ -f "${'$'}candidate" ] || continue ;;
+          *.wait) [ -e "${'$'}candidate" ] || continue ;;
+          *) continue ;;
+        esac
+        helper_token="${'$'}{candidate##*/}"; helper_token="${'$'}{helper_token%.*}"
+        case "${'$'}helper_token" in ''|*[!A-Za-z0-9._-]*) exit 78 ;; esac
+        case " ${'$'}candidates " in *" ${'$'}helper_token "*) continue ;; esac
+        candidates="${'$'}candidates ${'$'}helper_token"
+        candidate_count=${'$'}((candidate_count + 1))
+      done
+      if [ "${'$'}candidate_count" -gt $MAX_HELPER_READINESS_FILES ]; then
+        echo candidate_limit_exceeded=${'$'}candidate_count
+        exit 78
+      fi
+
+      ${HELPER_STOP_FUNCTIONS.prependIndent("      ")}
       cleanup_token() {
         readiness_file="${'$'}readiness_dir/${'$'}helper_token.ready"
         launch_file="${'$'}readiness_dir/${'$'}helper_token.launch"
@@ -1410,40 +1219,13 @@ internal class TicketActionPanelDarkLease(
           [ ! -e "${'$'}wait_file" ] || cleanup_failed=1
       }
 
-      for launch_file in "${'$'}readiness_dir"/*.launch; do
-        [ -f "${'$'}launch_file" ] || continue
-        helper_token="${'$'}{launch_file##*/}"; helper_token="${'$'}{helper_token%.launch}"
-        cleanup_token
-      done
-      for readiness_file in "${'$'}readiness_dir"/*.ready; do
-        [ -f "${'$'}readiness_file" ] || continue
-        helper_token="${'$'}{readiness_file##*/}"; helper_token="${'$'}{helper_token%.ready}"
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.launch" ] && continue
-        cleanup_token
-      done
-      for stage_file in "${'$'}readiness_dir"/*.stage; do
-        [ -f "${'$'}stage_file" ] || continue
-        helper_token="${'$'}{stage_file##*/}"; helper_token="${'$'}{helper_token%.stage}"
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.launch" ] && continue
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.ready" ] && continue
-        cleanup_orphan_files
-      done
-      for exit_file in "${'$'}readiness_dir"/*.exit; do
-        [ -f "${'$'}exit_file" ] || continue
-        helper_token="${'$'}{exit_file##*/}"; helper_token="${'$'}{helper_token%.exit}"
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.launch" ] && continue
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.ready" ] && continue
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.stage" ] && continue
-        cleanup_orphan_files
-      done
-      for wait_file in "${'$'}readiness_dir"/*.wait; do
-        [ -e "${'$'}wait_file" ] || continue
-        helper_token="${'$'}{wait_file##*/}"; helper_token="${'$'}{helper_token%.wait}"
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.launch" ] && continue
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.ready" ] && continue
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.stage" ] && continue
-        [ -f "${'$'}readiness_dir/${'$'}helper_token.exit" ] && continue
-        cleanup_orphan_files
+      for helper_token in ${'$'}candidates; do
+        if [ -f "${'$'}readiness_dir/${'$'}helper_token.launch" ] ||
+           [ -f "${'$'}readiness_dir/${'$'}helper_token.ready" ]; then
+          cleanup_token
+        else
+          cleanup_orphan_files
+        fi
       done
       echo cleaned=${'$'}cleaned
       echo stale_removed=${'$'}stale_removed
@@ -1473,68 +1255,7 @@ internal class TicketActionPanelDarkLease(
         echo launch_marker_removed=0
         exit 74
       }
-      read_proc_start() {
-        line=""
-        IFS= read -r line < "/proc/${'$'}1/stat" 2>/dev/null || return 1
-        rest="${'$'}{line#*) }"
-        set -- ${'$'}rest
-        shift 19
-        [ -n "${'$'}{1:-}" ] || return 1
-        printf '%s' "${'$'}1"
-      }
-      ${EXACT_HELPER_CMDLINE_MATCH_FUNCTION.prependIndent("      ")}
-      load_launch() {
-        launch_owner_pid=""; launch_owner_start=""
-        while IFS='=' read -r key value; do
-          case "${'$'}key" in
-            owner_pid) [ -z "${'$'}launch_owner_pid" ] || return 1; launch_owner_pid="${'$'}value" ;;
-            owner_start) [ -z "${'$'}launch_owner_start" ] || return 1; launch_owner_start="${'$'}value" ;;
-            *) return 1 ;;
-          esac
-        done < "${'$'}launch_file"
-        for numeric in "${'$'}launch_owner_pid" "${'$'}launch_owner_start"; do
-          case "${'$'}numeric" in ''|*[!0-9]*) return 1 ;; esac
-        done
-      }
-      load_readiness() {
-        helper_pid=""; helper_start=""; owner_pid=""; owner_start=""
-        while IFS='=' read -r key value; do
-          case "${'$'}key" in
-            helper_pid) [ -z "${'$'}helper_pid" ] || return 1; helper_pid="${'$'}value" ;;
-            helper_start) [ -z "${'$'}helper_start" ] || return 1; helper_start="${'$'}value" ;;
-            owner_pid) [ -z "${'$'}owner_pid" ] || return 1; owner_pid="${'$'}value" ;;
-            owner_start) [ -z "${'$'}owner_start" ] || return 1; owner_start="${'$'}value" ;;
-            *) return 1 ;;
-          esac
-        done < "${'$'}readiness_file"
-        for numeric in "${'$'}helper_pid" "${'$'}helper_start" "${'$'}owner_pid" "${'$'}owner_start"; do
-          case "${'$'}numeric" in ''|*[!0-9]*) return 1 ;; esac
-        done
-      }
-      original_helper_alive() {
-        [ -n "${'$'}helper_pid" ] && [ "${'$'}(read_proc_start "${'$'}helper_pid")" = "${'$'}helper_start" ]
-      }
-      exact_helper_matches() {
-        cmdline="/proc/${'$'}helper_pid/cmdline"
-        exact_helper_cmdline_args_match "${'$'}cmdline" || return 1
-        original_helper_alive
-      }
-      find_exact_helper_from_launch() {
-        helper_pid=""; helper_start=""
-        owner_pid="${'$'}launch_owner_pid"; owner_start="${'$'}launch_owner_start"
-        exact_count=0
-        for cmdline in /proc/[0-9]*/cmdline; do
-          exact_helper_cmdline_args_match "${'$'}cmdline" || continue
-          candidate="${'$'}{cmdline#/proc/}"; candidate="${'$'}{candidate%/cmdline}"
-          case "${'$'}candidate" in ''|*[!0-9]*) stop_failed ;; esac
-          [ "${'$'}candidate" != "${'$'}${'$'}" ] || continue
-          [ "${'$'}candidate" != "${'$'}PPID" ] || continue
-          candidate_start="${'$'}(read_proc_start "${'$'}candidate")" || stop_failed
-          exact_count=${'$'}((exact_count + 1))
-          [ "${'$'}exact_count" -le 1 ] || stop_failed
-          helper_pid="${'$'}candidate"; helper_start="${'$'}candidate_start"
-        done
-      }
+      ${HELPER_STOP_FUNCTIONS.prependIndent("      ")}
       readiness_attempt=0
       while [ ! -f "${'$'}readiness_file" ] && [ ! -f "${'$'}launch_file" ] &&
             [ "${'$'}readiness_attempt" -lt $PANEL_DARK_READINESS_WAIT_ATTEMPTS ]; do
@@ -1566,27 +1287,10 @@ internal class TicketActionPanelDarkLease(
         }
       else
         [ -f "${'$'}launch_file" ] || stop_failed
-        find_exact_helper_from_launch
+        owner_pid="${'$'}launch_owner_pid"; owner_start="${'$'}launch_owner_start"
+        find_exact_helper || stop_failed
       fi
-      if original_helper_alive; then
-        exact_helper_matches || stop_failed
-        kill -TERM "${'$'}helper_pid" >/dev/null 2>&1 || true
-        stop_attempt=0
-        while original_helper_alive && [ "${'$'}stop_attempt" -lt $PANEL_DARK_STOP_WAIT_ATTEMPTS ]; do
-          stop_attempt=${'$'}((stop_attempt + 1))
-          usleep ${PANEL_DARK_STOP_POLL_MILLIS * 1_000L} 2>/dev/null || sleep 0.025
-        done
-      fi
-      if original_helper_alive; then
-        exact_helper_matches || stop_failed
-        kill -KILL "${'$'}helper_pid" >/dev/null 2>&1 || stop_failed
-        stop_attempt=0
-        while original_helper_alive && [ "${'$'}stop_attempt" -lt $PANEL_DARK_STOP_WAIT_ATTEMPTS ]; do
-          stop_attempt=${'$'}((stop_attempt + 1))
-          usleep ${PANEL_DARK_STOP_POLL_MILLIS * 1_000L} 2>/dev/null || sleep 0.025
-        done
-      fi
-      original_helper_alive && stop_failed
+      stop_exact_helper || stop_failed
       rm -f "${'$'}readiness_file" "${'$'}stage_file" "${'$'}exit_file" \
         "${'$'}wait_file" 2>/dev/null || stop_failed
       [ ! -e "${'$'}readiness_file" ] && [ ! -e "${'$'}stage_file" ] &&
@@ -1638,72 +1342,20 @@ internal class TicketActionPanelDarkLease(
       val observation = """
       helper_token='$helperToken'
       readiness_file='$HELPER_READINESS_DIRECTORY/$helperToken.ready'
-      stage_file='$HELPER_READINESS_DIRECTORY/$helperToken.stage'
-      exit_file='$HELPER_READINESS_DIRECTORY/$helperToken.exit'
-      emit_helper_telemetry() {
-        helper_stage=unknown
-        if [ -f "${'$'}stage_file" ]; then
-          helper_stage_value=""
-          IFS= read -r helper_stage_value < "${'$'}stage_file" 2>/dev/null || helper_stage_value=""
-          case "${'$'}helper_stage_value" in
-            launch_prepared|child_started|identity_ready|panel_ready|zero_written|ready)
-              helper_stage="${'$'}helper_stage_value"
-              ;;
-            *) helper_stage=invalid ;;
-          esac
-        fi
-        echo helper_stage="${'$'}helper_stage"
-        if [ -f "${'$'}exit_file" ]; then
-          helper_exit_value=""
-          IFS= read -r helper_exit_value < "${'$'}exit_file" 2>/dev/null || helper_exit_value=""
-          case "${'$'}helper_exit_value" in
-            ''|*[!0-9]*) ;;
-            *)
-              if [ "${'$'}helper_exit_value" -ge 0 ] 2>/dev/null &&
-                 [ "${'$'}helper_exit_value" -le 255 ] 2>/dev/null; then
-                echo helper_exit_code="${'$'}helper_exit_value"
-              fi
-              ;;
-          esac
-        fi
-      }
       fail_readiness() {
-        emit_helper_telemetry
         echo helper_ready=0
         echo panel_dark=0
         exit 74
       }
-      read_proc_start() {
-        line=""
-        IFS= read -r line < "/proc/${'$'}1/stat" 2>/dev/null || return 1
-        rest="${'$'}{line#*) }"
-        set -- ${'$'}rest
-        shift 19
-        [ -n "${'$'}{1:-}" ] || return 1
-        printf '%s' "${'$'}1"
-      }
-      ${EXACT_HELPER_CMDLINE_MATCH_FUNCTION.prependIndent("      ")}
-      helper_pid=""; helper_start=""; owner_pid=""; owner_start=""
+      ${HELPER_IDENTITY_FUNCTIONS.prependIndent("      ")}
       [ -f "${'$'}readiness_file" ] || fail_readiness
-      while IFS='=' read -r key value; do
-        case "${'$'}key" in
-          helper_pid) [ -z "${'$'}helper_pid" ] || fail_readiness; helper_pid="${'$'}value" ;;
-          helper_start) [ -z "${'$'}helper_start" ] || fail_readiness; helper_start="${'$'}value" ;;
-          owner_pid) [ -z "${'$'}owner_pid" ] || fail_readiness; owner_pid="${'$'}value" ;;
-          owner_start) [ -z "${'$'}owner_start" ] || fail_readiness; owner_start="${'$'}value" ;;
-          *) fail_readiness ;;
-        esac
-      done < "${'$'}readiness_file"
-      for numeric in "${'$'}helper_pid" "${'$'}helper_start" "${'$'}owner_pid" "${'$'}owner_start"; do
-        case "${'$'}numeric" in ''|*[!0-9]*) fail_readiness ;; esac
-      done
+      load_readiness || fail_readiness
       [ "${'$'}helper_pid" != "${'$'}${'$'}" ] || fail_readiness
       [ "${'$'}helper_pid" != "${'$'}PPID" ] || fail_readiness
       cmdline="/proc/${'$'}helper_pid/cmdline"
       exact_helper_cmdline_args_match "${'$'}cmdline" || fail_readiness
       [ "${'$'}(read_proc_start "${'$'}helper_pid")" = "${'$'}helper_start" ] || fail_readiness
       [ "${'$'}(read_proc_start "${'$'}owner_pid")" = "${'$'}owner_start" ] || fail_readiness
-      emit_helper_telemetry
       echo helper_ready=1
       ${panelDarkReadbackScript()}
       """.trimIndent()

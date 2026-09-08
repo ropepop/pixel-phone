@@ -2,6 +2,109 @@
 
 This is the deep Pixel stream and capture note. It is not the first Ticket document.
 
+## Warm reuse and explicit cold restart
+
+The existing command WebSocket also subscribes to the one desired-state row. Commands and desired state enter one atomic inbox snapshot; disconnect discards both. Cold-stop validation and normal desired-start revalidation use that live snapshot, replacing the former one-second desired-state HTTP polling. Explicit teardown has one process-cleanup owner and requires a valid empty-process readback. Capture-setting restoration performs both independent writes, readback and conditional saved-state removal in one root transaction after reading the saved originals.
+
+Reducer HTTP calls share a bounded OkHttp connection pool with request-local authorization. Bodies are one-shot: connection establishment may recover before transmission, but ambiguous writes cannot be replayed. Coroutine cancellation cancels the affected call, and the whole request has a deadline. This replaces the former close-every-request HttpURLConnection workaround. Capture teardown kills the pipe writers before closing their streams, so an idle encoder cannot hold shutdown while waiting for a frame.
+
+Under the explicit cold barrier, frame publication and new ownership are blocked before teardown. Capture stop and settings restoration can then overlap; the session owner waits for both and verifies both results before acknowledging cold. Ordinary stop retains its sequential ownership boundary.
+
+Capture settings use the already-existing dedicated root worker first, with the general worker as the bounded fallback. Encoder process verification uses the general worker, allowing both cold proofs to progress independently without adding a worker or changing input ownership.
+
+The session owner may reuse an admitted, verified, demand-idle hardware encoder without requiring its last cached picture to remain fresh. The current secure-capture lease must remain active and other physical-action owners must be absent. Fresh picture presentation and action authority retain their existing deadlines. Demand watchdog grace begins at the first successful helper write that expects a picture and is not extended by repeated requests. Reading a current frame clears that expectation. An encoder replacement inside an admitted session starts normally instead of waiting for the prior helper's consumed activation token.
+
+Owner-requested cold restart uses the existing durable stream desired-state row and one `cold_stop` command. The worker revalidates the matching operation and stopping phase before dispatch, blocks all local capture starts/recovery, then calls the session owner's full stop path under its mutex. It acknowledges `cold_capture_released` only after capture is inactive, no encoder/stale capture process remains, and the secure-capture lease has been released. The relay independently cancels real warm timers and clears picture/delivery state before allowing viewer-page reload. Failed or timed-out proof retains the barrier; retries require a new explicit owner request. Ordinary false desired state remains distinct from this explicit, acknowledged shutdown.
+
+## Current V2 implementation
+
+V2 is the current deployed protocol. The live product contract is maintained in
+the ops checkout's `workloads/ticket-remote/CURRENT.md`; use current release
+provenance and fresh device/browser checks when validating another change.
+
+Command HTTP and optional-log HTTP share one bounded request implementation,
+with separate credentials, timeouts and execution lanes. Both reject redirects;
+failure classification reads only a bounded response and never records its text.
+The optional log queue still drops excess diagnostics and cannot delay command
+settlement. Routine health-report copies, warm-reuse timing and discarded input
+trace calls are removed. Journal, keyboard, capture and service failures pass the
+existing typed-field privacy filter and reach the shared operational log.
+
+Protected-capture settings use one restoration sequence for saved originals and
+unowned safe defaults. Both settings are attempted independently, then read back;
+the recovery record is removed only after both values are proved. Acquisition,
+readback and legacy-state migration share the same saved-state reader and atomic
+writer. The existing keys and two-line on-device file remain compatible.
+
+The removed browser recovery paths no longer admit database `keyframe` or
+`recover_stream` commands: their retained member entry points require a page
+reload. The service admits only stream-start commands through its old stream
+command endpoint. Pixel's subscribed worker no longer accepts those retired
+recovery/activity commands. Browser connection recovery, the capture watchdog,
+ordinary capture credits and the private media keyframe command retain their
+current owners. The server no longer publishes a dormant recovery status or
+keeps unused connection-restart entry points.
+The retained start endpoint grants the idle-opening exception only to the current
+page/prewarm reasons and suppresses starts while the relay has fresh live proof.
+Its old requester/control-code exceptions and command-specific retry dispatch are
+removed. Idle demand clears pending starts; code and visual-action ownership are
+unaffected.
+
+The scoped `generate_control_code` command carries request ID, digits and phone
+context revision. Fixed owner/app/flow labels from the retired multi-app router
+and their duplicate rejection/health bookkeeping are removed. The private Ticket
+subscription, database command admission and immutable request identity establish
+the operation; Pixel still verifies exact context, ViVi foreground, display/touch
+protection and the single physical request. Capture acknowledgements retain the
+request and exact picture tuple without those redundant routing labels.
+
+Control-code publications use a typed in-process outbox. The action supplies one
+exact epoch/sequence pair for generated results; the sender maps that pair to the
+retained database fields. Semantic cleanup uses its own revision with empty frame
+fields. Result and cleanup publications precede progress, expire after five
+minutes, and remain pending after a send failure. Acknowledging an older send
+cannot remove a replacement marker. The old JSON message bridge, lossy queue and
+unused successful-result cache are removed; command settlement and the current
+request guard still prevent a repeated physical request.
+
+V2 retains the actual encoder startup primer and its capture/activation boundary.
+It removes the separate startup-phase and primer-counter diagnostic protocol.
+The capture owner remains responsible for visibility failures, cadence, and
+source-to-service timing. The delivery health summary reports its own frame
+identity, sent-frame age, clients, delivery failures and secure-capture protection;
+it no longer duplicates capture settings or keeps separate startup stopwatches.
+Capture admission, unused-arm cleanup, reliability verification and scheduling
+follow one ordered path. Public opening reuses its current foreground proof and
+waits directly for two fresh typed observations; it does not repeat a focus
+probe through another readiness adapter.
+
+Phone navigation belongs to the admitted visual action or account-switching
+operation. The control-code request owns its result acknowledgement and bounded
+popup/result cleanup. Browser dismissal uses that same acknowledgement; the
+retired control-exit command and its separate background cleanup executor are
+removed. An interrupted request retains its durable fence until a freshly
+admitted visual reopen proves the clean detail. The original-detail fence and
+final panel/keyboard cleanup decide when control readiness may be published.
+Foreground monitoring cannot independently rewrite the request's code state.
+An expired foreground check is refreshed before control-code input admission.
+New and retained navigation dispatches share one transition reconciler; the next
+tap requires a matching typed successor and a verified journal write. Detailed
+success-phase maps are removed from control-code input, observation and cleanup.
+Overall request duration and first-input initiation remain measured; action timing
+retains admission, input and completion. This does not change exact-result
+acknowledgement, keyboard restoration or final panel convergence requirements.
+Steady-state encoding waits at most three seconds after posting an input for its
+complete access unit and honors thread interruption. Timeout enters the encoder
+owner's cleanup; the captured bitmap remains retained until codec release. Capture
+and typed observation continue independently while encoding recovers.
+
+The V2 private phone interface is health plus the media WebSocket. Start, reconnect
+and stop commands arrive through the existing subscribed command worker. The old
+private HTTP session handlers and retired RS command socket have been removed.
+Foreground checks observe interruption without waking or navigating ViVi.
+Background desired-state startup gets one attempt per observed demand episode
+and respects explicit stop; an explicit reconnect remains available.
+
 ## Independent control observations (v367)
 
 In v368 the compact slider detector still proves the slider shape and detail context. The existing detailed sample then refines its unpadded orange track and attached dark thumb, excluding dark components that meet the bounded search edge. Browser placement and phone geometry use that sample-space rectangle; the change introduces no capture or image publication.
@@ -81,6 +184,8 @@ Each public page includes internal viewer/page identity for diagnostics. Reloads
 Cold private-relay video handshakes carry only the server-owned `startup_` correlation: an eight-hex one-way derivative of the in-memory startup trace, never the browser session, viewer, full trace identifier, or authentication material. Pixel validates that exact bounded shape and binds it before recording the bridge video-client open or starting the local ticket session. The same correlation remains optional on the durable Spacetime start command, so either side may roll forward independently and the durable command stays the fallback.
 
 Pixel starts the private video's transport-control reader immediately after the WebSocket upgrade, before waiting for serialized session preparation. An unregistered connection may answer only WebSocket Ping and a valid side-effect-free clock probe; keyframe and capture-demand messages remain disabled until admission. Registration and close share one connection-local lifecycle lock, so a peer that closes while waiting cannot be added afterward. Once preparation returns, only the still-registered socket with the exact current startup generation may publish its connection-triggered live state, configuration, encoder check, or watchdog check. This keeps the relay's short dead-path timeout useful during a legitimate cold start and lets a replacement connection remain responsive while the previous authorized preparation finishes.
+
+Each admitted private socket has one `TicketVideoDeliveryWriter` for configuration and pictures. It sends configuration before that generation's binary frames and retains at most one newest waiting all-intra frame behind the active write. Reconfiguration invalidates queued work; a stale callback cannot authorize another generation. An independent deadline closes the exact socket even when its stalled write belongs to an older configuration. Invalid or oversized pictures request a coalesced refresh. The former separate configuration/frame pumps and delivery registry are retired.
 
 Control and video socket identity includes the browser page version. Health exposes active client identity/page-version diagnostics so public verification can prove the current Brave tab is running the latest served page rather than a stale cached shell.
 

@@ -646,31 +646,6 @@ public final class TicketControlCodeVisualClassifier {
     return left + "," + top + "," + right + "," + bottom;
   }
 
-  /**
-   * Returns a content-free local diagnostic for an unrecognized registration slider.
-   *
-   * <p>The capture helper writes this only to its phone-local diagnostic stream. It contains no
-   * pixels, text, dates or coordinates and is not part of the public Ticket action projection.</p>
-   */
-  public static String registrationSliderDiagnostic(int[] pixels) {
-    if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT) return "invalid_probe";
-    if (!frameHasTicketDetailHeader(pixels)) return "detail_header_missing";
-    if (!registrationSliderBounds(pixels).isEmpty()) return "slider_present";
-    int qualifyingRows = 0;
-    int widestOrangeRow = 0;
-    for (int y = 38; y <= 55; y++) {
-      int orangePixels = 0;
-      for (int x = 2; x < SAMPLE_WIDTH - 2; x++) {
-        if (isRegistrationOrange(pixelAt(pixels, x, y))) orangePixels += 1;
-      }
-      widestOrangeRow = Math.max(widestOrangeRow, orangePixels);
-      if (orangePixels >= 20) qualifyingRows += 1;
-    }
-    if (widestOrangeRow < 20) return "slider_orange_missing";
-    if (qualifyingRows < 3) return "slider_band_shape_unproved";
-    return "slider_thumb_unproved";
-  }
-
   private static boolean isRegistrationOrange(int pixel) {
     int red = (pixel >> 16) & 0xff;
     int green = (pixel >> 8) & 0xff;
@@ -790,9 +765,8 @@ public final class TicketControlCodeVisualClassifier {
     // This central interior excludes the title, field chrome and button. Dark-theme ViVi renders
     // entered digits as bright strokes; its empty placeholder is muted gray. Two columns plus
     // three pixels reject a single bright caret without inspecting or retaining the value.
-    int brightPixels = submitBrightPixelCount(pixels, 30, 60, 66, 68, 190);
-    int brightColumns = submitBrightColumnCount(pixels, 30, 60, 66, 68, 190);
-    return brightPixels >= 3 && brightColumns >= 2;
+    IntensityStats value = submitIntensityStats(pixels, 30, 60, 66, 68, 190, false);
+    return value.pixels >= 3 && value.columns >= 2;
   }
 
   private static boolean submitFrameHasDarkKeyboardReadyControlCodePopup(int[] pixels) {
@@ -822,156 +796,55 @@ public final class TicketControlCodeVisualClassifier {
     // strokes land at luminance 60 and 75. Two separated columns plus two pixels preserve those
     // strokes while rejecting the placeholder, underline and a one- or two-column caret without
     // OCR or retaining the value.
-    int veryDarkPixels = submitDarkPixelCount(pixels, 28, 64, 68, 72, 90);
-    int veryDarkColumns = submitDarkColumnCount(pixels, 28, 64, 68, 72, 90);
-    int veryDarkColumnSpan = submitDarkColumnSpan(pixels, 28, 64, 68, 72, 90);
+    IntensityStats value = submitIntensityStats(pixels, 28, 64, 68, 72, 90, true);
     // At the native 1080px Pixel resolution the shortest accepted value can be reduced by the
     // 96x144 probe to two adjacent dark samples on one row. Keep the wider-span rule for normal
     // glyphs, but accept that compact shape only when it is horizontal: a caret is one vertical
     // column and must remain a blank value.
-    int maximumDarkPixelsInOneRow = submitMaximumDarkPixelsInOneRow(
-      pixels, 28, 64, 68, 72, 90
-    );
-    boolean compactTwoSampleValue = veryDarkColumnSpan >= 1 && maximumDarkPixelsInOneRow >= 2;
+    boolean compactTwoSampleValue = value.span >= 1 && value.maximumRow >= 2;
     // The current empty Latvian placeholder is reduced to sparse dark strokes too, but its first
     // and last retained columns remain 25 probe columns apart. Even the longest accepted
     // eight-digit value stays inside the bounded 20-column digit band. Rejecting the wider shape
     // prevents unchanged placeholder text from becoming VALUE_READY without recognizing or
     // retaining any text.
-    boolean boundedDigitSpan = veryDarkColumnSpan <= 20;
-    return veryDarkPixels >= 2 && veryDarkColumns >= 2 && boundedDigitSpan &&
-      (veryDarkColumnSpan >= 2 || compactTwoSampleValue);
+    boolean boundedDigitSpan = value.span <= 20;
+    return value.pixels >= 2 && value.columns >= 2 && boundedDigitSpan &&
+      (value.span >= 2 || compactTwoSampleValue);
   }
 
-  private static int submitMaximumDarkPixelsInOneRow(
-    int[] pixels,
-    int left,
-    int top,
-    int right,
-    int bottom,
-    int maxLuminance
+  private static final class IntensityStats {
+    int pixels;
+    int columns;
+    int span;
+    int maximumRow;
+  }
+
+  private static IntensityStats submitIntensityStats(
+    int[] pixels, int left, int top, int right, int bottom, int threshold, boolean dark
   ) {
-    int maximum = 0;
+    IntensityStats stats = new IntensityStats();
+    boolean[] columns = new boolean[SUBMIT_SAMPLE_WIDTH];
+    int first = SUBMIT_SAMPLE_WIDTH;
+    int last = -1;
     for (int y = Math.max(0, top); y < Math.min(SUBMIT_SAMPLE_HEIGHT, bottom); y++) {
-      int rowDark = 0;
+      int row = 0;
       for (int x = Math.max(0, left); x < Math.min(SUBMIT_SAMPLE_WIDTH, right); x++) {
-        if (luminance(submitPixelAt(pixels, x, y)) <= maxLuminance) {
-          rowDark += 1;
-        }
-      }
-      maximum = Math.max(maximum, rowDark);
-    }
-    return maximum;
-  }
-
-  private static int submitDarkPixelCount(
-    int[] pixels,
-    int left,
-    int top,
-    int right,
-    int bottom,
-    int maxLuminance
-  ) {
-    int darkPixels = 0;
-    for (int x = Math.max(0, left); x < Math.min(SUBMIT_SAMPLE_WIDTH, right); x++) {
-      for (int y = Math.max(0, top); y < Math.min(SUBMIT_SAMPLE_HEIGHT, bottom); y++) {
-        if (luminance(submitPixelAt(pixels, x, y)) <= maxLuminance) {
-          darkPixels += 1;
-        }
-      }
-    }
-    return darkPixels;
-  }
-
-  private static int submitDarkColumnCount(
-    int[] pixels,
-    int left,
-    int top,
-    int right,
-    int bottom,
-    int maxLuminance
-  ) {
-    int darkColumns = 0;
-    for (int x = Math.max(0, left); x < Math.min(SUBMIT_SAMPLE_WIDTH, right); x++) {
-      boolean dark = false;
-      for (int y = Math.max(0, top); y < Math.min(SUBMIT_SAMPLE_HEIGHT, bottom); y++) {
-        if (luminance(submitPixelAt(pixels, x, y)) <= maxLuminance) {
-          dark = true;
-          break;
-        }
-      }
-      if (dark) {
-        darkColumns += 1;
-      }
-    }
-    return darkColumns;
-  }
-
-  private static int submitDarkColumnSpan(
-    int[] pixels,
-    int left,
-    int top,
-    int right,
-    int bottom,
-    int maxLuminance
-  ) {
-    int firstDarkColumn = -1;
-    int lastDarkColumn = -1;
-    for (int x = Math.max(0, left); x < Math.min(SUBMIT_SAMPLE_WIDTH, right); x++) {
-      for (int y = Math.max(0, top); y < Math.min(SUBMIT_SAMPLE_HEIGHT, bottom); y++) {
-        if (luminance(submitPixelAt(pixels, x, y)) <= maxLuminance) {
-          if (firstDarkColumn < 0) {
-            firstDarkColumn = x;
+        int value = luminance(submitPixelAt(pixels, x, y));
+        if (dark ? value <= threshold : value >= threshold) {
+          stats.pixels++;
+          row++;
+          if (!columns[x]) {
+            columns[x] = true;
+            stats.columns++;
           }
-          lastDarkColumn = x;
-          break;
+          first = Math.min(first, x);
+          last = Math.max(last, x);
         }
       }
+      stats.maximumRow = Math.max(stats.maximumRow, row);
     }
-    return firstDarkColumn < 0 ? 0 : lastDarkColumn - firstDarkColumn;
-  }
-
-  private static int submitBrightPixelCount(
-    int[] pixels,
-    int left,
-    int top,
-    int right,
-    int bottom,
-    int minLuminance
-  ) {
-    int brightPixels = 0;
-    for (int x = Math.max(0, left); x < Math.min(SUBMIT_SAMPLE_WIDTH, right); x++) {
-      for (int y = Math.max(0, top); y < Math.min(SUBMIT_SAMPLE_HEIGHT, bottom); y++) {
-        if (luminance(submitPixelAt(pixels, x, y)) >= minLuminance) {
-          brightPixels += 1;
-        }
-      }
-    }
-    return brightPixels;
-  }
-
-  private static int submitBrightColumnCount(
-    int[] pixels,
-    int left,
-    int top,
-    int right,
-    int bottom,
-    int minLuminance
-  ) {
-    int brightColumns = 0;
-    for (int x = Math.max(0, left); x < Math.min(SUBMIT_SAMPLE_WIDTH, right); x++) {
-      boolean bright = false;
-      for (int y = Math.max(0, top); y < Math.min(SUBMIT_SAMPLE_HEIGHT, bottom); y++) {
-        if (luminance(submitPixelAt(pixels, x, y)) >= minLuminance) {
-          bright = true;
-          break;
-        }
-      }
-      if (bright) {
-        brightColumns += 1;
-      }
-    }
-    return brightColumns;
+    stats.span = last < 0 ? 0 : last - first;
+    return stats;
   }
 
   private static boolean submitFrameHasKeyboardReadyControlCodePopup(int[] pixels) {

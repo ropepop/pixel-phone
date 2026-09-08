@@ -5,7 +5,7 @@ import kotlinx.serialization.json.JsonPrimitive
 /** Keeps durable Ticket traces useful without copying client identity or arbitrary runtime text. */
 internal object TicketTracePrivacy {
   private val numericFields = TicketActionTiming.Phase.entries.map { it.field }.toSet() +
-    TicketActionTiming.Work.entries.map { it.field } + setOf("private_samples",
+    setOf("private_samples",
     "blocked_ms",
     "bytes",
     "clients",
@@ -81,6 +81,13 @@ internal object TicketTracePrivacy {
     "latest_ticket_reselect_", "control_code_", "ticket_control_code_", "ticket_card_",
     "wake_", "fast_public_open_"
   )
+  private val failurePrefixes = setOf(
+    "ticket_action_", "ticket_service_", "ticket_server_", "ticket_screen_",
+    "ticket_foreground_", "ticket_phone_automation_", "secure_window_capture_",
+    "service_destroy_", "phone_portrait_", "keyboard_clamp_", "video_client_",
+    "http_request_", "blackout_overlay_"
+  )
+  private val failureSuffixes = setOf("failed", "unproved", "unverified", "timeout", "blocked")
   private val exactEvents = setOf(
     "root_readiness", "ticket_action_timing", "ticket_state_event", "ticket_slider_start_unknown", "ticket_slider_semantic_missing",
     "ticket_slider_semantic_unstable", "ticket_slider_semantic_fence_changed",
@@ -106,7 +113,6 @@ internal object TicketTracePrivacy {
     )
   )
 
-  val allowedFieldNames: Set<String> = numericFields + booleanFields
 
   fun allowlistedFields(detail: String): Map<String, String> {
     if (detail.isBlank()) return emptyMap()
@@ -124,7 +130,10 @@ internal object TicketTracePrivacy {
 
   fun eventName(value: String): String? {
     if (!eventToken.matches(value)) return null
-    return value.takeIf { it in exactEvents || eventPrefixes.any(it::startsWith) }
+    return value.takeIf {
+      it in exactEvents || eventPrefixes.any(it::startsWith) ||
+        (failurePrefixes.any(it::startsWith) && failureSuffixes.any(it::endsWith))
+    }
   }
 
   fun fixedValue(field: String, value: String): String {
@@ -136,7 +145,6 @@ internal object TicketTracePrivacy {
     return value.takeIf(pattern::matches).orEmpty()
   }
 
-  fun booleanValue(value: String): String = value.takeIf { it == "true" || it == "false" }.orEmpty()
 
   fun numericJsonValue(value: String, allowNegative: Boolean = false): JsonPrimitive? {
     return numericValue(value, allowNegative).toLongOrNull()?.let(::JsonPrimitive)
