@@ -24,7 +24,6 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
-import java.nio.ByteBuffer;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -368,6 +367,12 @@ public final class TicketRootHardwareH264CaptureMain {
         } catch (InterruptedException stopped) {
           interrupt();
           return;
+        } catch (TicketEncoderTeardown.UnsafeReleaseException unsafeRelease) {
+          // The process owner observes EOF/exit and performs its existing full helper cleanup.
+          // Never accumulate replacement codecs while native ownership is uncertain.
+          System.err.println("ENCODER_SESSION state=failed reason=encoder_resources_not_released");
+          System.exit(70);
+          return;
         } catch (Exception failure) {
           // Encoder failure leaves capture and observation alive. Do not log private
           // exception text; failed output and unavailable capture are distinct signals.
@@ -477,16 +482,6 @@ public final class TicketRootHardwareH264CaptureMain {
                 inputStage
             );
             if (
-              startupPrimer.fallbackWaitingForFirstKeyFrame() &&
-              startupPrimer.firstKeyFrameForwarded() &&
-              !startupPrimer.finished()
-            ) {
-              // drainEncoder consumes every currently available AU before returning. Finish only
-              // after a final sweep at the next rebased cadence boundary. A sibling primer output
-              // can become ready just after this drain reports TRY_AGAIN.
-              output.flush();
-            }
-            if (
               closeStartupPrimerAfterDrain &&
               startupPrimer.boundaryAccessUnitForwarded() &&
               !startupPrimer.finished()
@@ -497,7 +492,6 @@ public final class TicketRootHardwareH264CaptureMain {
               startupPrimer.finish();
             }
           }
-          output.flush();
 
             inputResolved = true;
             sent++;
@@ -525,13 +519,15 @@ public final class TicketRootHardwareH264CaptureMain {
       }
       outputAssembler.reset();
       codecInputLedger.clear();
-      output.flush();
       } finally {
-        if (inputSurface != null) inputSurface.release();
-        runQuietly(encoder::stop);
-        encoder.release();
-        // A failed draw/drain retains its source until the codec has released it.
-        if (failedInput != null) failedInput.close();
+        Surface ownedSurface = inputSurface;
+        PendingCapture ownedInput = failedInput;
+        TicketEncoderTeardown.release(
+          () -> { if (ownedSurface != null) ownedSurface.release(); },
+          encoder::stop,
+          encoder::release,
+          () -> { if (ownedInput != null) ownedInput.close(); }
+        );
       }
     }
   }
@@ -693,9 +689,6 @@ public final class TicketRootHardwareH264CaptureMain {
           cadenceScheduler,
           monotonicTimeUs() + ENCODER_INPUT_TIMEOUT_US
         );
-        if (primer.firstKeyFrameForwarded()) {
-          output.flush();
-        }
         continue;
       }
 
@@ -722,9 +715,6 @@ public final class TicketRootHardwareH264CaptureMain {
         cadenceScheduler,
         monotonicTimeUs() + ENCODER_INPUT_TIMEOUT_US
       );
-      if (primer.firstKeyFrameForwarded()) {
-        output.flush();
-      }
     }
 
     if (!primer.firstKeyFrameForwarded() && primer.inputPosts() >= primer.inputLimit()) {
@@ -742,9 +732,6 @@ public final class TicketRootHardwareH264CaptureMain {
           cadenceScheduler,
           monotonicTimeUs() + ENCODER_INPUT_TIMEOUT_US
         );
-      }
-      if (primer.firstKeyFrameForwarded()) {
-        output.flush();
       }
     }
 
@@ -769,7 +756,6 @@ public final class TicketRootHardwareH264CaptureMain {
           monotonicTimeUs() + ENCODER_INPUT_TIMEOUT_US
         );
       }
-      output.flush();
     } else {
       // Do not open the gate here. The vendor may have delayed rather than dropped these Surface
       // posts. The first ordinary one-FPS drain will forward one complete keyframe, suppress every
@@ -1104,73 +1090,65 @@ public final class TicketRootHardwareH264CaptureMain {
       if (index < 0) {
         continue;
       }
-      boolean eos = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
-      try {
-        ByteBuffer buffer = encoder.getOutputBuffer(index);
-        byte[] data = new byte[0];
-        if (buffer != null && info.size > 0) {
-          buffer.position(info.offset);
-          buffer.limit(info.offset + info.size);
-          data = new byte[info.size];
-          buffer.get(data);
+      int flags = info.flags;
+      boolean eos = (flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
+      byte[] data = TicketCodecOutputCopy.copyAndRelease(
+        () -> encoder.getOutputBuffer(index), info.offset, info.size,
+        () -> encoder.releaseOutputBuffer(index, false)
+      );
+      boolean codecConfig = (flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
+      boolean keyFrame = (flags & MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0;
+      boolean partialFrame = (flags & MediaCodec.BUFFER_FLAG_PARTIAL_FRAME) != 0;
+      if (eos && data.length == 0) {
+        // EOS with no bytes must not turn an unfinished partial access unit into a frame.
+        outputAssembler.reset();
+      } else {
+        TicketH264EncoderOutputAssembler.EmittedAccessUnit emitted = outputAssembler.accept(
+          data,
+          partialFrame,
+          codecConfig,
+          keyFrame
+        );
+        if (outputAssembler.consumeOverflowed()) {
+          throw new IllegalStateException("encoded access unit exceeds 2 MiB");
         }
-        boolean codecConfig = (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
-        boolean keyFrame = (info.flags & MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0;
-        boolean partialFrame = (info.flags & MediaCodec.BUFFER_FLAG_PARTIAL_FRAME) != 0;
-        if (eos && data.length == 0) {
-          // EOS with no bytes must not turn an unfinished partial access unit into a frame.
-          outputAssembler.reset();
-        } else {
-          TicketH264EncoderOutputAssembler.EmittedAccessUnit emitted = outputAssembler.accept(
-            data,
-            partialFrame,
-            codecConfig,
-            keyFrame
+        if (emitted == null && !partialFrame && !codecConfig && data.length > 0) {
+          throw new IllegalStateException("completed media access unit could not be framed");
+        }
+        TicketH264FrameRecord frame = null;
+        if (emitted != null && emitted.containsVcl) {
+          TicketCodecInputLedger.InputStage inputStage = codecInputLedger.take();
+          frame = new TicketH264FrameRecord(
+            emitted.idrKeyFrame,
+            inputStage.captureAttemptId,
+            inputStage.codecGeneration,
+            inputStage.captureStartUs,
+            inputStage.captureCompleteUs,
+            inputStage.codecInputUs,
+            monotonicTimeUs(),
+            0L,
+            emitted.payload
           );
-          if (outputAssembler.consumeOverflowed()) {
-            throw new IllegalStateException("encoded access unit exceeds 2 MiB");
-          }
-          if (emitted == null && !partialFrame && !codecConfig && data.length > 0) {
-            throw new IllegalStateException("completed media access unit could not be framed");
-          }
-          TicketH264FrameRecord frame = null;
-          if (emitted != null && emitted.containsVcl) {
-            TicketCodecInputLedger.InputStage inputStage = codecInputLedger.take();
-            frame = new TicketH264FrameRecord(
-              emitted.idrKeyFrame,
-              inputStage.captureAttemptId,
-              inputStage.codecGeneration,
-              inputStage.captureStartUs,
-              inputStage.captureCompleteUs,
-              inputStage.codecInputUs,
-              monotonicTimeUs(),
-              0L,
-              emitted.payload
-            );
-          }
-          TicketEncoderStartupPrimer.OutputDisposition disposition =
-            TicketEncoderStartupPrimer.OutputDisposition.FORWARD;
-          if (frame != null && startupPrimer != null) {
-            disposition = startupPrimer.classifyCompleteAccessUnit(
-                frame,
-                emitted.containsVcl,
-                emitted.idrKeyFrame,
-                SystemClock.elapsedRealtime()
-              );
-          }
-          if (
-            frame != null &&
-            disposition == TicketEncoderStartupPrimer.OutputDisposition.FORWARD
-          ) {
-            writeFrameRecord(output, frame, cadenceScheduler);
-          }
-          if (eos) {
-            outputAssembler.reset();
-          }
         }
-      } finally {
-        // Every dequeued buffer must be returned even if assembly, gating, or pipe I/O fails.
-        encoder.releaseOutputBuffer(index, false);
+        TicketEncoderStartupPrimer.OutputDisposition disposition =
+          TicketEncoderStartupPrimer.OutputDisposition.FORWARD;
+        if (frame != null && startupPrimer != null) {
+          disposition = startupPrimer.classifyCompleteAccessUnit(
+              frame,
+              emitted.containsVcl,
+              emitted.idrKeyFrame,
+              SystemClock.elapsedRealtime()
+            );
+        }
+        if (
+          frame != null &&
+          disposition == TicketEncoderStartupPrimer.OutputDisposition.FORWARD
+        ) {
+          writeFrameRecord(output, frame, cadenceScheduler);
+        }
+        if (eos) {
+          outputAssembler.reset();
+        }
       }
       if (eos) {
         forwardSelectedBoundaryAccessUnit(output, startupPrimer, cadenceScheduler);
@@ -1335,13 +1313,7 @@ public final class TicketRootHardwareH264CaptureMain {
     @Override public void close() { lifetime.close(); }
 
     private void releaseResources() {
-      if (bitmap != null) {
-        bitmap.recycle();
-      }
-      closeScreenCaptureResult(result);
-      if (hardwareBuffer != null && !hardwareBuffer.isClosed()) {
-        hardwareBuffer.close();
-      }
+      releaseCapturedResources(bitmap, result, hardwareBuffer);
     }
   }
 
@@ -1382,49 +1354,41 @@ public final class TicketRootHardwareH264CaptureMain {
 
     @Override
     public CapturedFrame capture() throws Exception {
-      CountDownLatch latch = new CountDownLatch(1);
-      AtomicReference<Object> result = new AtomicReference<>();
-      AtomicReference<Throwable> failure = new AtomicReference<>();
-      OutcomeReceiver<Object, Throwable> receiver = new OutcomeReceiver<Object, Throwable>() {
-        @Override
-        public void onResult(Object value) {
-          result.set(value);
-          latch.countDown();
-        }
-
-        @Override
-        public void onError(Throwable error) {
-          failure.set(error);
-          latch.countDown();
-        }
-      };
-      capture.invoke(null, args, directExecutor, receiver);
-      if (!latch.await(350, TimeUnit.MILLISECONDS)) {
-        throw new IllegalStateException("secure_screen_capture_timed_out");
+      try (TicketCaptureResult<Object> result = new TicketCaptureResult<>(this::releaseUnclaimedResult)) {
+        OutcomeReceiver<Object, Throwable> receiver = new OutcomeReceiver<Object, Throwable>() {
+          @Override public void onResult(Object value) { result.succeed(value); }
+          @Override public void onError(Throwable error) { result.fail(error); }
+        };
+        capture.invoke(null, args, directExecutor, receiver);
+        return result.awaitAndWrap(350, TimeUnit.MILLISECONDS, value -> {
+          if (value == null) return null;
+          HardwareBuffer buffer = (HardwareBuffer) getHardwareBuffer.invoke(value);
+          if (buffer == null) return null;
+          ColorSpace colorSpace = (ColorSpace) getColorSpace.invoke(value);
+          Bitmap bitmap = Bitmap.wrapHardwareBuffer(buffer, colorSpace);
+          if (bitmap == null) return null;
+          try {
+            return new CapturedFrame(bitmap, value, buffer);
+          } catch (Throwable failure) {
+            runQuietly(bitmap::recycle);
+            throw failure;
+          }
+        });
       }
-      if (failure.get() != null) {
-        throw new IllegalStateException("secure_screen_capture_failed", failure.get());
-      }
-      Object value = result.get();
-      if (value == null) {
-        return null;
-      }
-      HardwareBuffer buffer = (HardwareBuffer) getHardwareBuffer.invoke(value);
-      if (buffer == null) {
-        closeScreenCaptureResult(value);
-        return null;
-      }
-      ColorSpace colorSpace = (ColorSpace) getColorSpace.invoke(value);
-      Bitmap bitmap = Bitmap.wrapHardwareBuffer(buffer, colorSpace);
-      if (bitmap == null) {
-        closeScreenCaptureResult(value);
-        if (!buffer.isClosed()) {
-          buffer.close();
-        }
-        return null;
-      }
-      return new CapturedFrame(bitmap, value, buffer);
     }
+
+    private void releaseUnclaimedResult(Object value) {
+      HardwareBuffer buffer = null;
+      try { buffer = (HardwareBuffer) getHardwareBuffer.invoke(value); }
+      catch (Throwable ignored) { /* Still attempt result cleanup. */ }
+      releaseCapturedResources(null, value, buffer);
+    }
+  }
+
+  private static void releaseCapturedResources(Bitmap bitmap, Object result, HardwareBuffer buffer) {
+    if (bitmap != null) runQuietly(bitmap::recycle);
+    closeScreenCaptureResult(result);
+    if (buffer != null) runQuietly(() -> { if (!buffer.isClosed()) buffer.close(); });
   }
 
   private static boolean screenCaptureOptimizationEnabled(Class<?> screenCapture) {

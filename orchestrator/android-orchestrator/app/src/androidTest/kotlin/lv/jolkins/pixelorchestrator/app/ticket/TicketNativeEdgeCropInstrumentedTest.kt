@@ -43,7 +43,8 @@ class TicketNativeEdgeCropInstrumentedTest {
     }
 
     val crop = TicketCaptureGeometry.sourceCrop(sourceWidth, sourceHeight)
-    val output = Bitmap.createBitmap(720, 1482, Bitmap.Config.ARGB_8888)
+    val size = TicketStreamSizing.rootHardwareH264(sourceWidth, sourceHeight)
+    val output = Bitmap.createBitmap(size.width, size.height, Bitmap.Config.ARGB_8888)
     val outputBounds = Rect(0, 0, output.width, output.height)
     TicketRootHardwareH264CaptureMain.drawScaledCrop(
       Canvas(output),

@@ -2,6 +2,27 @@
 
 This is the deep Pixel stream and capture note. It is not the first Ticket document.
 
+## Capture and codec resource lifetime
+
+Each asynchronous ScreenCapture request owns its result until one waiter successfully wraps it.
+Timeout, interruption, invocation failure and wrapping failure abandon that ownership; a late
+callback closes its returned result and hardware buffer instead of leaving them unclaimed.
+Recognition and encoding still share the same immutable captured picture and its reference count.
+
+The encoding owner copies a dequeued output buffer and snapshots its flags, then returns that
+buffer before access-unit assembly, startup filtering, output pacing or pipe I/O. Complete frame
+writes remain the single flush boundary. There is no additional delivery thread or queue.
+
+Teardown attempts surface release, codec stop and codec release independently. A failed input
+picture remains pinned until codec release succeeds. Unproved surface, codec or retained-picture
+release terminates the helper with exit 70; the existing process owner observes exit/EOF and
+performs its normal process cleanup before replacement. It cannot create another codec inside
+that uncertain process. Ordinary recoverable encoder failures retain their existing owner.
+
+The capture deadline, one-FPS cadence, 8 Mbps target, crop, scaling, colour matrix, SDR signalling,
+hardware codec configuration and startup primer are unchanged. Measurement and acceptance are
+recorded in `ops/reports/2026-09/2026-09-08-media-resource-lifetime.md`.
+
 ## Warm reuse and explicit cold restart
 
 The existing command WebSocket also subscribes to the one desired-state row. Commands and desired state enter one atomic inbox snapshot; disconnect discards both. Cold-stop validation and normal desired-start revalidation use that live snapshot, replacing the former one-second desired-state HTTP polling. Explicit teardown has one process-cleanup owner and requires a valid empty-process readback. Capture-setting restoration performs both independent writes, readback and conditional saved-state removal in one root transaction after reading the saved originals.
