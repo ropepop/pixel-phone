@@ -28,6 +28,46 @@ class TicketPanelCleanupScriptTest {
   }
 
   @Test
+  fun acquisitionRequiresBothIndependentIdentityAndDarknessChecks() = fixture { root ->
+    fun stat(pid: Int, start: Int) = "$pid (fixture) S " + "0 ".repeat(18) + "$start\n"
+    root.resolve("proc/789").mkdirs()
+    root.resolve("proc/123").mkdirs()
+    root.resolve("proc/789/stat").writeText(stat(789, 321))
+    root.resolve("proc/123/stat").writeText(stat(123, 456))
+    root.resolve("proc/789/cmdline").writeText(
+      listOf("sh", "-c", "fixture", TicketActionPanelDarkLease.HELPER_PROCESS_MARKER,
+        "123", "456", "proof-test").joinToString("\u0000", postfix = "\u0000")
+    )
+    root.resolve("proof-test.ready").writeText(
+      "helper_pid=789\nhelper_start=321\nowner_pid=123\nowner_start=456\n"
+    )
+    root.resolve("panel/panel0-backlight").mkdirs()
+    root.resolve("panel/panel0-backlight/brightness").writeText("0\n")
+    root.resolve("panel/panel0-backlight/actual_brightness").writeText("0\n")
+    val program = TicketActionPanelDarkLease.panelDarkVerifyScript("proof-test", 2)
+      .replace(TicketActionPanelDarkLease.HELPER_READINESS_DIRECTORY, root.absolutePath)
+      .replace("/proc/", "${root.absolutePath}/proc/")
+      .replace("/sys/class/backlight", "${root.absolutePath}/panel")
+    // Change the actual fixture between the two complete observations.
+    val gap = "usleep 25000 2>/dev/null || sleep 0.025 || exit 76"
+    for ((between, expected) in listOf(
+      ":" to 0,
+      "echo 1 > '${root.absolutePath}/panel/panel0-backlight/brightness'" to 1,
+      "rm '${root.absolutePath}/proc/123/stat'" to 74
+    )) {
+      root.resolve("panel/panel0-backlight/brightness").writeText("0\n")
+      root.resolve("proc/123/stat").writeText(stat(123, 456))
+      val process = ProcessBuilder("/bin/bash", "-c", program.replace(gap, between))
+        .redirectErrorStream(true).start()
+      assertTrue(process.waitFor(5, TimeUnit.SECONDS))
+      val output = process.inputStream.bufferedReader().readText()
+      assertEquals(output, expected, process.exitValue())
+      assertEquals(expected == 0, output.contains("panel_confirmations=2"))
+      assertEquals(if (expected == 0) 2 else 1, output.lineSequence().count { it == "panel_dark=1" })
+    }
+  }
+
+  @Test
   fun cleanupCountsEachOwnerOnceAndPreservesUnrelatedFiles() = fixture { root ->
     repeat(16) { index ->
       root.resolve("owner.$index.launch").writeText("owner_pid=123\nowner_start=456\n")

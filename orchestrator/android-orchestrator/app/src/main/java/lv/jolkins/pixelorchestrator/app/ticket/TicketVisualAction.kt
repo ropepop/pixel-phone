@@ -1,6 +1,5 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
@@ -13,7 +12,8 @@ internal enum class TicketVisualActionTarget(val wireName: String, val activates
   REGISTER_CURRENT("register_current", activatesTicket = true),
   SHOW_RECENT_ACTIVATED("show_recent_activated"),
   RETURN_TO_LATEST_UNACTIVATED("return_to_latest_unactivated"),
-  REDETECT_LATEST("redetect_latest");
+  REDETECT_LATEST("redetect_latest"),
+  REFRESH_CURRENT_TICKET("refresh_current_ticket");
 
   companion object {
     fun fromWireName(value: String): TicketVisualActionTarget? = entries.firstOrNull {
@@ -157,6 +157,9 @@ internal fun ticketVisualTerminalViewCompatible(
   TicketVisualActionTarget.OPEN_LATEST_AND_REGISTER,
   TicketVisualActionTarget.REGISTER_CURRENT -> view == TicketVisualActionView.ACTIVATED_CURRENT
   TicketVisualActionTarget.SHOW_RECENT_ACTIVATED -> view == TicketVisualActionView.RECENT_ACTIVATED
+  TicketVisualActionTarget.REFRESH_CURRENT_TICKET -> view in setOf(
+    TicketVisualActionView.LATEST_UNACTIVATED, TicketVisualActionView.ACTIVATED_CURRENT
+  )
 }
 
 internal fun retainedTicketVisualTerminalSnapshot(
@@ -401,6 +404,10 @@ internal fun parseTicketVisualActionRequest(payload: JsonObject): TicketVisualAc
   val refreshActivationAttemptId = payload.string("activationAttemptId").trim()
   val refreshActivationRevision = payload.string("activationRevision").trim()
   if (actionId.isBlank() || actionId.length > 128) return null
+  if (target == TicketVisualActionTarget.REFRESH_CURRENT_TICKET &&
+    (flow != "idle_ticket_refresh" || payload.string("source") != "ticket_remote_idle_refresh" ||
+      attemptId.isNotBlank() || expectedRevision.isNotBlank())
+  ) return null
   if (target.activatesTicket && attemptId != actionId) return null
   if (target == TicketVisualActionTarget.REGISTER_CURRENT && expectedRevision.isBlank()) return null
   val switchesView = target in setOf(
@@ -463,7 +470,8 @@ internal data class TicketVisualCardAnchor(
     TicketVisualActionTarget.RETURN_TO_LATEST_UNACTIVATED,
     TicketVisualActionTarget.REDETECT_LATEST -> registrationBounds
     TicketVisualActionTarget.SHOW_RECENT_ACTIVATED -> activatedDetailBounds
-    TicketVisualActionTarget.REGISTER_CURRENT -> null
+    TicketVisualActionTarget.REGISTER_CURRENT,
+    TicketVisualActionTarget.REFRESH_CURRENT_TICKET -> null
   }
 }
 
@@ -513,7 +521,11 @@ internal data class TicketVisualActionObservation(
   val bottomTab: TicketViviBottomTab = TicketViviBottomTab.NONE,
   val cards: List<TicketVisualCardAnchor> = emptyList(),
   val atMillis: Long = 0L,
-  val captureStartUs: Long = 0L
+  val captureStartUs: Long = 0L,
+  /** Local helper generation; never supplied by a browser or persisted in a result. */
+  val captureGeneration: Long = 0L,
+  /** Exact validity-pair card identity from a full action probe, never an input freshness proof. */
+  val detailCardAnchor: String = ""
 ) {
   fun timeTicketsNavigationBoundsFor(target: TicketVisualActionTarget): TicketVisualProbeBounds? =
     timeTicketsTabBounds.takeIf {
@@ -581,6 +593,7 @@ internal fun ticketVisualObservationsAgree(
   if (!detailOverlay && first.bottomTab != second.bottomTab) return false
   val anchorsAgree = first.currentAnchor == second.currentAnchor
   if (!anchorsAgree) return false
+  if (first.detailCardAnchor != second.detailCardAnchor) return false
   if (!boundsAgree(first.sliderBounds, second.sliderBounds, geometryTolerance) ||
     !boundsAgree(first.controlCodeBounds, second.controlCodeBounds, geometryTolerance) ||
     !boundsAgree(first.backBounds, second.backBounds, geometryTolerance) ||
@@ -797,10 +810,10 @@ internal fun ticketVisualObservationAfterCardSelection(
 }
 
 /**
- * Activated-detail recognition intentionally reuses the exact pre-gesture identity because the
- * activated layout cannot independently expose that detail identity. Every other post-gesture
- * state keeps its detector-provided anchor so an unrelated or unproved detail is never mistaken
- * for the ticket that was swiped.
+ * The completed gesture proves this activation. Retain its recognized list-card identity for
+ * later switching across capture restarts; the pre-gesture detail signature is helper-local.
+ * Missing date recognition keeps the existing exact-identity fallback and fails closed if a
+ * later switch cannot prove it. Other post-gesture states never inherit registration identity.
  */
 internal fun ticketVisualActivationObservationAfterCompletedGesture(
   observation: TicketVisualActionObservation?,
@@ -808,7 +821,7 @@ internal fun ticketVisualActivationObservationAfterCompletedGesture(
 ): TicketVisualActionObservation? = if (
   observation?.state == TicketVisualPhoneState.ACTIVATED_DETAIL && provenAnchor.isNotBlank()
 ) {
-  observation.copy(currentAnchor = provenAnchor)
+  observation.copy(currentAnchor = observation.detailCardAnchor.ifBlank { provenAnchor })
 } else {
   observation
 }
@@ -841,5 +854,6 @@ internal fun ticketVisualCheckpointMatchesActivatedAnchor(
   observation: TicketVisualActionObservation,
   anchors: TicketVisualSwitchAnchors
 ): Boolean = observation.state == TicketVisualPhoneState.ACTIVATED_DETAIL &&
-  observation.currentAnchor.isNotBlank() &&
-  observation.currentAnchor == anchors.recentActivatedAnchor
+  anchors.recentActivatedAnchor.isNotBlank() &&
+  (observation.currentAnchor == anchors.recentActivatedAnchor ||
+    observation.detailCardAnchor == anchors.recentActivatedAnchor)

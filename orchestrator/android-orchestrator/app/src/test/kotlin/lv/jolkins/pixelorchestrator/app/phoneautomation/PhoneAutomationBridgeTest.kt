@@ -333,6 +333,37 @@ class PhoneAutomationBridgeTest {
   }
 
   @Test
+  fun focusDepartureAndReturnInvalidateTheOldFenceAndFourHundredMillisecondsReachTheHost() = runTest {
+    PhoneAutomationServiceBridge.resetForTests()
+    val vivi = PhoneAutomationFocusedInputWindow("com.pv.vivi", 17)
+    val host = FakeAccessibilityHost().apply {
+      focusedInputWindow = vivi
+      ticketSliderFullStrokeResult = TicketSliderGestureDispatchResult.COMPLETED
+    }
+    PhoneAutomationServiceBridge.bindAccessibilityService(host)
+    val fence = PhoneAutomationServiceBridge.awaitStableTicketInputFence(
+      "com.pv.vivi", 100, stableMillis = 1, elapsedRealtimeMillis = { testScheduler.currentTime }
+    )!!
+    assertEquals(TicketSliderGestureDispatchResult.COMPLETED,
+      PhoneAutomationServiceBridge.performTicketSliderFullStroke(
+        "com.pv.vivi", 10, 20, 90, 20, 400, 10, expectedInputFence = fence
+      ))
+    assertEquals(400L, host.ticketSliderFullStrokeRequests.single().durationMillis)
+    PhoneAutomationServiceBridge.recordFocusedInputWindow(vivi, nowMillis = 10)
+    assertTrue(PhoneAutomationServiceBridge.ticketInputFenceIsCurrent(fence))
+    PhoneAutomationServiceBridge.recordFocusedInputWindow(PhoneAutomationFocusedInputWindow("android", 18), nowMillis = 11)
+    PhoneAutomationServiceBridge.recordFocusedInputWindow(vivi, nowMillis = 12)
+    assertFalse(PhoneAutomationServiceBridge.ticketInputFenceIsCurrent(fence))
+    assertEquals(TicketSliderGestureDispatchResult.REJECTED,
+      PhoneAutomationServiceBridge.performTicketSliderFullStroke(
+        "com.pv.vivi", 10, 20, 90, 20, 400, 10, expectedInputFence = fence
+      ))
+    assertEquals(1, host.ticketSliderFullStrokeCalls)
+    PhoneAutomationServiceBridge.unbindAccessibilityService(host)
+    assertEquals(null, PhoneAutomationServiceBridge.currentFocusedInputState().window)
+  }
+
+  @Test
   fun touchEventsArePublishedAndUpdateSharedState() = runTest {
     PhoneAutomationServiceBridge.resetForTests()
     val observedEvents = mutableListOf<PhoneAutomationTouchEvent>()
@@ -920,11 +951,11 @@ class PhoneAutomationBridgeTest {
     val focusedWindow = source.substringAfter(
       "private fun focusedInputWindow(expectedPackageName: String)"
     ).substringBefore("private fun fastRootForPackage")
-    assertTrue(focusedWindow.contains("window.isFocused"))
-    assertTrue(focusedWindow.contains("focused.singleOrNull()"))
+    assertTrue(focusedWindow.contains("windows.filter { it.isFocused }.singleOrNull()"))
+    assertTrue(focusedWindow.contains("recordFocusedInputWindow(window)"))
     assertFalse(focusedWindow.contains("rootInActiveWindow"))
     assertEquals(1, Regex("GestureDescription\\.StrokeDescription\\(").findAll(fullStroke).count())
-    assertTrue(fullStroke.contains("durationMillis.coerceIn(700L, 1_100L)"))
+    assertTrue(fullStroke.contains("durationMillis.coerceIn(400L, 1_100L)"))
     assertTrue(fullStroke.contains("lineTo(end.first.toFloat(), end.second.toFloat())"))
     assertTrue(fullStroke.contains("reason = \"ticket_slider_full_stroke\""))
     assertEquals(1, Regex("dispatchTerminalTicketSliderStroke\\(").findAll(fullStroke).count())

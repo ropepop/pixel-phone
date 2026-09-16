@@ -34,7 +34,7 @@ internal data class TicketSliderGestureContract(
 /** One activation stroke: thumb-down, full usable-track movement, and one release. */
 internal fun ticketSliderGestureContract(
   bounds: TicketViviGraphicBounds,
-  durationMillis: Long = 800L
+  durationMillis: Long = 400L
 ): TicketSliderGestureContract {
   // The rooted visual band includes the thumb plus ViVi's vertical padding. Live proof showed
   // that half the full band height inset both endpoints too far; three eighths reaches the

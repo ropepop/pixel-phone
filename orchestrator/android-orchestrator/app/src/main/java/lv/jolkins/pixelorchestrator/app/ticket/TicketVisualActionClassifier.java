@@ -11,6 +11,8 @@ import java.util.List;
 public final class TicketVisualActionClassifier {
   public static final int PROBE_WIDTH = 384;
   public static final int PROBE_HEIGHT = 576;
+  public static final int DETAIL_VALIDITY_WIDTH = PROBE_WIDTH * 2 * 3 / 4;
+  public static final int DETAIL_VALIDITY_HEIGHT = PROBE_HEIGHT * 2 * 7 / 72;
   public static final int SAMPLE_WIDTH = 192;
   public static final int SAMPLE_HEIGHT = 288;
 
@@ -74,6 +76,7 @@ public final class TicketVisualActionClassifier {
   public static final class Result {
     public final String state;
     public final String currentAnchor;
+    public String detailCardAnchor = "";
     public final Bounds sliderBounds;
     public final Bounds controlCodeBounds;
     public final Bounds backBounds;
@@ -104,6 +107,7 @@ public final class TicketVisualActionClassifier {
       StringBuilder value = new StringBuilder();
       value.append("state=").append(state);
       if (!currentAnchor.isEmpty()) value.append(" anchor=").append(currentAnchor);
+      if (!detailCardAnchor.isEmpty()) value.append(" detail_card=").append(detailCardAnchor);
       if (sliderBounds != null) value.append(" slider=").append(sliderBounds.wire());
       if (controlCodeBounds != null) value.append(" control=").append(controlCodeBounds.wire());
       if (backBounds != null) value.append(" back=").append(backBounds.wire());
@@ -211,8 +215,6 @@ public final class TicketVisualActionClassifier {
     Bounds home = detectViviHome(geometryPixels);
     boolean homeBlocked = home != null && blocksViviHomeProof(
       ordinary,
-      activated,
-      slider,
       geometryPixels
     );
     if (home != null && !homeBlocked) {
@@ -350,6 +352,18 @@ public final class TicketVisualActionClassifier {
 
   private static Result unknown() {
     return new Result("unknown", "", null, null, null, new ArrayList<>());
+  }
+
+  /** Excludes the rotating code, price and registration time from the native capture crop. */
+  static Bounds detailValidityBounds(int width, int height) {
+    return new Bounds(0, height * 35 / 72, width * 3 / 4, height * 42 / 72);
+  }
+
+  /** One complete validity pair, sampled directly from the same picture at twice probe scale. */
+  static String detailCardAnchor(int[] validityBand) {
+    List<TicketVisualDateGlyphRecognizer.DateRange> ranges =
+      TicketVisualDateGlyphRecognizer.recognize(validityBand, DETAIL_VALIDITY_WIDTH, DETAIL_VALIDITY_HEIGHT);
+    return ranges.size() == 1 ? ranges.get(0).anchor : "";
   }
 
   /**
@@ -1325,14 +1339,11 @@ public final class TicketVisualActionClassifier {
 
   private static boolean blocksViviHomeProof(
     String ordinary,
-    String activated,
-    String slider,
     int[] geometryPixels
   ) {
-    return !slider.isEmpty() ||
-      activated.equals(TicketControlCodeVisualClassifier.RAW_TICKET) ||
-      ordinary.equals(TicketControlCodeVisualClassifier.CONTROL_POPUP) ||
-      ordinary.equals(TicketControlCodeVisualClassifier.GENERATED) ||
+    // Home notices match coarse ticket graphics, and its Search button can match a slider.
+    // All four navigation glyphs prove Home; explicit input and login surfaces still block it.
+    return ordinary.equals(TicketControlCodeVisualClassifier.CONTROL_POPUP) ||
       looksLikeLogin(geometryPixels);
   }
 

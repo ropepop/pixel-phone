@@ -969,6 +969,27 @@ public final class TicketRootHardwareH264CaptureMain {
         TicketVisualActionClassifier.Result result = ticketCurrentOnly
           ? TicketVisualActionClassifier.classifyCurrent(pixels)
           : TicketVisualActionClassifier.classify(pixels);
+        if (!ticketCurrentOnly && (result.state.equals("unactivated_detail") || result.state.equals("activated_detail"))) {
+          // The ordinary probe reduces thin validity digits to eight pixels high. Read only this
+          // strip at twice that scale from the same immutable capture, with the existing reader.
+          TicketVisualActionClassifier.Bounds band = TicketVisualActionClassifier.detailValidityBounds(
+            sourceCrop.width(), sourceCrop.height()
+          );
+          int width = TicketVisualActionClassifier.DETAIL_VALIDITY_WIDTH;
+          int height = TicketVisualActionClassifier.DETAIL_VALIDITY_HEIGHT;
+          Bitmap validity = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+          try {
+            new Canvas(validity).drawBitmap(readableSource, new Rect(
+              sourceCrop.left + band.left, sourceCrop.top + band.top,
+              sourceCrop.left + band.right, sourceCrop.top + band.bottom
+            ), new Rect(0, 0, width, height), paint);
+            int[] validityPixels = new int[width * height];
+            validity.getPixels(validityPixels, 0, width, 0, 0, width, height);
+            result.detailCardAnchor = TicketVisualActionClassifier.detailCardAnchor(validityPixels);
+          } finally {
+            validity.recycle();
+          }
+        }
         String selectedBottomTab =
           TicketVisualActionClassifier.selectedBottomNavigationTab(pixels);
         String wire = result.wire() +

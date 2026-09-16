@@ -7,6 +7,10 @@ internal class TicketActionTiming(
 ) {
   enum class Phase(val field: String) {
     ADMITTED("admitted_ms"),
+    LANE_READY("lane_ready_ms"),
+    PROTECTION_READY("protection_ready_ms"),
+    VISUAL_READY("visual_ready_ms"),
+    FINAL_CHECKS("final_checks_ms"),
     INPUT_REQUESTED("input_requested_ms"),
     INPUT_RETURNED("input_returned_ms"),
     TERMINAL("terminal_ms")

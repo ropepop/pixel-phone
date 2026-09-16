@@ -6,7 +6,6 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationViviAuthSurface
 
 internal data class TicketSpacetimeViviCredentials(
   val email: String,

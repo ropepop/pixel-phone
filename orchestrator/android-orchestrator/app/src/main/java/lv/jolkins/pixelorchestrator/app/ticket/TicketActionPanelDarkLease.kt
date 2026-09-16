@@ -947,13 +947,14 @@ internal class TicketActionPanelDarkLease(
 
     private val HELPER_IDENTITY_FUNCTIONS = """
       read_proc_start() {
+        proc_start=""
         line=""
         IFS= read -r line < "/proc/${'$'}1/stat" 2>/dev/null || return 1
         rest="${'$'}{line#*) }"
         set -- ${'$'}rest
         shift 19
         [ -n "${'$'}{1:-}" ] || return 1
-        printf '%s' "${'$'}1"
+        proc_start="${'$'}1"
       }
       ${EXACT_HELPER_CMDLINE_MATCH_FUNCTION.prependIndent("      ")}
       load_launch() {
@@ -985,7 +986,8 @@ internal class TicketActionPanelDarkLease(
         done
       }
       original_helper_alive() {
-        [ -n "${'$'}helper_pid" ] && [ "${'$'}(read_proc_start "${'$'}helper_pid")" = "${'$'}helper_start" ]
+        [ -n "${'$'}helper_pid" ] && read_proc_start "${'$'}helper_pid" &&
+          [ "${'$'}proc_start" = "${'$'}helper_start" ]
       }
       exact_helper_matches() {
         cmdline="/proc/${'$'}helper_pid/cmdline"
@@ -1004,7 +1006,8 @@ internal class TicketActionPanelDarkLease(
           case "${'$'}candidate" in ''|*[!0-9]*) return 1 ;; esac
           [ "${'$'}candidate" != "${'$'}${'$'}" ] || continue
           [ "${'$'}candidate" != "${'$'}PPID" ] || continue
-          candidate_start="${'$'}(read_proc_start "${'$'}candidate")" || return 1
+          read_proc_start "${'$'}candidate" || return 1
+          candidate_start="${'$'}proc_start"
           exact_count=${'$'}((exact_count + 1))
           [ "${'$'}exact_count" -le 1 ] || return 1
           helper_pid="${'$'}candidate"; helper_start="${'$'}candidate_start"
@@ -1354,8 +1357,8 @@ internal class TicketActionPanelDarkLease(
       [ "${'$'}helper_pid" != "${'$'}PPID" ] || fail_readiness
       cmdline="/proc/${'$'}helper_pid/cmdline"
       exact_helper_cmdline_args_match "${'$'}cmdline" || fail_readiness
-      [ "${'$'}(read_proc_start "${'$'}helper_pid")" = "${'$'}helper_start" ] || fail_readiness
-      [ "${'$'}(read_proc_start "${'$'}owner_pid")" = "${'$'}owner_start" ] || fail_readiness
+      read_proc_start "${'$'}helper_pid" && [ "${'$'}proc_start" = "${'$'}helper_start" ] || fail_readiness
+      read_proc_start "${'$'}owner_pid" && [ "${'$'}proc_start" = "${'$'}owner_start" ] || fail_readiness
       echo helper_ready=1
       ${panelDarkReadbackScript()}
       """.trimIndent()
@@ -1368,18 +1371,12 @@ internal class TicketActionPanelDarkLease(
       )
       confirmations=0
       while [ "${'$'}confirmations" -lt "$requiredConfirmations" ]; do
-        observation="${'$'}(verify_once)"
-        status=${'$'}?
-        if [ "${'$'}status" -ne 0 ]; then
-          printf '%s\n' "${'$'}observation"
-          exit "${'$'}status"
-        fi
+        verify_once || exit ${'$'}?
         confirmations=${'$'}((confirmations + 1))
         if [ "${'$'}confirmations" -lt "$requiredConfirmations" ]; then
           usleep ${PANEL_DARK_ACQUIRE_POLL_MILLIS * 1_000L} 2>/dev/null || sleep 0.025 || exit 76
         fi
       done
-      printf '%s\n' "${'$'}observation"
       echo panel_confirmations=${'$'}confirmations
       """.trimIndent()
     }

@@ -5,6 +5,25 @@ import org.junit.Test
 
 class TicketVisualTerminalOwnershipTest {
   @Test
+  fun registrationRetainsTheProvedCardAcrossColdCaptureRestarts() {
+    val original = TicketVisualActionObservation(1, TicketVisualPhoneState.ACTIVATED_DETAIL,
+      currentAnchor = "d_old_helper", detailCardAnchor = "same_card", captureGeneration = 1)
+    val activated = requireNotNull(ticketVisualActivationObservationAfterCompletedGesture(original, "d_old_helper"))
+    assertEquals("same_card", activated.currentAnchor)
+    val anchors = TicketVisualSwitchAnchors(recentActivatedAnchor = activated.currentAnchor)
+    val reopened = original.copy(probeId = 2, currentAnchor = "d_new_helper", captureGeneration = 2)
+    assertEquals(anchors.recentActivatedAnchor,
+      ticketVisualObservationAfterRecentActivatedSelection(reopened, "same_card", anchors.recentActivatedAnchor).currentAnchor)
+    assertEquals(true, ticketVisualCheckpointMatchesActivatedAnchor(reopened, anchors))
+    assertEquals(false, ticketVisualCheckpointMatchesActivatedAnchor(reopened.copy(detailCardAnchor = "other_card"), anchors))
+    assertEquals(false, ticketVisualCheckpointMatchesActivatedAnchor(reopened.copy(state = TicketVisualPhoneState.UNACTIVATED_DETAIL), anchors))
+    assertEquals("d_old_helper", ticketVisualActivationObservationAfterCompletedGesture(
+      original.copy(detailCardAnchor = ""), "d_old_helper")?.currentAnchor)
+    assertEquals("d_new_helper", ticketVisualActivationObservationAfterCompletedGesture(
+      reopened.copy(state = TicketVisualPhoneState.UNACTIVATED_DETAIL), "d_old_helper")?.currentAnchor)
+  }
+
+  @Test
   fun oldSettlementGeometryIsPreservedOnlyByItsRetainedEnvelope() {
     val old = TicketVisualActionJournalState(
       commandId = "command", commandRevision = "revision", actionId = "action",

@@ -3,20 +3,17 @@ package lv.jolkins.pixelorchestrator.app.ticket
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Color
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
-import android.util.Base64
 import android.view.WindowManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
@@ -28,6 +25,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -40,13 +38,10 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
-import lv.jolkins.pixelorchestrator.app.MainActivity
 import lv.jolkins.pixelorchestrator.app.SupervisorService
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationPreferencesStore
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationServiceBridge
@@ -64,18 +59,15 @@ import lv.jolkins.pixelorchestrator.rootexec.RootResult
 import lv.jolkins.pixelorchestrator.rootexec.SuRootExecutor
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
-import java.io.ByteArrayOutputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.time.Instant
-import java.util.ArrayDeque
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.math.roundToInt
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -130,119 +122,6 @@ class TicketStreamService : Service() {
     val resultProofAtMillis: Long = 0L
   )
 
-  /**
-   * Owns request-lifetime soft-keyboard suppression without disabling an IME or registering a
-   * hardware keyboard. The critical field tap is gated on the Accessibility controller's verified
-   * hidden mode, so control-code entry cannot trigger an Android display-configuration change.
-   */
-  private class RequestScopedKeyboardClampLease(
-    private val requestId: String,
-    private val expectedPackageName: String,
-    private val commandTimeoutMillis: Long,
-    private val onEvent: (String, String) -> Unit
-  ) {
-    private val releaseMutex = Mutex()
-    @Volatile private var suppressionMayBeOwned: Boolean = false
-    @Volatile private var acquired: Boolean = false
-    @Volatile private var released: Boolean = false
-
-    suspend fun acquire(): Boolean = releaseMutex.withLock {
-      if (released) {
-        return false
-      }
-      if (acquired) {
-        return PhoneAutomationServiceBridge.isViviControlCodeKeyboardModeSuppressed(
-          expectedPackageName
-        )
-      }
-      val applied = runCatching {
-        val connected = PhoneAutomationServiceBridge.awaitAccessibilityConnection(
-          commandTimeoutMillis
-        )
-        if (!connected) {
-          false
-        } else {
-          // From this call boundary onward, a failed Boolean may still mean HIDDEN was applied but
-          // its inline rollback could not be proved. Finalization must therefore verify restore.
-          suppressionMayBeOwned = true
-          PhoneAutomationServiceBridge.suppressViviControlCodeKeyboardMode(expectedPackageName)
-        }
-      }.getOrElse { error ->
-        onEvent(
-          "keyboard_clamp_apply_failed",
-          "request=$requestId error=${error::class.java.simpleName}"
-        )
-        false
-      }
-      if (!applied) {
-        onEvent(
-          "keyboard_clamp_apply_failed",
-          "request=$requestId authority=accessibility_soft_keyboard unavailable=true"
-        )
-        return false
-      }
-      acquired = true
-      true
-    }
-
-    /** Revalidates the exact owned mode at the last safe point before the field can be touched. */
-    suspend fun awaitApplied(): Boolean {
-      val ready = !released && acquired && runCatching {
-        PhoneAutomationServiceBridge.isViviControlCodeKeyboardModeSuppressed(expectedPackageName)
-      }.getOrDefault(false)
-      if (!ready) {
-        onEvent(
-          "keyboard_clamp_gate_failed",
-          "request=$requestId owned_hidden_mode_not_confirmed"
-        )
-      }
-      return ready
-    }
-
-    private suspend fun restoreMode(reason: String): Boolean {
-      var restored = false
-      var lastError = ""
-      for (attempt in 0 until 2) {
-        restored = runCatching {
-          PhoneAutomationServiceBridge.restoreViviControlCodeKeyboardMode(expectedPackageName)
-        }.getOrElse { error ->
-          lastError = error::class.java.simpleName
-          false
-        }
-        if (restored) {
-          break
-        }
-        if (attempt == 0) {
-          delay(40L)
-        }
-      }
-      if (!restored) {
-        onEvent(
-          "keyboard_clamp_restore_failed",
-          "request=$requestId reason=$reason authority=accessibility_soft_keyboard " +
-            "error=${lastError.ifBlank { "unavailable" }}"
-        )
-      }
-      return restored
-    }
-
-    suspend fun release(reason: String): Boolean = releaseMutex.withLock {
-      if (released) {
-        return true
-      }
-      val restored = if (acquired || suppressionMayBeOwned) {
-        restoreMode(reason)
-      } else {
-        true
-      }
-      if (restored) {
-        suppressionMayBeOwned = false
-        acquired = false
-        released = true
-      }
-      restored
-    }
-  }
 
   private data class TicketActivationDispatchPreparation(
     val observation: TicketVisualActionObservation,
@@ -250,7 +129,8 @@ class TicketStreamService : Service() {
     val inputFence: PhoneAutomationTicketInputFence,
     val captureStreamEpoch: Long,
     val captureRestartCount: Long,
-    val actionMutationGeneration: Long
+    val actionMutationGeneration: Long,
+    val liveEvidence: TicketRegistrationVisualEvidence? = null
   )
 
   private data class TicketActivationPreparationResult(
@@ -326,15 +206,22 @@ class TicketStreamService : Service() {
     },
     onObservation = { observation ->
       val touch = PhoneAutomationServiceBridge.currentRootPhysicalTouchState()
-      phoneControlState.observe(observation,
-        !secureCaptureStartupReady || serviceLifecycleStopping ||
-          ticketVisualActionJobOwnershipActive || viviReauthCaptureLeaseActive ||
+      val otherWork = !secureCaptureStartupReady || serviceLifecycleStopping ||
+          viviReauthCaptureLeaseActive ||
           ticketSpacetimeControlCodeRequestActive() || controlCodeSignatureCleanupRequired ||
-          activeControlCodeKeyboardClamp != null || activeTicketActionPanelDarkLease != null ||
-          touch.active || !touch.available)
-    },
-    onStateChanged = { health ->
-      handleRootHardwareH264CaptureStateChanged(health)
+          activeControlCodeKeyboardClamp != null || touch.active || !touch.available
+      val preparingFirstStroke = ticketVisualActionJobOwnershipActive &&
+        ticketActionV3Snapshot.target == TicketVisualActionTarget.REGISTER_CURRENT.wireName &&
+        ticketActionV3Snapshot.phase in setOf(
+          "awaiting_visual_proof", "starting_visual_stream", "preparing_registration_input", "dispatching_registration_gesture"
+        ) && activeTicketActionPanelDarkLease?.snapshot()?.mutationMayHaveDispatched != true
+      val mayPrepare = !otherWork &&
+        ((!ticketVisualActionJobOwnershipActive && activeTicketActionPanelDarkLease == null) || preparingFirstStroke)
+      phoneControlState.observe(
+        observation,
+        otherWork || ticketVisualActionJobOwnershipActive || activeTicketActionPanelDarkLease != null,
+        registrationEvidenceFence().takeIf { mayPrepare }
+      )
     },
     pendingKeyFrameRequest = pendingRootHardwareH264KeyFrame
   )
@@ -384,10 +271,6 @@ class TicketStreamService : Service() {
   @Volatile private var hardwareFrameBroadcastAllowed: Boolean = false
   @Volatile private var activeCaptureMode: String = CAPTURE_MODE_IDLE
   @Volatile private var fallbackReason: String? = null
-  @Volatile private var hardwareReliabilityFailures: Int = 0
-  @Volatile private var hardwareMarkedUnreliableAtMillis: Long = 0L
-  @Volatile private var hardwareUnreliableReason: String? = null
-  @Volatile private var lastObservedHardwareRestartCount: Long = 0L
   @Volatile private var lastRootH264BlankProbeAtMillis: Long = 0L
   @Volatile private var lastRootH264VisibleProbePassedAtMillis: Long = 0L
   @Volatile private var lastRootH264BlankProbeResult: String = "not_run"
@@ -487,6 +370,14 @@ class TicketStreamService : Service() {
 
   override fun onCreate() {
     super.onCreate()
+    serviceScope.launch {
+      PhoneAutomationServiceBridge.focusedInputStates.collect { input ->
+        phoneControlState.invalidate(
+          "input_window_changed", busy = input.window == null,
+          capturedThroughUs = input.changedAtMillis * 1_000L
+        )
+      }
+    }
     serviceScope.launch {
       var touchBeginCount = -1L
       var available = false
@@ -974,7 +865,10 @@ class TicketStreamService : Service() {
     }
   }
 
-  internal suspend fun handleTicketSpacetimeCommand(command: TicketSpacetimeCommand): TicketSpacetimeCommandResult {
+  internal suspend fun handleTicketSpacetimeCommand(
+    command: TicketSpacetimeCommand,
+    beginIdleRefresh: suspend () -> Boolean = { false }
+  ): TicketSpacetimeCommandResult {
     val payload = runCatching { json.parseToJsonElement(command.payloadJson).jsonObject }.getOrNull()
     val reason = payload?.stringValue("reason")
       ?: payload?.stringValue("acceptedReason")
@@ -1020,7 +914,7 @@ class TicketStreamService : Service() {
               reason = "ticket_action_v3_payload_invalid",
               streamState = ticketSpacetimeStreamState()
             )
-          handleTicketVisualActionV3(command, request)
+          handleTicketVisualActionV3(command, request, beginIdleRefresh)
         }
         "generate_control_code" -> {
           serviceScope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -1947,7 +1841,8 @@ class TicketStreamService : Service() {
 
   private suspend fun handleTicketVisualActionV3(
     command: TicketSpacetimeCommand,
-    request: TicketVisualActionRequest
+    request: TicketVisualActionRequest,
+    beginIdleRefresh: suspend () -> Boolean
   ): TicketSpacetimeCommandResult {
     val timing = TicketActionTiming(SystemClock::elapsedRealtime)
     var receivedRegistrationIdentity: TicketRegistrationProof? = null
@@ -1979,6 +1874,9 @@ class TicketStreamService : Service() {
           ticketPhoneControlRegistrationIdentity(request.expectedInteractionRevision,
             phoneControlState.exactContext(request.expectedInteractionRevision, SystemClock.elapsedRealtime()))
         } else null
+        if (request.target != TicketVisualActionTarget.REGISTER_CURRENT) {
+          phoneControlState.clearRegistrationEvidence()
+        }
         ticketActionV3Generation += 1L
         ticketActionV3MutationGeneration += 1L
         ticketActionV3Snapshot = TicketVisualActionSnapshot(
@@ -1995,7 +1893,8 @@ class TicketStreamService : Service() {
     try {
       val terminal = try {
         controlCodePhoneMutationLane.withOwnership {
-          runTicketVisualActionV3(command, request, generation, receivedRegistrationIdentity)
+          timing.mark(TicketActionTiming.Phase.LANE_READY)
+          runTicketVisualActionV3(command, request, generation, receivedRegistrationIdentity, beginIdleRefresh)
         }
       } catch (error: Throwable) {
         val revision = if (request.target == TicketVisualActionTarget.REGISTER_CURRENT) {
@@ -2029,7 +1928,8 @@ class TicketStreamService : Service() {
     command: TicketSpacetimeCommand,
     request: TicketVisualActionRequest,
     generation: Long,
-    receivedRegistrationIdentity: TicketRegistrationProof?
+    receivedRegistrationIdentity: TicketRegistrationProof?,
+    beginIdleRefresh: suspend () -> Boolean
   ): TicketVisualActionSnapshot {
     val recoveringControlCodeCheckpointAtStart = controlCodeSignatureCleanupRequired
     sessionMutex.withLock {
@@ -2072,8 +1972,24 @@ class TicketStreamService : Service() {
             "ticket_action_v3_initial", TICKET_ACTION_V3_VISUAL_TIMEOUT_MILLIS
           )
         } else null
+        // Evidence acquisition is read-only and can overlap the owned display protection.
+        // A retained checkpoint or uncertain navigation never receives this preparation.
+        val registrationPreparation = if (
+          request.target == TicketVisualActionTarget.REGISTER_CURRENT &&
+          receivedRegistrationIdentity != null && !recoveringControlCodeCheckpointAtStart &&
+          streamActive && rootHardwareH264CaptureEngine.snapshot().active &&
+          PhoneAutomationServiceBridge.currentFocusedInputState().window?.packageName == TicketScreenConfig.VIVI_PACKAGE &&
+          !loadTicketVisualActionJournal().navigationDispatchUncertain &&
+          ticketActivationCheckpoint(command.id, request.expectedInteractionRevision, request.attemptId) == null
+        ) async {
+          prepareExactTicketActivationDispatch(
+            request, receivedRegistrationIdentity.detailAnchor, generation, panelLease,
+            resumeVivi = false, useLiveEvidence = true
+          )
+        } else null
         try {
           leaseAcquired = panelLease.acquire()
+          if (leaseAcquired) ticketActionTiming?.mark(TicketActionTiming.Phase.PROTECTION_READY)
           provisional = if (!leaseAcquired) {
             request.terminal(
               // The detailed clamp failure remains available in privacy-safe Pixel health. Publish the
@@ -2087,6 +2003,8 @@ class TicketStreamService : Service() {
               generation,
               panelLease,
               receivedRegistrationIdentity,
+              beginIdleRefresh,
+              registrationPreparation = registrationPreparation,
               initialObservation = { mayUse ->
                 if (!mayUse) {
                   warmObservation?.cancelAndJoin()
@@ -2131,6 +2049,7 @@ class TicketStreamService : Service() {
           }
         } finally {
           warmObservation?.cancel()
+          registrationPreparation?.cancel()
         }
       }
     } finally {
@@ -2280,7 +2199,9 @@ class TicketStreamService : Service() {
     generation: Long,
     panelLease: TicketActionPanelDarkLease,
     receivedRegistrationIdentity: TicketRegistrationProof?,
+    beginIdleRefresh: suspend () -> Boolean,
     initialObservation: suspend (Boolean) -> TicketVisualActionObservation? = { null },
+    registrationPreparation: Deferred<TicketActivationPreparationResult>? = null,
     onNewSessionAdmitted: (Long) -> Unit
   ): TicketVisualActionSnapshot {
     loadTicketVisualSwitchAnchorsIfNeeded()
@@ -2299,6 +2220,15 @@ class TicketStreamService : Service() {
     )?.let { return it }
     if (ticketActionV3Generation != generation) {
       return request.terminal("ticket_action_v3_superseded")
+    }
+    val idleRefresh = request.target == TicketVisualActionTarget.REFRESH_CURRENT_TICKET
+    if (idleRefresh && (
+        retainedJournal.actionId.isNotBlank() || ticketActivationCheckpointStore.load() != null ||
+          ticketSpacetimeControlCodeRequestActive() || viviReauthCaptureLeaseActive ||
+          ticketColdRestartBlocked || activeControlCodeKeyboardClamp != null ||
+          !viviFocusedForFastPublicOpen("idle_refresh_initial")
+      )) {
+      return request.terminal("ticket_action_idle_refresh_unavailable")
     }
     if (request.target.activatesTicket) {
       val checkpointRevision = if (request.target == TicketVisualActionTarget.REGISTER_CURRENT) {
@@ -2325,17 +2255,22 @@ class TicketStreamService : Service() {
     }
     if (!streamActive) {
       val startResponse = startTicketSession(
+        observeOnly = idleRefresh,
         onNewSessionAdmitted = onNewSessionAdmitted
       )
       if (!startResponse.ok || !streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264) {
         return request.terminal("ticket_action_visual_stream_unavailable")
       }
     }
-    val viviAlreadyFocused = viviFocusedForFastPublicOpen("ticket_action_v3_prelaunch")
+    val viviAlreadyFocused = if (request.target.activatesTicket) {
+      PhoneAutomationServiceBridge.captureTicketInputFence(TicketScreenConfig.VIVI_PACKAGE) != null
+    } else viviFocusedForFastPublicOpen("ticket_action_v3_prelaunch")
     val mayUseWarmObservation = viviAlreadyFocused &&
       !request.target.activatesTicket && !retainedJournal.navigationDispatchUncertain
     if (!mayUseWarmObservation) initialObservation(false)
-    if (request.target.activatesTicket || !viviAlreadyFocused) {
+    if (!viviAlreadyFocused) {
+      if (idleRefresh) return request.terminal("ticket_action_idle_refresh_unavailable")
+      registrationPreparation?.cancelAndJoin()
       // The focus lookup can suspend while the physical-touch monitor remains live. Re-check at
       // the exact resume boundary so a touch that arrived during it can never be followed by input.
       if (!panelLease.beforeMutationAllowed()) {
@@ -2346,19 +2281,10 @@ class TicketStreamService : Service() {
       launchViviForWake("ticket_action_v3:${request.target.wireName}")
     }
     ensureRootHardwareH264CaptureIfPossible()
-    rootHardwareH264CaptureEngine.requestImmediateRefresh("ticket_action_v3_capture_lease")
-    if (request.target.activatesTicket) {
-      updateTicketVisualActionPhase(request, "preparing_registration_input")
-      if (!PhoneAutomationServiceBridge.awaitAccessibilityConnection(
-          TICKET_SLIDER_ACCESSIBILITY_RECONNECT_TIMEOUT_MILLIS
-        )
-      ) {
-        return request.terminal("ticket_action_accessibility_unavailable")
-      }
-    }
+    if (request.target.activatesTicket) updateTicketVisualActionPhase(request, "preparing_registration_input")
     val captureRecoveryBudget = TicketVisualCaptureRecoveryBudget()
     // A normal register-current command already names the private ticket identity. Prepare its
-    // exact input fence and two new visual samples once, then use that same preparation for the
+    // exact input fence and two current visual samples once, then use that same preparation for the
     // initial reconciliation and first stroke. Recovery still observes the retained journal
     // before considering any new preparation; it never acquires fresh replay authority.
     val initialPreparation = if (request.target == TicketVisualActionTarget.REGISTER_CURRENT &&
@@ -2374,10 +2300,23 @@ class TicketStreamService : Service() {
         status = "needs_attention",
         terminalPhase = "not_dispatched"
       )
-      val preparation = prepareExactTicketActivationDispatch(
-        request, identity.detailAnchor, generation, panelLease, resumeVivi = false
+      val preparation = if (viviAlreadyFocused && registrationPreparation != null) {
+        registrationPreparation.await()
+      } else prepareExactTicketActivationDispatch(
+        request, identity.detailAnchor, generation, panelLease, resumeVivi = false,
+        useLiveEvidence = viviAlreadyFocused
       )
-      preparation.prepared ?: return request.terminal(preparation.reason, status = "needs_attention", terminalPhase = "not_dispatched")
+      val prepared = preparation.prepared ?: return request.terminal(
+        preparation.reason, status = "needs_attention", terminalPhase = "not_dispatched"
+      )
+      // Protection can outlast the first pair. Use newer agreeing pictures in the same
+      // context, retaining the original input fence and the actual capture timestamps.
+      val latest = prepared.liveEvidence?.let {
+        phoneControlState.registrationEvidence(
+          request.expectedInteractionRevision, registrationEvidenceFence(), SystemClock.elapsedRealtime()
+        )
+      }
+      if (latest != null) prepared.copy(observation = latest.second, liveEvidence = latest) else prepared
     } else null
     val warmObservation = if (mayUseWarmObservation) initialObservation(true) else null
     var observation = initialPreparation?.observation ?: warmObservation ?: awaitStableTicketVisualActionObservation(
@@ -2389,6 +2328,91 @@ class TicketStreamService : Service() {
           retainedJournal.target == request.target.wireName
       }
     ) ?: return request.terminal("ticket_action_visual_unproved")
+    if (idleRefresh) {
+      var preparedInputFence: PhoneAutomationTicketInputFence? = null
+      fun preparedInputIsCurrent(before: TicketVisualActionObservation): Boolean {
+        val fence = preparedInputFence ?: return false
+        val focused = PhoneAutomationServiceBridge.currentFocusedInputState().window
+        return focused?.packageName == fence.packageName && focused.windowId == fence.windowId &&
+          PhoneAutomationServiceBridge.ticketInputFenceGenerationsAreCurrent(
+            fence.packageName, fence.accessibilityGeneration, fence.touchGeneration
+          ) && generation == ticketActionV3Generation &&
+          before.captureGeneration == rootHardwareH264CaptureEngine.currentCaptureGeneration &&
+          ticketVisualObservationIsFreshForDispatch(
+            before, SystemClock.elapsedRealtime(), TICKET_CONTROL_OBSERVATION_TTL_MILLIS
+          )
+      }
+      val result = refreshCurrentTicket(
+        initial = observation,
+        retainedDispatch = false,
+        begin = beginIdleRefresh,
+        restart = {
+          val stopped = runPanelDarkCommand("ticket_idle_refresh_force_stop") {
+            if (!preparedInputIsCurrent(observation) ||
+              packageManager.getLaunchIntentForPackage(TicketScreenConfig.VIVI_PACKAGE) == null
+            ) RootResult(1, "", "", "idle_refresh_blocked", 0L)
+            else {
+              ticketActionTiming?.mark(TicketActionTiming.Phase.INPUT_REQUESTED)
+              val timeout = 10_000L.milliseconds
+              inputRootExecutor.runScript(boundedNonTouchCommand(
+                "am force-stop ${TicketScreenConfig.VIVI_PACKAGE} && ! pidof ${TicketScreenConfig.VIVI_PACKAGE} >/dev/null",
+                timeout
+              ), timeout)
+            }
+          }
+          if (!stopped.ok) false else runPanelDarkCommand("ticket_idle_refresh_launch") {
+            if (generation != ticketActionV3Generation ||
+              observation.captureGeneration != rootHardwareH264CaptureEngine.currentCaptureGeneration
+            ) RootResult(1, "", "", "idle_refresh_blocked", 0L)
+            else {
+              launchVivi()
+              ticketActionTiming?.mark(TicketActionTiming.Phase.INPUT_RETURNED)
+              RootResult(0, "", "", "idle_refresh_launch", 0L)
+            }
+          }.ok
+        },
+        prepare = { before, _, cardAnchor ->
+          val inputFence = PhoneAutomationServiceBridge.captureTicketInputFence(TicketScreenConfig.VIVI_PACKAGE)
+          val allowed = generation == ticketActionV3Generation &&
+            before.captureGeneration == rootHardwareH264CaptureEngine.currentCaptureGeneration &&
+            inputFence != null &&
+            ticketVisualObservationIsFreshForDispatch(
+              before, SystemClock.elapsedRealtime(), TICKET_CONTROL_OBSERVATION_TTL_MILLIS
+            ) && panelLease.beforeMutationAllowed() &&
+            PhoneAutomationServiceBridge.ticketInputFenceIsCurrent(inputFence)
+          if (!allowed || !panelLease.beforeMutationAllowed()) false
+          else {
+            val journal = TicketVisualActionJournalState(
+              commandId = command.id, commandRevision = command.revision,
+              flow = request.flow, actionId = request.actionId, target = request.target.wireName,
+              phase = "navigation_dispatched", intendedAnchor = observation.currentAnchor,
+              navigationFromState = before.state.wireName,
+              navigationToState = if (cardAnchor.isBlank()) "" else observation.state.wireName,
+              navigationAnchor = cardAnchor
+            )
+            preparedInputFence = inputFence
+            persistTicketVisualActionJournal(journal)
+          }
+        },
+        dispatch = { before, bounds, _ ->
+          if (!preparedInputIsCurrent(before)) false else {
+            panelLease.markMutationMayHaveDispatched()
+            ticketActionTiming?.mark(TicketActionTiming.Phase.INPUT_REQUESTED)
+            val dispatched = tapTicketVisualProbeBounds(bounds, "ticket_action_v3_refresh_current_ticket")
+            ticketActionTiming?.mark(TicketActionTiming.Phase.INPUT_RETURNED)
+            dispatched
+          }
+        },
+        observe = {
+          awaitStableTicketVisualActionObservation(
+            "ticket_idle_refresh_transition", TICKET_ACTION_V3_VISUAL_TIMEOUT_MILLIS
+          )
+        }
+      )
+      return if (result.ok) ticketVisualActionSuccess(request, result.reason, requireNotNull(result.observation))
+        else request.terminal(result.reason,
+          status = if (panelLease.snapshot().mutationMayHaveDispatched) "needs_attention" else "failed")
+    }
     if (request.target.activatesTicket) {
       val checkpointRevision = if (request.target == TicketVisualActionTarget.REGISTER_CURRENT) {
         request.expectedInteractionRevision
@@ -2525,7 +2549,8 @@ class TicketStreamService : Service() {
             TicketVisualActionTarget.OPEN_LATEST_AND_REGISTER ->
               observation.latestRegistrationCard()
             TicketVisualActionTarget.REDETECT_LATEST -> observation.latestRegistrationCard()
-            TicketVisualActionTarget.REGISTER_CURRENT -> null
+            TicketVisualActionTarget.REGISTER_CURRENT,
+            TicketVisualActionTarget.REFRESH_CURRENT_TICKET -> null
           }
           selectedAnchor = selectedCard?.anchor.orEmpty()
           selectedAnchorForTransition = selectedAnchor
@@ -2717,15 +2742,6 @@ class TicketStreamService : Service() {
           terminalPhase = if (ordinal == 1) "not_dispatched" else "retry_not_dispatched"
         )
       }
-      if (checkpoint == null) {
-        checkpoint = recordTicketActivationFreshProof(command.id, revision, request.attemptId)
-          ?: return request.terminal(
-            "ticket_action_activation_checkpoint_unproved",
-            prepared.observation,
-            status = "needs_attention",
-            terminalPhase = "not_dispatched"
-          )
-      }
       if (!ticketActivationPreparationStillCurrent(prepared, generation, panelLease)) {
         // The durable stage still proves that no stroke for this ordinal was admitted.
         return request.terminal(
@@ -2734,6 +2750,15 @@ class TicketStreamService : Service() {
           status = "needs_attention",
           terminalPhase = if (ordinal == 1) "not_dispatched" else "retry_not_dispatched"
         )
+      }
+      if (checkpoint == null) {
+        checkpoint = recordTicketActivationFreshProof(command.id, revision, request.attemptId)
+          ?: return request.terminal(
+            "ticket_action_activation_checkpoint_unproved",
+            prepared.observation,
+            status = "needs_attention",
+            terminalPhase = "not_dispatched"
+          )
       }
       val physicalTouchFence = ticketActivationPhysicalTouchFence(
         PhoneAutomationServiceBridge.currentRootPhysicalTouchState()
@@ -2771,6 +2796,8 @@ class TicketStreamService : Service() {
       }
       val contract = ticketSliderGestureContract(prepared.gestureBounds)
       val y = (prepared.gestureBounds.top + prepared.gestureBounds.bottom) / 2
+      ticketActionTiming?.mark(TicketActionTiming.Phase.FINAL_CHECKS)
+      phoneControlState.clearRegistrationEvidence()
       panelLease.markMutationMayHaveDispatched()
       ticketActionTiming?.mark(TicketActionTiming.Phase.INPUT_REQUESTED)
       val gestureResult = PhoneAutomationServiceBridge.performTicketSliderFullStroke(
@@ -2814,8 +2841,7 @@ class TicketStreamService : Service() {
       val postGestureObservation = if (postLiftFence != null) {
         awaitStableTicketVisualActionObservation(
           "ticket_action_v3_activation_result_$ordinal",
-          TICKET_ACTION_V3_ACTIVATION_PROOF_TIMEOUT_MILLIS,
-          currentOnly = true
+          TICKET_ACTION_V3_ACTIVATION_PROOF_TIMEOUT_MILLIS
         )
       } else null
       val postProofLeaseReady = panelLease.beforeMutationAllowed()
@@ -2901,7 +2927,8 @@ class TicketStreamService : Service() {
     expectedDetailAnchor: String,
     generation: Long,
     panelLease: TicketActionPanelDarkLease,
-    resumeVivi: Boolean
+    resumeVivi: Boolean,
+    useLiveEvidence: Boolean = false
   ): TicketActivationPreparationResult {
     if (resumeVivi) {
       if (!panelLease.beforeMutationAllowed()) {
@@ -2909,7 +2936,6 @@ class TicketStreamService : Service() {
       }
       launchViviForWake("ticket_action_v3_retry:${request.target.wireName}")
       ensureRootHardwareH264CaptureIfPossible()
-      rootHardwareH264CaptureEngine.requestImmediateRefresh("ticket_action_v3_retry_resume")
     }
     if (!PhoneAutomationServiceBridge.awaitAccessibilityConnection(
         TICKET_SLIDER_ACCESSIBILITY_RECONNECT_TIMEOUT_MILLIS
@@ -2927,8 +2953,27 @@ class TicketStreamService : Service() {
       return TicketActivationPreparationResult(reason = "ticket_action_visual_unproved")
     }
     val captureRestartCount = rootHardwareH264CaptureEngine.snapshot().restartCount
-    rootHardwareH264CaptureEngine.requestImmediateRefresh("ticket_action_v3_exact_input_proof")
-    val freshObservation = awaitStableTicketVisualActionObservation(
+    var liveEvidence = if (useLiveEvidence) phoneControlState.registrationEvidence(
+      request.expectedInteractionRevision, registrationEvidenceFence(), SystemClock.elapsedRealtime()
+    ) else null
+    if (useLiveEvidence && liveEvidence == null && phoneControlState.registrationCandidateIsCurrent(
+        request.expectedInteractionRevision, registrationEvidenceFence(), SystemClock.elapsedRealtime()
+      )) {
+      // First readiness can precede the second live picture. Request the next legal capture
+      // and consume the existing observation stream instead of starting two new probes.
+      rootHardwareH264CaptureEngine.requestTicketCurrentVisualProbe("ticket_action_v3_live_pair")
+      withTimeoutOrNull(TICKET_ACTION_V3_VISUAL_TIMEOUT_MILLIS) {
+        phoneControlState.updates.first {
+          it.contextRevision != request.expectedInteractionRevision || phoneControlState.registrationEvidence(
+            request.expectedInteractionRevision, registrationEvidenceFence(), SystemClock.elapsedRealtime()
+          ) != null
+        }
+      }
+      liveEvidence = phoneControlState.registrationEvidence(
+        request.expectedInteractionRevision, registrationEvidenceFence(), SystemClock.elapsedRealtime()
+      ) ?: return TicketActivationPreparationResult(reason = "ticket_action_exact_input_fence_changed")
+    }
+    val freshObservation = liveEvidence?.second ?: awaitStableTicketVisualActionObservation(
       reason = "ticket_action_v3_exact_input_proof",
       timeoutMillis = TICKET_ACTION_V3_VISUAL_TIMEOUT_MILLIS,
       currentOnly = true
@@ -2945,7 +2990,7 @@ class TicketStreamService : Service() {
       displayWidth = resources.displayMetrics.widthPixels,
       displayHeight = resources.displayMetrics.heightPixels
     ) ?: return TicketActivationPreparationResult(reason = "ticket_action_slider_geometry_invalid")
-    if (!ticketVisualObservationIsFreshForDispatch(
+    if (liveEvidence == null && !ticketVisualObservationIsFreshForDispatch(
         freshObservation,
         SystemClock.elapsedRealtime(),
         ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS
@@ -2959,27 +3004,43 @@ class TicketStreamService : Service() {
       inputFence = inputFence,
       captureStreamEpoch = captureStreamEpoch,
       captureRestartCount = captureRestartCount,
-      actionMutationGeneration = actionMutationGeneration
+      actionMutationGeneration = actionMutationGeneration,
+      liveEvidence = liveEvidence
     )
-    if (ticketActionV3MutationGeneration != actionMutationGeneration ||
-      !ticketActivationPreparationStillCurrent(prepared, generation, panelLease)
-    ) {
+    if (ticketActionV3Generation != generation || ticketActionV3MutationGeneration != actionMutationGeneration ||
+      streamEpoch != captureStreamEpoch || rootHardwareH264CaptureEngine.snapshot().restartCount != captureRestartCount) {
       return TicketActivationPreparationResult(reason = "ticket_action_exact_input_fence_changed")
     }
+    ticketActionTiming?.mark(TicketActionTiming.Phase.VISUAL_READY)
     return TicketActivationPreparationResult(prepared = prepared, reason = "")
   }
+
+  private fun registrationEvidenceFence(): TicketRegistrationEvidenceFence? {
+    val touch = PhoneAutomationServiceBridge.currentRootPhysicalTouchState()
+    val input = PhoneAutomationServiceBridge.currentFocusedInputState()
+    val window = input.window ?: return null
+    if (!touch.available || touch.active || touch.observedAtUptimeMillis <= 0L ||
+      window.packageName != TicketScreenConfig.VIVI_PACKAGE || streamEpoch <= 0L) return null
+    return TicketRegistrationEvidenceFence(
+      streamEpoch, rootHardwareH264CaptureEngine.currentCaptureGeneration,
+      input.generation, window.windowId, touch.touchBeginCount,
+      maxOf(input.changedAtMillis, touch.changedAtElapsedMillis)
+    )
+  }
+
+  private fun registrationVisualPreparationIsCurrent(prepared: TicketActivationDispatchPreparation): Boolean =
+    prepared.liveEvidence?.let {
+      phoneControlState.registrationEvidenceIsCurrent(it, registrationEvidenceFence(), SystemClock.elapsedRealtime())
+    } ?: ticketVisualObservationIsFreshForDispatch(
+      prepared.observation, SystemClock.elapsedRealtime(), ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS
+    )
 
   private suspend fun ticketActivationPreparationStillCurrent(
     prepared: TicketActivationDispatchPreparation,
     generation: Long,
     panelLease: TicketActionPanelDarkLease
   ): Boolean {
-    if (!ticketVisualObservationIsFreshForDispatch(
-        prepared.observation,
-        SystemClock.elapsedRealtime(),
-        ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS
-      )
-    ) return false
+    if (!registrationVisualPreparationIsCurrent(prepared)) return false
     if (!ticketActivationInputFenceStillCurrent(
         generation = generation,
         actionMutationGeneration = prepared.actionMutationGeneration,
@@ -2993,11 +3054,7 @@ class TicketStreamService : Service() {
       ticketActionV3MutationGeneration == prepared.actionMutationGeneration &&
       streamEpoch == prepared.captureStreamEpoch &&
       rootHardwareH264CaptureEngine.snapshot().restartCount == prepared.captureRestartCount &&
-      ticketVisualObservationIsFreshForDispatch(
-        prepared.observation,
-        SystemClock.elapsedRealtime(),
-        ROOT_KEYFRAME_CACHE_MAX_AGE_MILLIS
-      )
+      registrationVisualPreparationIsCurrent(prepared)
   }
 
   private suspend fun ticketActivationInputFenceStillCurrent(
@@ -3065,6 +3122,7 @@ class TicketStreamService : Service() {
     convergenceExtensionMillis: Long = 0L,
     allowUnknown: Boolean = false,
     currentOnly: Boolean = false,
+    useLiveRegistrationEvidence: Boolean = false,
     captureRecoveryBudget: TicketVisualCaptureRecoveryBudget? = null
   ): TicketVisualActionObservation? {
     val startedAtMillis = SystemClock.elapsedRealtime()
@@ -3135,6 +3193,15 @@ class TicketStreamService : Service() {
         consensus.reset()
         consensusStreamEpoch = beforeProbeStreamEpoch
         consensusRestartCount = beforeProbeRestartCount
+      }
+      if (useLiveRegistrationEvidence && currentOnly) {
+        // Startup may already have published the first current ticket picture. Reuse the
+        // same guarded pair as registration instead of keeping its mutation lane for two
+        // additional captures. Other screen states retain the requested-probe path.
+        phoneControlState.registrationEvidence(
+          phoneControlState.updates.value.contextRevision,
+          registrationEvidenceFence(), SystemClock.elapsedRealtime()
+        )?.let { return it.second }
       }
       val started = SystemClock.elapsedRealtime()
       val probeId = if (currentOnly) {
@@ -3525,6 +3592,7 @@ class TicketStreamService : Service() {
   }
 
 
+
   internal fun ticketActivationCheckpoint(
     commandId: String,
     interactionRevision: String,
@@ -3667,6 +3735,7 @@ class TicketStreamService : Service() {
 
   private suspend fun startTicketSession(
     prepareCaptureWithCurrentPhoneMutationOwnership: Boolean = false,
+    observeOnly: Boolean = false,
     timeoutMillis: Long = SESSION_START_TIMEOUT_MILLIS,
     lockedStartDecision: (() -> TicketSessionResponse?)? = null,
     onNewSessionAdmitted: ((Long) -> Unit)? = null
@@ -3691,7 +3760,7 @@ class TicketStreamService : Service() {
           return@withLock TicketSessionResponse(false, "cold_restart", "Ticket is entering cold mode")
         }
         lockedStartDecision?.invoke() ?: startTicketSessionLocked(
-          scheduleCaptureStart = !prepareCaptureWithCurrentPhoneMutationOwnership,
+          scheduleCaptureStart = !prepareCaptureWithCurrentPhoneMutationOwnership && !observeOnly,
           controlCodeOwnsStart = prepareCaptureWithCurrentPhoneMutationOwnership,
           onNewSessionAdmitted = onNewSessionAdmitted
         )
@@ -3745,6 +3814,11 @@ class TicketStreamService : Service() {
       lastMessage = "Preparing ViVi for secure H.264 capture"
       scheduleTicketBrightnessGuard("session_start_already_preparing")
       startForegroundGuard()
+      // An idle refresh observes without preparing viewer delivery. A returning viewer must
+      // start that existing preparation; the scheduler joins any preparation already in flight.
+      if (scheduleCaptureStart) {
+        scheduleRootHardwareH264CaptureStart("session_start_existing_observation", suppressBlackout = false)
+      }
       return TicketSessionResponse(ok = true, state = "starting", message = lastMessage)
     }
     if (!TicketPackageSupport.isInstalled(this, TicketScreenConfig.VIVI_PACKAGE)) {
@@ -3847,7 +3921,6 @@ class TicketStreamService : Service() {
       }
       return@session reuseActiveHardwareStream("session_start_already_active")
     }
-    val sourceSize = currentDisplaySize()
     var hardwareCapture = rootHardwareH264CaptureEngine.snapshot()
     if (!hardwareCapture.available) {
       // The service-start probe is the one owner of helper/classpath
@@ -3857,9 +3930,6 @@ class TicketStreamService : Service() {
       // cleaning up and leave an active-but-empty stream behind.
       hardwareCapture = awaitRootHardwareH264StartupReadiness()
     }
-    // A dimensions-aware reliability probe captures one real frame. Keep it on the admitted side
-    // of streamStartAdmission so a blocked background start cannot acquire protected pixels.
-    val reliabilityProbeRequired = hardwareMarkedUnreliable()
     val hardwareUnavailableReason = when {
       !hardwareCapture.available -> "hardware_h264_unavailable:${hardwareCapture.state}"
       else -> null
@@ -3920,37 +3990,13 @@ class TicketStreamService : Service() {
         true
       }
     )
-    // Admission, unused-arm cleanup, reliability, and capture scheduling are one ordered path.
+    // The admitted capture owner proves fresh pictures and owns recovery; old encoder exits
+    // must not send a later opening through a separate capture probe.
     cancelPreflightArm("session_start_unused_arm")
     if (!admitted) {
       return@session TicketSessionResponse(
         ok = true, state = ticketSessionState, message = "Control-code work owns the phone"
       )
-    }
-    if (reliabilityProbeRequired) {
-      hardwareCapture = refreshHardwareReliabilityIfProbePasses(
-        sourceSize.first,
-        sourceSize.second,
-        hardwareCapture
-      )
-      if (!hardwareCapture.available || hardwareMarkedUnreliable()) {
-        val reliabilityFailure = hardwareUnreliableReason ?: "hardware_h264_unreliable"
-        fallbackReason = reliabilityFailure
-        streamActive = false
-        hardwareCaptureVerified = false
-        hardwareFrameBroadcastAllowed = false
-        activeCaptureMode = CAPTURE_MODE_IDLE
-        cancelForegroundGuard()
-        releaseBlackoutOverlaySuppression()
-        lastMessage = "Hardware H.264 ticket stream is unreliable; stream was not started"
-        updateTicketSessionState(TICKET_SESSION_UNAVAILABLE, "hardware_h264_unreliable")
-        recordTicketEvent("session_unavailable", reliabilityFailure)
-        return@session TicketSessionResponse(
-          ok = false,
-          state = "hardware_h264_unavailable",
-          message = lastMessage
-        )
-      }
     }
     if (scheduleCaptureStart) {
       scheduleRootHardwareH264CaptureStart("session_start_root_hardware_h264_capture", suppressBlackout = false)
@@ -3974,7 +4020,7 @@ class TicketStreamService : Service() {
           val source = currentDisplaySize()
           val size = TicketStreamSizing.rootHardwareH264(source.first, source.second)
           val health = rootHardwareH264CaptureEngine.snapshot()
-          if (health.available && !hardwareMarkedUnreliable()) {
+          if (health.available) {
             armedHandle.compareAndSet(
               null,
               rootHardwareH264CaptureEngine.arm(
@@ -4042,35 +4088,6 @@ class TicketStreamService : Service() {
 
   private suspend fun validateActiveTicketSessionBeforeReuse(reason: String): Boolean =
     observeViviState("active_session:$reason") != TicketViviRecoveryState.UNKNOWN_VIVI
-
-  private suspend fun refreshHardwareReliabilityIfProbePasses(
-    sourceWidth: Int,
-    sourceHeight: Int,
-    current: TicketHardwareH264Health
-  ): TicketHardwareH264Health {
-    if (!hardwareMarkedUnreliable()) {
-      return current
-    }
-    val previousReason = hardwareUnreliableReason ?: "hardware_h264_unreliable"
-    val probeOk = rootHardwareH264CaptureEngine.probe(sourceWidth, sourceHeight)
-    val refreshed = rootHardwareH264CaptureEngine.snapshot()
-    if (!probeOk || !refreshed.available || !refreshed.captureHelperAvailable || refreshed.captureHelperState != "ready") {
-      recordTicketEvent(
-        "hardware_reliability_probe_still_blocked",
-        "previous_reason=$previousReason probe_ok=$probeOk state=${refreshed.state} helper=${refreshed.captureHelperState}"
-      )
-      return refreshed
-    }
-    hardwareReliabilityFailures = 0
-    hardwareMarkedUnreliableAtMillis = 0L
-    hardwareUnreliableReason = null
-    return refreshed
-  }
-
-  private fun hardwareMarkedUnreliable(): Boolean {
-    return hardwareMarkedUnreliableAtMillis > 0L ||
-      hardwareReliabilityFailures >= HARDWARE_RELIABILITY_FAILURE_THRESHOLD
-  }
 
   private fun activeCaptureModeMessage(): String {
     return when (activeCaptureMode) {
@@ -4477,7 +4494,7 @@ class TicketStreamService : Service() {
     lastTicketScreenWakeAtMillis = now
     serviceScope.launch {
       controlCodePhoneMutationLane.withOwnership {
-        val result = runFastNonTouchScript(
+        val result = runFastNonTouchInput(
           """
           input keyevent KEYCODE_WAKEUP
           wm dismiss-keyguard >/dev/null 2>&1 || true
@@ -4778,40 +4795,6 @@ class TicketStreamService : Service() {
       previous.sourceVisibleHeight != next.sourceVisibleHeight
   }
 
-
-  private fun handleRootHardwareH264CaptureStateChanged(health: TicketHardwareH264Health) {
-    if (health.restartCount > lastObservedHardwareRestartCount) {
-      lastObservedHardwareRestartCount = health.restartCount
-      if (unexpectedHardwareEncoderRestart(health)) {
-        noteHardwareReliabilityFailure("hardware_encoder_restart:${health.lastExitReason.orEmpty()}")
-      }
-    }
-  }
-
-  private fun unexpectedHardwareEncoderRestart(health: TicketHardwareH264Health): Boolean {
-    val reason = health.lastExitReason.orEmpty()
-    if (reason.startsWith("requested_restart:")) {
-      return false
-    }
-    when (reason) {
-      "hardware_encoder_exit_0",
-      "capture_config_changed" -> return false
-    }
-    if (reason == "hardware_encoder_exit_143") {
-      return streamActive && activeCaptureMode == CAPTURE_MODE_ROOT_HARDWARE_H264 && videoClients.isNotEmpty()
-    }
-    return true
-  }
-
-  private fun noteHardwareReliabilityFailure(reason: String) {
-    hardwareReliabilityFailures += 1
-    recordTicketEvent("hardware_reliability_failure", "count=$hardwareReliabilityFailures reason=$reason")
-    if (hardwareReliabilityFailures >= HARDWARE_RELIABILITY_FAILURE_THRESHOLD && hardwareMarkedUnreliableAtMillis == 0L) {
-      hardwareMarkedUnreliableAtMillis = SystemClock.elapsedRealtime()
-      hardwareUnreliableReason = "hardware_h264_marked_unreliable:$reason"
-      recordTicketEvent("hardware_reliability_marked_unreliable", hardwareUnreliableReason.orEmpty())
-    }
-  }
 
   private fun restartActiveStreamEngine(reason: String) {
     TicketStreamStartupRecoveryPolicy.restartIfNeeded(
@@ -5124,21 +5107,15 @@ class TicketStreamService : Service() {
       if (!streamActive || activeCaptureMode != CAPTURE_MODE_ROOT_HARDWARE_H264) {
         null
       } else {
-        ensureFrameEpoch("frame")
         val currentSize = streamSize
-        if (
-          currentSize == null ||
-          currentSize.width != frame.width ||
-          currentSize.height != frame.height
-        ) {
+        val generation = TicketVideoFrameGeneration(streamEpoch, frame.width, frame.height)
+        // Configuration owns the epoch. An early armed-capture frame must not
+        // create one before the configuration has been queued for the viewers.
+        if (!generation.matches(streamEpoch, currentSize?.width, currentSize?.height)) {
           return@synchronized null
         }
         encodedFrames += 1
-        TicketVideoFrameGeneration(
-          epoch = streamEpoch,
-          width = frame.width,
-          height = frame.height
-        )
+        generation
       }
     }
     if (acceptedGeneration == null) {
@@ -5341,14 +5318,6 @@ class TicketStreamService : Service() {
       videoSendStates.values.forEach { it.configure(expectedEpoch) }
     }
   }
-
-  private fun ensureFrameEpoch(reason: String): Long {
-    if (streamEpoch == 0L) {
-      resetFrameEpoch(reason, active = true)
-    }
-    return streamEpoch
-  }
-
 
   private fun streamPipelineSnapshot(nowMillis: Long): TicketStreamPipeline {
     val protection = secureWindowCaptureBypassOwner.snapshot()
@@ -5554,7 +5523,7 @@ class TicketStreamService : Service() {
       awaitStableTicketVisualActionObservation(
         reason = "fast_open_current_visual:$reason",
         timeoutMillis = (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L),
-        allowUnknown = false, currentOnly = true
+        allowUnknown = false, currentOnly = true, useLiveRegistrationEvidence = true
       )
     } else null
     val state = if (!focused) TicketViviRecoveryState.OUTSIDE_VIVI
@@ -7206,9 +7175,8 @@ class TicketStreamService : Service() {
     command: String,
     reason: String,
     timeout: Duration
-  ): RootResult = runPanelDarkCommand(reason) {
-    inputRootExecutor.runScript(boundedNonTouchCommand(command, timeout), timeout)
-  }.copy(command = "[REDACTED]", stdout = "", stderr = "")
+  ): RootResult = runFastNonTouchInput(command, reason, timeout)
+    .copy(command = "[REDACTED]", stdout = "", stderr = "")
 
   private suspend fun runFastOneShotControlSurfaceCloseInput(
     command: String,
@@ -7231,12 +7199,6 @@ class TicketStreamService : Service() {
     command: String, reason: String, timeout: Duration
   ): RootResult = runPanelDarkCommand(reason) {
     wakeRootExecutor.runScript(boundedNonTouchCommand(command, timeout), timeout)
-  }
-
-  private suspend fun runFastNonTouchScript(
-    command: String, reason: String, timeout: Duration
-  ): RootResult = runPanelDarkCommand(reason) {
-    inputRootExecutor.runScript(boundedNonTouchCommand(command, timeout), timeout)
   }
 
   // Keep the descendant deadline independently of the root transport deadline.
@@ -7335,7 +7297,7 @@ class TicketStreamService : Service() {
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
     private const val SESSION_START_TIMEOUT_MILLIS = 70_000L
     private const val SERVICE_DESTROY_JOIN_TIMEOUT_MILLIS = 12_000L
-    const val SERVER_VERSION = "ticket-stream-2026-09-06-parallel-picture-readers-v372"
+    const val SERVER_VERSION = "ticket-stream-2026-09-14-home-search-proof-v389"
     private const val FRAME_ENVELOPE_VERSION = "tsf3"
     private const val TICKET_SESSION_IDLE = "idle"
     private const val TICKET_SESSION_STARTING = "starting"
@@ -7361,7 +7323,6 @@ class TicketStreamService : Service() {
     private const val STREAM_WATCHDOG_STARTUP_FIRST_USEFUL_FRAME_GRACE_MILLIS =
       TICKET_FAST_PUBLIC_OPEN_ROOT_PROOF_TIMEOUT_MILLIS
     private const val STREAM_WATCHDOG_RECOVERY_COOLDOWN_MILLIS = 1_000L
-    private const val HARDWARE_RELIABILITY_FAILURE_THRESHOLD = 3
     private const val SECURE_CAPTURE_PROBE_START_FRAME_COUNT = 3L
     private const val SECURE_CAPTURE_PROBE_DELAY_MILLIS = 700L
     private const val SECURE_CAPTURE_PROBE_MIN_INTERVAL_MILLIS = 8_000L

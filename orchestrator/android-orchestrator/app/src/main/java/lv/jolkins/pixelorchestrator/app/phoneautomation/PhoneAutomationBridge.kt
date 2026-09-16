@@ -89,7 +89,8 @@ data class PhoneAutomationRootPhysicalTouchState(
   val available: Boolean = false,
   val active: Boolean = false,
   val observedAtUptimeMillis: Long = 0L,
-  val touchBeginCount: Long = 0L
+  val touchBeginCount: Long = 0L,
+  val changedAtElapsedMillis: Long = 0L
 )
 
 data class PhoneAutomationPhysicalVisibleWindow(
@@ -100,6 +101,12 @@ data class PhoneAutomationPhysicalVisibleWindow(
 data class PhoneAutomationFocusedInputWindow(
   val packageName: String,
   val windowId: Int
+)
+
+data class PhoneAutomationFocusedInputState(
+  val window: PhoneAutomationFocusedInputWindow? = null,
+  val generation: Long = 0L,
+  val changedAtMillis: Long = 0L
 )
 
 data class PhoneAutomationTicketInputFence(
@@ -289,6 +296,8 @@ object PhoneAutomationServiceBridge {
   private val accessibilityService = MutableStateFlow<PhoneAutomationAccessibilityHost?>(null)
   private val accessibilityGeneration = AtomicLong(0L)
   private val accessibilityTouchGeneration = AtomicLong(0L)
+  private var inputStateClock: () -> Long = SystemClock::elapsedRealtime
+  private val focusedInputState = MutableStateFlow(PhoneAutomationFocusedInputState())
   private val notificationListenerConnected = MutableStateFlow(false)
   private val notificationSnapshotReady = MutableStateFlow(false)
   private val foregroundPackage = MutableStateFlow<String?>(null)
@@ -324,20 +333,21 @@ object PhoneAutomationServiceBridge {
   val nonTouchInputEvents: Flow<PhoneAutomationNonTouchInputEvent> = rawNonTouchInputEvents.asSharedFlow()
   val rootPhysicalTouchStates: Flow<PhoneAutomationRootPhysicalTouchState> =
     rootPhysicalTouchState
+  val focusedInputStates: Flow<PhoneAutomationFocusedInputState> = focusedInputState
   val accessibilityAvailability: Flow<Boolean> = accessibilityService
     .map { it != null }
     .distinctUntilChanged()
   val notificationListenerAvailability: Flow<Boolean> = notificationListenerConnected
 
   internal fun bindAccessibilityService(service: PhoneAutomationAccessibilityHost) {
-    accessibilityGeneration.incrementAndGet()
+    recordFocusedInputWindow(null, force = true)
     accessibilityService.value = service
     service.syncBlackoutOverlayVisibility(blackoutOverlayRequested.value && !blackoutOverlaySuppressed.value)
   }
 
   internal fun unbindAccessibilityService(service: PhoneAutomationAccessibilityHost) {
     if (accessibilityService.value === service) {
-      accessibilityGeneration.incrementAndGet()
+      recordFocusedInputWindow(null, force = true)
       accessibilityService.value = null
     }
     foregroundPackage.value = null
@@ -347,6 +357,20 @@ object PhoneAutomationServiceBridge {
   fun updateForegroundPackage(packageName: String?) {
     foregroundPackage.value = packageName
   }
+
+  @Synchronized
+  internal fun recordFocusedInputWindow(
+    window: PhoneAutomationFocusedInputWindow?,
+    nowMillis: Long = inputStateClock(),
+    force: Boolean = false
+  ) {
+    if (!force && focusedInputState.value.window == window) return
+    focusedInputState.value = PhoneAutomationFocusedInputState(
+      window, accessibilityGeneration.incrementAndGet(), nowMillis
+    )
+  }
+
+  fun currentFocusedInputState(): PhoneAutomationFocusedInputState = focusedInputState.value
 
   fun setNotificationListenerConnected(connected: Boolean) {
     notificationListenerConnected.value = connected
@@ -427,7 +451,10 @@ object PhoneAutomationServiceBridge {
         available = available,
         active = active,
         observedAtUptimeMillis = observedAtUptimeMillis,
-        touchBeginCount = prior.touchBeginCount + if (active && !prior.active) 1L else 0L
+        touchBeginCount = prior.touchBeginCount + if (active && !prior.active) 1L else 0L,
+        changedAtElapsedMillis = if (active != prior.active || available != prior.available) {
+          inputStateClock()
+        } else prior.changedAtElapsedMillis
       )
       if (available && (active || prior.active)) {
         recordPhysicalVisibilityTouchLocked(observedAtUptimeMillis, active)
@@ -758,7 +785,7 @@ object PhoneAutomationServiceBridge {
     return captureTicketInputFence(fence.packageName) == fence
   }
 
-  private suspend fun captureTicketInputFence(
+  internal suspend fun captureTicketInputFence(
     expectedPackageName: String
   ): PhoneAutomationTicketInputFence? {
     if (expectedPackageName.isBlank() || touchInteractionActive.value) return null
@@ -768,6 +795,7 @@ object PhoneAutomationServiceBridge {
     val window = withTimeoutOrNull(ACCESSIBILITY_SNAPSHOT_TIMEOUT_MILLIS) {
       service.snapshotFocusedInputWindow(expectedPackageName)
     } ?: return null
+    recordFocusedInputWindow(window)
     if (
       accessibilityService.value !== service ||
       accessibilityGeneration.get() != connectionGeneration ||
@@ -1073,8 +1101,10 @@ object PhoneAutomationServiceBridge {
     return accessibilityGloballyEnabled && componentEnabled
   }
 
-  internal fun resetForTests() {
+  internal fun resetForTests(nowMillis: () -> Long = { 0L }) {
+    inputStateClock = nowMillis
     accessibilityService.value = null
+    focusedInputState.value = PhoneAutomationFocusedInputState()
     notificationListenerConnected.value = false
     notificationSnapshotReady.value = false
     foregroundPackage.value = null

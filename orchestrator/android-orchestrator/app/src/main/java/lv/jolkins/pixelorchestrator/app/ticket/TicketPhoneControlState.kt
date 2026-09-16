@@ -29,6 +29,43 @@ internal data class TicketPhoneControlObservation(
   val reason: String
 )
 
+/** Captured state only: admission and protected input remain owned by the action executor. */
+internal data class TicketRegistrationEvidenceFence(
+  val streamEpoch: Long,
+  val captureGeneration: Long,
+  val inputGeneration: Long,
+  val windowId: Int,
+  val touchGeneration: Long,
+  val validAfterMillis: Long
+)
+
+internal data class TicketRegistrationVisualEvidence(
+  val contextRevision: String,
+  val first: TicketVisualActionObservation,
+  val second: TicketVisualActionObservation,
+  val fence: TicketRegistrationEvidenceFence
+) {
+  fun isFresh(nowMillis: Long): Boolean =
+    fence.streamEpoch > 0L && fence.captureGeneration > 0L && fence.inputGeneration > 0L &&
+      fence.windowId >= 0 && first.captureStartUs < second.captureStartUs &&
+      ticketRegistrationObservationIsFresh(first, fence, nowMillis) &&
+      ticketRegistrationObservationIsFresh(second, fence, nowMillis) &&
+      ticketVisualObservationsAgree(first, second)
+}
+
+private fun ticketRegistrationObservationIsFresh(
+  observation: TicketVisualActionObservation,
+  fence: TicketRegistrationEvidenceFence,
+  nowMillis: Long
+): Boolean {
+  val capturedAtMillis = observation.captureStartUs / 1_000L
+  return observation.captureStartUs > 0L && observation.captureGeneration == fence.captureGeneration &&
+    capturedAtMillis >= fence.validAfterMillis && capturedAtMillis <= observation.atMillis &&
+    nowMillis - capturedAtMillis in 0 until TICKET_CONTROL_OBSERVATION_TTL_MILLIS &&
+    observation.state == TicketVisualPhoneState.UNACTIVATED_DETAIL &&
+    observation.currentAnchor.isNotBlank() && observation.sliderBounds != null
+}
+
 /** One lifetime per service, independent of capture/codec generations and connections. */
 internal class TicketPhoneControlState(
   val sessionId: String = "pc-${UUID.randomUUID()}"
@@ -37,14 +74,30 @@ internal class TicketPhoneControlState(
   private var sequence = 0L
   private var capturedThroughUs = 0L
   private var contextKey: List<Any?>? = null
+  private var registrationFirst: TicketVisualActionObservation? = null
+  private var registrationFence: TicketRegistrationEvidenceFence? = null
   val updates = MutableStateFlow(TicketPhoneControlObservation("$sessionId:0", 0, null, false, "phone_session_started"))
 
   @Synchronized
-  fun observe(observation: TicketVisualActionObservation, busy: Boolean) {
+  fun observe(
+    observation: TicketVisualActionObservation,
+    busy: Boolean,
+    evidenceFence: TicketRegistrationEvidenceFence? = null
+  ) {
     // The stderr reader may repeat or deliver an old probe after a newer capture.
     if (observation.captureStartUs <= capturedThroughUs) return
     capturedThroughUs = observation.captureStartUs
     val nextKey = listOf(observation.state, observation.currentAnchor, observation.sliderBounds)
+    val prior = updates.value.observation
+    registrationFirst = prior?.takeIf {
+      nextKey == contextKey && evidenceFence != null && evidenceFence == registrationFence &&
+        ticketVisualObservationsAgree(it, observation)
+    }
+    registrationFence = evidenceFence.takeIf {
+      observation.state == TicketVisualPhoneState.UNACTIVATED_DETAIL &&
+        observation.currentAnchor.isNotBlank() && observation.sliderBounds != null
+    }
+    if (registrationFence == null) registrationFirst = null
     if (nextKey != contextKey) {
       contextCounter++
       contextKey = nextKey
@@ -62,6 +115,7 @@ internal class TicketPhoneControlState(
     contextCounter++
     this.capturedThroughUs = maxOf(this.capturedThroughUs, capturedThroughUs)
     contextKey = null
+    clearRegistrationEvidence()
     updates.value = TicketPhoneControlObservation("$sessionId:$contextCounter", ++sequence, null, busy, reason)
   }
 
@@ -76,6 +130,41 @@ internal class TicketPhoneControlState(
         it.state in setOf(TicketVisualPhoneState.UNACTIVATED_DETAIL, TicketVisualPhoneState.ACTIVATED_DETAIL)
     }
   }
+
+  @Synchronized
+  fun clearRegistrationEvidence() {
+    registrationFirst = null
+    registrationFence = null
+  }
+
+  @Synchronized
+  fun registrationCandidateIsCurrent(
+    revision: String,
+    fence: TicketRegistrationEvidenceFence?,
+    nowMillis: Long
+  ): Boolean = fence != null && fence == registrationFence && updates.value.contextRevision == revision &&
+    updates.value.observation?.let { ticketRegistrationObservationIsFresh(it, fence, nowMillis) } == true
+
+  /** Only the already-admitted action may read while busy; this never publishes readiness. */
+  @Synchronized
+  fun registrationEvidence(
+    revision: String,
+    fence: TicketRegistrationEvidenceFence?,
+    nowMillis: Long
+  ): TicketRegistrationVisualEvidence? {
+    if (fence == null || fence != registrationFence || updates.value.contextRevision != revision) return null
+    return TicketRegistrationVisualEvidence(
+      revision, registrationFirst ?: return null, updates.value.observation ?: return null, fence
+    ).takeIf { it.isFresh(nowMillis) }
+  }
+
+  @Synchronized
+  fun registrationEvidenceIsCurrent(
+    evidence: TicketRegistrationVisualEvidence,
+    fence: TicketRegistrationEvidenceFence?,
+    nowMillis: Long
+  ): Boolean = evidence.contextRevision == updates.value.contextRevision &&
+    evidence.fence == registrationFence && evidence.fence == fence && evidence.isFresh(nowMillis)
 }
 
 /** Immutable receipt identity. Fresh pre-input observations still own gesture geometry. */

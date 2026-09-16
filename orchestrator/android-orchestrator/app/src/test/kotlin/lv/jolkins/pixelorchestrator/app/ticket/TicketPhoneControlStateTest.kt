@@ -84,6 +84,88 @@ class TicketPhoneControlStateTest {
     assertNull(ticketPhoneControlRegistrationIdentity(revision, null))
   }
 
+  private val evidenceFence = TicketRegistrationEvidenceFence(1, 7, 3, 17, 0, 0)
+  private fun liveObservation(capture: Long) = observation(capture).copy(probeId = 0, captureGeneration = 7)
+
+  @Test fun registrationReusesTwoDistinctLivePicturesWithoutTurningThemIntoRequestedProbes() {
+    val state = TicketPhoneControlState("pc-test")
+    state.observe(liveObservation(1_000), false, evidenceFence)
+    val revision = state.updates.value.contextRevision
+    assertTrue(state.registrationCandidateIsCurrent(revision, evidenceFence, 1_100))
+    assertNull(state.registrationEvidence(revision, evidenceFence, 1_100))
+    state.observe(liveObservation(1_000), false, evidenceFence)
+    state.observe(liveObservation(900), false, evidenceFence)
+    assertNull(state.registrationEvidence(revision, evidenceFence, 1_100))
+    state.observe(liveObservation(2_000), true, evidenceFence)
+    val evidence = state.registrationEvidence(revision, evidenceFence, 2_100)!!
+    assertEquals(1_000_000L, evidence.first.captureStartUs)
+    assertEquals(2_000_000L, evidence.second.captureStartUs)
+    assertNull(state.exactContext(revision, 2_100)) // Public readiness stays busy.
+    assertFalse(ticketVisualObservationIsFreshForDispatch(evidence.second, 2_100, 3_000))
+    assertTrue(state.registrationEvidenceIsCurrent(evidence, evidenceFence, 3_999))
+    assertFalse(state.registrationEvidenceIsCurrent(evidence, evidenceFence, 4_000))
+    state.observe(liveObservation(3_000), true, evidenceFence)
+    val newer = state.registrationEvidence(revision, evidenceFence, 4_000)!!
+    assertEquals(2_000_000L, newer.first.captureStartUs)
+    assertEquals(3_000_000L, newer.second.captureStartUs)
+    assertNull(state.registrationEvidence(revision, evidenceFence, 2_999)) // Future capture.
+  }
+
+  @Test fun preparedRegistrationCannotCrossFocusTouchOrCaptureBoundaries() {
+    val changedFences = listOf(
+      evidenceFence.copy(streamEpoch = 2),
+      evidenceFence.copy(captureGeneration = 8),
+      evidenceFence.copy(inputGeneration = 4),
+      evidenceFence.copy(windowId = 18),
+      evidenceFence.copy(touchGeneration = 1),
+      evidenceFence.copy(validAfterMillis = 1_500)
+    )
+    for (changed in changedFences) {
+      val state = TicketPhoneControlState("pc-test")
+      state.observe(liveObservation(1_000), false, evidenceFence)
+      state.observe(liveObservation(2_000), false, evidenceFence)
+      val revision = state.updates.value.contextRevision
+      val prepared = state.registrationEvidence(revision, evidenceFence, 2_100)!!
+      assertFalse(state.registrationEvidenceIsCurrent(prepared, changed, 2_100))
+      state.observe(liveObservation(2_200), true, changed)
+      assertNull(state.registrationEvidence(revision, changed, 2_300))
+      assertFalse(state.registrationEvidenceIsCurrent(prepared, evidenceFence, 2_300))
+    }
+  }
+
+  @Test fun unknownInterferenceAndDispatchClearThePairAndLatePicturesCannotRestoreIt() {
+    for (interruption in listOf("unknown", "different_ticket", "touch", "dispatch")) {
+      val state = TicketPhoneControlState("pc-test")
+      state.observe(liveObservation(1_000), false, evidenceFence)
+      state.observe(liveObservation(2_000), false, evidenceFence)
+      val revision = state.updates.value.contextRevision
+      val prepared = state.registrationEvidence(revision, evidenceFence, 2_100)!!
+      when (interruption) {
+        "unknown" -> state.observe(liveObservation(2_100).copy(state = TicketVisualPhoneState.UNKNOWN), true, evidenceFence)
+        "different_ticket" -> state.observe(liveObservation(2_100).copy(currentAnchor = "private-b"), true, evidenceFence)
+        "touch" -> state.invalidate("physical_touch", true, 2_100_000)
+        "dispatch" -> state.clearRegistrationEvidence()
+      }
+      state.observe(liveObservation(1_500), false, evidenceFence)
+      assertFalse(state.registrationEvidenceIsCurrent(prepared, evidenceFence, 2_200))
+      state.observe(liveObservation(2_200), true, evidenceFence)
+      assertNull(state.registrationEvidence(state.updates.value.contextRevision, evidenceFence, 2_300))
+      state.observe(liveObservation(2_400), true, evidenceFence)
+      assertNotNull(state.registrationEvidence(state.updates.value.contextRevision, evidenceFence, 2_500))
+    }
+  }
+
+  @Test fun picturesCapturedBeforeAnInputChangeCannotFormPreparedEvidence() {
+    val state = TicketPhoneControlState("pc-test")
+    val fence = evidenceFence.copy(validAfterMillis = 1_500)
+    state.observe(liveObservation(1_000), false, fence)
+    state.observe(liveObservation(2_000), false, fence)
+    val revision = state.updates.value.contextRevision
+    assertNull(state.registrationEvidence(revision, fence, 2_100))
+    state.observe(liveObservation(3_000), false, fence)
+    assertNotNull(state.registrationEvidence(revision, fence, 3_100))
+  }
+
   private class Transport : TicketPhoneControlTransport {
     var session: TicketPhoneControlSession? = null
     val published = mutableListOf<Triple<TicketPhoneControlObservation, String, Boolean>>()

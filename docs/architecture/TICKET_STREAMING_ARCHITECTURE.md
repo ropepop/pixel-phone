@@ -2,6 +2,61 @@
 
 This is the deep Pixel stream and capture note. It is not the first Ticket document.
 
+## Idle same-ticket app restart (v386)
+
+The database owns the one idle schedule and delivers an internal `refresh_current_ticket`
+visual action. The phone claims it once through `ticketremote_begin_idle_ticket_refresh`
+immediately before restarting ViVi; that reducer checks current visible viewer presence, never stream
+warmth. A lost claim response or retained navigation journal cannot authorize another attempt.
+The existing mutation lane, dark-panel lease, physical-touch protection and terminal outbox
+own the entire operation. Temporary capture starts without waking or relaunching ViVi and
+uses the existing command-started capture cleanup afterward.
+
+Refresh requires ViVi already focused on a recognized ticket detail with a private identity.
+The full action probe reuses the existing digit recognizer on the detail's validity metadata band,
+requiring exactly one pair of complete dates. The existing date-based card anchor identifies the
+matching list entry before the restart; the fast current/registration probe is unchanged.
+Refresh selects only that same card's target for the original activation state. A sole remaining card
+does not substitute for missing identity. Missing or ambiguous targets stop the cycle. The
+restored detail must prove both the exact private detail
+signature and its original activation state; capture-source changes invalidate the comparison.
+No remembered card association, new salt, or bootstrap navigation is needed. Missing or ambiguous
+dates stop before the restart, and none of the private identities is published to the database
+or browser. The helper-specific `d_` identity, freshness and physical-touch proof remain required.
+After the existing journal and one-time admission, the phone force-stops only ViVi, proves its
+process is absent, and launches it once without clearing app data or login. A fresh observation
+may prove the same detail directly. Otherwise the existing exact navigation targets reach Tickets,
+Time tickets and the matching card, with at most three taps and no repeated navigation kind.
+The list match uses the original validity identity even when a different ticket is newest.
+Login, missing/ambiguous identity, changed capture source or uncertain execution stops the attempt.
+The operation never activates a ticket, requests a code, or retries the restart or input.
+A viewer returning after the claim permits this safe completion; physical touch still preempts.
+
+Home navigation is proved by the selected Home icon and all three neutral peer icons. Coarse
+ticket/code graphic matches cannot override that fixed navigation proof: the normal service notice
+can match those body patterns. Explicit input dialogs, slider geometry and login still block Home.
+
+A viewer joining the still-warm observation session starts the existing capture-preparation job.
+That job already deduplicates concurrent starts and waits for the phone mutation lane, so it
+enables viewer delivery only after the admitted refresh finishes. An observation-only start
+still does not schedule that job. Without a viewer, the existing 90-second cleanup closes the
+temporary capture session and restores its settings.
+
+## Registered-ticket switching across cold capture restarts (v383)
+
+Registration's existing two post-gesture pictures use the full action classifier. A proved
+activated result retains the already-recognized validity-pair card identity for later switching,
+so a cold capture restart does not invalidate the saved switch target. Registration admission
+still requires its exact helper-local detail signature, fresh input fence and physical-touch
+proof. Missing date recognition retains the prior exact-identity fallback; it never grants a
+switch to an unproved card. Checkpoint recovery accepts only the same recognized activated card
+or the original exact detail identity and never dispatches another gesture.
+
+Full detail probes sample only the validity strip directly from that same immutable capture at
+576 by 112 pixels. The ordinary action picture reduced the thin dates to eight-pixel digits;
+the larger strip preserves them without changing digit confidence, geometry, input admission,
+list recognition or continuous video. Its temporary bitmap is recycled with the owning probe.
+
 ## Capture and codec resource lifetime
 
 Each asynchronous ScreenCapture request owns its result until one waiter successfully wraps it.
@@ -94,8 +149,10 @@ The capture owner remains responsible for visibility failures, cadence, and
 source-to-service timing. The delivery health summary reports its own frame
 identity, sent-frame age, clients, delivery failures and secure-capture protection;
 it no longer duplicates capture settings or keeps separate startup stopwatches.
-Capture admission, unused-arm cleanup, reliability verification and scheduling
-follow one ordered path. Public opening reuses its current foreground proof and
+Capture admission, unused-arm cleanup and scheduling follow one ordered path.
+The admitted capture owner proves fresh pictures and handles encoder failures;
+historical exits do not require a separate one-frame capture probe on reopening.
+Public opening reuses its current foreground proof and
 waits directly for two fresh typed observations; it does not repeat a focus
 probe through another readiness adapter.
 
@@ -208,6 +265,8 @@ Pixel starts the private video's transport-control reader immediately after the 
 
 Each admitted private socket has one `TicketVideoDeliveryWriter` for configuration and pictures. It sends configuration before that generation's binary frames and retains at most one newest waiting all-intra frame behind the active write. Reconfiguration invalidates queued work; a stale callback cannot authorize another generation. An independent deadline closes the exact socket even when its stalled write belongs to an older configuration. Invalid or oversized pictures request a coalesced refresh. The former separate configuration/frame pumps and delivery registry are retired.
 
+Only capture configuration and explicit engine restart create a stream epoch. An early armed-capture callback with no configured epoch is discarded; it cannot allocate an epoch ahead of configuration delivery. Callback admission and later frame numbering use the same existing generation-and-dimensions fence.
+
 Control and video socket identity includes the browser page version. Health exposes active client identity/page-version diagnostics so public verification can prove the current Brave tab is running the latest served page rather than a stale cached shell.
 
 The phone owns viewer inactivity truth and timeout enforcement, but the browser owns smooth countdown rendering. The phone sends an immediate inactivity update when activity changes, then broadcasts the steady countdown every five seconds until the final minute, where it returns to one-second updates. The browser fills the visible timer locally between those phone updates so passive ticket viewing does not keep the Pixel sending countdown rows/messages every second.
@@ -275,7 +334,13 @@ Browser decode behavior:
 
 ### Unified Visual Ticket Action Contract
 
-Non-registering actions retain their guarded focus behavior. Registration always sends one no-touch ViVi wake/resume intent, even when ViVi already appears focused, before binding fresh visual readiness proof.
+Home recognition requires the selected Home glyph and the three neutral peer
+navigation glyphs. A notice above the route planner can move its yellow Search
+button into the coarse ticket-slider detector's band; that match cannot veto
+the independently proved Home navigation. Explicit popup and login proofs still
+block Home input. Ticket-detail registration keeps its separate detail proof.
+
+Ticket actions resume ViVi only when the actual focused input window is not ViVi. Registration binds its visual preparation to the exact Accessibility window and generation; a window departure and return invalidates old evidence even when the window ID is reused.
 
 - The signed-in browser writes one durable `ticket_action_v3` command directly to SpacetimeDB. Its targets are `open_latest_unactivated`, `open_latest_and_register`, `register_current`, `show_recent_activated`, `return_to_latest_unactivated`, `redetect_latest`, and the non-mutating `prove_current`. The server remains the authentication and video relay boundary; it is not an immediate Ticket command hop.
 - Ordinary non-registering v3 navigation, re-detection, and view-switch actions publish only the v3 action projection and acknowledgement. Pixel no longer reads or writes the retired ticket-interaction claim/progress row. Registration geometry travels only with the current v3 proof projection. Pixel retains its physical dispatch checkpoint and terminal envelope, while one idempotent Spacetime finalizer owns the durable terminal action, activation history, interaction state, refresh scheduling, command retirement, lane release, and promotion of at most one waiting intent.
@@ -285,15 +350,15 @@ Non-registering actions retain their guarded focus behavior. Registration always
 - The rooted stream detector classifies activated detail, unactivated detail with slider bounds, ticket lists with card/action bounds, the ViVi route-planning home with a proved Tickets-tab target, the empty Single-use Tickets shell with a proved Time-tickets-tab target, the distinct empty Time-tickets shell with a proved Single-use-tab target, control-code surfaces, login, blockers, and unknown layouts. Ticket-list chrome takes precedence over slider-like card geometry only after the separated selected-tab underline and wide red/orange route-card header bands are both proved; without that list proof, a slider also requires the ticket-detail graphic or its unique top-right close, otherwise the frame remains unknown. Route-home authority comes only from the fixed bottom navigation in two agreeing frames: a bounded orange selected-Home silhouette plus separate neutral ticket-shaped Tickets, Profile, and three-line Menu glyphs. Dynamic news, journey-planner content, route actions, tab-like bands, and the thin separator above navigation do not participate. A missing, malformed, or orange peer glyph, a solid or oversized Home patch, a navigation overlay, login, ticket detail, slider, popup, or generated result fails closed. Empty-tab authority additionally requires exactly one selected underline, both bounded tab-label silhouettes, the central empty-state silhouette, no ticket action/card color, and the selected bottom Tickets glyph. A mutating v3 navigation action journals exactly one proved tab tap before dispatch, re-observes, and continues only from a typed Tickets shell/list; unchanged Home or any ambiguous transition becomes attention-needed and is never replayed. The Time-tickets list is always an intermediate state: every card or status target used for input needs two fresh frames agreeing on both identity and geometry, and a successful terminal or retained result must match the target's activated/unactivated Aztec-detail view. `register_current` rejects both intermediate states, and non-mutating `prove_current` reports them without input. The lightweight visibility probe accepts a sparse dark ViVi page only when it still has sufficient luminance range, mean, dark coverage, and at least eight independent bright samples; uniform black and navigation-pill-only capture remain blocked. Ticket actions do not use UiAutomator or accessibility labels for state, navigation, card selection, registration, or control-code target geometry. Rīgas Satiksme keeps its separate automation authority.
 - In the current ViVi monthly-ticket list, the separately detected orange registration control opens the unactivated slider for the next journey, while a dedicated compact registered-status target opens the most recently activated journey. Open, combined-register, return-to-unactivated, and re-detect use registration-control geometry. View-recent-activated and control-code preparation require the dedicated registered-status geometry; they never fall back to a generic dated card body. The transition is successful only after fresh activated detail with its Aztec graphic is proved, so a plain ticket list is never terminal success for activated-detail navigation.
 - Ticket-list choice uses the bounded digit/date recognizer only on demand. Two distinct fresh frames must agree on a parseable, confident, uniquely eligible current-or-upcoming card. Conflicting, duplicated, expired, unreadable, rotated, overlaid, or redesigned layouts fail closed.
-- Registration runs one canonical preparation fence after its no-touch wake/resume. It waits for stable ViVi focus and Accessibility input readiness, then accepts semantic slider bounds only after two consecutive, identical, non-empty bounded snapshots; an empty sample breaks the pair, while persistent absence or movement fails closed with sanitized branch diagnostics. This semantic polling completes before two new agreeing rooted frames are requested from the same generation with the same private ticket anchor, an unactivated detail, an enabled slider, and matching semantic and visual geometry. The second rooted probe's exact monotonic capture-start timestamp is the picture-age origin. The request timestamp remains a lower bound that rejects a capture from before that request; positive probe identity and capture timing are mandatory, with no estimated or parse-time fallback. Registration accepts an already encoded matching or later picture in the same capture epoch, or waits only for that output. It does not request an additional one-second capture after receiving the visual proof. Missing or inconsistent capture timing fails closed, and the encoded watermark must still arrive before the classified picture reaches 3 seconds old. The same actual picture-age bound is rechecked immediately before dispatch; waiting for a legal capture opportunity before that picture exists no longer spends its age budget. When ViVi shows its lower navigation bar, the active tab comes only from the yellow/orange selected icon while the peer icons remain white/neutral; dynamic news and other upper-page content are ignored. The full-screen ticket-detail overlay hides that navigation bar, so detail registration uses the exact private detail identity and slider proof instead of inferring a tab from page pixels. Stream watermark, focus, Accessibility window, action generation, rooted touch generation, capture epoch/restart generation, anchor, geometry, and rooted-proof age are rechecked before the fresh-proof checkpoint and again immediately before dispatch. Any failed check ends before touch.
-- A prepared action checkpoints and sends one uninterrupted 800 ms Accessibility stroke. It may send one final stroke only after Android conclusively completed the first, two new agreeing frames still prove the exact same ticket unactivated, and the complete preparation fence passes again. Both strokes stay inside the same command, action, admission, and quota use; no retry child is created. Android cancellation, rejection, timeout, lost acknowledgement, ambiguous visual state, changed anchor, or a failed second preparation never authorizes another touch. A restart before dispatch without surviving private proof stops safely; a restart after `dispatching` may reconcile the persisted outcome but may never replay the stroke. If both allowed strokes conclusively complete and the same ticket remains unactivated, the action terminates as no-transition. The list-card identity and phone-local salted signature of the stable lower route/date metadata band remain distinct; the rotating ticket-code graphic, upper crop, and slider are excluded from identity.
+- Fresh `register_current` preparation reuses two distinct, agreeing observations already classified by the ordinary one-frame-per-second capture path. The existing phone-control owner retains this private pair only for the same ticket context, slider geometry, stream epoch, helper generation, focused-input generation/window, and rooted physical-touch generation. Both real capture timestamps must follow the latest focus/touch boundary and remain strictly less than three seconds old at dispatch. Unknown or changed content, focus departure/rebind, touch or monitor loss, capture replacement, another action, and dispatch clear its authority. A single first-ready observation requests only the next legal capture and awaits the existing observation stream; it does not start another capture loop or raise cadence. Cold startup can reuse this same guarded pair for its current unactivated-ticket readiness check, releasing the mutation lane without two redundant captures; other startup screen states keep their requested-probe path. Read-only visual preparation overlaps action-panel protection while an already-admitted fresh action owns the mutation lane; it never launches ViVi or dispatches input before protection succeeds. Newer agreeing pictures may refresh the pair in the same context without changing the original input fence. Retained checkpoints, uncertain navigation, retries, and combined open-and-register actions keep the requested-probe preparation path. Requested probes still require positive probe identity and a real capture timestamp at or after their request; private live observations never fabricate those fields. All paths retain the stable input check, exact ticket and geometry, action/mutation and capture generations, physical-touch and protection checks before durable admission and again before dispatch, plus Android's final focused-window guard.
+- A prepared action checkpoints and sends one uninterrupted 400 ms Accessibility stroke. It may send one final stroke only after Android conclusively completed the first, two new agreeing frames still prove the exact same ticket unactivated, and the complete preparation fence passes again. Both strokes stay inside the same command, action, admission, and quota use; no retry child is created. Android cancellation, rejection, timeout, lost acknowledgement, ambiguous visual state, changed anchor, or a failed second preparation never authorizes another touch. A restart before dispatch without surviving private proof stops safely; a restart after `dispatching` may reconcile the persisted outcome but may never replay the stroke. If both allowed strokes conclusively complete and the same ticket remains unactivated, the action terminates as no-transition. The list-card identity and phone-local salted signature of the stable lower route/date metadata band remain distinct; the rotating ticket-code graphic, upper crop, and slider are excluded from identity.
 - `prove_current` requires an already-running fresh capture, observes two distinct agreeing fixed-cadence frames with coalesced immediate refresh requests, and never launches ViVi, changes brightness, takes the physical mutation lane, navigates, recognizes list dates, taps, or drags. An unactivated detail publishes a normal successful `latest_unactivated` action proof and the matching normalized slider bounds. Activated detail, list, login, blocker, and stable unknown states publish only their sanitized view/reason and never authorize registration. A rooted physical touch during observation invalidates the proof; a later explicit action waits for the proof's terminal settlement instead of cancelling it.
 - A successful activation stores only the opaque visual anchor needed for safe navigation; the phone does not calculate or persist the business switch window. SpacetimeDB owns the 15-minute switch policy and supplies its `policyRevision` and `switchExpiresAt` on each authorized switch action. Pixel requires that authority plus unambiguous recent-activated and newer-unactivated visual anchors, echoes the supplied deadline, and fails closed when authority or visual evidence is missing. Pixel's monotonic execution deadlines, command expiry checks, at-most-once dispatch journal, and activation checkpoint remain execution-safety mechanisms rather than product-policy timers.
 - The public action projection is sanitized to action id, target, status, phase, current visual view, switch state/expiry, proof watermark, fixed safe reason, and timestamps. A separate short-lived slider row may expose only 0–10,000 basis-point bounds relative to that exact encoded frame, tied to proof action id, stream epoch, and frame sequence. All terminals produced while an action owns the panel/capture lease remain provisional through cleanup and final proof checks. The wrapper writes one canonical terminal afterward; staging reads that immutable envelope and cannot rewrite its result. Registration dispatch classification comes from the activation checkpoint, never from a lease flag that also counts navigation taps. Pixel keeps the terminal envelope until the single Spacetime finalizer accepts it. Re-delivering an identical envelope after network loss succeeds idempotently; a revision, command, action, target, attempt, or result mismatch rolls back the whole transaction. Dates, ticket text or numbers, glyph output, screenshots, raw pixels, raw device coordinates, and private diagnostic errors remain on the phone.
 
 ### Action-start preparation
 
-Panel-dark acquisition uses one bounded root call containing two distinct complete helper/owner identity and raw-panel observations, separated by 25 ms. The pair retains the existing one-second allowance per observation, capped by the remaining three-second acquisition deadline; a late successful return cannot authorize the lease. The second observation must succeed before the helper reports two confirmations. A failed read or changed identity discards the pair; physical-touch cancellation, launcher success, the current visibility grant and final mutation checks remain independent authorities. Command-correlated timing separates helper-launch work and acquisition-verification work from total preparation elapsed time. Final convergence still counts from the last possible mutation and retains its 2.5-second bound.
+Panel-dark acquisition uses one bounded root call containing two distinct complete helper/owner identity and raw-panel observations, separated by 25 ms. The pair retains the existing one-second allowance per observation, capped by the remaining three-second acquisition deadline; a late successful return cannot authorize the lease. The second observation must succeed before the helper reports two confirmations. A failed read or changed identity discards the pair; physical-touch cancellation, launcher success, the current visibility grant and final mutation checks remain independent authorities. Command-correlated timing separates helper-launch work and acquisition-verification work from total preparation elapsed time. The bounded private action event also marks admission, mutation-lane availability, visual readiness, protection readiness, final checks, input request/return, and terminal settlement. Final convergence still counts from the last possible mutation and retains its 2.5-second bound.
 
 Warm non-registering V3 actions collect their initial two-frame observation concurrently with acquisition of the existing panel-dark lease. The observation is read-only and scoped to that action; launch and input still wait for the lease. It is consumed only if ViVi remains focused, no uncertain navigation journal needs reconciliation, and the capture epoch, restart count, action/mutation generation, physical-touch fence and three-second picture age still match. A required launch cancels and joins the early observer first. Structured cancellation joins the observer before lease cleanup.
 
@@ -470,6 +535,8 @@ Known caveats:
 - Reports can preserve dated measurements, but architecture updates should describe the stable behavior after changes land.
 
 ## Architecture Update Notes
+
+- 2026-09-11: `RequestScopedKeyboardClampLease.kt` owns the existing request-lifetime keyboard-suppression state and its serialized acquire/release behavior. `TicketStreamService` retains the active lease and request cleanup ownership. This extraction does not change Accessibility authority, two-attempt mode restoration, cancellation behavior, IME configuration, or phone input.
 
 - 2026-09-05: `ticket-stream-2026-09-04-serialized-capture-recovery-v348` rechecks current startup state under the existing service encoder lock and retains that owner through epoch reset, old-process teardown, and replacement admission. A durable browser recovery that arrives while the watchdog is stopping the old encoder joins the newly starting or already healthy capture instead of resetting it again using the old encoder-start timestamp. Source-frame callbacks carry the existing internal capture generation and recheck it under that same encoder lock before counters or epoch assignment, so an old callback delayed behind teardown cannot enter the replacement stream. This local identity never enters the media envelope. The three-second stall decision and bounded six-second first-useful-frame startup policy remain unchanged; a later confirmed stall can still restart capture, and an old fresh picture cannot conceal an exited encoder.
 
