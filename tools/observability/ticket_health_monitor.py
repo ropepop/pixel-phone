@@ -28,7 +28,7 @@ def _words(value: str) -> set[str]:
   return set(value.split())
 
 
-VERSION = "5"
+VERSION = "6"
 # Owning Ticket contracts: STREAM_BACKGROUND_REPORT_MAX_AGE_MS and streamPageOpenWarmHold.
 RELAY_REPORT_MAX_AGE_MILLIS = 5000
 PAGE_WARM_MAX_MILLIS = 30 * 60 * 1000
@@ -64,7 +64,7 @@ PIXEL_TICKET_STATES = _words(
 VIVI_STATES = _words(
   "TICKET_DETAIL TICKET_LIST GENERATED_CONTROL_CODE CONTROL_CODE_POPUP LOGIN NO_TICKETS ROUTE_HOME CART UNKNOWN_VIVI OTHER_VIVI"
 )
-RECOVERY_STAGE_STATES = _words("idle running healthy recovering blocked failed stopped none")
+RECOVERY_STAGE_STATES = _words("idle demand_idle running healthy recovering blocked failed stopped none")
 RECOVERY_RESULT_STATES = _words("none pending succeeded failed recovered skipped not_needed")
 RECOVERY_FAILURE_REASONS = _words(
   "timeout phone_not_ready capture_unavailable capture_blocked stream_start_failed ticket_not_ready "
@@ -333,17 +333,27 @@ def _safe_json(body: str) -> dict[str, Any] | None:
     return None
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+  def redirect_request(self, req, fp, code, msg, headers, newurl):
+    return None
+
+
 def http_probe(url: str, expected_status: int, timeout_seconds: float) -> dict[str, Any]:
   request = urllib.request.Request(url, headers={"User-Agent": f"pixel-ticket-health-monitor/{VERSION}"})
   try:
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+    with urllib.request.build_opener(_NoRedirect).open(request, timeout=timeout_seconds) as response:
       status, body = response.status, response.read(65536)
+      location = response.headers.get("Location", "")
   except urllib.error.HTTPError as error:
-    status, body = error.code, error.read(65536)
+    with error:
+      status, body = error.code, error.read(65536)
+      location = error.headers.get("Location", "")
   except (urllib.error.URLError, TimeoutError, OSError) as error:
     return {"ok": False, "status": None, "error": type(error).__name__}
   parsed = _safe_json(body.decode("utf-8", "replace")) or {}
   result: dict[str, Any] = {"ok": status == expected_status, "status": status}
+  if expected_status == 302:
+    result["ok"] = result["ok"] and location.startswith("/api/v1/auth/start?")
   for key in ("ok", "status", "serverVersion", "assetVersion"):
     if key in parsed:
       result[f"body_{key}"] = parsed[key]
@@ -443,7 +453,7 @@ def collect_public(config: Mapping[str, Any]) -> dict[str, Any]:
   timeout = float(config.get("timeout_seconds", 10))
   root, livez, protected = [
     http_probe(str(config[key]), expected, timeout)
-    for key, expected in (("page_url", 200), ("livez_url", 200), ("protected_health_url", 401))
+    for key, expected in (("page_url", 302), ("livez_url", 200), ("protected_health_url", 401))
   ]
   return {
     "ok": root["ok"] and livez["ok"] and protected["ok"],
@@ -1041,7 +1051,7 @@ def evaluate_snapshot(snapshot: Mapping[str, Any], thresholds: Mapping[str, Any]
       add(not relay.get("phone_connected") or not relay.get("phone_desired"), "relay_phone_state_mismatch")
       add(str(relay.get("phone_stream_state", "")).lower() != "streaming", "relay_phone_not_streaming")
       if warm:
-        add(spacetime.get("relay_stream_verdict") not in {"live", "waiting_keyframe", "stale_recovering"}, "warm_relay_unavailable")
+        add(spacetime.get("relay_stream_verdict") not in {"idle", "live", "waiting_keyframe", "stale_recovering"}, "warm_relay_unavailable")
         warnings.append("Intentional page warmth has no browser video client; live picture freshness and browser/action proof were not assessed.")
       else:
         add(spacetime.get("relay_stream_verdict") != "live" or clients < 1, "relay_not_live")

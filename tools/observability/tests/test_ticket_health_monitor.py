@@ -3,6 +3,8 @@ import json
 import sys
 import tempfile
 import unittest
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -183,6 +185,29 @@ def healthy_snapshot(active: bool) -> dict:
 
 
 class TicketHealthMonitorTest(unittest.TestCase):
+  def test_signed_out_redirect_is_checked_without_following_login(self):
+    requests = []
+    class Handler(BaseHTTPRequestHandler):
+      def do_GET(self):
+        requests.append(self.path)
+        self.send_response(302 if self.path != "/login" else 400)
+        self.send_header("Location", "/api/v1/auth/start?returnTo=%2F" if self.path == "/" else "/login")
+        self.end_headers()
+      def log_message(self, *args):
+        pass
+    with HTTPServer(("127.0.0.1", 0), Handler) as server:
+      worker = threading.Thread(target=server.serve_forever, daemon=True)
+      worker.start()
+      try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        self.assertTrue(monitor.http_probe(base + "/", 302, 2)["ok"])
+        self.assertFalse(monitor.http_probe(base + "/wrong", 302, 2)["ok"])
+        self.assertFalse(monitor.http_probe(base + "/", 200, 2)["ok"])
+        self.assertEqual(["/", "/wrong", "/"], requests)
+      finally:
+        server.shutdown()
+        worker.join()
+
   def test_config_requires_public_operator_identity_and_forbids_tokens(self):
     config_path = MODULE_PATH.parent / "ticket_health_monitor.config.json"
     config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -724,10 +749,28 @@ class TicketHealthMonitorTest(unittest.TestCase):
     return snapshot
 
   def test_intentional_warmth_does_not_require_browser_frames(self):
-    result = monitor.evaluate_snapshot(self.warm_snapshot(), default_thresholds(), [])
-    self.assertEqual("healthy_warm", result["status"], result)
-    self.assertEqual("warm_no_viewer", result["viewer_mode"])
-    self.assertIsNone(result["frame_age_millis"])
+    for verdict in ("idle", "waiting_keyframe"):
+      snapshot = self.warm_snapshot()
+      snapshot["spacetime"]["relay_stream_verdict"] = verdict
+      result = monitor.evaluate_snapshot(snapshot, default_thresholds(), [])
+      self.assertEqual("healthy_warm", result["status"], result)
+      self.assertEqual("warm_no_viewer", result["viewer_mode"])
+      self.assertIsNone(result["frame_age_millis"])
+
+  def test_phone_demand_idle_is_known_but_cannot_hide_stale_active_viewing(self):
+    raw = raw_pixel_health(active=True)
+    raw["recovery"]["streamStage"] = "demand_idle"
+    collected = collect_pixel_with_health(raw)
+    self.assertTrue(collected["ok"], collected)
+    self.assertEqual("demand_idle", collected["health"]["recovery"]["stream_stage"])
+    snapshot = self.warm_snapshot()
+    snapshot["pixel"]["health"]["recovery"]["stream_stage"] = "demand_idle"
+    snapshot["spacetime"]["relay_stream_verdict"] = "idle"
+    self.assertEqual("healthy_warm", monitor.evaluate_snapshot(snapshot, default_thresholds(), [])["status"])
+    snapshot["spacetime"]["relay_video_clients"] = 1
+    result = monitor.evaluate_snapshot(snapshot, default_thresholds(), [])
+    self.assertEqual("degraded", result["status"])
+    self.assertIn("relay_frame_stale", result["failures"])
 
   def test_warmth_never_hides_expiry_missing_evidence_or_device_failure(self):
     for case in ("expired", "missing", "stale_report", "missing_report", "future_report",

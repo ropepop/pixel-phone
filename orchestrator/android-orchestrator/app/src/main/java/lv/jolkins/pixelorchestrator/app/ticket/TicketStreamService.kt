@@ -2405,8 +2405,10 @@ class TicketStreamService : Service() {
         },
         observe = {
           awaitStableTicketVisualActionObservation(
-            "ticket_idle_refresh_transition", TICKET_ACTION_V3_VISUAL_TIMEOUT_MILLIS
-          )
+            "ticket_idle_refresh_transition", TICKET_ACTION_V3_VISUAL_TIMEOUT_MILLIS,
+            convergenceExtensionMillis = TICKET_ACTION_V3_FINAL_CONVERGENCE_MILLIS,
+            captureRecoveryBudget = captureRecoveryBudget
+          ).also { if (it != null) ticketActionTiming?.mark(TicketActionTiming.Phase.VISUAL_READY) }
         }
       )
       return if (result.ok) ticketVisualActionSuccess(request, result.reason, requireNotNull(result.observation))
@@ -7297,7 +7299,7 @@ class TicketStreamService : Service() {
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
     private const val SESSION_START_TIMEOUT_MILLIS = 70_000L
     private const val SERVICE_DESTROY_JOIN_TIMEOUT_MILLIS = 12_000L
-    const val SERVER_VERSION = "ticket-stream-2026-09-14-home-search-proof-v389"
+    const val SERVER_VERSION = "ticket-stream-2026-09-18-idle-refresh-convergence-v390"
     private const val FRAME_ENVELOPE_VERSION = "tsf3"
     private const val TICKET_SESSION_IDLE = "idle"
     private const val TICKET_SESSION_STARTING = "starting"

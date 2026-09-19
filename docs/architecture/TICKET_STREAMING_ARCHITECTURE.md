@@ -28,6 +28,11 @@ process is absent, and launches it once without clearing app data or login. A fr
 may prove the same detail directly. Otherwise the existing exact navigation targets reach Tickets,
 Time tickets and the matching card, with at most three taps and no repeated navigation kind.
 The list match uses the original validity identity even when a different ticket is newest.
+After restart and each navigation tap, refresh uses the same bounded visual convergence
+and single capture-recovery budget as ordinary navigation: five seconds plus an eight-second
+observation extension, with interrupted capture bounded by the existing fifteen-second limit.
+This waits for fresh agreeing observations; it never repeats the restart or a dispatched tap.
+The existing action timing records the first proved post-restart view as `visual_ready_ms`.
 Login, missing/ambiguous identity, changed capture source or uncertain execution stops the attempt.
 The operation never activates a ticket, requests a code, or retries the restart or input.
 A viewer returning after the claim permits this safe completion; physical touch still preempts.

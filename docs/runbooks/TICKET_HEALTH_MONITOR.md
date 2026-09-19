@@ -1,5 +1,11 @@
 # Ticket Health Monitor
 
+The public page probe checks its same-site sign-in redirect directly and never follows
+authentication redirects. A connected relay may report `idle` while a proved, unexpired
+page-warm hold is demand-gated; active viewers still require fresh live pictures.
+The phone's corresponding `demand_idle` watchdog state is recognized without granting
+any picture-freshness exemption to active viewers.
+
 `tools/observability/ticket_health_monitor.py` is the repository-owned, read-only Ticket health contract. It checks the public protection boundary, kitty-gration containers and local endpoints, bounded host memory/disk/Docker usage, narrow public Spacetime state, Pixel-local health, Pixel battery/thermal/RAM/disk usage, rooted capture readiness, stream freshness, and portrait lock. The legacy `hardwareH264` field name does not establish the deployed codec.
 
 The classifier distinguishes `healthy_live`, `healthy_warm`, and `healthy_idle`. Active browser viewing requires live transport, capture and ticket state plus pictures within the three-second product boundary. Intentional page warmth requires zero browser video clients, retained stream demand, a fresh relay report with a bounded non-expired `pageOpenWarm` count/expiry, connected phone transport and healthy capture readiness. It does not require continuing browser frame delivery and grants no fresh-picture or action proof. Missing/expired warmth, stale relay reports, disconnected transport, stopped capture and failed recovery remain failures. Active viewers never borrow the warm-state freshness exemption. Settled idle requires stopped capture and settled phone/ticket state; an older unchanged idle report alone is not a fault.
