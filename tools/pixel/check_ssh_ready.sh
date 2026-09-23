@@ -101,7 +101,7 @@ if [[ "${host_set}" == "true" ]] && pixel_transport_tcp_probe "${PIXEL_SSH_HOST}
   tcp_reachable="true"
 fi
 
-if [[ "${host_set}" == "true" && "${password_set}" == "true" && "${tcp_reachable}" == "true" ]]; then
+if [[ "${host_set}" == "true" && "${tcp_reachable}" == "true" ]]; then
   if remote_probe_output="$(pixel_transport_ssh_remote_probe 2>/dev/null)"; then
     remote_probe_ok="true"
   fi

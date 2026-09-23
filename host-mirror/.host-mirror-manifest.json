@@ -127,8 +127,8 @@
     },
     "data/local/pixel-stack/conf/orchestrator-config-v1.json": {
       "mode": 384,
-      "sha256": "60744545d99819a56164245a5b14f7c9f777a4e1d9f4f481affb98e77b2aaea7",
-      "size": 6689
+      "sha256": "67893cba83b8aa1454253f82026a7fba4145a62d8b56674f91578a868e54174e",
+      "size": 6686
     },
     "data/local/pixel-stack/conf/runtime/components/satiksme_bot/release-manifest.json": {
       "mode": 384,
@@ -157,8 +157,8 @@
     },
     "data/local/pixel-stack/conf/ssh/authorized_keys": {
       "mode": 384,
-      "sha256": "4242af4ac3a0adfcfad8ba11124135d3874b30c331c485cd6a429026ec24b0d9",
-      "size": 101
+      "sha256": "2ed240913cea43fbffbb5b5773bcfebd5e89e5f0a8e733dbc31da9fb1a534c4b",
+      "size": 313
     },
     "data/local/pixel-stack/conf/ssh/root_password.hash": {
       "mode": 384,
@@ -172,10 +172,10 @@
     },
     "data/local/pixel-stack/conf/vpn/tailscale.env": {
       "mode": 384,
-      "sha256": "e757409f654ab6f16e586f8b0fb249c1dcbb98e9057517e49dd48ffdbca80e5d",
+      "sha256": "1d01cbb874d91ef99b60e4db3d7d0dde950e42491f171298e0abeed77c6804e8",
       "size": 416
     }
   },
   "profile": "pixel",
-  "updatedEpochSeconds": 1788846420
+  "updatedEpochSeconds": 1789830384
 }

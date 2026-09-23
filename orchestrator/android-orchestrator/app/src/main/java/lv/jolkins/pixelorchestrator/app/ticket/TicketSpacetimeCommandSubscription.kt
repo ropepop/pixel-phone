@@ -53,12 +53,15 @@ internal data class TicketSpacetimeCommandSubscriptionMessage(
   val requestId: Int? = null,
   val deleted: List<String> = emptyList(),
   val desired: TicketSpacetimeDesiredState? = null,
-  val desiredDeleted: Boolean = false
+  val desiredDeleted: Boolean = false,
+  val monitoring: TicketMonitoringConfig? = null,
+  val monitoringDeleted: Boolean = false
 )
 
 internal data class TicketCommandControlSnapshot(
   val commands: List<TicketSpacetimeCommand>,
-  val desired: TicketSpacetimeDesiredState?
+  val desired: TicketSpacetimeDesiredState?,
+  val monitoring: TicketMonitoringConfig? = null
 )
 
 internal data class TicketSpacetimeCommandSubscriptionConfig(
@@ -74,12 +77,14 @@ internal class TicketCommandInbox {
   private val commands = linkedMapOf<String, TicketSpacetimeCommand>()
   private var ready = false
   private var desired: TicketSpacetimeDesiredState? = null
+  private var monitoring: TicketMonitoringConfig? = null
   val changed = Channel<Unit>(Channel.CONFLATED)
 
   @Synchronized fun disconnected() {
     ready = false
     commands.clear()
     desired = null
+    monitoring = null
     changed.trySend(Unit)
   }
 
@@ -87,6 +92,7 @@ internal class TicketCommandInbox {
     if (message.kind == TicketSpacetimeCommandSubscriptionMessageKind.APPLIED) {
       commands.clear()
       desired = null
+      monitoring = null
       ready = true
     }
     check(ready) { "command_snapshot_not_ready" }
@@ -94,6 +100,8 @@ internal class TicketCommandInbox {
     message.commands.forEach { commands[it.id] = it }
     if (message.desiredDeleted) desired = null
     message.desired?.let { desired = it }
+    if (message.monitoringDeleted) monitoring = null
+    message.monitoring?.let { monitoring = it }
     check(commands.size <= 128) { "command_snapshot_capacity" }
     changed.trySend(Unit)
   }
@@ -104,7 +112,7 @@ internal class TicketCommandInbox {
   }
 
   @Synchronized fun controlSnapshot(): TicketCommandControlSnapshot? = if (!ready) null else
-    TicketCommandControlSnapshot(commands.values.filterNot { ticketSpacetimeCommandExpired(it.expiresAt, Instant.now()) }, desired)
+    TicketCommandControlSnapshot(commands.values.filterNot { ticketSpacetimeCommandExpired(it.expiresAt, Instant.now()) }, desired, monitoring)
 
   @Synchronized fun contains(command: TicketSpacetimeCommand): Boolean =
     ready && commands[command.id] == command && !ticketSpacetimeCommandExpired(command.expiresAt, Instant.now())
@@ -129,10 +137,14 @@ internal fun ticketSpacetimeKeyframeSubscriptionQuery(ticketId: String, backendI
     "AND status = 'pending'"
 }
 
-internal fun ticketSpacetimeKeyframeSubscribeMessage(query: String, desiredQuery: String? = null): String {
+internal fun ticketSpacetimeKeyframeSubscribeMessage(query: String, desiredQuery: String? = null, monitoringQuery: String? = null): String {
   return buildJsonObject {
     put("Subscribe", buildJsonObject {
-      put("query_strings", buildJsonArray { add(JsonPrimitive(query)); desiredQuery?.let { add(JsonPrimitive(it)) } })
+      put("query_strings", buildJsonArray {
+        add(JsonPrimitive(query))
+        desiredQuery?.let { add(JsonPrimitive(it)) }
+        monitoringQuery?.let { add(JsonPrimitive(it)) }
+      })
       put("request_id", COMMAND_SUBSCRIPTION_REQUEST_ID)
     })
   }.toString()
@@ -193,12 +205,14 @@ internal fun parseTicketSpacetimeCommandSubscriptionMessage(
   val deleted = mutableListOf<String>()
   var desired: TicketSpacetimeDesiredState? = null
   var desiredDeleted = false
+  var monitoring: TicketMonitoringConfig? = null
+  var monitoringDeleted = false
   val tables = databaseUpdate["tables"] as? JsonArray
     ?: return TicketSpacetimeCommandSubscriptionMessage(TicketSpacetimeCommandSubscriptionMessageKind.ERROR)
   for (tableElement in tables) {
     val table = tableElement as? JsonObject ?: continue
     val tableName = table.string("table_name")
-    if (tableName != COMMAND_SUBSCRIPTION_TABLE && tableName != DESIRED_SUBSCRIPTION_TABLE) continue
+    if (tableName !in setOf(COMMAND_SUBSCRIPTION_TABLE, DESIRED_SUBSCRIPTION_TABLE, MONITORING_SUBSCRIPTION_TABLE)) continue
     val updates = table["updates"] as? JsonArray ?: continue
     for (updateElement in updates) {
       val rawUpdate = updateElement as? JsonObject ?: continue
@@ -214,6 +228,8 @@ internal fun parseTicketSpacetimeCommandSubscriptionMessage(
         } as? JsonPrimitive ?: error("invalid_deleted_command")
         if (tableName == DESIRED_SUBSCRIPTION_TABLE) {
           if (id.content == "$expectedTicketId:$expectedBackendId") desiredDeleted = true
+        } else if (tableName == MONITORING_SUBSCRIPTION_TABLE) {
+          if (id.content == "$expectedTicketId:$expectedBackendId") monitoringDeleted = true
         } else deleted += id.content
       }
       val inserts = update["inserts"] as? JsonArray ?: continue
@@ -224,6 +240,10 @@ internal fun parseTicketSpacetimeCommandSubscriptionMessage(
         val row = runCatching { json.parseToJsonElement(rowText) }.getOrNull() ?: continue
         if (tableName == DESIRED_SUBSCRIPTION_TABLE) {
           row.toStreamDesiredOrNull(expectedTicketId, expectedBackendId)?.let { desired = it }
+          continue
+        }
+        if (tableName == MONITORING_SUBSCRIPTION_TABLE) {
+          row.toMonitoringConfigOrNull(expectedTicketId, expectedBackendId)?.let { monitoring = it }
           continue
         }
         val command = row.toKeyframeCommandOrNull(expectedTicketId, expectedBackendId, now) ?: continue
@@ -237,6 +257,8 @@ internal fun parseTicketSpacetimeCommandSubscriptionMessage(
     deleted = deleted,
     desired = desired,
     desiredDeleted = desiredDeleted,
+    monitoring = monitoring,
+    monitoringDeleted = monitoringDeleted,
     requestId = if (kind == TicketSpacetimeCommandSubscriptionMessageKind.APPLIED) {
       COMMAND_SUBSCRIPTION_REQUEST_ID
     } else {
@@ -353,7 +375,8 @@ internal class TicketSpacetimeCommandSubscription(
       .build()
     val subscribeMessage = ticketSpacetimeKeyframeSubscribeMessage(
       ticketSpacetimeKeyframeSubscriptionQuery(config.ticketId, config.backendId),
-      "SELECT * FROM $DESIRED_SUBSCRIPTION_TABLE WHERE id = ${ticketSpacetimeSubscriptionSqlLiteral("${config.ticketId}:${config.backendId}")}"
+      "SELECT * FROM $DESIRED_SUBSCRIPTION_TABLE WHERE id = ${ticketSpacetimeSubscriptionSqlLiteral("${config.ticketId}:${config.backendId}")}",
+      "SELECT * FROM $MONITORING_SUBSCRIPTION_TABLE WHERE id = ${ticketSpacetimeSubscriptionSqlLiteral("${config.ticketId}:${config.backendId}")}"
     )
     val listener = object : WebSocketListener() {
       override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -452,6 +475,23 @@ internal class TicketSpacetimeCommandSubscription(
       webSocket.cancel()
     }
   }
+}
+
+private fun JsonElement.toMonitoringConfigOrNull(ticketId: String, backendId: String): TicketMonitoringConfig? {
+  val fields = when (this) {
+    is JsonObject -> this
+    is JsonArray -> {
+      check(size == 5) { "invalid_monitoring_config_shape" }
+      listOf("id", "ticketId", "backendId", "enabled", "epoch").zip(this).toMap()
+    }
+    else -> error("invalid_monitoring_config_shape")
+  }
+  fun string(name: String) = (fields[name] as? JsonPrimitive)?.contentOrNull.orEmpty()
+  if (string("id") != "$ticketId:$backendId" || string("ticketId") != ticketId || string("backendId") != backendId) return null
+  val epoch = string("epoch")
+  check(epoch.isNotBlank() && epoch.length <= 128) { "invalid_monitoring_epoch" }
+  return TicketMonitoringConfig((fields["enabled"] as? JsonPrimitive)?.booleanOrNull
+    ?: error("invalid_monitoring_enabled"), epoch)
 }
 
 private fun JsonElement.toStreamDesiredOrNull(ticketId: String, backendId: String): TicketSpacetimeDesiredState? {
@@ -587,7 +627,8 @@ private val KEYFRAME_COMMAND_FIELD_NAMES = listOf(
   "expiresAt"
 )
 private const val COMMAND_SUBSCRIPTION_TABLE = "ticketremote_service_stream_command"
-private const val DESIRED_SUBSCRIPTION_TABLE = "ticketremote_stream_desired_state"
+private const val DESIRED_SUBSCRIPTION_TABLE = "ticketremote_service_stream_desired_state"
+private const val MONITORING_SUBSCRIPTION_TABLE = "ticketremote_monitoring_config"
 private val STREAM_DESIRED_FIELDS = listOf("id", "ticketId", "backendId", "desiredActive", "viewerCount", "reason", "revision", "updatedBy", "updatedAt", "coldRestartId", "coldRestartPhase", "coldRestartStartedAt", "coldRestartError")
 private const val COMMAND_SUBSCRIPTION_REQUEST_ID = 0
 private const val MAX_KEYFRAME_COMMANDS_PER_MESSAGE = 128

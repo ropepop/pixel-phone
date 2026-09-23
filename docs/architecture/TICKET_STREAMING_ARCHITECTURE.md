@@ -2,6 +2,33 @@
 
 This is the deep Pixel stream and capture note. It is not the first Ticket document.
 
+## Private viewer state (v394)
+
+The phone subscribes to `ticketremote_service_stream_desired_state`, gated by
+its existing registered service identity. The raw desired-state table is private
+after all consumers have moved to this view. Its fields, command authority and
+stream-demand behavior are unchanged. Publish the view before deploying v394;
+make the raw table private only after the phone and sidecar have switched.
+The page's voluntary carriage check-ins are separate database state and never
+produce phone commands or stream demand.
+
+## Input-service readiness (v392)
+
+Control readiness requires the existing Android Accessibility input service to be
+connected as well as a fresh recognized ticket. A connection change invalidates
+the previous action context immediately; reconnecting requires a new capture.
+Missing input service cannot retain prepared registration evidence or advertise a
+ready slider. The five-minute monitoring observation still reports the recognized
+ticket screen independently; it never grants input authority.
+
+Ticket APK deployment restores its existing input-service permission over both
+SSH and ADB and verifies the component is enabled and bound before succeeding.
+It preserves other Accessibility entries and does not change notification-listener
+permission for a Ticket-only redeploy. A failed activation is never replayed by
+this repair.
+`health` and `health_component` skip the process force-stop and log reset, so
+checking an already installed APK does not interrupt the bound input service.
+
 ## Idle same-ticket app restart (v386)
 
 The database owns the one idle schedule and delivers an internal `refresh_current_ticket`
@@ -189,6 +216,32 @@ Background desired-state startup gets one attempt per observed demand episode
 and respects explicit stop; an explicit reconnect remains available.
 
 ## Independent control observations (v367)
+
+Owner-enabled Ticket monitoring consumes the same current-view classifier, through a separate
+status-only health publisher. Its sanitized config (`ticketremote_monitoring_config`) travels
+on the existing command subscription; `ticketremote_report_monitoring` carries the enable
+epoch, current phone session, monotonic sequence and capture time derived from the existing
+database clock anchor. The database rejects observations older than 30 seconds, including delayed
+HTTP delivery. Active observations are reused only while
+fresh (under 30 seconds), with publication on a state change or every five minutes. They never
+renew the three-second control authority. Enabling monitoring or reconnecting requires fresh
+evidence; missing observations remain distinguishable from a classified non-ticket screen.
+Current phone work, physical touch and lifecycle guards override reused observations before
+publication. The existing command worker supplies monitoring wakeups, including while disabled.
+While a warm stream has paused ordinary capture, a successfully dispatched classifier probe
+remains pending until its real observation arrives through that owner. It must not publish a
+synthetic capture failure ahead of the result. Failed dispatch still reports unavailable;
+a missing result retains the database's overdue-observation deadline. No action lock is held
+while waiting for the asynchronous result.
+
+Idle monitoring runs one `--monitor-once` invocation of the existing rooted capture helper every
+five minutes. This branch captures and classifies once before constructing any MediaCodec
+encoder, and emits only a state and local capture time. It neither wakes nor navigates the phone.
+The existing phone mutation lane and session lock serialize it with actions and cold teardown;
+busy ownership is reported without waiting behind an action. Secure capture settings are acquired
+and restored by their existing owner on every check. Cold mode still releases the encoder and
+permits subsequent bounded observations. Routine successful checks add no operational log rows;
+capture-settings failures retain existing diagnostics. Monitoring remains disabled by default.
 
 In v368 the compact slider detector still proves the slider shape and detail context. The existing detailed sample then refines its unpadded orange track and attached dark thumb, excluding dark components that meet the bounded search edge. Browser placement and phone geometry use that sample-space rectangle; the change introduces no capture or image publication.
 
@@ -517,7 +570,7 @@ Important health surfaces:
 
 SpacetimeDB is the source of truth for ticket membership, browser presence, control requests, and current compact phone state. The old public control-ownership/socket flow is not part of the browser product. `ticket_remote` keeps a short in-process read cache for non-mutating health and media setup, plus the requester-only rendered result. Pixel health is stored in SpacetimeDB as a compact material summary and is written only when that summary changes or a keepalive interval passes; the full current phone diagnostics stay in `ticket_remote` process health for operations. Compact phone health must preserve the root-derived fields needed by public verification: `streamVerdict`, `visibleFrame`, `ticketState`, `viviState`, and `hardwareH264`.
 
-Admin-scheduled latest-ticket re-detection uses a private one-shot SpacetimeDB schedule rather than a web-process timer or Android alarm. The admin submits native date and time fields that `ticket_remote` resolves in the configured Pixel IANA time zone, currently `Europe/Riga`, before storing the absolute UTC instant. Only one future schedule may be pending for a ticket/backend; replacement and cancellation are transactional and guarded by the schedule ID. At the due instant, the internal scheduled reducer emits `ticket_action_v3` with target `redetect_latest`. Pixel consumes it through the same subscription-first dispatch ledger and visual executor as immediate actions; the durable action journal and terminal projection preserve recovery across service or phone restarts without a second navigation tap. `tickets_single_use_empty` remains only an intermediate left-tab state with one proved Time-tickets target, and `tickets_time_empty` is a distinct right-tab state with one proved Single-use target. A cycle already on Time-tickets first journals and taps back to Single-use; if that tab is empty, it journals and taps forward again. A remembered Time-tickets selection reached from Home follows the same reverse-then-forward proof. Either owned tab transition may instead reveal a non-empty ticket list and resume ordinary latest-card discovery. Only two new agreeing `tickets_time_empty` frames reached directly from a fresh, owned `tickets_single_use_empty` transition can report that nothing was found. That expected negative result is published as `failed` with reason `ticket_action_latest_not_detected`, public view `unknown`, and a positive encoded-frame watermark; it never claims `latest_unactivated`. Like a successful visual proof, this negative proof is journaled only after safe panel-lease finalization and after its watermark and generation are revalidated. Any missing tab selection, conflicting geometry, stale frame, unsafe finalization, or unknown state fails closed instead. Expired commands are never started. Schedule and outcome rows are private and reach only the authenticated admin surface through the service projection; member/public state does not expose them.
+Admin-scheduled latest-ticket re-detection uses a private one-shot SpacetimeDB schedule rather than a web-process timer or Android alarm. The admin submits native date and time fields that `ticket_remote` resolves in the configured Pixel IANA time zone, currently `Europe/Riga`, before storing the absolute UTC instant. Only one future schedule may be pending for a ticket/backend; replacement and cancellation are transactional and guarded by the schedule ID. At the due instant, the internal scheduled reducer emits `ticket_action_v3` with target `redetect_latest`. Pixel consumes it through the same subscription-first dispatch ledger and visual executor as immediate actions; the durable action journal and terminal projection preserve recovery across service or phone restarts without a second navigation tap. `tickets_single_use_empty` remains only an intermediate left-tab state with one proved Time-tickets target, and `tickets_time_empty` is a distinct right-tab state with one proved Single-use target. A cycle already on Time-tickets first journals and taps back to Single-use; if that tab is empty, it journals and taps forward again. A remembered Time-tickets selection reached from Home follows the same reverse-then-forward proof. An old activated card with no registration control may also leave a nonempty tab list; two agreeing list observations with proved inner-tab and bottom Tickets chrome permit only a journaled opposite-tab tap for redetection, never a card tap. The return to Time-tickets is bounded; if the nonempty list still lacks a proved eligible registration, it stops for attention rather than claiming absence. Either owned tab transition may instead reveal a non-empty ticket list and resume ordinary latest-card discovery. Only two new agreeing `tickets_time_empty` frames reached directly from a fresh, owned `tickets_single_use_empty` transition can report that nothing was found. That expected negative result is published as `failed` with reason `ticket_action_latest_not_detected`, public view `unknown`, and a positive encoded-frame watermark; it never claims `latest_unactivated`. Like a successful visual proof, this negative proof is journaled only after safe panel-lease finalization and after its watermark and generation are revalidated. Any missing tab selection, conflicting geometry, stale frame, unsafe finalization, or unknown state fails closed instead. Expired commands are never started. Schedule and outcome rows are private and reach only the authenticated admin surface through the service projection; member/public state does not expose them.
 
 The unattended repository health monitor verifies that the current CLI login matches its configured public operator identity before SQL and stores no authentication token. Its complete configuration uses an exact schema and rejects missing, extra, mistyped, unsafe, duplicate, or non-finite values before probing. Each query is accepted only with its exact columns and strict value types. Pixel live and idle health have explicit required typed fields; an incomplete report fails the Pixel surface before any derived stream verdict. A healthy idle result additionally requires matching idle/stopped session and ticket state, inactive-but-available hardware capture, no failed or blocked recovery, and a successfully collected, strictly typed Ticket lifecycle summary. Exact Ticket start/stop shells and their linked command-reading helpers become stuck after 60 seconds; an exact helper reparented to init remains detectable. The monitor saves only their counts and oldest age, never command arguments, and reports `pixel_ticket_lifecycle_stuck`. Failed Spacetime or Pixel collection stays unknown and must not generate secondary live/idle, portrait, frame, capture, pipeline, or ticket-state findings. Persisted states, including Docker and ADB status, use per-field enum maps and fixed fallbacks rather than a shared generic token rule.
 

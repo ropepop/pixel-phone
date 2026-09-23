@@ -100,6 +100,19 @@ The module registry and module manifests are the source of truth for ownership. 
 
 Derived components must not be redeployed as if they were independent owners. New app-style services must own a dedicated runtime root and should use immutable releases with a `current` pointer.
 
+Management access remains minimal: Android init owns `adbd` on 5555, and the
+existing SSH/VPN owners provide Dropbear on 2222 and Tailscale. The one-shot
+`orchestrator/templates/magisk-service.d/99-wireless-adb.sh` replaces the existing
+device boot hook at the same path under `/data/adb/service.d/`; it installs IPv4
+and IPv6 ADB guards allowing Tailscale and local Wi-Fi before enabling TCP,
+requires Android key authentication, preserves non-expiring approved keys, and
+adds no resident service. SSH uses key-only authentication
+and its existing Tailscale-only guards. Native dynamic wireless debugging is
+disabled in the production VPN configuration. See the root-operations runbook
+for installation, host-key verification and acceptance checks. The private
+repository intentionally tracks the access instructions and credentials in
+`access/`; they must not enter public mirrors.
+
 ## 5. Deployment And Update Model
 
 Use the narrowest action that matches the intended mutation.

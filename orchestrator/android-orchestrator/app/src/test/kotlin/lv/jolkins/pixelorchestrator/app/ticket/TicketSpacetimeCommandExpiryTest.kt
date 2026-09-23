@@ -121,7 +121,7 @@ class TicketSpacetimeCommandExpiryTest {
   fun desiredStateUpdatesShareTheCommandSnapshotAndClearOnDisconnect() {
     fun row(phase: String) = JsonPrimitive("""["ticket:pixel","ticket","pixel",false,0,"cold_restart","operation","owner","2026-09-08T00:00:00Z",[0,"operation"],[0,"$phase"],[0,"2026-09-08T00:00:00Z"],[1,[]]]""").toString()
     fun update(phase: String) = parseTicketSpacetimeCommandSubscriptionMessage(
-      """{"TransactionUpdateLight":{"update":{"tables":[{"table_name":"ticketremote_stream_desired_state",
+      """{"TransactionUpdateLight":{"update":{"tables":[{"table_name":"ticketremote_service_stream_desired_state",
       "updates":[{"Uncompressed":{"deletes":[${row("stopping")}],"inserts":[${row(phase)}]}}]}]}}}""", "ticket", "pixel")
     val inbox = TicketCommandInbox()
     inbox.apply(TicketSpacetimeCommandSubscriptionMessage(TicketSpacetimeCommandSubscriptionMessageKind.APPLIED))

@@ -5,6 +5,39 @@ import org.junit.Test
 
 class TicketVisualTerminalOwnershipTest {
   @Test
+  fun redetectMayLeaveOldListOnlyThroughProvedTabAndReconcilesItsSuccessor() {
+    val singleUse = TicketVisualProbeBounds(12, 19, 91, 33)
+    val time = TicketVisualProbeBounds(104, 19, 177, 33)
+    val oldCard = TicketVisualCardAnchor("old", TicketVisualProbeBounds(8, 45, 184, 140),
+      activatedDetailBounds = TicketVisualProbeBounds(150, 81, 181, 95))
+    val timeList = TicketVisualActionObservation(1, TicketVisualPhoneState.TICKET_LIST,
+      ticketsTabBounds = singleUse, cards = listOf(oldCard))
+    assertEquals(singleUse to TICKET_ACTION_LIST_TO_SINGLE_USE,
+      ticketVisualRedetectListTabTarget(timeList, false))
+    assertEquals(null, ticketVisualRedetectListTabTarget(timeList, true))
+    assertEquals(null, ticketVisualRedetectListTabTarget(timeList.copy(state = TicketVisualPhoneState.BLOCKED), false))
+    assertEquals(null, ticketVisualRedetectListTabTarget(timeList.copy(cards = listOf(
+      oldCard.copy(registrationBounds = time))), false))
+
+    val request = TicketVisualActionRequest("action", TicketVisualActionTarget.REDETECT_LATEST,
+      "", "", "", "", "", "", "")
+    val journal = TicketVisualActionJournalState(actionId = "action", target = "redetect_latest",
+      phase = "navigation_dispatched", navigationFromState = "ticket_list",
+      navigationToState = TICKET_ACTION_LIST_TO_SINGLE_USE)
+    assertEquals(false, ticketVisualJournalReconciled(journal, request, timeList))
+    val singleUseList = timeList.copy(probeId = 2, ticketsTabBounds = null, timeTicketsTabBounds = time)
+    assertEquals(true, ticketVisualJournalReconciled(journal, request, singleUseList))
+    assertEquals(true, ticketVisualJournalReconciled(journal, request,
+      TicketVisualActionObservation(2, TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY,
+        timeTicketsTabBounds = time)))
+    assertEquals(time to TICKET_ACTION_LIST_TO_TIME,
+      ticketVisualRedetectListTabTarget(singleUseList, false))
+    val returnJournal = journal.copy(navigationToState = TICKET_ACTION_LIST_TO_TIME)
+    assertEquals(false, ticketVisualJournalReconciled(returnJournal, request, singleUseList))
+    assertEquals(true, ticketVisualJournalReconciled(returnJournal, request, timeList.copy(probeId = 3)))
+  }
+
+  @Test
   fun registrationRetainsTheProvedCardAcrossColdCaptureRestarts() {
     val original = TicketVisualActionObservation(1, TicketVisualPhoneState.ACTIVATED_DETAIL,
       currentAnchor = "d_old_helper", detailCardAnchor = "same_card", captureGeneration = 1)

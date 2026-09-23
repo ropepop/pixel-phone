@@ -704,7 +704,7 @@ else
 fi
 
 repair_phone_automation_permissions() {
-  if [[ "$(pixel_transport_selected)" != "adb" ]]; then
+  if [[ "$(pixel_transport_selected)" != "adb" && "${ACTION}:${COMPONENT}" != "redeploy_component:ticket_screen" ]]; then
     return 0
   fi
 
@@ -743,9 +743,11 @@ PY
     pixel_transport_root_shell "settings put secure enabled_accessibility_services $(pixel_transport_single_quote "${next}")" >/dev/null
     pixel_transport_root_shell "settings put secure accessibility_enabled 1" >/dev/null
 
-    current="$(pixel_transport_root_shell "settings get secure enabled_notification_listeners" 2>/dev/null | tr -d '\r' | sed -n '1p')"
-    next="$(merge_enabled_service_component "${current}" "${notification_component}")"
-    pixel_transport_root_shell "settings put secure enabled_notification_listeners $(pixel_transport_single_quote "${next}")" >/dev/null
+    if [[ "${ACTION}:${COMPONENT}" != "redeploy_component:ticket_screen" ]]; then
+      current="$(pixel_transport_root_shell "settings get secure enabled_notification_listeners" 2>/dev/null | tr -d '\r' | sed -n '1p')"
+      next="$(merge_enabled_service_component "${current}" "${notification_component}")"
+      pixel_transport_root_shell "settings put secure enabled_notification_listeners $(pixel_transport_single_quote "${next}")" >/dev/null
+    fi
 
     sleep 1
     current="$(pixel_transport_root_shell "settings get secure enabled_accessibility_services" 2>/dev/null | tr -d '\r' | sed -n '1p')"
@@ -760,7 +762,7 @@ PY
 }
 
 should_repair_phone_automation_permissions() {
-  if [[ "$(pixel_transport_selected)" != "adb" ]]; then
+  if [[ "$(pixel_transport_selected)" != "adb" && "${ACTION}:${COMPONENT}" != "redeploy_component:ticket_screen" ]]; then
     return 1
   fi
   if [[ "${PROFILE}" != "fast" ]] || (( APK_INSTALLED_THIS_RUN == 1 )); then
@@ -784,7 +786,13 @@ phone_automation_permissions_ready() {
 
   [[ ":${accessibility_services}:" == *":${accessibility_component}:"* ]] || return 1
   [[ "${accessibility_enabled}" == "1" ]] || return 1
-  [[ ":${notification_listeners}:" == *":${notification_component}:"* ]]
+  if [[ "${ACTION}:${COMPONENT}" != "redeploy_component:ticket_screen" ]]; then
+    [[ ":${notification_listeners}:" == *":${notification_component}:"* ]]
+    return
+  fi
+  # Settings alone do not prove Android bound the input service after APK replacement.
+  state="$(pixel_transport_root_shell "dumpsys activity services ${accessibility_component}" 2>/dev/null)" || return 1
+  [[ "${state}" == *'app=ProcessRecord{'* && "${state}" == *'requested=true received=true hasBound=true'* ]]
 }
 
 remote_sha256_file() {
@@ -1651,8 +1659,8 @@ pixel_transport_root_exec mkdir -p "${ACTION_RESULT_REMOTE_DIR}" >/dev/null 2>&1
 pixel_transport_root_exec rm -f "${ACTION_RESULT_REMOTE_PATH}" >/dev/null 2>&1 || true
 
 process_prepare_started_ms="$(now_ms)"
-if [[ "${PROFILE}" == "fast" ]]; then
-  echo "Skipping app force-stop and log reset (fast profile)"
+if [[ "${PROFILE}" == "fast" || "${ACTION}" == "health" || "${ACTION}" == "health_component" ]]; then
+  echo "Skipping app force-stop and log reset (profile=${PROFILE}, action=${ACTION})"
 else
   pixel_transport_shell "am force-stop ${PKG}" >/dev/null 2>&1 || true
   pixel_transport_shell "logcat -c" >/dev/null 2>&1 || true
@@ -1724,6 +1732,12 @@ if [[ "${ACTION_RESULT_SOURCE}" == "artifact" && -n "${ACTION_RESULT_OUTPUT_PATH
 fi
 
 run_phase runtime_postcheck verify_runtime_assets_after_action
+
+if [[ "${ACTION}:${COMPONENT}" == "redeploy_component:ticket_screen" ]] &&
+  ! phone_automation_permissions_ready; then
+  echo "ERROR: Ticket deployment did not restore the enabled and bound phone input service" >&2
+  exit 1
+fi
 
 if [[ "${ACTION}" == "health" || "${ACTION}" == "start_all" || "${ACTION}" == "bootstrap" || "${ACTION}" == "start_component" ]]; then
   echo "Quick listener checks:"

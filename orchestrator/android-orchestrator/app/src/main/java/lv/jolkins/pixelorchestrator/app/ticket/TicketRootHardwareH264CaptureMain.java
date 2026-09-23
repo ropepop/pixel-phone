@@ -97,6 +97,21 @@ public final class TicketRootHardwareH264CaptureMain {
     // Construction only reflects hidden APIs and builds immutable capture parameters. It does
     // not acquire pixels; the first capture() remains below the exact activation-token gate.
     SurfaceCapture capture = new SecureScreenCapture(sourceWidth, sourceHeight);
+    // Monitoring uses the same pixels and classifier, but never constructs an encoder or
+    // publishes control geometry. One bounded invocation leaves no capture loop behind.
+    if (hasFlag(args, "--monitor-once")) {
+      Rect crop = sourceCropRect(cropLeftSource, cropTopSource, cropRightSource,
+        cropBottomSource, sourceWidth, sourceHeight);
+      long capturedAtUs = monotonicTimeUs();
+      try (CapturedFrame source = capture.capture()) {
+        if (source == null || !frameLooksVisible(source.bitmap, crop)) return;
+        VisualProbeClassification current = classifyControlCodeVisualState(
+          source.bitmap, crop, false, false, true, true);
+        System.out.println("MONITOR_OBSERVATION capture_start_us=" + capturedAtUs +
+          " result=" + current.state);
+      }
+      return;
+    }
     AtomicBoolean syncFrameRequested = new AtomicBoolean(true);
     AtomicBoolean captureActivated = new AtomicBoolean(!awaitActivation);
     CountDownLatch activationLatch = new CountDownLatch(awaitActivation ? 1 : 0);

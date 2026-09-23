@@ -83,6 +83,7 @@ cat > "${FAKE_SSH}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "${PIXEL_TEST_SSH_LOG}"
+if [[ "${PIXEL_TEST_SSH_DRAIN_STDIN:-0}" == 1 ]]; then cat >/dev/null; fi
 exit 0
 EOF
 chmod +x "${FAKE_SSH}"
@@ -105,6 +106,7 @@ export PIXEL_TEST_ADB_LOG="${ADB_LOG}"
 export PIXEL_TEST_SSH_LOG="${SSH_LOG}"
 export ADB_BIN="${FAKE_ADB}"
 export PIXEL_TRANSPORT_FORWARD_DIR="${TMP_DIR}/forward"
+export PIXEL_TRANSPORT_CONTROL_DIR="${TMP_DIR}/control"
 export PIXEL_SSH_KNOWN_HOSTS_FILE="${TMP_DIR}/known_hosts"
 export PIXEL_DEVICE_SSH_PASSWORD="test-password"
 
@@ -185,7 +187,7 @@ test_ssh_transport_contract() {
 
   assert_contains "${EXPECT_LOG}" "program=ssh args=-o LogLevel=ERROR"
   assert_contains "${EXPECT_LOG}" "100.64.0.10"
-  assert_contains "${EXPECT_LOG}" "program=scp args=-o LogLevel=ERROR"
+  assert_contains "${EXPECT_LOG}" "program=scp args=-O -o LogLevel=ERROR"
   assert_contains "${EXPECT_LOG}" "artifact.apk"
   assert_contains "${EXPECT_LOG}" "install"
   assert_contains "${EXPECT_LOG}" "-L 18080:127.0.0.1:8080"
@@ -343,6 +345,33 @@ test_tailscale_bin_resolution() {
   assert_contains "${TRANSPORT_SH}" 'expect -f /dev/stdin -- "$@"'
 }
 
+test_key_auth_without_password() (
+  unset PIXEL_DEVICE_SSH_PASSWORD
+  PIXEL_SSH_HOST="100.64.0.10"
+  pixel_transport_require_ssh_client
+  local -a args=()
+  pixel_transport_build_ssh_args args
+  [[ " ${args[*]} " == *" PreferredAuthentications=publickey "* ]] || fail "key authentication missing"
+  [[ " ${args[*]} " == *" StrictHostKeyChecking=yes "* ]] || fail "key mode must require a known host"
+  [[ " ${args[*]} " == *" BatchMode=yes "* ]] || fail "key mode must not prompt"
+  [[ " ${args[*]} " != *"StrictHostKeyChecking=accept-new"* ]] || fail "conflicting host policy"
+  # Reload the actual runner, which the other tests stub above.
+  unset PIXEL_TRANSPORT_SH_LOADED
+  source "${TRANSPORT_SH}"
+  [[ "$(pixel_transport_expect_run printf '%s' key-runner-ok)" == key-runner-ok ]] || fail "key runner failed"
+  export PIXEL_TEST_SSH_DRAIN_STDIN=1
+  local count=0
+  while IFS= read -r item; do
+    pixel_transport_ssh_remote_shell ':'
+    count=$((count + 1))
+  done <<< $'one\ntwo'
+  [[ "${count}" == 2 ]] || fail "SSH must not consume caller loop input"
+)
+
+test_key_auth_without_password
+quoted_value=$'a\'b\n$HOME; $(printf not-expanded)'
+quoted_command="$(pixel_transport_shell_join printf '%s' "${quoted_value}")"
+[[ "$(sh -c "${quoted_command}")" == "${quoted_value}" ]] || fail "remote shell quoting changed literal data"
 test_adb_transport_contract
 test_ssh_transport_contract
 test_auto_transport_selection

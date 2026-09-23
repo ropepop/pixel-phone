@@ -248,13 +248,30 @@ public final class TicketVisualActionClassifier {
       List<Card> cards = detectCards(geometryPixels, dates, registrationBands);
       boolean hasListRegistrationGeometry = cards.stream()
         .anyMatch(card -> card.registrationBounds != null);
+      EmptyTicketsDetection listTabs = detectTicketsTabs(geometryPixels, false);
+      boolean tabChromeSafe = listTabs != null && !hasTicketDetailBase &&
+        (back == null || isTimeTicketsLabelCloseAlias(pixels, back, listTabs)) &&
+        !looksLikeLogin(geometryPixels) &&
+        !ordinary.equals(TicketControlCodeVisualClassifier.CONTROL_POPUP) &&
+        !ordinary.equals(TicketControlCodeVisualClassifier.GENERATED);
       if (!cards.isEmpty() && hasListRegistrationGeometry) {
-        return new Result("ticket_list", "", null, null, back, cards);
+        return new Result("ticket_list", "", null, null, back,
+          tabChromeSafe && listTabs.timeTicketsSelected ? listTabs.singleUseTabTarget : null,
+          tabChromeSafe && !listTabs.timeTicketsSelected ? listTabs.timeTabTarget : null,
+          cards);
+      }
+      // An old activated card can leave the Time-tickets list with no registration control.
+      // Prove its tab chrome before allowing redetection to leave the list; no card gains a tap.
+      if (tabChromeSafe) {
+        return new Result("ticket_list", "", null, null, null,
+          listTabs.timeTicketsSelected ? listTabs.singleUseTabTarget : null,
+          listTabs.timeTicketsSelected ? null : listTabs.timeTabTarget,
+          new ArrayList<>());
       }
       return unknown();
     }
 
-    EmptyTicketsDetection emptyTickets = detectEmptyTicketsTabs(geometryPixels);
+    EmptyTicketsDetection emptyTickets = detectTicketsTabs(geometryPixels, true);
     Bounds timeTicketsTab = emptyTickets == null
       ? null
       : emptyTickets.timeTabTarget;
@@ -737,7 +754,7 @@ public final class TicketVisualActionClassifier {
    * {@code tickets_time_empty} state. The caller still gates each direction by typed state and
    * command target.</p>
    */
-  private static EmptyTicketsDetection detectEmptyTicketsTabs(int[] pixels) {
+  private static EmptyTicketsDetection detectTicketsTabs(int[] pixels, boolean requireEmpty) {
     if (pixels == null || pixels.length != SAMPLE_WIDTH * SAMPLE_HEIGHT) return null;
 
     int[] backgroundLuminances = new int[SAMPLE_WIDTH * 24];
@@ -748,7 +765,9 @@ public final class TicketVisualActionClassifier {
       }
     }
     Arrays.sort(backgroundLuminances);
-    int background = backgroundLuminances[backgroundLuminances.length / 2];
+    int background = requireEmpty
+      ? backgroundLuminances[backgroundLuminances.length / 2]
+      : navigationBackground(pixels);
 
     int selectedSingleUseRows = 0;
     int selectedTimeRows = 0;
@@ -846,6 +865,7 @@ public final class TicketVisualActionClassifier {
       timeLabelBottom - timeLabelTop < 3 || timeLabelBottom - timeLabelTop > 9
     ) return null;
 
+    if (requireEmpty) {
     int emptyPixels = 0;
     int emptyLeft = 170;
     int emptyTop = 170;
@@ -890,6 +910,7 @@ public final class TicketVisualActionClassifier {
       }
     }
     if (unexpectedActionPixels > 8) return null;
+    }
 
     int navigationSeparatorRows = 0;
     int separatorRow = -1;

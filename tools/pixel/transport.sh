@@ -7,6 +7,7 @@ PIXEL_TRANSPORT_SH_LOADED=1
 
 PIXEL_TRANSPORT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIXEL_TRANSPORT_REPO_ROOT="$(cd "${PIXEL_TRANSPORT_LIB_DIR}/../.." && pwd)"
+PIXEL_SSH_IDENTITY_FILE="${PIXEL_SSH_IDENTITY_FILE:-${PIXEL_TRANSPORT_REPO_ROOT}/access/pixel_ssh}"
 PIXEL_TRANSPORT="${PIXEL_TRANSPORT:-auto}"
 PIXEL_TRANSPORT_RESOLVED="${PIXEL_TRANSPORT_RESOLVED:-}"
 PIXEL_TRANSPORT_PARSE_CONSUMED=0
@@ -20,9 +21,15 @@ PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC="${PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC:-120}
 PIXEL_TRANSPORT_TRANSFER_TIMEOUT_SEC="${PIXEL_TRANSPORT_TRANSFER_TIMEOUT_SEC:-900}"
 PIXEL_TRANSPORT_RESOLUTION_TTL_SEC="${PIXEL_TRANSPORT_RESOLUTION_TTL_SEC:-30}"
 PIXEL_SSH_CONTROL_PERSIST_SEC="${PIXEL_SSH_CONTROL_PERSIST_SEC:-60}"
-PIXEL_SSH_KNOWN_HOSTS_FILE="${PIXEL_SSH_KNOWN_HOSTS_FILE:-${HOME}/.ssh/known_hosts}"
+if [[ -z "${PIXEL_SSH_KNOWN_HOSTS_FILE:-}" ]]; then
+  if [[ -f "${PIXEL_TRANSPORT_REPO_ROOT}/access/known_hosts" ]]; then
+    PIXEL_SSH_KNOWN_HOSTS_FILE="${PIXEL_TRANSPORT_REPO_ROOT}/access/known_hosts"
+  else
+    PIXEL_SSH_KNOWN_HOSTS_FILE="${HOME}/.ssh/known_hosts"
+  fi
+fi
 PIXEL_TAILSCALE_BIN="${PIXEL_TAILSCALE_BIN:-}"
-PIXEL_TRANSPORT_CONTROL_DIR="${PIXEL_TRANSPORT_CONTROL_DIR:-${PIXEL_TRANSPORT_FORWARD_DIR}/control}"
+PIXEL_TRANSPORT_CONTROL_DIR="${PIXEL_TRANSPORT_CONTROL_DIR:-${HOME}/.ssh/cm}"
 PIXEL_TRANSPORT_TIMING_FILE="${PIXEL_TRANSPORT_TIMING_FILE:-${PIXEL_PHASE_TIMINGS_FILE:-}}"
 PIXEL_TRANSPORT_DEVICE_READY="${PIXEL_TRANSPORT_DEVICE_READY:-0}"
 PIXEL_TRANSPORT_DEVICE_CACHE_KEY="${PIXEL_TRANSPORT_DEVICE_CACHE_KEY:-}"
@@ -30,6 +37,7 @@ PIXEL_TRANSPORT_DEVICE_CACHE_AT_SECONDS="${PIXEL_TRANSPORT_DEVICE_CACHE_AT_SECON
 ADB_BIN="${ADB_BIN:-adb}"
 
 mkdir -p "${PIXEL_TRANSPORT_FORWARD_DIR}" "${PIXEL_TRANSPORT_CONTROL_DIR}" "$(dirname "${PIXEL_SSH_KNOWN_HOSTS_FILE}")"
+chmod 0700 "${PIXEL_TRANSPORT_CONTROL_DIR}"
 
 pixel_transport_usage() {
   cat <<'USAGE'
@@ -101,7 +109,9 @@ pixel_transport_require_cmd() {
 }
 
 pixel_transport_single_quote() {
-  printf "'%s'" "${1//\'/\'\"\'\"\'}"
+  local replacement="'\"'\"'"
+  local value="${1//\'/$replacement}"
+  printf "'%s'" "$value"
 }
 
 pixel_transport_shell_join() {
@@ -285,15 +295,13 @@ if not ips:
 }
 
 pixel_transport_require_ssh_client() {
-  pixel_transport_require_cmd expect || return 1
+  if [[ -n "${PIXEL_DEVICE_SSH_PASSWORD:-}" ]]; then
+    pixel_transport_require_cmd expect || return 1
+    pixel_transport_require_cmd scp || return 1
+  fi
   pixel_transport_require_cmd ssh || return 1
-  pixel_transport_require_cmd scp || return 1
   [[ -n "${PIXEL_SSH_HOST:-}" ]] || {
     echo "PIXEL_SSH_HOST is required for SSH transport" >&2
-    return 1
-  }
-  [[ -n "${PIXEL_DEVICE_SSH_PASSWORD:-}" ]] || {
-    echo "PIXEL_DEVICE_SSH_PASSWORD is required for SSH transport" >&2
     return 1
   }
 }
@@ -321,18 +329,26 @@ PY
 
 pixel_transport_build_ssh_args() {
   local ref_name="$1"
-  local host_key=""
   local control_path=""
-  host_key="${PIXEL_SSH_HOST//[^[:alnum:]]/_}"
-  host_key="${host_key:0:32}-${#PIXEL_SSH_HOST}"
-  control_path="${PIXEL_TRANSPORT_CONTROL_DIR}/ssh-${PIXEL_SSH_USER}-${host_key}-${PIXEL_SSH_PORT}.sock"
+  control_path="${PIXEL_TRANSPORT_CONTROL_DIR}/%C"
   eval "${ref_name}=()"
   eval "${ref_name}+=(-o LogLevel=ERROR)"
-  eval "${ref_name}+=(-o StrictHostKeyChecking=accept-new)"
   eval "${ref_name}+=(-o UserKnownHostsFile=\"\${PIXEL_SSH_KNOWN_HOSTS_FILE}\")"
-  eval "${ref_name}+=(-o PreferredAuthentications=password,keyboard-interactive)"
-  eval "${ref_name}+=(-o PubkeyAuthentication=no)"
-  eval "${ref_name}+=(-o KbdInteractiveAuthentication=yes)"
+  if [[ -n "${PIXEL_DEVICE_SSH_PASSWORD:-}" ]]; then
+    eval "${ref_name}+=(-o StrictHostKeyChecking=accept-new)"
+    eval "${ref_name}+=(-o PreferredAuthentications=password,keyboard-interactive)"
+    eval "${ref_name}+=(-o PubkeyAuthentication=no)"
+    eval "${ref_name}+=(-o KbdInteractiveAuthentication=yes)"
+  else
+    eval "${ref_name}+=(-o PreferredAuthentications=publickey)"
+    eval "${ref_name}+=(-o PubkeyAuthentication=yes)"
+    eval "${ref_name}+=(-o BatchMode=yes)"
+    eval "${ref_name}+=(-o StrictHostKeyChecking=yes)"
+    if [[ -f "${PIXEL_SSH_IDENTITY_FILE}" ]]; then
+      chmod 0600 "${PIXEL_SSH_IDENTITY_FILE}"
+      eval "${ref_name}+=(-i \"\${PIXEL_SSH_IDENTITY_FILE}\" -o IdentitiesOnly=yes)"
+    fi
+  fi
   eval "${ref_name}+=(-o NumberOfPasswordPrompts=1)"
   eval "${ref_name}+=(-o ConnectTimeout=\"\${PIXEL_SSH_CONNECT_TIMEOUT_SEC}\")"
   eval "${ref_name}+=(-o ConnectionAttempts=1)"
@@ -350,6 +366,11 @@ pixel_transport_expect_run() {
 
   if [[ "${program}" == "scp" ]]; then
     command_timeout="${PIXEL_TRANSPORT_TRANSFER_TIMEOUT_SEC}"
+  fi
+
+  if [[ -z "${PIXEL_DEVICE_SSH_PASSWORD:-}" ]]; then
+    pixel_transport_run_bounded "${command_timeout}" "${program}" "$@"
+    return $?
   fi
 
 EXPECT_PROGRAM="${program}" EXPECT_TIMEOUT_SEC="${command_timeout}" PIXEL_DEVICE_SSH_PASSWORD="${PIXEL_DEVICE_SSH_PASSWORD:-}" expect -f /dev/stdin -- "$@" <<'EOF'
@@ -397,11 +418,12 @@ pixel_transport_ssh_remote_shell() {
   pixel_transport_require_ssh_client || return 1
 
   local command="$1"
+  local input_file="${2:-/dev/null}"
   local -a ssh_args=()
   local remote_command=""
   pixel_transport_build_ssh_args ssh_args
   remote_command="$(pixel_transport_shell_join /system/bin/sh -c "${command}")"
-  pixel_transport_expect_run ssh "${ssh_args[@]}" -p "${PIXEL_SSH_PORT}" "${PIXEL_SSH_USER}@${PIXEL_SSH_HOST}" "${remote_command}"
+  pixel_transport_expect_run ssh "${ssh_args[@]}" -p "${PIXEL_SSH_PORT}" "${PIXEL_SSH_USER}@${PIXEL_SSH_HOST}" "${remote_command}" < "${input_file}"
 }
 
 pixel_transport_ssh_remote_probe() {
@@ -492,7 +514,7 @@ pixel_transport_require_device() {
         elif pixel_transport_resolve_adb >/dev/null 2>&1; then
           PIXEL_TRANSPORT_RESOLVED="adb"
         else
-          echo "Neither SSH/Tailscale nor adb transport is ready. Set PIXEL_SSH_HOST and PIXEL_DEVICE_SSH_PASSWORD, or connect the device over adb." >&2
+          echo "Neither SSH/Tailscale nor adb transport is ready. Set PIXEL_SSH_HOST with a trusted SSH key (or PIXEL_DEVICE_SSH_PASSWORD), or connect the device over adb." >&2
           return 1
         fi
       fi
@@ -630,7 +652,12 @@ pixel_transport_push() {
       pixel_transport_build_ssh_args scp_args
       remote_parent="$(dirname "${remote_path}")"
       pixel_transport_root_exec mkdir -p "${remote_parent}" >/dev/null
-      pixel_transport_expect_run scp "${scp_args[@]}" -P "${PIXEL_SSH_PORT}" "${local_path}" "${PIXEL_SSH_USER}@${PIXEL_SSH_HOST}:${remote_path}"
+      if [[ -z "${PIXEL_DEVICE_SSH_PASSWORD:-}" ]]; then
+        PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC="${PIXEL_TRANSPORT_TRANSFER_TIMEOUT_SEC}" \
+          pixel_transport_ssh_remote_shell "cat > $(pixel_transport_single_quote "${remote_path}")" "${local_path}"
+      else
+        pixel_transport_expect_run scp -O "${scp_args[@]}" -P "${PIXEL_SSH_PORT}" "${local_path}" "${PIXEL_SSH_USER}@${PIXEL_SSH_HOST}:${remote_path}"
+      fi
       ;;
   esac
 }
@@ -653,7 +680,12 @@ pixel_transport_pull() {
     ssh)
       local -a scp_args=()
       pixel_transport_build_ssh_args scp_args
-      pixel_transport_expect_run scp "${scp_args[@]}" -P "${PIXEL_SSH_PORT}" "${PIXEL_SSH_USER}@${PIXEL_SSH_HOST}:${remote_path}" "${local_path}"
+      if [[ -z "${PIXEL_DEVICE_SSH_PASSWORD:-}" ]]; then
+        PIXEL_TRANSPORT_COMMAND_TIMEOUT_SEC="${PIXEL_TRANSPORT_TRANSFER_TIMEOUT_SEC}" \
+          pixel_transport_ssh_remote_shell "cat $(pixel_transport_single_quote "${remote_path}")" > "${local_path}"
+      else
+        pixel_transport_expect_run scp -O "${scp_args[@]}" -P "${PIXEL_SSH_PORT}" "${PIXEL_SSH_USER}@${PIXEL_SSH_HOST}:${remote_path}" "${local_path}"
+      fi
       ;;
   esac
 }

@@ -64,6 +64,43 @@ class TicketPhoneControlStateTest {
     assertNull(clock.observedAt(400_000, 30_500))
   }
 
+  @Test fun missingInputServiceKeepsVisualHealthButCannotGrantOrRetainActionReadiness() = runTest {
+    val state = TicketPhoneControlState("pc-test")
+    val transport = Transport()
+    var now = 200L
+    backgroundScope.launch { TicketPhoneControlPublisher(state, { now }).run(transport) }
+    runCurrent()
+    state.observe(liveObservation(150), false, evidenceFence, inputAvailable = false)
+    runCurrent()
+    val unavailable = state.updates.value
+    assertEquals("ticket_action_accessibility_unavailable", unavailable.reason)
+    assertFalse(transport.published.last().third)
+    assertNull(state.exactContext(unavailable.contextRevision, now))
+    assertNull(state.registrationEvidence(unavailable.contextRevision, evidenceFence, now))
+    assertEquals("ready", ticketMonitoringObservation(unavailable.observation!!.state,
+      unavailable.busy, unavailable.observation.captureStartUs / 1_000L).status)
+
+    state.invalidate("input_service_connected", capturedThroughUs = 250_000)
+    state.observe(liveObservation(240), false, evidenceFence, inputAvailable = true)
+    runCurrent()
+    assertFalse(transport.published.last().third)
+    now = 350
+    state.observe(liveObservation(300), false, evidenceFence, inputAvailable = true)
+    runCurrent()
+    val restored = state.updates.value.contextRevision
+    assertTrue(transport.published.last().third)
+    assertNotEquals(unavailable.contextRevision, restored)
+    assertNotNull(state.exactContext(restored, now))
+    state.invalidate("ticket_action_accessibility_unavailable", capturedThroughUs = 360_000)
+    runCurrent()
+    assertFalse(transport.published.last().third)
+    assertNull(state.exactContext(restored, 370))
+    now = 450
+    state.observe(liveObservation(400), false, evidenceFence, inputAvailable = false)
+    runCurrent()
+    assertFalse(transport.published.last().third)
+  }
+
   @Test fun receivedIdentityDoesNotNeedAnEncodedFrameAndRejectsChangedDetail() {
     val state = TicketPhoneControlState("pc-test")
     state.observe(observation(100), false)

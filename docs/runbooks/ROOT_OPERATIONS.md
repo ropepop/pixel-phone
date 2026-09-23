@@ -672,8 +672,47 @@ Disaster references:
 ## Security and Credential Rotation
 
 SSH auth model:
+- The Pixel production configuration uses `key_only`. Host transport uses SSH
+  keys with batch mode and strict known-host checking when
+  `PIXEL_DEVICE_SSH_PASSWORD` is unset. Verify a new host key through authenticated
+  ADB before adding it to the local known-hosts file. Supplying the password
+  variable explicitly retains the legacy password transport for other targets.
+  Key-based file transfers stream through SSH without installing SCP or SFTP on
+  the phone; control sockets use a short private directory for macOS compatibility.
 - Password-only supported via `ssh.authMode=password_only`
 - Key compatibility remains available for `key_only` / `key_password` modes
+
+### Minimal persistent Tailscale management
+
+Android init owns the one `adbd` process on TCP 5555; the orchestrator owns the
+existing Dropbear service on TCP 2222 and Tailscale runtime. SSH remains
+Tailscale-only. SSH uses `PIXEL_SSH_GUARD` and
+`PIXEL_SSH_GUARD6`; ADB uses `PIXEL_ADB_GUARD` in both firewall families, permitting
+`tailscale0` and local Wi-Fi through `wlan0`. Android ADB key authentication
+(`ro.adb.secure=1`) stays enabled. The boot hook preserves
+`adb_allowed_connection_time=0`, so remembered host approvals do not expire
+through inactivity. The tracked private `access/` folder holds the Pixel-only
+SSH identity, existing approved ADB identity, verified host key and instructions.
+
+The source for the existing `/data/adb/service.d/99-wireless-adb.sh` boot hook is
+`orchestrator/templates/magisk-service.d/99-wireless-adb.sh`. Install that file
+as root, mode 0700, at the existing path. It installs the guards before enabling
+TCP, bounds the boot wait, and exits; it adds no supervisor or recurring poller.
+Rerunning it preserves a running ADB daemon and does not duplicate rules.
+`vpn.nativeWirelessDebugEnabled=false` avoids a second dynamic wireless-debug
+listener. Do not run `adb tcpip` or disable ADB authentication as recovery.
+
+Connect with `adb connect 100.76.50.43:5555`. For repository commands use
+`--transport ssh --ssh-host 100.76.50.43` with the trusted local SSH key. Key-based
+access is verified before password login is disabled; keep authenticated ADB
+available while applying SSH configuration. Pull/audit the host mirror before
+editing configuration, then push and explicitly restart the SSH component when
+only `orchestrator-config-v1.json` changed.
+
+Acceptance: authenticated SSH and ADB succeed over Tailscale; approved ADB works
+over Wi-Fi while Wi-Fi SSH remains blocked; both IPv4/IPv6 guards exist; an unauthenticated SSH probe
+offers only public-key authentication; the boot hook can be rerun with unchanged
+daemon PIDs. A manual boot-hook replay is not proof of a full phone reboot.
 
 Credential files:
 - `/data/local/pixel-stack/conf/ssh/root_password.hash`

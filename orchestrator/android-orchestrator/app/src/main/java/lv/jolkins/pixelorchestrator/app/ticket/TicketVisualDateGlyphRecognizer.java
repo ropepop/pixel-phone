@@ -32,8 +32,9 @@ public final class TicketVisualDateGlyphRecognizer {
   private static final int NORMALIZED_GLYPH_HEIGHT = 18;
   private static final int NORMALIZED_GLYPH_WORDS =
     (NORMALIZED_GLYPH_WIDTH * NORMALIZED_GLYPH_HEIGHT + Long.SIZE - 1) / Long.SIZE;
-  private static final int[] DARK_GLYPH_THRESHOLDS = { 115, 150, 185 };
-  private static final int[] BRIGHT_GLYPH_THRESHOLDS = { 185, 150, 115 };
+  // The last dark pass reads muted list-card dates; bright text keeps its existing range.
+  private static final int[] DARK_GLYPH_THRESHOLDS = { 115, 150, 185, 205 };
+  private static final int[] BRIGHT_GLYPH_THRESHOLDS = { 185, 150, 115, 115 };
   private static final int RANGE_ROW_TOLERANCE = 5;
   private static final char[] HEX = "0123456789abcdef".toCharArray();
   private static final Map<Character, List<String[]>> DIGITS = digitTemplates();
@@ -734,7 +735,8 @@ public final class TicketVisualDateGlyphRecognizer {
     ));
     values.put('3', variants(
       rows("####.", "...##", "...##", ".###.", "...##", "...##", "####."),
-      rows("####.", "....#", "....#", ".###.", "....#", "....#", "####.")
+      rows("####.", "....#", "....#", ".###.", "....#", "....#", "####."),
+      rows("..##.", ".#.##", "....#", "..##.", "....#", "#...#", ".###.")
     ));
     values.put('4', variants(
       rows("...##", "..###", ".#.##", "##.##", "#####", "...##", "...##"),

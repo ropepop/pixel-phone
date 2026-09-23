@@ -26,7 +26,8 @@ internal data class TicketPhoneControlObservation(
   val sequence: Long,
   val observation: TicketVisualActionObservation?,
   val busy: Boolean,
-  val reason: String
+  val reason: String,
+  val inputAvailable: Boolean = true
 )
 
 /** Captured state only: admission and protected input remain owned by the action executor. */
@@ -82,19 +83,20 @@ internal class TicketPhoneControlState(
   fun observe(
     observation: TicketVisualActionObservation,
     busy: Boolean,
-    evidenceFence: TicketRegistrationEvidenceFence? = null
+    evidenceFence: TicketRegistrationEvidenceFence? = null,
+    inputAvailable: Boolean = true
   ) {
     // The stderr reader may repeat or deliver an old probe after a newer capture.
     if (observation.captureStartUs <= capturedThroughUs) return
     capturedThroughUs = observation.captureStartUs
-    val nextKey = listOf(observation.state, observation.currentAnchor, observation.sliderBounds)
+    val nextKey = listOf(observation.state, observation.currentAnchor, observation.sliderBounds, inputAvailable)
     val prior = updates.value.observation
     registrationFirst = prior?.takeIf {
       nextKey == contextKey && evidenceFence != null && evidenceFence == registrationFence &&
         ticketVisualObservationsAgree(it, observation)
     }
     registrationFence = evidenceFence.takeIf {
-      observation.state == TicketVisualPhoneState.UNACTIVATED_DETAIL &&
+      inputAvailable && observation.state == TicketVisualPhoneState.UNACTIVATED_DETAIL &&
         observation.currentAnchor.isNotBlank() && observation.sliderBounds != null
     }
     if (registrationFence == null) registrationFirst = null
@@ -104,7 +106,12 @@ internal class TicketPhoneControlState(
     }
     updates.value = TicketPhoneControlObservation(
       "$sessionId:$contextCounter", ++sequence, observation, busy,
-      if (busy) "phone_busy" else if (observation.currentAnchor.isBlank()) "ticket_not_identified" else ""
+      when {
+        !inputAvailable -> "ticket_action_accessibility_unavailable"
+        busy -> "phone_busy"
+        observation.currentAnchor.isBlank() -> "ticket_not_identified"
+        else -> ""
+      }, inputAvailable
     )
   }
 
@@ -125,7 +132,7 @@ internal class TicketPhoneControlState(
     val observation = state.observation ?: return null
     val age = nowMillis - observation.captureStartUs / 1_000L
     return observation.takeIf {
-      !state.busy && state.contextRevision == revision &&
+      state.inputAvailable && !state.busy && state.contextRevision == revision &&
         age in 0 until TICKET_CONTROL_OBSERVATION_TTL_MILLIS && it.currentAnchor.isNotBlank() &&
         it.state in setOf(TicketVisualPhoneState.UNACTIVATED_DETAIL, TicketVisualPhoneState.ACTIVATED_DETAIL)
     }
@@ -185,15 +192,18 @@ internal fun ticketPhoneControlRegistrationIdentity(
 }
 
 internal data class TicketPhoneControlClock(val serverMillis: Long, val receivedMonotonicMillis: Long) {
-  fun observedAt(captureStartUs: Long, nowMillis: Long): String? {
+  fun observedAtMillis(captureStartUs: Long, nowMillis: Long): Long? {
     val anchorAge = nowMillis - receivedMonotonicMillis
     val captureMillis = captureStartUs / 1_000L
     if (anchorAge !in 0 until CLOCK_ANCHOR_MAX_AGE_MILLIS || captureMillis > nowMillis || captureStartUs <= 0) return null
     // Server time was sampled before the response arrived. Subtracting from the
     // response boundary deliberately includes network time in the observation age.
     // One extra millisecond covers conversion rounding; no wall clock is trusted.
-    return Instant.ofEpochMilli(serverMillis + captureMillis - receivedMonotonicMillis - 1).toString()
+    return serverMillis + captureMillis - receivedMonotonicMillis - 1
   }
+
+  fun observedAt(captureStartUs: Long, nowMillis: Long): String? =
+    observedAtMillis(captureStartUs, nowMillis)?.let { Instant.ofEpochMilli(it).toString() }
 }
 
 internal data class TicketPhoneControlSession(val sessionId: String, val clockAt: String)
@@ -213,9 +223,15 @@ internal class TicketPhoneControlPublisher(
   private var expectedPrevious: String? = null
   private var established = false
   @Volatile private var fenced = false
+  @Volatile private var running = false
+  private val clock = AtomicReference<TicketPhoneControlClock?>(null)
+
+  fun observedAtMillis(capturedAtMillis: Long): Long? =
+    if (fenced || !running) null else clock.get()?.observedAtMillis(capturedAtMillis * 1_000L, nowMillis())
 
   suspend fun run(transport: TicketPhoneControlTransport): Unit = coroutineScope {
-    val clock = AtomicReference<TicketPhoneControlClock?>(null)
+    clock.set(null)
+    running = true
     // Clock renewal has its own lane: three network round trips must not stop
     // fresh observations from replacing the last published state.
     val renewal = launch(start = CoroutineStart.UNDISPATCHED) {
@@ -262,7 +278,7 @@ internal class TicketPhoneControlPublisher(
             val source = observation.observation
             val observedAt = source?.let { anchor.observedAt(it.captureStartUs, nowMillis()) }.orEmpty()
             val sourceAge = source?.let { nowMillis() - it.captureStartUs / 1_000L }
-            val ready = !observation.busy && source != null && source.currentAnchor.isNotBlank() &&
+            val ready = observation.inputAvailable && !observation.busy && source != null && source.currentAnchor.isNotBlank() &&
               source.state in setOf(TicketVisualPhoneState.UNACTIVATED_DETAIL, TicketVisualPhoneState.ACTIVATED_DETAIL) &&
               sourceAge != null && sourceAge in 0 until TICKET_CONTROL_OBSERVATION_TTL_MILLIS && observedAt.isNotEmpty() &&
               (source.state != TicketVisualPhoneState.UNACTIVATED_DETAIL || ticketPhoneControlBounds(source.sliderBounds) != null)
@@ -280,6 +296,8 @@ internal class TicketPhoneControlPublisher(
         }
       }
     } finally {
+      running = false
+      clock.set(null)
       renewal.cancel()
     }
   }

@@ -274,6 +274,70 @@ class TicketIdleRefreshTest {
     }
   }
 
+  @Test fun oldTimeTicketListGrantsOnlyTheOppositeTabTarget() {
+    val pixels = oldTimeListPixels()
+    val oldList = TicketVisualActionClassifier.classify(pixels)
+    assertEquals("ticket_list", oldList.state)
+    assertNotNull(oldList.ticketsTabBounds)
+    assertNull(oldList.timeTicketsTabBounds)
+    assertTrue(oldList.cards.isEmpty())
+    val selectedHome = pixels.copyOf().also { paintProbe(it, 20, 265, 25, 271, 0xffffa000.toInt()) }
+    assertNull(TicketVisualActionClassifier.classify(selectedHome).ticketsTabBounds)
+    val ambiguousTabs = pixels.copyOf().also { paintProbe(it, 10, 36, 98, 38, 0xffffa000.toInt()) }
+    assertNull(TicketVisualActionClassifier.classify(ambiguousTabs).ticketsTabBounds)
+    val coveredTickets = pixels.copyOf().also { paintProbe(it, 46, 262, 84, 284, 0xff30353a.toInt()) }
+    assertNull(TicketVisualActionClassifier.classify(coveredTickets).ticketsTabBounds)
+  }
+
+  @Test fun mutedThinThreeStillIdentifiesTheOnlyNewRegistrationCard() {
+    val pixels = oldTimeListPixels()
+    paintProbe(pixels, 8, 54, 184, 155, -1)
+    paintProbe(pixels, 12, 125, 180, 144, 0xffffa000.toInt())
+    val muted = 0xffc0c0c0.toInt()
+    val newDate = "23.09.2099-22.10.2099"
+    drawDate(pixels, newDate, top = 205, left = 24, color = muted)
+    for (y in 205 until 214) for (x in 36 until 44) pixels[y * 384 + x] = -1
+    val thinThree = listOf(
+      "...###..", ".##..###", "##....##", "......##", "...###..",
+      "......##", "......##", "##....##", ".######."
+    )
+    thinThree.forEachIndexed { y, row -> row.forEachIndexed { x, ink ->
+      if (ink == '#') pixels[(205 + y) * 384 + 36 + x] = muted
+    } }
+    val result = TicketVisualActionClassifier.classify(pixels)
+    assertEquals("ticket_list", result.state)
+    assertEquals(1, result.cards.size)
+    assertEquals(1, result.cards.count { it.latest && it.registrationBounds != null })
+    assertEquals("2099-09-23", TicketVisualDateGlyphRecognizer.recognize(pixels, 384, 576)
+      .first { it.centerY < 300 }.from.toString())
+
+    val missingDate = pixels.copyOf()
+    for (y in 205 until 214) for (x in 24 until 300) missingDate[y * 384 + x] = -1
+    assertTrue(TicketVisualActionClassifier.classify(missingDate).cards.none { it.latest })
+  }
+
+  private fun oldTimeListPixels(): IntArray {
+    val pixels = homePixels()
+    for (y in 262 until 284) for (x in 8 until 84) {
+      val index = y * 192 + x
+      if (x < 40 && pixels[index] == 0xffffa000.toInt()) pixels[index] = -1
+      if (x >= 46 && pixels[index] == -1) pixels[index] = 0xffffa000.toInt()
+    }
+    paint(pixels, 20, 22, 80, 26, -1)
+    for (x in 116 until 166 step 3) paint(pixels, x, 22, x + 1, 26, -1)
+    paint(pixels, 101, 36, 181, 38, 0xffffa000.toInt())
+    paint(pixels, 8, 46, 184, 54, 0xffbf4020.toInt())
+    paint(pixels, 154, 88, 164, 93, 0xffffa000.toInt())
+    paint(pixels, 2, 258, 190, 259, -1)
+    return IntArray(384 * 576) { pixels[(it / 384 / 2) * 192 + it % 384 / 2] }
+  }
+
+  private fun paintProbe(pixels: IntArray, left: Int, top: Int, right: Int, bottom: Int, color: Int) {
+    for (y in top * 2 until bottom * 2) for (x in left * 2 until right * 2) {
+      pixels[y * 384 + x] = color
+    }
+  }
+
   private fun paint(pixels: IntArray, left: Int, top: Int, right: Int, bottom: Int, color: Int) {
     for (y in top until bottom) for (x in left until right) pixels[y * 192 + x] = color
   }
@@ -328,7 +392,8 @@ class TicketIdleRefreshTest {
   private fun dateFixture(text: String = "01.04.2031-30.04.2031", top: Int = 308): IntArray =
     IntArray(384 * 576) { 0xffffffff.toInt() }.also { drawDate(it, text, top) }
 
-  private fun drawDate(pixels: IntArray, text: String, top: Int, left: Int = 12) {
+  private fun drawDate(pixels: IntArray, text: String, top: Int, left: Int = 12,
+    color: Int = 0xff000000.toInt()) {
     // Seven-pixel source digits match the ordinary probe's date scale; the bounded native strip
     // preserves fourteen-pixel digits. Keep the fixture at that scale rather than enlarging it twice.
     val digits = listOf(
@@ -346,7 +411,7 @@ class TicketIdleRefreshTest {
     text.forEachIndexed { index, character ->
       val rows = if (character.isDigit()) digits[character.digitToInt()].split('/') else emptyList()
       rows.forEachIndexed { y, row -> row.forEachIndexed { x, pixel ->
-        if (pixel == '#') pixels[(top + y) * 384 + left + index * 12 + x] = 0xff000000.toInt()
+        if (pixel == '#') pixels[(top + y) * 384 + left + index * 12 + x] = color
       } }
     }
   }

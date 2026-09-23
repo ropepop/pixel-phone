@@ -152,7 +152,12 @@ class TicketStreamService : Service() {
     // Reuse the existing second worker instead of adding another root transport.
     primaryRootExecutor = secureCaptureRootExecutor,
     fallbackRootExecutor = rootExecutor,
-    onEvent = { event, detail -> recordTicketEvent(event, detail) }
+    onEvent = { event, detail ->
+      val routineMonitor = (detail == "monitoring" || detail.startsWith("reason=monitoring ")) &&
+        event in setOf("secure_window_capture_bypass_enabled", "secure_window_capture_bypass_verified",
+          "secure_window_capture_bypass_disabled")
+      if (!routineMonitor) recordTicketEvent(event, detail)
+    }
   )
   private val inputRootExecutor = TicketRootCommandWorker()
   private val controlSurfaceCloseRootExecutor = SuRootExecutor()
@@ -220,7 +225,8 @@ class TicketStreamService : Service() {
       phoneControlState.observe(
         observation,
         otherWork || ticketVisualActionJobOwnershipActive || activeTicketActionPanelDarkLease != null,
-        registrationEvidenceFence().takeIf { mayPrepare }
+        registrationEvidenceFence().takeIf { mayPrepare },
+        inputAvailable = PhoneAutomationServiceBridge.isAccessibilityServiceConnected()
       )
     },
     pendingKeyFrameRequest = pendingRootHardwareH264KeyFrame
@@ -370,6 +376,14 @@ class TicketStreamService : Service() {
 
   override fun onCreate() {
     super.onCreate()
+    serviceScope.launch {
+      PhoneAutomationServiceBridge.accessibilityAvailability.collect { connected ->
+        phoneControlState.invalidate(
+          if (connected) "input_service_connected" else "ticket_action_accessibility_unavailable",
+          capturedThroughUs = SystemClock.elapsedRealtime() * 1_000L
+        )
+      }
+    }
     serviceScope.launch {
       PhoneAutomationServiceBridge.focusedInputStates.collect { input ->
         phoneControlState.invalidate(
@@ -2465,6 +2479,10 @@ class TicketStreamService : Service() {
       retainedJournal.actionId == request.actionId && retainedJournal.target == request.target.wireName
     }.orEmpty()
     var pendingNavigation = retainedJournal.takeIf { it.navigationDispatchUncertain }
+    var redetectReturnedToTime = retainedJournal.actionId == request.actionId &&
+      (retainedJournal.navigationToState == TICKET_ACTION_LIST_TO_TIME ||
+        retainedJournal.navigationFromState == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY.wireName &&
+        retainedJournal.navigationToState == TicketVisualPhoneState.TICKET_LIST.wireName)
     val desiredState = if (request.target == TicketVisualActionTarget.SHOW_RECENT_ACTIVATED) {
       TicketVisualPhoneState.ACTIVATED_DETAIL
     } else {
@@ -2540,6 +2558,7 @@ class TicketStreamService : Service() {
         return request.terminal("ticket_action_visual_state_${observation.state.wireName}")
       }
       var selectedAnchorForTransition = ""
+      var listTabDestination = ""
       val tapBounds = when (observation.state) {
         TicketVisualPhoneState.TICKET_LIST -> {
           val selectedCard = when (request.target) {
@@ -2556,11 +2575,15 @@ class TicketStreamService : Service() {
           }
           selectedAnchor = selectedCard?.anchor.orEmpty()
           selectedAnchorForTransition = selectedAnchor
+          val listTab = if (request.target == TicketVisualActionTarget.REDETECT_LATEST &&
+            selectedCard == null
+          ) ticketVisualRedetectListTabTarget(observation, redetectReturnedToTime) else null
+          listTabDestination = listTab?.second.orEmpty()
           // Current ViVi cards keep the most recently activated journey behind a compact proved
           // registered-status target and expose a separate registration control for the next
           // journey. No action taps the generic card body, and redetection also converges on the
           // unactivated Aztec/slider detail instead of publishing the list as a terminal state.
-          selectedCard?.navigationBoundsFor(request.target)
+          listTab?.first ?: selectedCard?.navigationBoundsFor(request.target)
         }
         TicketVisualPhoneState.VIVI_HOME -> observation.ticketsTabBounds
         TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY ->
@@ -2568,7 +2591,9 @@ class TicketStreamService : Service() {
         TicketVisualPhoneState.TICKETS_TIME_EMPTY ->
           observation.singleUseTicketsNavigationBoundsFor(request.target)
         else -> observation.backBounds
-      } ?: return request.terminal("ticket_action_visual_target_ambiguous")
+      } ?: return request.terminal("ticket_action_visual_target_ambiguous", observation,
+        status = if (request.target == TicketVisualActionTarget.REDETECT_LATEST &&
+          redetectReturnedToTime) "needs_attention" else "failed")
       updateTicketVisualActionPhase(request, "applying_visual_navigation")
       val navigationJournal = TicketVisualActionJournalState(
         actionId = request.actionId,
@@ -2576,12 +2601,16 @@ class TicketStreamService : Service() {
         phase = "navigation_dispatched",
         intendedAnchor = selectedAnchor.ifBlank { requiredAnchor },
         navigationFromState = observation.state.wireName,
-        navigationToState = if (observation.state == TicketVisualPhoneState.TICKET_LIST) {
+        navigationToState = if (listTabDestination.isNotBlank()) {
+          listTabDestination
+        } else if (observation.state == TicketVisualPhoneState.TICKET_LIST) {
           desiredState.wireName
         } else {
           TicketVisualPhoneState.TICKET_LIST.wireName
         },
-        navigationAnchor = if (observation.state == TicketVisualPhoneState.TICKET_LIST) {
+        navigationAnchor = if (observation.state == TicketVisualPhoneState.TICKET_LIST &&
+          listTabDestination.isBlank()
+        ) {
           selectedAnchorForTransition
         } else {
           ""
@@ -2597,6 +2626,10 @@ class TicketStreamService : Service() {
       if (!persistTicketVisualActionJournal(navigationJournal)) {
         return request.terminal("ticket_action_navigation_journal_unproved", observation)
       }
+      if (listTabDestination == TICKET_ACTION_LIST_TO_TIME ||
+        observation.state == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY &&
+        request.target == TicketVisualActionTarget.REDETECT_LATEST
+      ) redetectReturnedToTime = true
       // A failed root result can arrive after Android accepted the tap. In either case this is
       // now one dispatched physical attempt: observe its typed result and never resend it.
       panelLease.markMutationMayHaveDispatched()
@@ -3733,6 +3766,57 @@ class TicketStreamService : Service() {
 
   internal fun setTicketColdRestartBlocked(blocked: Boolean) {
     ticketColdRestartBlocked = blocked
+  }
+
+  internal fun ticketMonitoringInterruption(): TicketMonitoringObservation? {
+    val now = SystemClock.elapsedRealtime()
+    if (serviceLifecycleStopping || !secureCaptureStartupReady) return ticketMonitoringObservation(null, false, now)
+    val touch = PhoneAutomationServiceBridge.currentRootPhysicalTouchState()
+    if (ticketProofStreamAutomationOwnershipActive() || activeTicketActionPanelDarkLease != null ||
+      controlCodeSignatureCleanupRequired || activeControlCodeKeyboardClamp != null || touch.active || !touch.available) {
+      return ticketMonitoringObservation(null, true, now)
+    }
+    return null
+  }
+
+  internal fun currentTicketMonitoringObservation(capturedAfter: Long): TicketMonitoringObservation? {
+    ticketMonitoringInterruption()?.let { return it }
+    val state = phoneControlState.updates.value
+    val source = state.observation ?: return null
+    return ticketMonitoringObservation(source.state, state.busy, source.captureStartUs / 1_000L).takeIf {
+      it.fresh(SystemClock.elapsedRealtime()) && it.capturedAtMillis >= capturedAfter
+    }
+  }
+
+  internal suspend fun observeTicketMonitoring(capturedAfter: Long): TicketMonitoringObservation? {
+    fun unavailable() = ticketMonitoringObservation(null, false, SystemClock.elapsedRealtime())
+    fun busy() = ticketMonitoringObservation(null, true, SystemClock.elapsedRealtime())
+    var acquired = false
+    val observation = controlCodePhoneMutationLane.tryWithOwnership {
+      acquired = true
+      sessionMutex.withLock {
+        ticketMonitoringInterruption()?.let { return@withLock it }
+        currentTicketMonitoringObservation(capturedAfter)?.takeIf { streamActive }?.let { return@withLock it }
+        if (streamActive) {
+          val probeId = rootHardwareH264CaptureEngine.requestTicketCurrentVisualProbe("monitoring")
+          return@withLock ticketMonitoringProbeDispatch(probeId, SystemClock.elapsedRealtime())
+        }
+        // Cold teardown and stream admission use this same lock. A monitor capture never wakes,
+        // navigates, starts a session, or publishes three-second control readiness.
+        val lease = ensureSecureWindowCaptureBypassResultForSessionStart("monitoring").lease
+          ?: return@withLock unavailable()
+        var restored = false
+        val observation = try {
+          val (width, height) = currentDisplaySize()
+          rootHardwareH264CaptureEngine.monitorOnce(width, height) ?: unavailable()
+        } finally {
+          restored = secureWindowCaptureBypassOwner.releaseAcquiredLease(lease, "monitoring")?.ok == true
+        }
+        if (!restored) unavailable()
+        else ticketMonitoringInterruption() ?: observation
+      }
+    }
+    return if (acquired) observation else busy()
   }
 
   private suspend fun startTicketSession(
@@ -7299,7 +7383,7 @@ class TicketStreamService : Service() {
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
     private const val SESSION_START_TIMEOUT_MILLIS = 70_000L
     private const val SERVICE_DESTROY_JOIN_TIMEOUT_MILLIS = 12_000L
-    const val SERVER_VERSION = "ticket-stream-2026-09-18-idle-refresh-convergence-v390"
+    const val SERVER_VERSION = "ticket-stream-2026-09-23-redetect-list-tab-v395"
     private const val FRAME_ENVELOPE_VERSION = "tsf3"
     private const val TICKET_SESSION_IDLE = "idle"
     private const val TICKET_SESSION_STARTING = "starting"

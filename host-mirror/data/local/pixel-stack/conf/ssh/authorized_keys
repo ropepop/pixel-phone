@@ -1,1 +1,3 @@
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBfy6gxLYStZOJqUrLlmyDBNO+420A6lynbKkv5EBz/e pixel-root-dropbear
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJQOJNGSLC3yPgNPApjJhHeR8BUI84nAQB5JvjexKelV arbuzas-access-2026-04-08
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHVRL6dKtQfaMgFvX3fySyxMprDwHCdsW8fsobrp7b0u pixel-repository-access

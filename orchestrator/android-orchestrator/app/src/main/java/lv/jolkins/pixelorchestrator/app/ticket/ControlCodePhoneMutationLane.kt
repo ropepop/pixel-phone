@@ -10,4 +10,9 @@ internal class ControlCodePhoneMutationLane {
   suspend fun <T> withOwnership(block: suspend () -> T): T = mutex.withLock {
     block()
   }
+
+  suspend fun <T> tryWithOwnership(block: suspend () -> T): T? {
+    if (!mutex.tryLock()) return null
+    return try { block() } finally { mutex.unlock() }
+  }
 }

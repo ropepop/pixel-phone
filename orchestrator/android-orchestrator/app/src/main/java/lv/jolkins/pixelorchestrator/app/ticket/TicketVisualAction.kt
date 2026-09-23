@@ -324,6 +324,18 @@ internal fun ticketVisualJournalReconciled(
   if (!journal.navigationDispatchUncertain || journal.actionId != request.actionId ||
     journal.target != request.target.wireName
   ) return false
+  if (request.target == TicketVisualActionTarget.REDETECT_LATEST) {
+    if (journal.navigationToState == TICKET_ACTION_LIST_TO_SINGLE_USE) {
+      return observation.state in setOf(TicketVisualPhoneState.TICKET_LIST,
+        TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY) &&
+        observation.timeTicketsTabBounds != null && observation.ticketsTabBounds == null
+    }
+    if (journal.navigationToState == TICKET_ACTION_LIST_TO_TIME) {
+      return observation.state in setOf(TicketVisualPhoneState.TICKET_LIST,
+        TicketVisualPhoneState.TICKETS_TIME_EMPTY) &&
+        observation.ticketsTabBounds != null && observation.timeTicketsTabBounds == null
+    }
+  }
   val recordedToState = TicketVisualPhoneState.fromWireName(journal.navigationToState)
   if (recordedToState != TicketVisualPhoneState.UNKNOWN) {
     if (recordedToState == TicketVisualPhoneState.TICKET_LIST &&
@@ -346,6 +358,14 @@ internal fun ticketVisualJournalReconciled(
       observation.state == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY
     ) return true
     if (observation.state != recordedToState) return false
+    if (recordedToState == TicketVisualPhoneState.TICKET_LIST &&
+      request.target == TicketVisualActionTarget.REDETECT_LATEST
+    ) {
+      if (journal.navigationFromState == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY.wireName &&
+        observation.ticketsTabBounds == null) return false
+      if (journal.navigationFromState == TicketVisualPhoneState.TICKETS_TIME_EMPTY.wireName &&
+        observation.timeTicketsTabBounds == null) return false
+    }
     return when (recordedToState) {
       TicketVisualPhoneState.TICKET_LIST -> true
       TicketVisualPhoneState.UNACTIVATED_DETAIL,
@@ -580,6 +600,26 @@ internal data class TicketVisualActionObservation(
     return uniqueActivatedDetailCard()
   }
 
+}
+
+internal const val TICKET_ACTION_LIST_TO_SINGLE_USE = "ticket_list_to_single_use"
+internal const val TICKET_ACTION_LIST_TO_TIME = "ticket_list_to_time"
+
+/** An old card supplies no ticket tap; redetection may inspect only a proved opposite tab. */
+internal fun ticketVisualRedetectListTabTarget(
+  observation: TicketVisualActionObservation,
+  returnedToTime: Boolean
+): Pair<TicketVisualProbeBounds, String>? {
+  if (observation.state != TicketVisualPhoneState.TICKET_LIST ||
+    observation.cards.any { it.registrationBounds != null }
+  ) return null
+  return when {
+    observation.ticketsTabBounds != null && observation.timeTicketsTabBounds == null &&
+      !returnedToTime -> observation.ticketsTabBounds to TICKET_ACTION_LIST_TO_SINGLE_USE
+    observation.timeTicketsTabBounds != null && observation.ticketsTabBounds == null ->
+      observation.timeTicketsTabBounds to TICKET_ACTION_LIST_TO_TIME
+    else -> null
+  }
 }
 
 internal fun ticketVisualObservationsAgree(
