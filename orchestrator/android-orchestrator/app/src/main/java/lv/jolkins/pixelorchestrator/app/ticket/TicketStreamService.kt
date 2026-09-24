@@ -2953,6 +2953,7 @@ class TicketStreamService : Service() {
           terminalPhase = "no_transition"
         )
       }
+      delay(1_000L)
     }
     error("ticket activation attempt loop exhausted")
   }
