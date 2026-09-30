@@ -126,7 +126,6 @@ class RuntimeTicketStopSecureRestoreTest {
     private val stack: Path = Files.createDirectories(root.resolve("stack"))
     private val debugState: Path = root.resolve("debuggable")
     private val secureState: Path = root.resolve("secure")
-    private val lockHelper: Path = root.resolve("lock-helper.sh")
     private val failSecureMutationValue: String
     val stateFile: Path = Files.createDirectories(stack.resolve("apps/ticket-screen/state"))
       .resolve("ro-debuggable-before-ticket")
@@ -137,7 +136,12 @@ class RuntimeTicketStopSecureRestoreTest {
       }
       Files.write(debugState, debuggable.toByteArray(StandardCharsets.UTF_8))
       Files.write(secureState, secure.toByteArray(StandardCharsets.UTF_8))
-      Files.write(lockHelper, "ticket_lock_acquire() { return 0; }\n".toByteArray(StandardCharsets.UTF_8))
+      val native = listOf(
+        Path.of("../pixel-health/target/release/pixel-runtime-cleanup"),
+        Path.of("pixel-health/target/release/pixel-runtime-cleanup"),
+        Path.of("orchestrator/android-orchestrator/pixel-health/target/release/pixel-runtime-cleanup")
+      ).firstOrNull(Files::isExecutable) ?: error("Build existing host pixel-runtime-cleanup before lifecycle JVM tests")
+      Files.copy(native, Files.createDirectories(stack.resolve("bin")).resolve("pixel-runtime-cleanup"))
       executable("am", "exit 0\n")
       executable(
         "ss",
@@ -185,7 +189,6 @@ esac
         .redirectErrorStream(true)
         .apply {
           environment()["PIXEL_STACK_ROOT"] = stack.toString()
-          environment()["PIXEL_TICKET_LOCK_HELPER"] = lockHelper.toString()
           environment()["MOCK_DEBUG_STATE"] = debugState.toString()
           environment()["MOCK_SECURE_STATE"] = secureState.toString()
           environment()["MOCK_FAIL_SECURE_MUTATION"] = failSecureMutationValue

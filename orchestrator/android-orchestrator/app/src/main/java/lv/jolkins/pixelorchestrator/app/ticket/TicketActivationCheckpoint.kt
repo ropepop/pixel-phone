@@ -2,6 +2,8 @@ package lv.jolkins.pixelorchestrator.app.ticket
 
 import android.content.Context
 import android.content.SharedPreferences
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.*
 import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationRootPhysicalTouchState
 
 /**
@@ -9,6 +11,7 @@ import lv.jolkins.pixelorchestrator.app.phoneautomation.PhoneAutomationRootPhysi
  * and revision identifiers plus a stage; it deliberately never contains ticket pixels, UI text,
  * coordinates, identity data, or other private content.
  */
+@Serializable
 internal enum class TicketActivationCheckpointStage(val wireName: String) {
   FRESH_TICKET_PROVEN("fresh_ticket_proven"),
   ACTIVATION_DISPATCHING("activation_dispatching"),
@@ -22,6 +25,7 @@ internal enum class TicketActivationCheckpointStage(val wireName: String) {
   }
 }
 
+@Serializable
 internal data class TicketActivationCheckpoint(
   val commandId: String,
   val interactionRevision: String,
@@ -51,30 +55,19 @@ internal fun ticketActivationPhysicalTouchFenceIsCurrent(
 
 internal fun ticketActivationNoTransitionTerminalPhase(
   checkpoint: TicketActivationCheckpoint
-): String {
-  require(checkpoint.stage == TicketActivationCheckpointStage.NO_TRANSITION_PROVEN)
-  return if (checkpoint.dispatchOrdinal >= 2) "no_transition" else "retry_not_dispatched"
-}
+): String = NativeTicketCheckpoint.call("no_transition_phase", checkpoint).jsonPrimitive.content
 
 internal fun ticketActivationNoTransitionTerminalReason(
   checkpoint: TicketActivationCheckpoint
-): String = if (ticketActivationNoTransitionTerminalPhase(checkpoint) == "no_transition") {
-  "ticket_action_gesture_completed_no_transition"
-} else {
-  "ticket_action_retry_not_dispatched"
-}
+): String = NativeTicketCheckpoint.call("no_transition_reason", checkpoint).jsonPrimitive.content
 
 /** Navigation taps never establish that the separate registration stroke was dispatched. */
 internal fun ticketActivationFailureTerminalPhase(
   checkpoint: TicketActivationCheckpoint?,
   provisionalPhase: String = ""
-): String = when {
-  checkpoint?.stage == TicketActivationCheckpointStage.NO_TRANSITION_PROVEN ->
-    ticketActivationNoTransitionTerminalPhase(checkpoint)
-  checkpoint?.dispatchOrdinal?.let { it > 0 } == true ||
-    provisionalPhase == "outcome_unknown" -> "outcome_unknown"
-  else -> "not_dispatched"
-}
+): String = NativeTicketCheckpoint.call("failure_phase", checkpoint, buildJsonObject {
+  put("provisionalPhase", provisionalPhase)
+}).jsonPrimitive.content
 
 /**
  * A server-finalized terminal may retire only a checkpoint whose local stage proves the same
@@ -84,34 +77,22 @@ internal fun ticketActivationCheckpointSafeToClearAfterTerminalFinalization(
   checkpoint: TicketActivationCheckpoint,
   commandId: String,
   action: TicketVisualActionSnapshot
-): Boolean {
-  if (checkpoint.commandId != commandId ||
-    checkpoint.activationAttemptId != action.activationAttemptId ||
-    action.activationAttemptId != action.actionId ||
-    !action.terminal || action.completedAt.isBlank()
-  ) return false
-  return when (checkpoint.stage) {
-    TicketActivationCheckpointStage.FRESH_TICKET_PROVEN ->
-      checkpoint.dispatchOrdinal == 0 && !action.ok &&
-        action.status == "needs_attention" && action.phase == "not_dispatched" &&
-        action.activationRevision.isBlank()
-    TicketActivationCheckpointStage.NO_TRANSITION_PROVEN ->
-      checkpoint.dispatchOrdinal in 1..2 && !action.ok && action.status == "needs_attention" &&
-        action.phase == ticketActivationNoTransitionTerminalPhase(checkpoint) &&
-        action.reason == ticketActivationNoTransitionTerminalReason(checkpoint) &&
-        action.currentView == TicketVisualActionView.LATEST_UNACTIVATED &&
-        action.activationRevision.isBlank()
-    TicketActivationCheckpointStage.ACTIVATION_PROVEN ->
-      action.ok && action.status == "succeeded" && action.phase == "activation_proven" &&
-        action.reason == "ticket_action_registered" &&
-        action.currentView == TicketVisualActionView.ACTIVATED_CURRENT &&
-        action.interactionRevision == checkpoint.interactionRevision &&
-        action.activationRevision.isNotBlank() &&
-        action.activationRevision == checkpoint.activationRevision
-    TicketActivationCheckpointStage.ACTIVATION_DISPATCHING,
-    TicketActivationCheckpointStage.NEEDS_ATTENTION -> false
-  }
-}
+): Boolean = NativeTicketCheckpoint.call("safe_to_clear", checkpoint, buildJsonObject {
+  put("commandId", commandId)
+  put("action", buildJsonObject {
+    put("actionId", action.actionId)
+    put("activationAttemptId", action.activationAttemptId)
+    put("terminal", action.terminal)
+    put("completedAt", action.completedAt)
+    put("ok", action.ok)
+    put("status", action.status)
+    put("phase", action.phase)
+    put("reason", action.reason)
+    put("currentView", action.currentView.wireName)
+    put("interactionRevision", action.interactionRevision)
+    put("activationRevision", action.activationRevision)
+  })
+}).jsonPrimitive.boolean
 
 
 internal interface TicketActivationCheckpointBackend {
@@ -137,11 +118,11 @@ internal class TicketActivationCheckpointStore internal constructor(
     activationAttemptId: String
   ): TicketActivationCheckpoint? {
     val checkpoint = backend.load() ?: return null
-    return checkpoint.takeIf {
-      it.commandId == commandId.trim() &&
-        it.interactionRevision == interactionRevision.trim() &&
-        it.activationAttemptId == activationAttemptId.trim()
-    }
+    return checkpoint.takeIf { NativeTicketCheckpoint.call("matches", it, buildJsonObject {
+      put("commandId", commandId)
+      put("interactionRevision", interactionRevision)
+      put("activationAttemptId", activationAttemptId)
+    }).jsonPrimitive.boolean }
   }
 
   fun recordFreshTicketProven(
@@ -152,76 +133,54 @@ internal class TicketActivationCheckpointStore internal constructor(
     // A different unresolved activation owns this single durable slot. Never overwrite its
     // at-most-once history merely because the server normally serializes phone commands.
     if (backend.load() != null) return null
-    return save(
-      TicketActivationCheckpoint(
-        commandId = commandId.trim(),
-        interactionRevision = interactionRevision.trim(),
-        activationAttemptId = activationAttemptId.trim(),
-        stage = TicketActivationCheckpointStage.FRESH_TICKET_PROVEN
-      )
-    )
+    return transition("fresh", null, buildJsonObject {
+      put("commandId", commandId)
+      put("interactionRevision", interactionRevision)
+      put("activationAttemptId", activationAttemptId)
+    })
   }
 
   fun recordActivationDispatching(
     checkpoint: TicketActivationCheckpoint,
     ordinal: Int
   ): TicketActivationCheckpoint? {
-    require(ordinal in 1..2) { "activation dispatch ordinal must be one or two" }
-    require(ordinal > checkpoint.dispatchOrdinal) { "activation dispatch ordinal must advance" }
-    require(
-      ordinal == 1 && checkpoint.stage == TicketActivationCheckpointStage.FRESH_TICKET_PROVEN ||
-        ordinal == 2 && checkpoint.stage == TicketActivationCheckpointStage.NO_TRANSITION_PROVEN
-    ) { "activation dispatch stage does not admit ordinal $ordinal" }
-    return save(
-      checkpoint.copy(
-        dispatchOrdinal = ordinal,
-        stage = TicketActivationCheckpointStage.ACTIVATION_DISPATCHING
-      )
-    )
+    return transition("dispatching", checkpoint, buildJsonObject { put("ordinal", ordinal) })
   }
 
   fun recordActivationProven(
     checkpoint: TicketActivationCheckpoint,
     activationRevision: String
   ): TicketActivationCheckpoint? {
-    return save(
-      checkpoint.copy(
-        activationRevision = activationRevision.trim(),
-        stage = TicketActivationCheckpointStage.ACTIVATION_PROVEN
-      )
-    )
+    return transition("proven", checkpoint, buildJsonObject { put("activationRevision", activationRevision) })
   }
 
   fun recordNoTransitionProven(checkpoint: TicketActivationCheckpoint): TicketActivationCheckpoint? {
-    return save(checkpoint.copy(stage = TicketActivationCheckpointStage.NO_TRANSITION_PROVEN))
+    return transition("no_transition", checkpoint)
   }
 
   fun recordNeedsAttention(checkpoint: TicketActivationCheckpoint): TicketActivationCheckpoint? {
-    if (checkpoint.stage == TicketActivationCheckpointStage.FRESH_TICKET_PROVEN ||
-      checkpoint.stage == TicketActivationCheckpointStage.NO_TRANSITION_PROVEN
-    ) {
-      // These stages already prove a stronger, conclusive boundary: respectively no admitted
-      // stroke, or a completed stroke with the exact ticket still unactivated. Do not replace
-      // that certainty with the generic attention state.
-      return checkpoint.takeIf { backend.load() == checkpoint }
-    }
-    return save(checkpoint.copy(stage = TicketActivationCheckpointStage.NEEDS_ATTENTION))
+    return transition("attention", checkpoint)
   }
 
   fun clearIfMatches(commandId: String, activationAttemptId: String): Boolean {
     val current = backend.load() ?: return false
-    if (current.commandId != commandId.trim() || current.activationAttemptId != activationAttemptId.trim()) {
+    if (!NativeTicketCheckpoint.call("matches", current, buildJsonObject {
+      put("commandId", commandId)
+      put("activationAttemptId", activationAttemptId)
+    }).jsonPrimitive.boolean) {
       return false
     }
     return backend.clear() && backend.load() == null
   }
 
-  private fun save(checkpoint: TicketActivationCheckpoint): TicketActivationCheckpoint? {
-    require(checkpoint.commandId.isNotBlank()) { "activation checkpoint command id is required" }
-    require(checkpoint.interactionRevision.isNotBlank()) { "activation checkpoint interaction revision is required" }
-    require(checkpoint.activationAttemptId.isNotBlank()) { "activation checkpoint attempt id is required" }
-    if (!backend.save(checkpoint)) return null
-    return checkpoint.takeIf { backend.load() == checkpoint }
+  private fun transition(
+    operation: String,
+    checkpoint: TicketActivationCheckpoint?,
+    args: JsonObject = buildJsonObject {}
+  ): TicketActivationCheckpoint? {
+    val update = NativeTicketCheckpoint.transition(operation, checkpoint, args)
+    if (update.write && !backend.save(update.checkpoint)) return null
+    return update.checkpoint.takeIf { backend.load() == it }
   }
 
   private companion object {

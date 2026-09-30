@@ -2,8 +2,12 @@ package lv.jolkins.pixelorchestrator.app.ticket
 
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.After
 
 class TicketH264EncoderOutputAssemblerTest {
+  private val owners = mutableListOf<TicketH264EncoderOutputAssembler>()
+  private fun assembler() = TicketH264EncoderOutputAssembler().also(owners::add)
+  @After fun closeOwners() { owners.forEach { it.close() } }
   private val delimiter = byteArrayOf(0, 0, 0, 1, 9, 16)
   private val sps = byteArrayOf(0x67, 0x42, 0x11)
   private val pps = byteArrayOf(0x68, 0x33)
@@ -15,7 +19,7 @@ class TicketH264EncoderOutputAssemblerTest {
   ) + nal
 
   @Test fun partialLengthPrefixAndFlagsBelongToOneAccessUnit() {
-    val assembler = TicketH264EncoderOutputAssembler()
+    val assembler = assembler()
     val configuration = length(sps) + length(pps)
     assertNull(assembler.accept(configuration.copyOfRange(0, 2), true, true, false))
     assertNull(assembler.accept(configuration.copyOfRange(2, 7), true, false, false))
@@ -34,7 +38,7 @@ class TicketH264EncoderOutputAssemblerTest {
   }
 
   @Test fun idrRequiresBothParameterSetsAndResetDropsTheirAuthority() {
-    val assembler = TicketH264EncoderOutputAssembler()
+    val assembler = assembler()
     assertNull(assembler.accept(annex(idr), false, false, true))
     assertNotNull(assembler.accept(annex(sps), false, true, false))
     assertNull(assembler.accept(annex(idr), false, false, true))
@@ -50,7 +54,7 @@ class TicketH264EncoderOutputAssemblerTest {
   }
 
   @Test fun ambiguousAndMalformedFramingCannotEstablishOrChangeConfiguration() {
-    val assembler = TicketH264EncoderOutputAssembler()
+    val assembler = assembler()
     val ambiguous = length(ByteArray(0x167) { 0x67 })
     assertNull(assembler.accept(ambiguous, false, true, false))
     assertNull(assembler.accept(byteArrayOf(0, 0, 0, 8, 0x67), false, true, false))
@@ -62,7 +66,7 @@ class TicketH264EncoderOutputAssemblerTest {
   }
 
   @Test fun overflowDiscardsRemainingFragmentsAndRecoversAtNextWholeUnit() {
-    val assembler = TicketH264EncoderOutputAssembler()
+    val assembler = assembler()
     assertNotNull(assembler.accept(annex(sps) + annex(pps), false, true, false))
     assertNull(assembler.accept(ByteArray(TicketH264EncoderOutputAssembler.MAX_ASSEMBLY_BYTES), true, false, false))
     assertNull(assembler.accept(byteArrayOf(1), true, false, false))

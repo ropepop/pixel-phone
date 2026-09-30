@@ -1,5 +1,7 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.*
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
@@ -21,6 +23,7 @@ internal fun ticketPhoneControlBounds(bounds: TicketVisualProbeBounds?) = bounds
 }
 
 /** Private capture identity stays on the phone; only the opaque revision leaves it. */
+@Serializable
 internal data class TicketPhoneControlObservation(
   val contextRevision: String,
   val sequence: Long,
@@ -31,6 +34,7 @@ internal data class TicketPhoneControlObservation(
 )
 
 /** Captured state only: admission and protected input remain owned by the action executor. */
+@Serializable
 internal data class TicketRegistrationEvidenceFence(
   val streamEpoch: Long,
   val captureGeneration: Long,
@@ -40,138 +44,83 @@ internal data class TicketRegistrationEvidenceFence(
   val validAfterMillis: Long
 )
 
+@Serializable
 internal data class TicketRegistrationVisualEvidence(
   val contextRevision: String,
   val first: TicketVisualActionObservation,
   val second: TicketVisualActionObservation,
   val fence: TicketRegistrationEvidenceFence
 ) {
-  fun isFresh(nowMillis: Long): Boolean =
-    fence.streamEpoch > 0L && fence.captureGeneration > 0L && fence.inputGeneration > 0L &&
-      fence.windowId >= 0 && first.captureStartUs < second.captureStartUs &&
-      ticketRegistrationObservationIsFresh(first, fence, nowMillis) &&
-      ticketRegistrationObservationIsFresh(second, fence, nowMillis) &&
-      ticketVisualObservationsAgree(first, second)
+  fun isFresh(nowMillis: Long): Boolean = NativeTicketControl.call("evidence_fresh", buildJsonObject {
+    put("evidence", NativeTicketControl.json.encodeToJsonElement(this@TicketRegistrationVisualEvidence))
+    put("now", nowMillis)
+  }).jsonPrimitive.boolean
 }
 
-private fun ticketRegistrationObservationIsFresh(
-  observation: TicketVisualActionObservation,
-  fence: TicketRegistrationEvidenceFence,
-  nowMillis: Long
-): Boolean {
-  val capturedAtMillis = observation.captureStartUs / 1_000L
-  return observation.captureStartUs > 0L && observation.captureGeneration == fence.captureGeneration &&
-    capturedAtMillis >= fence.validAfterMillis && capturedAtMillis <= observation.atMillis &&
-    nowMillis - capturedAtMillis in 0 until TICKET_CONTROL_OBSERVATION_TTL_MILLIS &&
-    observation.state == TicketVisualPhoneState.UNACTIVATED_DETAIL &&
-    observation.currentAnchor.isNotBlank() && observation.sliderBounds != null
+internal object NativeTicketControl {
+  val json = Json { encodeDefaults = true }
+  init { System.loadLibrary("pixel_health") }
+  private external fun decide(operation: String, payload: String): String
+  fun call(operation: String, args: JsonObject, state: JsonElement = JsonNull, session: String = ""): JsonElement =
+    json.parseToJsonElement(decide(operation, buildJsonObject {
+      put("args", args); put("state", state); put("session", session)
+    }.toString()))
 }
 
 /** One lifetime per service, independent of capture/codec generations and connections. */
 internal class TicketPhoneControlState(
   val sessionId: String = "pc-${UUID.randomUUID()}"
 ) {
-  private var contextCounter = 0L
-  private var sequence = 0L
-  private var capturedThroughUs = 0L
-  private var contextKey: List<Any?>? = null
-  private var registrationFirst: TicketVisualActionObservation? = null
-  private var registrationFence: TicketRegistrationEvidenceFence? = null
+  private var nativeState: JsonElement = JsonNull
   val updates = MutableStateFlow(TicketPhoneControlObservation("$sessionId:0", 0, null, false, "phone_session_started"))
 
+  private fun call(operation: String, args: JsonObject): JsonElement {
+    val result = NativeTicketControl.call(operation, args, nativeState, sessionId).jsonObject
+    nativeState = result.getValue("state")
+    updates.value = NativeTicketControl.json.decodeFromJsonElement(nativeState.jsonObject.getValue("update"))
+    return result.getValue("answer")
+  }
+
   @Synchronized
-  fun observe(
-    observation: TicketVisualActionObservation,
-    busy: Boolean,
-    evidenceFence: TicketRegistrationEvidenceFence? = null,
-    inputAvailable: Boolean = true
-  ) {
-    // The stderr reader may repeat or deliver an old probe after a newer capture.
-    if (observation.captureStartUs <= capturedThroughUs) return
-    capturedThroughUs = observation.captureStartUs
-    val nextKey = listOf(observation.state, observation.currentAnchor, observation.sliderBounds, inputAvailable)
-    val prior = updates.value.observation
-    registrationFirst = prior?.takeIf {
-      nextKey == contextKey && evidenceFence != null && evidenceFence == registrationFence &&
-        ticketVisualObservationsAgree(it, observation)
-    }
-    registrationFence = evidenceFence.takeIf {
-      inputAvailable && observation.state == TicketVisualPhoneState.UNACTIVATED_DETAIL &&
-        observation.currentAnchor.isNotBlank() && observation.sliderBounds != null
-    }
-    if (registrationFence == null) registrationFirst = null
-    if (nextKey != contextKey) {
-      contextCounter++
-      contextKey = nextKey
-    }
-    updates.value = TicketPhoneControlObservation(
-      "$sessionId:$contextCounter", ++sequence, observation, busy,
-      when {
-        !inputAvailable -> "ticket_action_accessibility_unavailable"
-        busy -> "phone_busy"
-        observation.currentAnchor.isBlank() -> "ticket_not_identified"
-        else -> ""
-      }, inputAvailable
-    )
+  fun observe(observation: TicketVisualActionObservation, busy: Boolean,
+    evidenceFence: TicketRegistrationEvidenceFence? = null, inputAvailable: Boolean = true) {
+    call("observe", buildJsonObject {
+      put("observation", NativeTicketControl.json.encodeToJsonElement(observation))
+      put("busy", busy); put("inputAvailable", inputAvailable)
+      put("fence", NativeTicketControl.json.encodeToJsonElement(evidenceFence))
+    })
   }
 
   @Synchronized
   fun invalidate(reason: String, busy: Boolean = false, capturedThroughUs: Long = 0L) {
-    // Break the context even if the same ticket later reappears. A gesture spanning
-    // interference, unavailable capture or a physical mutation must start again.
-    contextCounter++
-    this.capturedThroughUs = maxOf(this.capturedThroughUs, capturedThroughUs)
-    contextKey = null
-    clearRegistrationEvidence()
-    updates.value = TicketPhoneControlObservation("$sessionId:$contextCounter", ++sequence, null, busy, reason)
+    call("invalidate", buildJsonObject {put("reason", reason); put("busy", busy); put("captured", capturedThroughUs)})
   }
 
   @Synchronized
-  fun exactContext(revision: String, nowMillis: Long): TicketVisualActionObservation? {
-    val state = updates.value
-    val observation = state.observation ?: return null
-    val age = nowMillis - observation.captureStartUs / 1_000L
-    return observation.takeIf {
-      state.inputAvailable && !state.busy && state.contextRevision == revision &&
-        age in 0 until TICKET_CONTROL_OBSERVATION_TTL_MILLIS && it.currentAnchor.isNotBlank() &&
-        it.state in setOf(TicketVisualPhoneState.UNACTIVATED_DETAIL, TicketVisualPhoneState.ACTIVATED_DETAIL)
-    }
-  }
+  fun exactContext(revision: String, nowMillis: Long): TicketVisualActionObservation? =
+    NativeTicketControl.json.decodeFromJsonElement(call("exact", buildJsonObject {put("revision", revision); put("now", nowMillis)}))
 
   @Synchronized
-  fun clearRegistrationEvidence() {
-    registrationFirst = null
-    registrationFence = null
-  }
+  fun clearRegistrationEvidence() {call("clear", buildJsonObject {})}
 
   @Synchronized
-  fun registrationCandidateIsCurrent(
-    revision: String,
-    fence: TicketRegistrationEvidenceFence?,
-    nowMillis: Long
-  ): Boolean = fence != null && fence == registrationFence && updates.value.contextRevision == revision &&
-    updates.value.observation?.let { ticketRegistrationObservationIsFresh(it, fence, nowMillis) } == true
-
-  /** Only the already-admitted action may read while busy; this never publishes readiness. */
-  @Synchronized
-  fun registrationEvidence(
-    revision: String,
-    fence: TicketRegistrationEvidenceFence?,
-    nowMillis: Long
-  ): TicketRegistrationVisualEvidence? {
-    if (fence == null || fence != registrationFence || updates.value.contextRevision != revision) return null
-    return TicketRegistrationVisualEvidence(
-      revision, registrationFirst ?: return null, updates.value.observation ?: return null, fence
-    ).takeIf { it.isFresh(nowMillis) }
-  }
+  fun registrationCandidateIsCurrent(revision: String, fence: TicketRegistrationEvidenceFence?, nowMillis: Long): Boolean =
+    call("candidate", buildJsonObject {
+      put("revision", revision); put("now", nowMillis); put("fence", NativeTicketControl.json.encodeToJsonElement(fence))
+    }).jsonPrimitive.boolean
 
   @Synchronized
-  fun registrationEvidenceIsCurrent(
-    evidence: TicketRegistrationVisualEvidence,
-    fence: TicketRegistrationEvidenceFence?,
-    nowMillis: Long
-  ): Boolean = evidence.contextRevision == updates.value.contextRevision &&
-    evidence.fence == registrationFence && evidence.fence == fence && evidence.isFresh(nowMillis)
+  fun registrationEvidence(revision: String, fence: TicketRegistrationEvidenceFence?, nowMillis: Long): TicketRegistrationVisualEvidence? =
+    NativeTicketControl.json.decodeFromJsonElement(call("evidence", buildJsonObject {
+      put("revision", revision); put("now", nowMillis); put("fence", NativeTicketControl.json.encodeToJsonElement(fence))
+    }))
+
+  @Synchronized
+  fun registrationEvidenceIsCurrent(evidence: TicketRegistrationVisualEvidence, fence: TicketRegistrationEvidenceFence?, nowMillis: Long): Boolean =
+    call("evidence_current", buildJsonObject {
+      put("evidence", NativeTicketControl.json.encodeToJsonElement(evidence)); put("now", nowMillis)
+      put("fence", NativeTicketControl.json.encodeToJsonElement(fence))
+    }).jsonPrimitive.boolean
 }
 
 /** Immutable receipt identity. Fresh pre-input observations still own gesture geometry. */
@@ -179,8 +128,9 @@ internal fun ticketPhoneControlRegistrationIdentity(
   revision: String,
   observation: TicketVisualActionObservation?
 ): TicketRegistrationProof? = observation?.takeIf {
-  revision.startsWith("pc-") && it.state == TicketVisualPhoneState.UNACTIVATED_DETAIL &&
-    it.currentAnchor.isNotBlank() && it.sliderBounds != null
+  NativeTicketControl.call("identity", buildJsonObject {
+    put("revision", revision); put("observation", NativeTicketControl.json.encodeToJsonElement(it))
+  }).jsonPrimitive.boolean
 }?.let {
   TicketRegistrationProof(
     status = "unactivated_ready", reason = "phone_control_context",
@@ -193,13 +143,10 @@ internal fun ticketPhoneControlRegistrationIdentity(
 
 internal data class TicketPhoneControlClock(val serverMillis: Long, val receivedMonotonicMillis: Long) {
   fun observedAtMillis(captureStartUs: Long, nowMillis: Long): Long? {
-    val anchorAge = nowMillis - receivedMonotonicMillis
-    val captureMillis = captureStartUs / 1_000L
-    if (anchorAge !in 0 until CLOCK_ANCHOR_MAX_AGE_MILLIS || captureMillis > nowMillis || captureStartUs <= 0) return null
-    // Server time was sampled before the response arrived. Subtracting from the
-    // response boundary deliberately includes network time in the observation age.
-    // One extra millisecond covers conversion rounding; no wall clock is trusted.
-    return serverMillis + captureMillis - receivedMonotonicMillis - 1
+    return NativeTicketControl.call("clock", buildJsonObject {
+      put("server", serverMillis); put("received", receivedMonotonicMillis)
+      put("captureStartUs", captureStartUs); put("now", nowMillis)
+    }).jsonPrimitive.longOrNull
   }
 
   fun observedAt(captureStartUs: Long, nowMillis: Long): String? =
@@ -277,11 +224,11 @@ internal class TicketPhoneControlPublisher(
             if (observation.sequence == 0L) return@collect
             val source = observation.observation
             val observedAt = source?.let { anchor.observedAt(it.captureStartUs, nowMillis()) }.orEmpty()
-            val sourceAge = source?.let { nowMillis() - it.captureStartUs / 1_000L }
-            val ready = observation.inputAvailable && !observation.busy && source != null && source.currentAnchor.isNotBlank() &&
-              source.state in setOf(TicketVisualPhoneState.UNACTIVATED_DETAIL, TicketVisualPhoneState.ACTIVATED_DETAIL) &&
-              sourceAge != null && sourceAge in 0 until TICKET_CONTROL_OBSERVATION_TTL_MILLIS && observedAt.isNotEmpty() &&
-              (source.state != TicketVisualPhoneState.UNACTIVATED_DETAIL || ticketPhoneControlBounds(source.sliderBounds) != null)
+            val ready = NativeTicketControl.call("publish_ready", buildJsonObject {
+              put("update", NativeTicketControl.json.encodeToJsonElement(observation))
+              put("now", nowMillis()); put("observedAt", observedAt)
+              put("boundsAvailable", ticketPhoneControlBounds(source?.sliderBounds) != null)
+            }).jsonPrimitive.boolean
             transport.publishControlObservation(state.sessionId, observation, observedAt, ready)
             return@collect
           } catch (cancelled: CancellationException) {

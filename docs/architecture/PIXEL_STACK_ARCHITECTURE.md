@@ -4,14 +4,18 @@ This is the canonical architecture map for the Pixel/orchestrator stack. Keep op
 
 ## 1. System Purpose And Boundaries
 
-The stack turns a rooted Pixel into a managed runtime host for local services, public endpoints, remote management, and workload automation. The Android orchestrator owns installation, lifecycle, health, and runtime asset sync. Workloads own their app logic and release artifacts.
+The rooted Pixel runs Ticket and its required device-side support, with ADB and
+SSH access. The Android orchestrator manages that runtime, its health and
+housekeeping. Existing Tailscale connectivity provides private access to the
+device. Application servers, bots and other server workloads run on the VPS
+from the canonical `ops` repository.
 
 In scope:
 
 - Android app control plane under `orchestrator/android-orchestrator`.
 - Rooted runtime under `/data/local/pixel-stack`.
 - Component registry, module manifests, and redeploy ownership.
-- Workload runtimes under `workloads/`.
+- Ticket's device runtime under `workloads/ticket-screen/`.
 - Evidence and health outputs under `ops/` and `standards/schemas/`.
 
 Out of scope:
@@ -19,6 +23,9 @@ Out of scope:
 - Independent legacy autostart mechanisms after cutover.
 - Runtime mutations that bypass module ownership metadata.
 - Treating reports as canonical architecture.
+- Installing or restarting historical phone bots, DNS/DDNS, notification,
+  subscription or task-runner services. Retained source and configuration
+  fields are compatibility/reference material, not active deployment scope.
 
 ## 2. Control Plane
 
@@ -45,12 +52,43 @@ Key roles:
 
 - `SupervisorService` receives deploy, boot, start, stop, restart, health, and cleanup actions.
 - The phone UI is one lifecycle-aware Material 3 Compose scroll. It presents state through `DashboardUiState` and typed `DashboardAction` values, while operations that can outlive the Activity run in `SupervisorService` and report back through bounded action results.
-- `OrchestratorFacade` enforces component ownership, config writes, redeploy policy, and runtime mutation order.
+- `OrchestratorFacade` applies component ownership, config writes and runtime mutation order; the existing native library owns redeploy route and acceptance decisions.
 - `RuntimeInstaller` syncs bundled runtime assets and installs component releases.
 - `SupervisorEngine` starts, stops, restarts, and health-checks runtime components.
 - `RuntimeHealthChecker` synthesizes component health from runtime probes.
 - `runtime_cleanup` is a scheduled/manual job component. It runs through the Android cleanup action, uses the runtime mutation lock, and reports health from cleanup reports.
 - `StackStore` persists app-private config and state.
+
+Ticket's rooted start/stop/health entrypoint paths are small exec adapters to
+the existing packaged `pixel-runtime-cleanup` standalone binary. Its native
+`ticket_lifecycle` owner chooses flags, config equality, waits, PID lock
+arbitration and secure-setting restore/readback. POSIX env sourcing and the
+existing Android/network tools perform effects. Original entrypoint basenames
+remain argv dispatch modes so an older lock reader can recognize the native
+owner during coordinated rollback. Full and Ticket-scoped asset sync installs
+the executable before its callers, and freshness checks cover both. Asset
+installation stages beside the destination and renames the completed file;
+it never truncates a running executable. Source and installed acceptance are
+recorded separately in the
+[active-owner inventory](../../ops/reports/2026-09-30-pixel-native-boundary-inventory.md).
+
+`pixel-management-health.sh` is also an exec adapter to that same standalone
+binary. Its `management_health` owner reads platform facts, resolves network
+and listener identity, compares authentication state and emits the established
+ordered report and readiness result. POSIX SSH/VPN/DDNS config sourcing,
+Android observation commands and upstream network tools remain effect adapters.
+Full, SSH, VPN and management asset sync publishes the native owner before
+this caller. Local probes remain local; explicit deep probes retain their
+bounded public-IP/banner checks. Report translation remains in the existing
+native general-health owner, with unchanged authentication acceptance policy.
+
+Redeploy configuration bounds, route metadata, module-health precedence,
+disabled readiness, watched-neighbor ordering, stability windows, timeout and
+rollback/result classifications belong to `redeploy_policy` in the same JNI
+library. Kotlin keeps typed ingress/results and the original coroutine clock,
+probe, delay, logging, installation, stop/start and rollback effect sequence.
+Legacy quiescence probe command builders remain Android root-command adapters;
+native metadata selects them. No extra poller, state store or binary is used.
 
 ## 3. Runtime Plane
 
@@ -69,7 +107,7 @@ flowchart LR
 
 Primary paths:
 
-- `/data/local/pixel-stack/bin`: component entrypoints such as `pixel-train-start.sh` and `pixel-ticket-start.sh`. Retired DNS entrypoints may remain only as inert migration residue until measured cleanup removes them.
+- `/data/local/pixel-stack/bin`: Ticket and access entrypoints such as `pixel-ticket-start.sh` and `pixel-ssh-start.sh`. Historical entrypoints may remain as inert residue; their presence does not authorize starting them.
 - `/data/local/pixel-stack/templates`: rendered service loops, launchers, and helper templates.
 - `/data/local/pixel-stack/conf`: config, env files, secrets, runtime manifests, and staged component releases.
 - `/data/local/pixel-stack/run`: runtime state, pids, and action-result files.
@@ -81,24 +119,23 @@ App-private persisted state stays in the Android app files directory under `stac
 
 ## 4. Component Ownership
 
-The module registry and module manifests are the source of truth for ownership. Each managed component declares its runtime type, health key, start/stop/health command, and redeploy mode.
+The active registry is `orchestrator/modules/registry/modules.yaml`, with the
+generated Android asset `runtime/component-registry.json`. It declares these
+five components. `management` is a health result and `runtime_cleanup` is a
+housekeeping job; neither is another application server.
 
 | Component | Owner path | Runtime type | Redeploy mode | Notes |
 | --- | --- | --- | --- | --- |
-| `dns` | none (retired) | none | none | Remains visible as disabled historical state; normal bootstrap and the active component registry do not install or start it. |
 | `ssh` | `orchestrator/android-orchestrator` | rooted service | `artifact_release` | Owns Dropbear bundle and port 2222 management path. |
-| `vpn` | `orchestrator/android-orchestrator` | rooted service | `artifact_release` | Owns Tailscale runtime and management connectivity. |
-| `ddns` | `orchestrator/android-orchestrator` | job | `job` | Runs sync entrypoint and records last-sync state. |
-| `remote` | none (retired with DNS) | none | none | No longer aliases DNS release ownership. |
+| `vpn` | `orchestrator/android-orchestrator` | rooted service | `artifact_release` | Existing Tailscale connectivity for ADB/SSH and Ticket access; distinct from VPS Tiny-VLESS. |
 | `management` | `orchestrator/android-orchestrator` | synthetic health | `derived` from `vpn` | Represents management reachability. |
 | `runtime_cleanup` | `orchestrator/android-orchestrator` | job | `job` | Weekly Monday 03:00 cleanup owns 30-day artifacts and releases. A frequent lane runs immediately and hourly for root history, 24-hour action receipts, and bounded allowlisted logs. |
-| `train_bot` | `workloads/train-bot` | rooted service | `artifact_release` | Uses immutable releases under `/apps/train-bot/releases`. |
-| `satiksme_bot` | `workloads/satiksme-bot` | rooted service | `artifact_release` | Uses immutable releases under `/apps/satiksme-bot/releases`. |
-| `site_notifier` | `workloads/site-notifications` | rooted service | `artifact_release` | Uses immutable releases under `/apps/site-notifications/releases`. |
-| `subscription_bot` | `workloads/subscription-bot` | rooted service | `artifact_release` | Uses immutable releases under `/apps/subscription-bot/releases`. |
 | `ticket_screen` | `workloads/ticket-screen` | rooted service | `job` | Private Pixel-side Ticket health, session, and video interfaces; durable auto-start is controlled by the Android ticket service toggle. |
 
-Derived components must not be redeployed as if they were independent owners. New app-style services must own a dedicated runtime root and should use immutable releases with a `current` pointer.
+Derived components must not be redeployed as independent owners. Historical
+DNS, DDNS, remote, Train, Satiksme, notifier and subscription fields can remain
+visible as disabled saved state. They are absent from the active registry and
+must not be revived or migrated on the phone.
 
 Management access remains minimal: Android init owns `adbd` on 5555, and the
 existing SSH/VPN owners provide Dropbear on 2222 and Tailscale. The one-shot
@@ -135,6 +172,8 @@ APK/runtime deployment and the local-first host mirror remain separate safety bo
 Runtime start commands are idempotent. When installed inputs are current and the owned process plus local listener are healthy, they return without rewriting files or restarting the service. Independent health probes and deployment actions run with bounded timeouts, use owner-aware locks, and poll actual readiness instead of sleeping for a fixed delay. Slow public-network checks belong to deep/full health modes so a healthy local component does not wait on an unrelated external round trip.
 
 The full deployment health result is configuration-aware. Root access, the supervisor heartbeat, and the local Ticket listener are always strict gates. Other components are gates only while enabled or explicitly required; a disabled DNS, DDNS, remote surface, train bot, Satiksme bot, site notifier, or subscription bot remains visible as `disabled` but is neutral to deployment success. Ticket remains strict even when its generic module auto-start flag is off, because the separate Android Ticket toggle owns that runtime. Management reachability remains strict while enabled. Authentication drift stays visible through `managementAuthHealthy`, module details, and warning evidence, but it blocks deployment only when `supervision.managementRequireAuthConsistency=true`.
+
+After Android process loss, the explicit full-health action resumes an already-running persisted supervisor before checking its heartbeat. It uses the existing engine guard: stopped or absent supervision stays stopped, an active loop is retained, and component starts are not replayed. This does not rewrite configuration or runtime environment files.
 
 `ticket_screen` has an extra Android-side reliability toggle. When off, the supervisor loop must not auto-start that component. When on, SupervisorService keeps the local ticket server and tunnel ready after app start, package replace, and phone reboot, while leaving ViVi and capture idle until a viewer requests the stream. A clean-device or recovery deployment may opt in with `deploy_orchestrator_apk.sh --action redeploy_component --component ticket_screen --enable-ticket-service`. The flag is rejected for every other action or component, defaults to no preference change, and persists the setting through the Android preferences store before the redeploy rather than editing app-owned XML from a root shell. If redeploy fails, a previously disabled setting is restored and readiness work is stopped; an already-enabled setting remains enabled.
 
@@ -185,12 +224,25 @@ These boundaries are architectural constraints:
 - Do not weaken notification lockdown, secure-window handling, input safety, or tunnel access controls without updating the relevant architecture and runbook.
 - Do not treat public and Pixel-local ticket surfaces as the same deploy target.
 - Do not clear browser profiles, cookies, or stored auth state unless explicitly requested.
-- Runtime cleanup must remain allowlisted and protected-path driven. It must not delete active runtime artifacts, chroots, current releases, state, run, conf, ssh, vpn, `/data/app`, or Termux repo roots.
+- Runtime cleanup must remain allowlisted and protected-path driven. Its existing shell path launches the standalone Android executable from the existing `pixel-health` package. Rust owns target admission, retention, rotation and rollback; Android retains protected active/rollback generations, scheduling, mutation locking, root execution/timeouts and reports. It must not delete active runtime artifacts, chroots, current releases, state, run, conf, ssh, vpn, `/data/app`, or Termux repo roots. See [native cleanup proof](../../ops/reports/2026-09-30-pixel-runtime-cleanup-rust-migration.md).
 - Frequent maintenance runs immediately when the supervisor starts and hourly thereafter. If the runtime mutation lock is occupied, it records the deferral and retries once after 60 seconds. It rotates root-command history above 32 MiB with overflow-safe DB/WAL/SHM accounting and root re-verification, removes action receipts older than 24 hours, and enforces one-MiB allowlisted log and 32-MiB aggregate limits. Cleanup never changes root authorization.
 - Ticket hierarchy XML is transient only: known filenames are swept at Ticket startup and deleted on success, failure, timeout, or cancellation.
 - When touch brightness is enabled, it is the sole owner of physical panel brightness, physical-touch timing, and power-button wake rebound. Ticket brightness guards and other screen guards must park instead of writing the panel.
 
 ## Architecture Update Notes
+
+- 2026-09-30: The user reaffirmed the phone boundary: Ticket and its required
+  support, plus ADB/SSH access; other application services belong on the VPS.
+  The unpublished network/Supervisor candidate was withdrawn and its source
+  restored to the accepted baseline. No new APK or runtime assets were
+  installed. Existing Tailscale access and the accepted Ticket release remain
+  unchanged. See `ops/reports/2026-09-30-phone-scope-correction.md`.
+
+- 2026-09-29: Active supervisor persisted-state reductions and network observations now use the same Rust library, with explicit time and insertion-order-preserving JSON. Rust owns service timestamps/counts, bounded operation history, module-health merging, network/convergence/direct-public transition records and observed management status. Kotlin retains DTOs, controller calls at their existing positions, fresh pre-restart health checks, stop/start order, coroutine scheduling, backoff/recovery policy and the single existing store write per loop. Disabled services are excluded; their existing policies remain unchanged. No command batch, new loop, state store, native handle or production clock override was added. Verification and pending device acceptance are recorded in `ops/reports/2026-09-29-pixel-supervisor-rust-migration.md`.
+
+- 2026-09-29: The same packaged native library also owns StackStore UTF-8 reads, private same-directory atomic file replacement, legacy remote-key selection and inline DoH-token masking. Kotlin retains the public DTOs, synchronized store API and existing JSON formatting; AppGraph still uses its app-private `files/stack-store` config/state identities. The external root-config adapter, supervisor persistence call sites and support exporter are unchanged callers. Corrupt/unreadable files still load defaults without a repair write; library/bridge failures do not silently reset config. Failed writes remove only their own temporary file; readers ignore interrupted staging. There is no new state store, writer loop, cross-process lock or power-loss durability claim. Device restart acceptance must follow the procedure in the native crate README.
+
+- 2026-09-29: General health decisions now belong to the workload-local Rust `pixel-health` library. The Kotlin checker retains the existing public DTOs and one `CommandRunner` root execution; Rust constructs the same single probe, validates required marker sections, and returns the same module status/evidence fields. No supervision, recovery, polling, persistence, or management-auth policy moved across that execution boundary. The arm64 Pixel APK packages the JNI library through the existing Gradle build with 16-KiB ELF/ZIP alignment. Host health and supervisor tests use the same native implementation. Incomplete probes preserve failed-probe semantics; configuration/library failures stay visible as exceptions. The previous Kotlin checker remains in Git for differential verification and rollback, with no parallel production health owner.
 
 - 2026-09-08: The unused AdGuard Home and Pi-hole chroots, dedicated obsolete configuration, and five old DNS entrypoints were retired after live process/mount/listener/manifest checks and verification of a restricted recovery archive outside the phone. Approximately 3.6 GiB was reclaimed. Active platform artifacts and application rollback releases remain. Normal bootstrap already excludes DNS and must not repopulate these retired installations.
 
@@ -216,3 +268,20 @@ Future agents should append short notes here only when a change affects the whol
 - 2026-07-13: DNS and its old public-remote alias are retired on this Pixel. Normal bootstrap excludes DNS archives. When no DNS process exists, cleanup also removes the two known top-level AdGuard runtime/service-loop logs instead of retaining them as managed logs. Deployment artifacts use a verified content-addressed store with active-plus-one-rollback manifest protection; hourly root-history and bounded-log guards prevent the measured residue from returning.
 - 2026-07-20: The ChatGPT phone worker, its Spacetime queue client, package query, clipboard bridge, local HTTP tombstone, and runtime-env generation were retired from new orchestrator builds. Ticket direct Spacetime handling and the protected Rīgas Satiksme automation paths remain unchanged; removing any already-deployed phone files is a separate deployment operation.
 - 2026-07-13: The staged cleanup moved all six live non-DNS packages into the shared hash store, then removed only reverified action receipts, retired DNS/Pi-hole history, duplicate archives, app staging, excess root-command history, and oversized managed logs. Filesystem usage fell by 6.15 GB while root, SSH, VPN, management, Ticket, and active package references remained available. See [Pixel Orchestrator Polish And Cleanup](../../ops/reports/2026-07-13-pixel-orchestrator-polish-and-cleanup.md).
+
+- 2026-09-30: The existing native library also owns the RAM telemetry queue's
+  validation, eviction/admission, expiry, in-flight exclusion, due-event ordering,
+  retry arithmetic and saturating additions. Kotlin keeps the single lock, safe
+  payload/recent DTO storage, randomness, clocks, cancellation and HTTP effects.
+  Selection/marking remains atomic under that lock, with delivery outside it.
+  No queue persistence, additional sender or logging authority was introduced.
+  See `ops/reports/2026-09-30-pixel-telemetry-rust-migration.md` for exact acceptance.
+
+- 2026-09-30: Restart window/count/delay state and weekly cleanup date/alarm
+  decisions now use the existing native library. SupervisorEngine retains its
+  original single-loop controller effects and sleep; Kotlin supplies the clock
+  and device ZoneRules/calendar conversions, preserving gaps, overlaps and
+  skipped dates without narrowing Java's calendar range. AlarmManager retains
+  the same Monday03:00 PendingIntent and permission-dependent exact/approximate
+  scheduling calls. Source parity is distinct from installed-device acceptance;
+  see `ops/reports/2026-09-30-pixel-maintenance-rust-migration.md`.

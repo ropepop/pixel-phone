@@ -57,23 +57,6 @@ assert_before 'public_ipv4_candidate="${ddns_published_ipv4}"' 'if [ "${DEEP_MOD
 rg -Fq 'management_health_mode' "${MANAGEMENT_HEALTH}" || fail "management health does not report local/deep mode"
 rg -Fq -- '--deep|--full' "${MANAGEMENT_HEALTH}" || fail "management health lacks explicit deep mode"
 
-if rg -Fq 'rm -rf' "${TICKET_START}" || rg -Fq 'rm -rf' "${TICKET_STOP}" || rg -Fq 'rm -rf' "${TICKET_LOCK}"; then
-  fail "ticket lifecycle scripts recursively remove a contested lock"
-fi
-rg -Fq 'inputs_current()' "${TICKET_START}" || fail "Ticket start lacks runtime input freshness checks"
-rg -Fq 'ready && inputs_current' "${TICKET_START}" || fail "Ticket fast path can bypass changed runtime inputs"
-rg -Fq 'ticket_lock_acquire "$LOCK"' "${TICKET_START}" || fail "Ticket start lacks lifecycle lock acquisition"
-rg -Fq 'ticket_lock_acquire "$LOCK"' "${TICKET_STOP}" || fail "Ticket stop lacks lifecycle lock acquisition"
-tail -n 1 "${TICKET_STOP}" | rg -Fxq 'exit 0' || fail "Ticket stop reports failure after a successful shutdown"
-rg -Fq 'TICKET_LOCK_OWNER="${TICKET_LOCK_DIR}/owner.pid"' "${TICKET_LOCK}" || fail "Ticket lock lacks owner PID"
-rg -Fq 'ticket_lock_owner_active' "${TICKET_LOCK}" || fail "Ticket lock lacks stale-owner proof"
-rg -Fq 'ticket_lock_run_bounded' "${TICKET_LOCK}" || fail "Ticket lock owner inspection is not bounded"
-if rg -Fq '$(tr '\''\000'\'' '\'' '\'' < "/proc/$owner/cmdline"' "${TICKET_LOCK}"; then
-  fail "Ticket lock still reads owner command lines without a timeout"
-fi
-rg -Fq 'rmdir "$TICKET_LOCK_DIR"' "${TICKET_LOCK}" || fail "Ticket lock lacks narrow stale cleanup"
-if rg -Fq 'cloudflared' "${TICKET_START}" || rg -Fq 'ticket-web-tunnel' "${TICKET_STOP}"; then
-  fail "Ticket lifecycle still owns the retired Pixel tunnel"
-fi
+python3 "${REPO_ROOT}/android-orchestrator/pixel-health/tests/ticket_lifecycle_e2e.py" --policy-only
 
-echo "PASS: active SSH, VPN, management, and Ticket paths retain freshness, bounded waits, ownership, and stale-safe locks"
+echo "PASS: active SSH, VPN, management and native Ticket lifecycle contracts"

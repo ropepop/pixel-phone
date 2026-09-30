@@ -239,16 +239,76 @@ class OrchestratorFacadeRedeployPolicyTest {
     assertEquals(0, harness.supervisor.healthCalls)
   }
 
+  @Test
+  fun bootstrapRejectsRetiredManifestBeforeConfigOrRuntimeMutation() = runBlocking {
+    for (id in listOf("adguardhome-rootfs", "dns-runtime-assets", "train-bot-bundle", "satiksme-bot-bundle", "site-notifier-bundle", "subscription-bot-bundle")) {
+      val harness = buildHarness(StackConfigV1(), listOf(health()), bootstrapExtraArtifactId = id)
+      val result = harness.facade.bootstrapStack()
+      assertFalse(result.message, result.success)
+      assertTrue(result.message, result.message.contains("only Dropbear/Tailscale"))
+      assertNoAdmissionEffects(harness)
+    }
+  }
+
+  @Test
+  fun redeployRejectsRetiredOrMismatchedArtifactBeforeStoppingOrWriting() = runBlocking {
+    for (id in listOf("adguardhome-rootfs", "dns-runtime-assets", "train-bot-bundle", "satiksme-bot-bundle", "site-notifier-bundle", "subscription-bot-bundle", "dropbear-bundle")) {
+      val harness = buildHarness(StackConfigV1(), listOf(health()), manifestArtifactId = id)
+      val result = harness.facade.redeployComponent("vpn")
+      assertFalse(result.message, result.success)
+      assertTrue(result.message, result.message.contains("Phone component release"))
+      assertNoAdmissionEffects(harness)
+    }
+  }
+
+  @Test
+  fun accessBootstrapAndSshRedeployRemainAdmitted() = runBlocking {
+    val bootstrap = buildHarness(StackConfigV1(), listOf(health()))
+    val bootstrapResult = bootstrap.facade.bootstrapStack()
+    assertTrue(bootstrapResult.message, bootstrapResult.success)
+    assertEquals(1, bootstrap.runtimeInstaller.bootstrapCalls)
+    assertEquals(1, bootstrap.supervisor.startAllCalls)
+    assertTrue(bootstrap.store.configSaves > 0)
+    assertTrue(bootstrap.rootExecutor.scripts.isNotEmpty())
+
+    val ssh = buildHarness(StackConfigV1(), listOf(health()), manifestComponent = "ssh")
+    val sshResult = ssh.facade.redeployComponent("ssh")
+    assertTrue(sshResult.message, sshResult.success)
+    assertEquals(1, ssh.runtimeInstaller.installCalls)
+    assertEquals(listOf("ssh"), ssh.supervisor.restartCalls)
+  }
+
+  private fun assertNoAdmissionEffects(harness: TestHarness) {
+    assertEquals(0, harness.store.configSaves)
+    assertTrue(harness.rootExecutor.scripts.isEmpty())
+    assertTrue(harness.runtimeInstaller.syncedComponents.isEmpty())
+    assertEquals(0, harness.runtimeInstaller.bootstrapCalls)
+    assertEquals(0, harness.runtimeInstaller.installCalls)
+    assertEquals(0, harness.supervisor.startAllCalls)
+    assertEquals(0, harness.supervisor.healthCalls)
+    assertTrue(harness.supervisor.stopCalls.isEmpty())
+    assertTrue(harness.supervisor.restartCalls.isEmpty())
+    assertTrue(harness.supervisor.startCalls.isEmpty())
+  }
+
   private fun buildHarness(
     config: StackConfigV1,
     healthSnapshots: List<HealthSnapshot>,
-    manifestComponent: String = "vpn"
+    manifestComponent: String = "vpn",
+    manifestArtifactId: String? = null,
+    bootstrapExtraArtifactId: String? = null
   ): TestHarness {
     val configJson = json.encodeToString(StackConfigV1.serializer(), config)
-    val manifestJson = json.encodeToString(ComponentReleaseManifest.serializer(), testManifest(manifestComponent))
+    val manifest = testManifest(manifestComponent)
+    val manifestJson = json.encodeToString(ComponentReleaseManifest.serializer(),
+      if (manifestArtifactId == null) manifest else manifest.copy(artifacts = manifest.artifacts.map { it.copy(id = manifestArtifactId) }))
+    val access = testManifest("ssh").artifacts + testManifest("vpn").artifacts
+    val bootstrapManifest = ArtifactManifest(manifestVersion = "access-only", signatureSchema = "none",
+      artifacts = if (bootstrapExtraArtifactId == null) access else access + access[0].copy(id = bootstrapExtraArtifactId))
     val runtimeInstaller = FakeRuntimeInstaller()
     val supervisor = FakeSupervisor(healthSnapshots)
-    val rootExecutor = FakeRootExecutor(configJson = configJson, releaseManifestJson = manifestJson)
+    val rootExecutor = FakeRootExecutor(configJson = configJson, releaseManifestJson = manifestJson,
+      runtimeManifestJson = json.encodeToString(ArtifactManifest.serializer(), bootstrapManifest))
     val healthChecker = RuntimeHealthChecker(CommandRunner { _ ->
       CommandResult(ok = true, stdout = "", stderr = "")
     })
@@ -284,7 +344,7 @@ class OrchestratorFacadeRedeployPolicyTest {
   private fun testManifest(component: String): ComponentReleaseManifest {
     val artifacts = listOf(
       lv.jolkins.pixelorchestrator.runtimeinstaller.ArtifactEntry(
-        id = "tailscale-bundle",
+        id = if (component == "ssh") "dropbear-bundle" else "tailscale-bundle",
         url = "/tmp/$component-release-123.tar.gz",
         sha256 = "abc123",
         fileName = "$component-release-123.tar.gz",
@@ -342,8 +402,10 @@ class OrchestratorFacadeRedeployPolicyTest {
   private class InMemoryStackStore : StackStore() {
     var lastSavedConfig: StackConfigV1 = StackConfigV1()
     var lastSavedState: StackStateV1 = StackStateV1()
+    var configSaves = 0
 
     override fun saveConfig(config: StackConfigV1) {
+      configSaves++
       lastSavedConfig = config
     }
 
@@ -362,7 +424,8 @@ class OrchestratorFacadeRedeployPolicyTest {
 
   private class FakeRootExecutor(
     private val configJson: String,
-    private val releaseManifestJson: String
+    private val releaseManifestJson: String,
+    private val runtimeManifestJson: String
   ) : RootExecutor {
     val commands = mutableListOf<String>()
     val scripts = mutableListOf<String>()
@@ -374,6 +437,7 @@ class OrchestratorFacadeRedeployPolicyTest {
       val stdout = when {
         command.contains("/data/local/pixel-stack/conf/orchestrator-config-v1.json") -> configJson
         command.contains("/data/local/pixel-stack/conf/runtime/components/") -> releaseManifestJson
+        command.contains("/data/local/pixel-stack/conf/runtime/runtime-manifest.json") -> runtimeManifestJson
         else -> ""
       }
       return RootResult(
@@ -398,6 +462,7 @@ class OrchestratorFacadeRedeployPolicyTest {
   }
 
   private class FakeRuntimeInstaller : RuntimeInstallerControl {
+    var bootstrapCalls: Int = 0
     var installCalls: Int = 0
     var rollbackCalls: Int = 0
     var pruneCalls: Int = 0
@@ -409,7 +474,8 @@ class OrchestratorFacadeRedeployPolicyTest {
       manifest: ArtifactManifest,
       rootfsArtifactId: String?
     ): BootstrapResult {
-      throw UnsupportedOperationException("bootstrap not used in redeploy tests")
+      bootstrapCalls++
+      return BootstrapResult(true, true, 0, "installed", manifest.artifacts.map { it.id })
     }
 
     override suspend fun syncBundledRuntimeAssets(assets: AssetProvider, component: String?): SyncResult {
@@ -459,8 +525,9 @@ class OrchestratorFacadeRedeployPolicyTest {
     val restartCalls = mutableListOf<String>()
     val stopCalls = mutableListOf<String>()
     val startCalls = mutableListOf<String>()
+    var startAllCalls = 0
 
-    override suspend fun startAll() = Unit
+    override suspend fun startAll() { startAllCalls++ }
     override suspend fun resumeSupervision() = Unit
 
     override suspend fun stopAll() = Unit

@@ -11,16 +11,19 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -39,6 +42,7 @@ internal enum class TicketSpacetimeCommandSubscriptionState {
   DISCONNECTED
 }
 
+@Serializable
 internal enum class TicketSpacetimeCommandSubscriptionMessageKind {
   IDENTITY,
   IGNORED,
@@ -47,6 +51,7 @@ internal enum class TicketSpacetimeCommandSubscriptionMessageKind {
   ERROR
 }
 
+@Serializable
 internal data class TicketSpacetimeCommandSubscriptionMessage(
   val kind: TicketSpacetimeCommandSubscriptionMessageKind,
   val commands: List<TicketSpacetimeCommand> = emptyList(),
@@ -58,6 +63,7 @@ internal data class TicketSpacetimeCommandSubscriptionMessage(
   val monitoringDeleted: Boolean = false
 )
 
+@Serializable
 internal data class TicketCommandControlSnapshot(
   val commands: List<TicketSpacetimeCommand>,
   val desired: TicketSpacetimeDesiredState?,
@@ -74,48 +80,31 @@ internal data class TicketSpacetimeCommandSubscriptionConfig(
 
 /** The subscription owns current rows; only the worker executes them. */
 internal class TicketCommandInbox {
-  private val commands = linkedMapOf<String, TicketSpacetimeCommand>()
-  private var ready = false
-  private var desired: TicketSpacetimeDesiredState? = null
-  private var monitoring: TicketMonitoringConfig? = null
+  private var inbox: JsonObject? = null
   val changed = Channel<Unit>(Channel.CONFLATED)
 
-  @Synchronized fun disconnected() {
-    ready = false
-    commands.clear()
-    desired = null
-    monitoring = null
-    changed.trySend(Unit)
+  private fun call(operation: String, args: JsonObject = JsonObject(emptyMap())): JsonElement {
+    val result = NativeTicketCommand.call(operation,args,inbox).jsonObject
+    inbox = result.getValue("inbox").jsonObject
+    check(result.getValue("error") == JsonNull) { result.getValue("error").jsonPrimitive.content }
+    return result.getValue("answer")
   }
+
+  @Synchronized fun disconnected() { call("disconnect"); changed.trySend(Unit) }
 
   @Synchronized fun apply(message: TicketSpacetimeCommandSubscriptionMessage) {
-    if (message.kind == TicketSpacetimeCommandSubscriptionMessageKind.APPLIED) {
-      commands.clear()
-      desired = null
-      monitoring = null
-      ready = true
-    }
-    check(ready) { "command_snapshot_not_ready" }
-    message.deleted.forEach(commands::remove)
-    message.commands.forEach { commands[it.id] = it }
-    if (message.desiredDeleted) desired = null
-    message.desired?.let { desired = it }
-    if (message.monitoringDeleted) monitoring = null
-    message.monitoring?.let { monitoring = it }
-    check(commands.size <= 128) { "command_snapshot_capacity" }
+    call("apply",buildJsonObject { put("message",NativeTicketCommand.json.encodeToJsonElement(message)) })
     changed.trySend(Unit)
   }
 
-  @Synchronized fun snapshot(): List<TicketSpacetimeCommand>? {
-    if (!ready) return null
-    return commands.values.filterNot { ticketSpacetimeCommandExpired(it.expiresAt, Instant.now()) }
+  @Synchronized fun snapshot(): List<TicketSpacetimeCommand>? = controlSnapshot()?.commands
+
+  @Synchronized fun controlSnapshot(): TicketCommandControlSnapshot? = call("snapshot").let {
+    if (it == JsonNull) null else NativeTicketCommand.json.decodeFromJsonElement<TicketCommandControlSnapshot>(it)
   }
 
-  @Synchronized fun controlSnapshot(): TicketCommandControlSnapshot? = if (!ready) null else
-    TicketCommandControlSnapshot(commands.values.filterNot { ticketSpacetimeCommandExpired(it.expiresAt, Instant.now()) }, desired, monitoring)
-
   @Synchronized fun contains(command: TicketSpacetimeCommand): Boolean =
-    ready && commands[command.id] == command && !ticketSpacetimeCommandExpired(command.expiresAt, Instant.now())
+    call("contains",buildJsonObject { put("command",NativeTicketCommand.json.encodeToJsonElement(command)) }).jsonPrimitive.boolean
 }
 
 /** Terminal results remain until the authoritative snapshot removes the command.
@@ -156,116 +145,8 @@ internal fun parseTicketSpacetimeCommandSubscriptionMessage(
   expectedBackendId: String,
   json: Json = Json { ignoreUnknownKeys = true },
   now: Instant = Instant.now()
-): TicketSpacetimeCommandSubscriptionMessage {
-  if (
-    rawMessage.length > MAX_KEYFRAME_MESSAGE_CHARS ||
-    rawMessage.toByteArray(Charsets.UTF_8).size > MAX_KEYFRAME_MESSAGE_BYTES
-  ) {
-    return TicketSpacetimeCommandSubscriptionMessage(TicketSpacetimeCommandSubscriptionMessageKind.ERROR)
-  }
-  val root = runCatching { json.parseToJsonElement(rawMessage) as? JsonObject }.getOrNull()
-    ?: return TicketSpacetimeCommandSubscriptionMessage(TicketSpacetimeCommandSubscriptionMessageKind.ERROR)
-  if (root.containsKey("IdentityToken")) {
-    // The first server message contains the caller's token. Its body is intentionally never read,
-    // copied into another object, or surfaced to diagnostics.
-    return TicketSpacetimeCommandSubscriptionMessage(TicketSpacetimeCommandSubscriptionMessageKind.IDENTITY)
-  }
-  if (root.containsKey("SubscriptionError")) {
-    return TicketSpacetimeCommandSubscriptionMessage(TicketSpacetimeCommandSubscriptionMessageKind.ERROR)
-  }
-  val kind: TicketSpacetimeCommandSubscriptionMessageKind
-  val databaseUpdate: JsonObject
-  when {
-    root.containsKey("InitialSubscription") -> {
-      kind = TicketSpacetimeCommandSubscriptionMessageKind.APPLIED
-      val initial = root["InitialSubscription"] as? JsonObject
-        ?: return TicketSpacetimeCommandSubscriptionMessage(TicketSpacetimeCommandSubscriptionMessageKind.ERROR)
-      val requestId = (initial["request_id"] as? JsonPrimitive)?.intOrNull
-      if (requestId != COMMAND_SUBSCRIPTION_REQUEST_ID) {
-        return TicketSpacetimeCommandSubscriptionMessage(TicketSpacetimeCommandSubscriptionMessageKind.ERROR)
-      }
-      databaseUpdate = initial["database_update"] as? JsonObject
-        ?: return TicketSpacetimeCommandSubscriptionMessage(TicketSpacetimeCommandSubscriptionMessageKind.ERROR)
-    }
-    root.containsKey("TransactionUpdate") -> {
-      kind = TicketSpacetimeCommandSubscriptionMessageKind.UPDATE
-      val status = (root["TransactionUpdate"] as? JsonObject)?.get("status") as? JsonObject
-      databaseUpdate = status?.get("Committed") as? JsonObject
-        ?: return TicketSpacetimeCommandSubscriptionMessage(TicketSpacetimeCommandSubscriptionMessageKind.IGNORED)
-    }
-    root.containsKey("TransactionUpdateLight") -> {
-      kind = TicketSpacetimeCommandSubscriptionMessageKind.UPDATE
-      databaseUpdate = (root["TransactionUpdateLight"] as? JsonObject)?.get("update") as? JsonObject
-        ?: return TicketSpacetimeCommandSubscriptionMessage(TicketSpacetimeCommandSubscriptionMessageKind.ERROR)
-    }
-    else -> return TicketSpacetimeCommandSubscriptionMessage(TicketSpacetimeCommandSubscriptionMessageKind.IGNORED)
-  }
-
-  val commands = mutableListOf<TicketSpacetimeCommand>()
-  val deleted = mutableListOf<String>()
-  var desired: TicketSpacetimeDesiredState? = null
-  var desiredDeleted = false
-  var monitoring: TicketMonitoringConfig? = null
-  var monitoringDeleted = false
-  val tables = databaseUpdate["tables"] as? JsonArray
-    ?: return TicketSpacetimeCommandSubscriptionMessage(TicketSpacetimeCommandSubscriptionMessageKind.ERROR)
-  for (tableElement in tables) {
-    val table = tableElement as? JsonObject ?: continue
-    val tableName = table.string("table_name")
-    if (tableName !in setOf(COMMAND_SUBSCRIPTION_TABLE, DESIRED_SUBSCRIPTION_TABLE, MONITORING_SUBSCRIPTION_TABLE)) continue
-    val updates = table["updates"] as? JsonArray ?: continue
-    for (updateElement in updates) {
-      val rawUpdate = updateElement as? JsonObject ?: continue
-      val update = (rawUpdate["Uncompressed"] as? JsonObject) ?: rawUpdate
-      for (rowElement in update["deletes"] as? JsonArray ?: JsonArray(emptyList())) {
-        val rowText = (rowElement as? JsonPrimitive)?.contentOrNull ?: error("invalid_deleted_command")
-        check(rowText.toByteArray(Charsets.UTF_8).size <= MAX_KEYFRAME_ROW_BYTES)
-        val row = json.parseToJsonElement(rowText)
-        val id = when (row) {
-          is JsonObject -> row["id"]
-          is JsonArray -> row.firstOrNull()
-          else -> null
-        } as? JsonPrimitive ?: error("invalid_deleted_command")
-        if (tableName == DESIRED_SUBSCRIPTION_TABLE) {
-          if (id.content == "$expectedTicketId:$expectedBackendId") desiredDeleted = true
-        } else if (tableName == MONITORING_SUBSCRIPTION_TABLE) {
-          if (id.content == "$expectedTicketId:$expectedBackendId") monitoringDeleted = true
-        } else deleted += id.content
-      }
-      val inserts = update["inserts"] as? JsonArray ?: continue
-      for (rowElement in inserts) {
-        check(commands.size < MAX_KEYFRAME_COMMANDS_PER_MESSAGE) { "command_update_capacity" }
-        val rowText = (rowElement as? JsonPrimitive)?.contentOrNull ?: continue
-        if (rowText.toByteArray(Charsets.UTF_8).size > MAX_KEYFRAME_ROW_BYTES) continue
-        val row = runCatching { json.parseToJsonElement(rowText) }.getOrNull() ?: continue
-        if (tableName == DESIRED_SUBSCRIPTION_TABLE) {
-          row.toStreamDesiredOrNull(expectedTicketId, expectedBackendId)?.let { desired = it }
-          continue
-        }
-        if (tableName == MONITORING_SUBSCRIPTION_TABLE) {
-          row.toMonitoringConfigOrNull(expectedTicketId, expectedBackendId)?.let { monitoring = it }
-          continue
-        }
-        val command = row.toKeyframeCommandOrNull(expectedTicketId, expectedBackendId, now) ?: continue
-        commands += command
-      }
-    }
-  }
-  return TicketSpacetimeCommandSubscriptionMessage(
-    kind = kind,
-    commands = commands,
-    deleted = deleted,
-    desired = desired,
-    desiredDeleted = desiredDeleted,
-    monitoring = monitoring,
-    monitoringDeleted = monitoringDeleted,
-    requestId = if (kind == TicketSpacetimeCommandSubscriptionMessageKind.APPLIED) {
-      COMMAND_SUBSCRIPTION_REQUEST_ID
-    } else {
-      null
-    }
-  )
-}
+): TicketSpacetimeCommandSubscriptionMessage =
+  NativeTicketCommand.parse(rawMessage, expectedTicketId, expectedBackendId, json, now)
 
 /** Reconnecting transport for one authoritative current-command snapshot. */
 internal class TicketSpacetimeCommandSubscription(
@@ -477,101 +358,6 @@ internal class TicketSpacetimeCommandSubscription(
   }
 }
 
-private fun JsonElement.toMonitoringConfigOrNull(ticketId: String, backendId: String): TicketMonitoringConfig? {
-  val fields = when (this) {
-    is JsonObject -> this
-    is JsonArray -> {
-      check(size == 5) { "invalid_monitoring_config_shape" }
-      listOf("id", "ticketId", "backendId", "enabled", "epoch").zip(this).toMap()
-    }
-    else -> error("invalid_monitoring_config_shape")
-  }
-  fun string(name: String) = (fields[name] as? JsonPrimitive)?.contentOrNull.orEmpty()
-  if (string("id") != "$ticketId:$backendId" || string("ticketId") != ticketId || string("backendId") != backendId) return null
-  val epoch = string("epoch")
-  check(epoch.isNotBlank() && epoch.length <= 128) { "invalid_monitoring_epoch" }
-  return TicketMonitoringConfig((fields["enabled"] as? JsonPrimitive)?.booleanOrNull
-    ?: error("invalid_monitoring_enabled"), epoch)
-}
-
-private fun JsonElement.toStreamDesiredOrNull(ticketId: String, backendId: String): TicketSpacetimeDesiredState? {
-  val fields = when (this) {
-    is JsonObject -> this
-    is JsonArray -> {
-      check(size == STREAM_DESIRED_FIELDS.size) { "invalid_desired_state_shape" }
-      STREAM_DESIRED_FIELDS.zip(this).toMap()
-    }
-    else -> error("invalid_desired_state_shape")
-  }
-  fun string(name: String) = (fields[name] as? JsonPrimitive)?.contentOrNull.orEmpty()
-  if (string("id") != "$ticketId:$backendId" || string("ticketId") != ticketId || string("backendId") != backendId) return null
-  val phase = ticketSpacetimeOptionalString(fields["coldRestartPhase"])
-  check(phase in setOf("", "quiescing", "stopping", "confirmed", "reloading", "asleep", "live", "failed")) { "invalid_cold_restart_phase" }
-  return TicketSpacetimeDesiredState(
-    desiredActive = (fields["desiredActive"] as? JsonPrimitive)?.booleanOrNull ?: error("invalid_desired_active"),
-    viewerCount = (fields["viewerCount"] as? JsonPrimitive)?.intOrNull ?: error("invalid_desired_viewers"),
-    reason = string("reason"), revision = string("revision"), updatedAt = string("updatedAt"),
-    coldRestartId = ticketSpacetimeOptionalString(fields["coldRestartId"]), coldRestartPhase = phase
-  )
-}
-
-private fun JsonElement.toKeyframeCommandOrNull(
-  expectedTicketId: String,
-  expectedBackendId: String,
-  now: Instant
-): TicketSpacetimeCommand? {
-  val fields = when (this) {
-    is JsonObject -> KEYFRAME_COMMAND_FIELD_NAMES.associateWith { field ->
-      val value = this[field] as? JsonPrimitive ?: return null
-      if (!value.isString) return null
-      value.content
-    }
-    is JsonArray -> {
-      if (size != KEYFRAME_COMMAND_FIELD_NAMES.size) return null
-      val values = map {
-        val value = it as? JsonPrimitive ?: return null
-        if (!value.isString) return null
-        value.content
-      }
-      KEYFRAME_COMMAND_FIELD_NAMES.zip(values).toMap()
-    }
-    else -> return null
-  }
-  val id = fields.getValue("id")
-  val ticketId = fields.getValue("ticketId")
-  val backendId = fields.getValue("backendId")
-  val commandType = fields.getValue("commandType")
-  val status = fields.getValue("status")
-  val payloadJson = fields.getValue("payloadJson")
-  val expiresAt = fields.getValue("expiresAt")
-  if (
-    id.isBlank() || id.length > 512 ||
-    ticketId != expectedTicketId || backendId != expectedBackendId ||
-    commandType !in LIVE_TICKET_COMMAND_TYPES || status != "pending" ||
-    payloadJson.toByteArray(Charsets.UTF_8).size > MAX_KEYFRAME_PAYLOAD_BYTES ||
-    ticketSpacetimeCommandExpired(expiresAt, now)
-  ) {
-    return null
-  }
-  return TicketSpacetimeCommand(
-    id = id,
-    ticketId = ticketId,
-    backendId = backendId,
-    commandType = commandType,
-    status = status,
-    revision = fields.getValue("revision"),
-    reason = fields.getValue("reason"),
-    payloadJson = payloadJson.ifBlank { "{}" },
-    createdAt = fields.getValue("createdAt"),
-    updatedAt = fields.getValue("updatedAt"),
-    expiresAt = expiresAt
-  )
-}
-
-private fun JsonObject.string(key: String): String {
-  return (this[key] as? JsonPrimitive)?.contentOrNull.orEmpty()
-}
-
 private fun ticketSpacetimeSubscriptionSqlLiteral(value: String): String {
   return "'" + value.replace("'", "''") + "'"
 }
@@ -609,30 +395,6 @@ private val LONG_SUBSCRIPTION_BACKOFF_CATEGORIES = setOf(
 )
 private val LOCAL_SUBSCRIPTION_HOSTS = setOf("localhost", "127.0.0.1", "::1")
 private const val COMMAND_SUBSCRIPTION_PROTOCOL = "v1.json.spacetimedb"
-private val LIVE_TICKET_COMMAND_TYPES = setOf(
-  "start", "cold_stop", "ticket_action_v3",
-  "generate_control_code", "control_code_browser_capture", "vivi_reauth",
-)
-private val KEYFRAME_COMMAND_FIELD_NAMES = listOf(
-  "id",
-  "ticketId",
-  "backendId",
-  "commandType",
-  "status",
-  "revision",
-  "reason",
-  "payloadJson",
-  "createdAt",
-  "updatedAt",
-  "expiresAt"
-)
-private const val COMMAND_SUBSCRIPTION_TABLE = "ticketremote_service_stream_command"
 private const val DESIRED_SUBSCRIPTION_TABLE = "ticketremote_service_stream_desired_state"
 private const val MONITORING_SUBSCRIPTION_TABLE = "ticketremote_monitoring_config"
-private val STREAM_DESIRED_FIELDS = listOf("id", "ticketId", "backendId", "desiredActive", "viewerCount", "reason", "revision", "updatedBy", "updatedAt", "coldRestartId", "coldRestartPhase", "coldRestartStartedAt", "coldRestartError")
 private const val COMMAND_SUBSCRIPTION_REQUEST_ID = 0
-private const val MAX_KEYFRAME_COMMANDS_PER_MESSAGE = 128
-private const val MAX_KEYFRAME_MESSAGE_CHARS = 768 * 1024
-private const val MAX_KEYFRAME_MESSAGE_BYTES = 1024 * 1024
-private const val MAX_KEYFRAME_ROW_BYTES = 16 * 1024
-private const val MAX_KEYFRAME_PAYLOAD_BYTES = 8 * 1024

@@ -1,23 +1,27 @@
 # Pixel Phone Runtime
 
-Canonical source repository for the rooted Pixel phone runtime, orchestration, and device-side automation.
+Canonical source repository for Ticket on the rooted Pixel and its ADB/SSH access.
 
 ## Purpose
 
-This repository contains the device-side half of the production stack, separate from the server-side `ops` repository, with:
-- root orchestrator code and runtime scripts,
-- workload modules (train bot and site notifications),
-- automation workflows,
-- pihole secret artifacts (intentionally tracked per current policy),
-- evidence archives and observability contracts.
+The phone runs Ticket, its required device-side support and housekeeping, and
+ADB/SSH access. Existing Tailscale connectivity provides the private access path.
+Application servers, bots, notifications and other server workloads run on the
+VPS from the separate canonical `ops` repository.
+
+Historical workload directories and configuration fields remain for retained
+state and reference. Their presence is not an instruction to reinstall or
+restart them. The active registry is
+`orchestrator/modules/registry/modules.yaml`; see
+[PIXEL_STACK_ARCHITECTURE](./docs/architecture/PIXEL_STACK_ARCHITECTURE.md).
 
 ## Repository Map
 
 - `orchestrator/`: Android orchestrator app, root scripts, templates, orchestrator configs, module registry.
 - `orchestrator/vpn-access`: VPN access module manifest and integration overlays.
-- `workloads/`: runtime applications managed by orchestrator (`train-bot`, `site-notifications`).
-- `automation/`: external scheduler/cron automation (`task-executor`).
-- `infra/`: infrastructure-specific files (`pihole/secrets`).
+- `workloads/ticket-screen/`: active Ticket device runtime.
+- Other `workloads/`, `automation/` and `infra/` directories: historical material;
+  excluded from phone deployment and migration.
 - `ops/`: archived evidence and reports.
 - `docs/`: canonical runbooks, onboarding docs, architecture and references.
 - `docs/CONTEXT.md`: small-context reading guide for agents and documentation placement.
@@ -43,21 +47,13 @@ yq '.modules[]?.id' orchestrator/modules/registry/modules.yaml
 
 ## Developer Quickstart
 
-1. Refresh snapshot imports when needed:
-```bash
-./tools/import/import_snapshot.sh
-```
-2. Validate Android orchestrator project:
+1. Validate the Android orchestrator project:
 ```bash
 cd orchestrator/android-orchestrator
 ./gradlew test
 ```
-3. Validate automation/workload suites (examples):
-```bash
-cd workloads/site-notifications && python -m venv .venv && . .venv/bin/activate && pip install -r requirements-dev.txt && PYTHONPATH=. pytest -q
-cd workloads/train-bot && go test ./...
-cd automation/task-executor && ./scripts/drain_runner_smoke_test.sh
-```
+2. Follow the Ticket guidance in the sibling ops checkout's
+`workloads/ticket-remote/CURRENT.md` for affected browser-to-phone acceptance.
 
 ## Observability
 
@@ -68,19 +64,10 @@ cd automation/task-executor && ./scripts/drain_runner_smoke_test.sh
 - One-off evidence emitter: `./tools/observability/emit_event.sh` (stdout JSON; it is not the cloud writer)
 - Evidence archive root: `ops/evidence/`
 
-## Runtime Notes
-
-- `train_bot` treats missing same-day schedule data as degraded after `SCRAPER_DAILY_HOUR` in the runtime timezone (`Europe/Riga` by default).
-- The Android supervisor can auto-restart `train_bot` when heartbeat is healthy but same-day schedule freshness is missing after the daily cutoff.
-- Before the daily cutoff, schedule reads can still return `schedule unavailable` if the current day has not been loaded yet.
-
-## Add New Module
-
-Use the manifest-driven onboarding flow:
-- [ADDING_A_MODULE](./docs/onboarding/ADDING_A_MODULE.md)
-
 ## Scope Notes
 
-- Consolidated modules: `orchestrator`, `telegram train app`, `site-notifications`, `task-executor`, `pihole`, `vpn-access`.
-- White-label notifier repository remains out of scope.
-- History was intentionally reset for this monorepo.
+- Phone scope is Ticket plus ADB/SSH access and the support required for them.
+- Do not restore the old phone-hosted Train, Satiksme, notification, subscription,
+  DNS/DDNS or task-runner arrangement from historical imports or examples.
+- Keep the current working networking setup; language migration does not justify
+  changing the phone/VPS boundary or introducing another resident service.

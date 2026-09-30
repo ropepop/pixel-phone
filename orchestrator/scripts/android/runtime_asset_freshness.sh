@@ -129,6 +129,12 @@ append_entrypoint_specs() {
   done
 }
 
+append_native_runtime_spec() {
+  printf 'pixel-runtime-cleanup|%s|%s\n' \
+    "${APP_ROOT}/app/build/generated/pixelRuntimeCleanupAsset/pixel-runtime-cleanup" \
+    "/data/local/pixel-stack/bin/pixel-runtime-cleanup"
+}
+
 emit_specs() {
   case "${SCOPE}" in
     dns|remote|rooted)
@@ -139,6 +145,7 @@ emit_specs() {
       append_entrypoint_specs "pixel-dns-start.sh" "pixel-dns-stop.sh"
       ;;
     ssh)
+      append_native_runtime_spec
       append_template_group_specs \
         "${APP_ROOT}/app/src/main/assets/runtime/templates/ssh" \
         "/data/local/pixel-stack/templates/ssh" \
@@ -146,6 +153,7 @@ emit_specs() {
       append_entrypoint_specs "pixel-ssh-start.sh" "pixel-ssh-stop.sh" "pixel-management-health.sh"
       ;;
     vpn)
+      append_native_runtime_spec
       append_template_group_specs \
         "${APP_ROOT}/app/src/main/assets/runtime/templates/vpn" \
         "/data/local/pixel-stack/templates/vpn" \
@@ -153,6 +161,7 @@ emit_specs() {
       append_entrypoint_specs "pixel-vpn-start.sh" "pixel-vpn-stop.sh" "pixel-vpn-health.sh" "pixel-management-health.sh"
       ;;
     ticket_screen)
+      append_native_runtime_spec
       append_template_group_specs \
         "${APP_ROOT}/app/src/main/assets/runtime/templates/ticket" \
         "/data/local/pixel-stack/templates/ticket" \

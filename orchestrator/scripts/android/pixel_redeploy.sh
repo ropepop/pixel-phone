@@ -37,11 +37,11 @@ DEFAULT_DDNS_TOKEN_FILE="${WORKSPACE_ROOT}/infra/pihole/secrets/cloudflare-token
 SATIKSME_COMPONENT_RELEASE_ARGS=(--component satiksme_bot)
 
 ORCHESTRATOR_CONFIG_FILE="${ORCHESTRATOR_CONFIG_FILE:-${DEFAULT_CONFIG_FILE}}"
-TRAIN_BOT_ENV_FILE="${TRAIN_BOT_ENV_FILE:-${DEFAULT_TRAIN_BOT_ENV_FILE}}"
-SATIKSME_BOT_ENV_FILE="${SATIKSME_BOT_ENV_FILE:-${DEFAULT_SATIKSME_BOT_ENV_FILE}}"
-SITE_NOTIFIER_ENV_FILE="${SITE_NOTIFIER_ENV_FILE:-${DEFAULT_SITE_NOTIFIER_ENV_FILE}}"
-SUBSCRIPTION_BOT_ENV_FILE="${SUBSCRIPTION_BOT_ENV_FILE:-${DEFAULT_SUBSCRIPTION_BOT_ENV_FILE}}"
-DDNS_TOKEN_FILE="${DDNS_TOKEN_FILE:-${DEFAULT_DDNS_TOKEN_FILE}}"
+TRAIN_BOT_ENV_FILE="${TRAIN_BOT_ENV_FILE:-}"
+SATIKSME_BOT_ENV_FILE="${SATIKSME_BOT_ENV_FILE:-}"
+SITE_NOTIFIER_ENV_FILE="${SITE_NOTIFIER_ENV_FILE:-}"
+SUBSCRIPTION_BOT_ENV_FILE="${SUBSCRIPTION_BOT_ENV_FILE:-}"
+DDNS_TOKEN_FILE="${DDNS_TOKEN_FILE:-}"
 SSH_PUBLIC_KEY_FILE="${SSH_PUBLIC_KEY_FILE:-}"
 SSH_PASSWORD_HASH_FILE="${SSH_PASSWORD_HASH_FILE:-}"
 ADMIN_PASSWORD_FILE="${ADMIN_PASSWORD_FILE:-}"
@@ -51,7 +51,7 @@ IPINFO_LITE_TOKEN_FILE="${IPINFO_LITE_TOKEN_FILE:-}"
 ROOTFS_TARBALL="${PIXEL_RUNTIME_ROOTFS_TARBALL:-}"
 
 ADB_SERIAL=""
-SCOPE="full"
+SCOPE="orchestrator"
 SCOPE_EXPLICIT=0
 MODE="auto"
 PROFILE="${PIXEL_REDEPLOY_PROFILE:-standard}"
@@ -136,16 +136,15 @@ Options:
   --transport MODE            transport to use (adb|ssh|auto)
   --ssh-host IP               Tailscale or SSH host/IP
   --ssh-port PORT             SSH port (default: 2222)
-  --scope full|orchestrator|platform|dns|ticket_screen|train_bot|satiksme_bot|site_notifier|subscription_bot
-                              deployment scope (default: full)
+  --scope orchestrator|ticket_screen|full|platform
+                              Ticket/access deployment scope (default: orchestrator);
+                              full and platform are aliases for orchestrator
   --profile fast|standard|full
                               fast defaults to orchestrator-only scope and reuses unchanged work;
                               standard preserves the current default; full keeps all strict checks
   --mode auto|force-bootstrap|force-refresh|validate-only
                               deployment mode (default: auto)
-  --rootfs-tarball FILE       explicit AdGuardHome rootfs tarball to package for dns/platform scopes
   --skip-build                skip orchestrator APK build
-  --destructive-e2e           run destructive restart/kill-recovery checks after standard validation
   mirror-pull                 pull Pixel deployment variables and secrets into the local plaintext mirror
   mirror-audit                compare the local Pixel mirror with the device and report drift
   mirror-push                 push local Pixel mirror changes when the device has not drifted
@@ -300,29 +299,17 @@ pixel_mirror_affected_actions() {
   local changed_paths_file="$1"
   local rel=""
   local -a actions=()
-  local seen_train=0 seen_satiksme=0 seen_site=0 seen_subscription=0 seen_ticket=0 seen_dns=0 seen_ssh=0 seen_vpn=0 seen_ddns=0
+  local seen_ticket=0 seen_ssh=0 seen_vpn=0
   while IFS= read -r rel; do
     case "${rel}" in
-      data/local/pixel-stack/conf/apps/train-bot.env|data/local/pixel-stack/conf/apps/train-bot-cloudflared.json) seen_train=1 ;;
-      data/local/pixel-stack/conf/apps/satiksme-bot.env) seen_satiksme=1 ;;
-      data/local/pixel-stack/conf/apps/site-notifications.env) seen_site=1 ;;
-      data/local/pixel-stack/conf/apps/subscription-bot.env) seen_subscription=1 ;;
       data/local/pixel-stack/conf/apps/ticket-screen.env|data/local/pixel-stack/conf/apps/operational-logging.env|data/local/pixel-stack/conf/apps/operational-logging-token|data/local/pixel-stack/conf/apps/pixel-orchestrator-observability.env|data/local/pixel-stack/conf/apps/pixel-orchestrator-observability-token) seen_ticket=1 ;;
       data/local/pixel-stack/conf/ssh/*) seen_ssh=1 ;;
       data/local/pixel-stack/conf/vpn/*) seen_vpn=1 ;;
-      data/local/pixel-stack/conf/ddns/*) seen_ddns=1 ;;
-      data/local/pixel-stack/conf/adguardhome/*|data/local/pixel-stack/conf/runtime/runtime-manifest.json|data/local/pixel-stack/conf/runtime/components/dns/*) seen_dns=1 ;;
     esac
   done < "${changed_paths_file}"
-  (( seen_train == 1 )) && actions+=("restart_component train_bot")
-  (( seen_satiksme == 1 )) && actions+=("restart_component satiksme_bot")
-  (( seen_site == 1 )) && actions+=("restart_component site_notifier")
-  (( seen_subscription == 1 )) && actions+=("restart_component subscription_bot")
   (( seen_ticket == 1 )) && actions+=("restart_component ticket_screen")
   (( seen_ssh == 1 )) && actions+=("restart_component ssh")
   (( seen_vpn == 1 )) && actions+=("restart_component vpn")
-  (( seen_ddns == 1 )) && actions+=("sync_ddns")
-  (( seen_dns == 1 )) && actions+=("restart_component dns")
   if (( ${#actions[@]} > 0 )); then
     printf '%s\n' "${actions[@]}"
   fi
@@ -384,8 +371,8 @@ while (( $# > 0 )); do
       MODE="${1:-}"
       ;;
     --rootfs-tarball)
-      shift
-      ROOTFS_TARBALL="${1:-}"
+      echo "DNS/rootfs deployment is retired on the phone; use the VPS" >&2
+      exit 2
       ;;
     --skip-build)
       SKIP_BUILD=1
@@ -418,6 +405,45 @@ if [[ "${PROFILE}" == "fast" ]] && (( SCOPE_EXPLICIT == 0 )); then
   SCOPE="orchestrator"
 fi
 
+case "${SCOPE}" in
+  full|platform) SCOPE="orchestrator" ;;
+  orchestrator|ticket_screen) ;;
+  dns|ddns|remote|train_bot|satiksme_bot|site_notifier|subscription_bot)
+    echo "Phone scope ${SCOPE} is retired; only Ticket and ADB/SSH access belong on the phone; use the VPS" >&2
+    exit 2 ;;
+  *) echo "Unsupported --scope: ${SCOPE}" >&2; exit 2 ;;
+esac
+for retired_input in TRAIN_BOT_ENV_FILE SATIKSME_BOT_ENV_FILE SITE_NOTIFIER_ENV_FILE SUBSCRIPTION_BOT_ENV_FILE DDNS_TOKEN_FILE ADMIN_PASSWORD_FILE ACME_TOKEN_FILE IPINFO_LITE_TOKEN_FILE ROOTFS_TARBALL PIXEL_RUNTIME_TRAIN_BOT_BUNDLE PIXEL_RUNTIME_SATIKSME_BOT_BUNDLE PIXEL_RUNTIME_SITE_NOTIFIER_BUNDLE PIXEL_RUNTIME_SUBSCRIPTION_BOT_BUNDLE; do
+  if [[ -n "${!retired_input:-}" ]]; then
+    echo "Phone input ${retired_input} is retired; use the VPS" >&2
+    exit 2
+  fi
+done
+if (( DESTRUCTIVE_E2E == 1 )); then
+  echo "The retired whole-phone workload test is unavailable; use the Ticket-specific checks" >&2
+  exit 2
+fi
+
+admission_config="${ORCHESTRATOR_CONFIG_FILE}"
+case "${MIRROR_ACTION}" in
+  mirror-pull|mirror-audit) admission_config="" ;;
+  mirror-push|deploy-config) admission_config="${HOST_MIRROR_ROOT}/data/local/pixel-stack/conf/orchestrator-config-v1.json" ;;
+esac
+if [[ -n "${admission_config}" ]]; then
+  python3 - "${admission_config}" <<'PY_PHONE_SCOPE' || exit 2
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as source:
+        config = json.load(source)
+    retired = ("dns", "ddns", "remote", "train_bot", "satiksme_bot", "site_notifier", "subscription_bot")
+    modules = config.get("modules", {})
+    if any(name in modules and modules[name].get("enabled", True) is not False for name in retired) or config.get("ddns", {}).get("enabled", False):
+        raise ValueError()
+except (OSError, ValueError, TypeError, AttributeError):
+    raise SystemExit("Invalid phone configuration or retired workloads enabled; only Ticket and ADB/SSH access belong on the phone (use the VPS)")
+PY_PHONE_SCOPE
+fi
+
 if [[ -n "${MIRROR_ACTION}" ]]; then
   require_cmd python3
   require_cmd tar
@@ -441,14 +467,6 @@ if [[ -n "${MIRROR_ACTION}" ]]; then
   esac
   exit 0
 fi
-
-case "${SCOPE}" in
-  full|orchestrator|platform|dns|ticket_screen|train_bot|satiksme_bot|site_notifier|subscription_bot) ;;
-  *)
-    echo "Unsupported --scope: ${SCOPE}" >&2
-    exit 2
-    ;;
-esac
 
 case "${MODE}" in
   auto|force-bootstrap|force-refresh|validate-only) ;;

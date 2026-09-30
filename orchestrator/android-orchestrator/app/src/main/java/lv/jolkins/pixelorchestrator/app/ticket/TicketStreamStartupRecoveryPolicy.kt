@@ -1,5 +1,7 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
+import kotlinx.serialization.json.*
+
 internal object TicketStreamStartupRecoveryPolicy {
   /** Recheck and restart under the service's existing encoder owner, including slow teardown. */
   fun restartIfNeeded(lock: Any, shouldRestart: () -> Boolean, restart: () -> Unit): Boolean {
@@ -22,13 +24,12 @@ internal object TicketStreamStartupRecoveryPolicy {
     startupWaitMillis: Long,
     captureFrameExpectedAgoMillis: Long? = null
   ): Boolean {
-    if (encoderActive && ordinaryCaptureDemandGated && !captureFrameExpected) return true
-    if (encoderActive && ordinaryCaptureDemandGated && captureFrameExpectedAgoMillis != null &&
-      captureFrameExpectedAgoMillis < startupWaitMillis) return true
-    if (firstUsefulFramePending) return true
-    if (!encoderActive && encoderState != "starting" && encoderState != "restarting") return false
-    if (frameAgeMillis != null && frameAgeMillis <= liveFrameMaxAgeMillis) return true
-    return encoderStartAgeMillis == null || encoderStartAgeMillis < startupWaitMillis
+    return NativeTicketCapture.call("continue_encoder", buildJsonObject {
+      put("active", encoderActive); put("state", encoderState); put("gated", ordinaryCaptureDemandGated)
+      put("expected", captureFrameExpected); put("firstPending", firstUsefulFramePending)
+      put("frameAge", frameAgeMillis); put("startAge", encoderStartAgeMillis)
+      put("liveMax", liveFrameMaxAgeMillis); put("wait", startupWaitMillis); put("expectedAge", captureFrameExpectedAgoMillis)
+    }).jsonPrimitive.boolean
   }
 
   fun waitingForFirstUsefulFrame(
@@ -40,23 +41,10 @@ internal object TicketStreamStartupRecoveryPolicy {
     graceMillis: Long,
     sourceUsefulnessMillis: Long
   ): Boolean {
-    if (
-      encoderStartAgeMillis == null ||
-      encoderStartAgeMillis < 0L ||
-      graceMillis <= 0L ||
-      encoderStartAgeMillis >= graceMillis
-    ) {
-      return false
-    }
-    if (!encoderActive && encoderState != "starting" && encoderState != "restarting") {
-      return false
-    }
-    val usefulFrameFromCurrentEncoder =
-      lastFrameAgeMillis != null &&
-        lastFrameAgeMillis >= 0L &&
-        lastFrameAgeMillis <= encoderStartAgeMillis &&
-        lastFrameSourceToServiceMillis != null &&
-        lastFrameSourceToServiceMillis <= sourceUsefulnessMillis
-    return !usefulFrameFromCurrentEncoder
+    return NativeTicketCapture.call("waiting_first", buildJsonObject {
+      put("active", encoderActive); put("state", encoderState); put("startAge", encoderStartAgeMillis)
+      put("frameAge", lastFrameAgeMillis); put("sourceAge", lastFrameSourceToServiceMillis)
+      put("grace", graceMillis); put("usefulMax", sourceUsefulnessMillis)
+    }).jsonPrimitive.boolean
   }
 }

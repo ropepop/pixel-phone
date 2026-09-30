@@ -3,6 +3,15 @@
 This is the canonical manual for architecture, deployment, cutover, operations, and recovery.
 All other runbooks/docs are compatibility pointers to this file plus generated references.
 
+Current phone scope is Ticket and its required device-side support, housekeeping,
+and ADB/SSH access over the existing Tailscale connection. Application servers,
+bots, notifications and other workloads run on the VPS from canonical `ops`.
+Older DNS/DDNS, bot, notifier, rootfs and multi-workload sections below describe
+historical arrangements; do not use them to reinstall or restart those services.
+The five-component registry and
+[current architecture map](../architecture/PIXEL_STACK_ARCHITECTURE.md) define
+today's phone boundary.
+
 ## Table of Contents
 
 - [Purpose and Scope](#purpose-and-scope)
@@ -30,14 +39,10 @@ All other runbooks/docs are compatibility pointers to this file plus generated r
 ## Purpose and Scope
 
 This repository manages rooted Pixel runtime ownership for:
-- DNS (`dns`)
-- SSH (`ssh`)
-- VPN (`vpn`)
-- Dynamic DNS (`ddns`)
-- Remote endpoint runtime checks (`remote`)
-- Train bot (`train_bot`)
-- Site notifier (`site_notifier`)
-- Ticket screen automation and stream (`ticket_screen`)
+
+- Ticket screen automation and stream (`ticket_screen`).
+- SSH (`ssh`) and existing Tailscale access (`vpn`); Android init owns ADB.
+- Management health (`management`) and required housekeeping (`runtime_cleanup`).
 
 Ownership is centralized in the Android app orchestrator and managed root scripts under `/data/local/pixel-stack`.
 

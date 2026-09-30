@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SOURCE="${ROOT}/scripts/android/deploy_orchestrator_apk.sh"
+SOURCE="${PIXEL_DEPLOY_SOURCE:-${ROOT}/scripts/android/deploy_orchestrator_apk.sh}"
 TEST_DIR="$(mktemp -d)"
 trap 'rm -rf "${TEST_DIR}"' EXIT
 sed -n '/^repair_phone_automation_permissions() {/,/^remote_sha256_file() {/p' "${SOURCE}" |
@@ -31,7 +31,14 @@ pixel_transport_root_shell() {
     'settings get secure enabled_notification_listeners') cat "${TEST_DIR}/listeners" ;;
     'settings get secure accessibility_enabled') cat "${TEST_DIR}/enabled" ;;
     'settings put secure enabled_accessibility_services '*)
-      printf '%s\n' "$1" | sed "s/^settings put secure enabled_accessibility_services '//;s/'$//" > "${TEST_DIR}/services" ;;
+      prior="$(cat "${TEST_DIR}/services")"
+      printf '%s\n' "$1" | sed "s/^settings put secure enabled_accessibility_services '//;s/'$//" > "${TEST_DIR}/services"
+      updated="$(cat "${TEST_DIR}/services")"
+      if [[ ":${updated}:" != *":${accessibility_component}:"* ]]; then
+        rm -f "${TEST_DIR}/bound"
+      elif [[ ":${prior}:" != *":${accessibility_component}:"* && ! -e "${TEST_DIR}/never_bind" ]]; then
+        touch "${TEST_DIR}/bound"
+      fi ;;
     'settings put secure enabled_notification_listeners '*)
       printf '%s\n' "$1" | sed "s/^settings put secure enabled_notification_listeners '//;s/'$//" > "${TEST_DIR}/listeners" ;;
     'settings put secure accessibility_enabled 1') printf '1\n' > "${TEST_DIR}/enabled" ;;
@@ -48,8 +55,6 @@ should_repair_phone_automation_permissions
 repair_phone_automation_permissions
 [[ "$(cat "${TEST_DIR}/services")" == "other.app/OtherService:${accessibility_component}" ]]
 [[ "$(cat "${TEST_DIR}/listeners")" == "other.app/Listener" ]]
-! phone_automation_permissions_ready
-touch "${TEST_DIR}/bound"
 phone_automation_permissions_ready
 PROFILE=fast
 APK_INSTALLED_THIS_RUN=0
@@ -57,7 +62,7 @@ APK_INSTALLED_THIS_RUN=0
 rm "${TEST_DIR}/bound"
 should_repair_phone_automation_permissions
 
-sed -n '/^if \[\[ "${ACTION}:${COMPONENT}" == "redeploy_component:ticket_screen" \]\] \&\&/,/^fi$/p' "${SOURCE}" > "${TEST_DIR}/gate.sh"
+sed -n '/^if \[\[ "${ACTION}:${COMPONENT}" == "redeploy_component:ticket_screen"/,/^fi$/p' "${SOURCE}" > "${TEST_DIR}/gate.sh"
 [[ -s "${TEST_DIR}/gate.sh" ]]
 if (source "${TEST_DIR}/gate.sh") 2>/dev/null; then
   echo 'FAIL: Ticket deployment accepted an unbound input service' >&2
@@ -69,4 +74,24 @@ ACTION=health
 COMPONENT=''
 PROFILE=standard
 ! should_repair_phone_automation_permissions
-echo 'PASS: SSH repairs only owned service entries and Ticket deploy requires an enabled, bound input service'
+
+# The orchestrator-only ADB health path is also used after instrumentation.
+# Android retains the permission after process death but does not rebind on a
+# write of the same setting. It must not report readiness until a real rebind.
+pixel_transport_selected() { printf 'adb\n'; }
+printf '%s\n' "other.app/Listener:${notification_component}" > "${TEST_DIR}/listeners"
+rm "${TEST_DIR}/bound"
+! phone_automation_permissions_ready
+if (source "${TEST_DIR}/gate.sh") 2>/dev/null; then
+  echo 'FAIL: orchestrator health accepted an unbound input service' >&2
+  exit 1
+fi
+repair_phone_automation_permissions
+phone_automation_permissions_ready
+[[ "$(cat "${TEST_DIR}/services")" == "other.app/OtherService:${accessibility_component}" ]]
+[[ "$(cat "${TEST_DIR}/listeners")" == "other.app/Listener:${notification_component}" ]]
+rm "${TEST_DIR}/bound"
+touch "${TEST_DIR}/never_bind"
+! repair_phone_automation_permissions
+! phone_automation_permissions_ready
+echo 'PASS: Ticket and orchestrator health require bound input; rebind preserves other services and persistent failure stays closed'

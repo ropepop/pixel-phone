@@ -8,8 +8,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import lv.jolkins.pixelorchestrator.coreconfig.HealthSnapshot
-import lv.jolkins.pixelorchestrator.coreconfig.ModuleRuntimeState
-import lv.jolkins.pixelorchestrator.coreconfig.OperationEvent
 import lv.jolkins.pixelorchestrator.coreconfig.ServiceRuntimeState
 import lv.jolkins.pixelorchestrator.coreconfig.ServiceStatus
 import lv.jolkins.pixelorchestrator.coreconfig.StackConfigV1
@@ -593,82 +591,7 @@ class SupervisorEngine(
     state: StackStateV1,
     snapshot: HealthSnapshot,
     config: StackConfigV1
-  ): NetworkObservation {
-    val nowEpoch = System.currentTimeMillis() / 1000
-    val currentFingerprint = normalizedStateValue(snapshot.evidence["network_fingerprint"])
-    val currentPublicIpv4 = normalizedStateValue(snapshot.evidence["network_public_ipv4_candidate"])
-    val previousFingerprint = normalizedStateValue(state.lastNetworkFingerprint)
-    val previousPublicIpv4 = normalizedStateValue(state.lastObservedPublicIpv4)
-    val fingerprintChanged =
-      currentFingerprint.isNotBlank() &&
-        previousFingerprint.isNotBlank() &&
-        currentFingerprint != previousFingerprint
-    val publicIpv4Changed =
-      currentPublicIpv4.isNotBlank() &&
-        previousPublicIpv4.isNotBlank() &&
-        currentPublicIpv4 != previousPublicIpv4
-    val previousDirectPublicTransitioning = directPublicTransitioning(previousState.lastHealthSnapshot)
-
-    var nextState = state
-    if (fingerprintChanged) {
-      val convergenceUntil =
-        nowEpoch + config.supervision.networkConvergenceWindowSeconds.coerceAtLeast(0)
-      nextState = nextState
-        .copy(networkConvergenceUntilEpochSeconds = convergenceUntil)
-        .appendEvent(
-          "supervisor",
-          "network_change",
-          true,
-          "transport=${snapshot.evidence["network_active_transport"].orEmpty().ifBlank { "unknown" }} public_ipv4=${if (currentPublicIpv4.isBlank()) "unknown" else currentPublicIpv4}"
-        )
-    }
-
-    val directPublicFailed = directPublicPathFailed(snapshot)
-    val directPublicInTransition = directPublicTransitioning(snapshot)
-    nextState = when {
-      directPublicFailed && nextState.lastDirectPublicFailureEpochSeconds == 0L ->
-        nextState
-          .copy(lastDirectPublicFailureEpochSeconds = nowEpoch)
-          .appendEvent("remote", "direct_public_degraded", false, "published_ip=${snapshot.evidence["ddns_published_ipv4"].orEmpty()} current_ip=${snapshot.evidence["network_public_ipv4_candidate"].orEmpty()}")
-      directPublicFailed ->
-        nextState.copy(lastDirectPublicFailureEpochSeconds = nowEpoch)
-      !directPublicFailed && nextState.lastDirectPublicFailureEpochSeconds != 0L ->
-        nextState
-          .copy(lastDirectPublicFailureEpochSeconds = 0L)
-          .appendEvent("remote", "direct_public_recovered", true, "published_ip=${snapshot.evidence["ddns_published_ipv4"].orEmpty()} current_ip=${snapshot.evidence["network_public_ipv4_candidate"].orEmpty()}")
-      else -> nextState
-    }
-    nextState = when {
-      directPublicFailed -> nextState
-      directPublicInTransition && !previousDirectPublicTransitioning ->
-        nextState.appendEvent(
-          "remote",
-          "direct_public_transition",
-          true,
-          "reason=${snapshot.evidence["direct_public_transition_reason"].orEmpty()} published_ip=${snapshot.evidence["ddns_published_ipv4"].orEmpty()} current_ip=${snapshot.evidence["network_public_ipv4_candidate"].orEmpty()}"
-        )
-      !directPublicInTransition && previousDirectPublicTransitioning ->
-        nextState.appendEvent(
-          "remote",
-          "direct_public_transition_recovered",
-          true,
-          "published_ip=${snapshot.evidence["ddns_published_ipv4"].orEmpty()} current_ip=${snapshot.evidence["network_public_ipv4_candidate"].orEmpty()}"
-        )
-      else -> nextState
-    }
-
-    nextState = nextState.copy(
-      lastNetworkFingerprint = currentFingerprint.ifBlank { state.lastNetworkFingerprint },
-      lastObservedPublicIpv4 = currentPublicIpv4.ifBlank { state.lastObservedPublicIpv4 }
-    )
-
-    return NetworkObservation(
-      state = nextState,
-      fingerprintChanged = fingerprintChanged,
-      publicIpv4Changed = publicIpv4Changed,
-      convergenceActive = nowEpoch < nextState.networkConvergenceUntilEpochSeconds
-    )
-  }
+  ): NetworkObservation = SupervisorState.network(previousState, state, snapshot, config, System.currentTimeMillis() / 1000)
 
   private fun directPublicPathFailed(snapshot: HealthSnapshot): Boolean {
     return snapshot.evidence["direct_public_path_healthy"] == "false"
@@ -676,10 +599,6 @@ class SupervisorEngine(
 
   private fun directPublicTransitioning(snapshot: HealthSnapshot): Boolean {
     return snapshot.evidence["direct_public_transitioning"] == "true"
-  }
-
-  private fun normalizedStateValue(value: String?): String {
-    return value.orEmpty().trim().takeUnless { it.equals("none", ignoreCase = true) } ?: ""
   }
 
   private fun nextTrainBotTunnelFailureCount(trainBotHealthy: Boolean, tunnelFailure: Boolean): Int {
@@ -834,32 +753,8 @@ class SupervisorEngine(
     }
   }
 
-  private fun observeManagementHealth(state: StackStateV1, snapshot: HealthSnapshot): StackStateV1 {
-    if (!managementEnabled(snapshot)) {
-      return state
-    }
-
-    val healthy = snapshot.managementHealthy
-    val reason = managementReason(snapshot)
-    val current = state.services["management"] ?: ServiceRuntimeState()
-    if (healthy) {
-      return if (current.status != ServiceStatus.RUNNING) {
-        state
-          .markComponent("management", ServiceStatus.RUNNING, "", countAsRestart = false)
-          .appendEvent("management", "health_recovered", true, "reason=$reason")
-      } else {
-        state
-      }
-    }
-
-    return if (current.status != ServiceStatus.DEGRADED) {
-      state
-        .markComponent("management", ServiceStatus.DEGRADED, reason, countAsRestart = false)
-        .appendEvent("management", "health_unhealthy", false, "reason=$reason")
-    } else {
-      state
-    }
-  }
+  private fun observeManagementHealth(state: StackStateV1, snapshot: HealthSnapshot): StackStateV1 =
+    SupervisorState.observe(state, "management", snapshot, System.currentTimeMillis() / 1000)
 
   private fun managementEnabled(snapshot: HealthSnapshot): Boolean {
     return snapshot.evidence["management_enabled"] == "true"
@@ -937,81 +832,23 @@ class SupervisorEngine(
     status: ServiceStatus,
     failure: String,
     countAsRestart: Boolean = true
-  ): StackStateV1 {
-    val now = System.currentTimeMillis() / 1000
-    val current = services[name] ?: ServiceRuntimeState()
-    val updated = current.copy(
-      status = status,
-      restartCount = if (countAsRestart && status == ServiceStatus.RUNNING && current.status != ServiceStatus.RUNNING) {
-        current.restartCount + 1
-      } else {
-        current.restartCount
-      },
-      lastFailureReason = failure,
-      lastStartedEpochSeconds = if (status == ServiceStatus.RUNNING) now else current.lastStartedEpochSeconds,
-      lastHealthyEpochSeconds = if (status == ServiceStatus.RUNNING) now else current.lastHealthyEpochSeconds
-    )
+  ): StackStateV1 = SupervisorState.mark(this, name, status, failure, countAsRestart, System.currentTimeMillis() / 1000)
 
-    return copy(services = services + (name to updated))
-  }
+  private fun StackStateV1.appendEvent(component: String, action: String, success: Boolean, details: String): StackStateV1 =
+    SupervisorState.event(this, component, action, success, details, System.currentTimeMillis() / 1000)
 
-  private fun StackStateV1.appendEvent(component: String, action: String, success: Boolean, details: String): StackStateV1 {
-    val next = operationLog
-      .plus(
-        OperationEvent(
-          epochSeconds = System.currentTimeMillis() / 1000,
-          component = component,
-          action = action,
-          success = success,
-          details = details
-        )
-      )
-      .takeLast(100)
+  private fun StackStateV1.withSupervisorStatus(status: ServiceStatus): StackStateV1 =
+    SupervisorState.status(this, status, System.currentTimeMillis() / 1000)
 
-    return copy(operationLog = next)
-  }
+  private fun StackStateV1.withSupervisorLoopHeartbeat(): StackStateV1 =
+    SupervisorState.heartbeat(this, System.currentTimeMillis() / 1000)
 
-  private fun StackStateV1.withSupervisorStatus(status: ServiceStatus): StackStateV1 {
-    val now = System.currentTimeMillis() / 1000
-    val supervisor = services["supervisor"] ?: ServiceRuntimeState()
-    return copy(
-      services = services + ("supervisor" to supervisor.copy(
-        status = status,
-        lastStartedEpochSeconds = if (status == ServiceStatus.RUNNING) now else supervisor.lastStartedEpochSeconds,
-        lastHealthyEpochSeconds = if (status == ServiceStatus.RUNNING) now else supervisor.lastHealthyEpochSeconds
-      )),
-      lastSuccessfulBootEpochSeconds = if (status == ServiceStatus.RUNNING) now else lastSuccessfulBootEpochSeconds
-    )
-  }
-
-  private fun StackStateV1.withSupervisorLoopHeartbeat(): StackStateV1 {
-    return copy(supervisorLoopHeartbeatEpochSeconds = System.currentTimeMillis() / 1000)
-  }
-
-  private fun StackStateV1.withModuleHealth(snapshot: HealthSnapshot): StackStateV1 {
-    val now = System.currentTimeMillis() / 1000
-    val merged = moduleState.toMutableMap()
-    snapshot.moduleHealth.forEach { (moduleId, moduleHealth) ->
-      merged[moduleId] = ModuleRuntimeState(
-        status = moduleHealth.status,
-        healthy = moduleHealth.healthy,
-        lastUpdatedEpochSeconds = now,
-        details = moduleHealth.details
-      )
-    }
-    return copy(moduleState = merged)
-  }
+  private fun StackStateV1.withModuleHealth(snapshot: HealthSnapshot): StackStateV1 =
+    SupervisorState.observe(this, "modules", snapshot, System.currentTimeMillis() / 1000)
 
   private data class RestartOutcome(
     val state: StackStateV1,
     val delayMillis: Long = 0L
-  )
-
-  private data class NetworkObservation(
-    val state: StackStateV1,
-    val fingerprintChanged: Boolean,
-    val publicIpv4Changed: Boolean,
-    val convergenceActive: Boolean
   )
 
   private fun launchLoop(forceRestart: Boolean) {

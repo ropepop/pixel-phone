@@ -2193,7 +2193,9 @@ class TicketStreamService : Service() {
     }
     val recorded = recordTicketVisualActionOutcome(request, terminal.copy(proofObservation = terminalObservation))
     if (recorded.ok && recoveredControlCodeSurface && recoveredControlCodeCleanupCommitted) {
-      publishControlCodeReadyAfterPanelFinalization(lastControlCodeRequestId.orEmpty())
+      val codeRequestId = lastControlCodeRequestId.orEmpty()
+      publishControlCodeReadyAfterPanelFinalization(codeRequestId, publishReady = false)
+      sendControlCodeCleanup(codeRequestId, true, "return_to_raw_complete", 0L)
     }
     return recorded
   }
@@ -6029,15 +6031,17 @@ class TicketStreamService : Service() {
     return true
   }
 
-  private fun publishControlCodeReadyAfterPanelFinalization(requestId: String) {
+  private fun publishControlCodeReadyAfterPanelFinalization(requestId: String, publishReady: Boolean) {
     if (streamActive) {
       updateTicketSessionState(TICKET_SESSION_LIVE, "control_exit_popup_closed")
       startForegroundGuard()
     }
-    enqueueTicketCodePublication(TicketCodePublication(
-      requestId, TicketCodePublicationKind.READY,
-      cleanupRevision = phoneControlState.updates.value.contextRevision
-    ))
+    if (publishReady) {
+      enqueueTicketCodePublication(TicketCodePublication(
+        requestId, TicketCodePublicationKind.READY,
+        cleanupRevision = phoneControlState.updates.value.contextRevision
+      ))
+    }
   }
 
   private suspend fun releaseControlCodeAutomationForRequest() {
@@ -6424,7 +6428,9 @@ class TicketStreamService : Service() {
             val publishCleanup = deferredCleanupOk != null ||
               (!safe && (!keyboardClampReleased || afterDispatch))
             if (publishCleanup) {
-              if (failure == null) publishControlCodeReadyAfterPanelFinalization(cleanRequestId)
+              if (failure == null) publishControlCodeReadyAfterPanelFinalization(
+                cleanRequestId, publishReady = generatedResultDelivered && browserCaptureFailure == null
+              )
               sendControlCodeCleanup(
                 cleanRequestId, failure == null, failure ?: deferredCleanupReason, startedAtMillis
               )
@@ -7384,7 +7390,7 @@ class TicketStreamService : Service() {
     private const val MAX_TICKET_EVENT_DETAIL_BYTES = 256
     private const val SESSION_START_TIMEOUT_MILLIS = 70_000L
     private const val SERVICE_DESTROY_JOIN_TIMEOUT_MILLIS = 12_000L
-    const val SERVER_VERSION = "ticket-stream-2026-09-23-redetect-list-tab-v395"
+    const val SERVER_VERSION = "ticket-stream-2026-09-27-monitor-rechecks-v396"
     private const val FRAME_ENVELOPE_VERSION = "tsf3"
     private const val TICKET_SESSION_IDLE = "idle"
     private const val TICKET_SESSION_STARTING = "starting"

@@ -393,15 +393,15 @@ public final class TicketRootHardwareH264CaptureMain {
           // exception text; failed output and unavailable capture are distinct signals.
           System.err.println("ENCODER_SESSION state=failed");
           if (pendingFrames.isClosed()) return;
-          codecGeneration = Math.max(codecGeneration + 1L, SystemClock.elapsedRealtime());
+          codecGeneration = NativeTicketMedia.nextEncoderGeneration(codecGeneration, SystemClock.elapsedRealtime());
           try { Thread.sleep(500L); } catch (InterruptedException stopped) { interrupt(); return; }
         }
       }
     }
     private void encodeSession() throws Exception {
+      try (TicketH264EncoderOutputAssembler outputAssembler = new TicketH264EncoderOutputAssembler()) {
       MediaCodec encoder = MediaCodec.createEncoderByType("video/avc");
       Surface inputSurface = null;
-      TicketH264EncoderOutputAssembler outputAssembler = new TicketH264EncoderOutputAssembler();
       TicketCodecInputLedger codecInputLedger = new TicketCodecInputLedger();
       TicketEncoderStartupPrimer startupPrimer = new TicketEncoderStartupPrimer(frames);
       Rect destination = new Rect(0, 0, width, height);
@@ -543,6 +543,7 @@ public final class TicketRootHardwareH264CaptureMain {
           encoder::release,
           () -> { if (ownedInput != null) ownedInput.close(); }
         );
+      }
       }
     }
   }

@@ -3,7 +3,7 @@ package lv.jolkins.pixelorchestrator.app
 import java.time.Duration
 import java.time.Instant
 import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.*
 import lv.jolkins.pixelorchestrator.coreconfig.ModuleHealthState
 import lv.jolkins.pixelorchestrator.rootexec.RootExecutor
 import lv.jolkins.pixelorchestrator.supervisor.AutoStartAwareComponentController
@@ -26,26 +26,11 @@ class RuntimeCleanupComponentController(
 
   override suspend fun moduleHealthState(): ModuleHealthState {
     val result = rootExecutor.run(latestReportCommand())
-    if (!result.ok) {
-      return degraded("report_probe_failed", mapOf("detail" to result.stderr.trim().ifBlank { "unknown" }))
-    }
-    if (result.stdout.isBlank()) {
-      return degraded("no_report")
-    }
-
-    val path = result.stdout.lineSequence()
-      .firstOrNull { it.startsWith(REPORT_PATH_PREFIX) }
-      ?.removePrefix(REPORT_PATH_PREFIX)
-      ?.trim()
-      .orEmpty()
-    val body = result.stdout.lineSequence()
-      .dropWhile { !it.startsWith(REPORT_BODY_MARKER) }
-      .drop(1)
-      .joinToString("\n")
-      .trim()
-    if (body.isBlank()) {
-      return degraded("report_body_missing", mapOf("report_path" to path.ifBlank { "unknown" }))
-    }
+    val protocol=NativeCleanupPolicy.call("health_protocol",buildJsonObject{put("ok",result.ok);put("stdout",result.stdout);put("stderr",result.stderr)}).jsonObject
+    val path=protocol.getValue("path").jsonPrimitive.content
+    val body=protocol.getValue("body").jsonPrimitive.content
+    val reason=protocol.getValue("reason").jsonPrimitive.content
+    if(reason.isNotEmpty()) return degraded(reason,json.decodeFromJsonElement(protocol.getValue("details")))
 
     val report = runCatching { json.decodeFromString<CleanupReport>(body) }.getOrElse { error ->
       return degraded(
@@ -62,38 +47,13 @@ class RuntimeCleanupComponentController(
         mapOf("report_path" to path.ifBlank { "unknown" }, "status" to report.status)
       )
     val ageSeconds = Duration.between(finishedAt, Instant.now()).seconds
-    val failed = report.status == CleanupReportStatus.FAILED.wireValue()
-    val dryRunOnly = report.dryRun
-    val stale = ageSeconds < 0 || ageSeconds > HEALTH_FRESH_SECONDS
-    val healthy = !failed && !dryRunOnly && !stale
-    val reason = when {
-      failed -> "latest_cleanup_failed"
-      dryRunOnly -> "latest_cleanup_was_dry_run"
-      stale -> "latest_cleanup_stale"
-      else -> "ok"
-    }
-    return ModuleHealthState(
-      healthy = healthy,
-      status = if (healthy) "running" else "degraded",
-      details = mapOf(
-        "failure_reason" to reason,
-        "report_path" to path.ifBlank { "unknown" },
-        "report_status" to report.status,
-        "report_age_sec" to ageSeconds.toString(),
-        "deleted_bytes" to report.summary.deletedBytes.toString(),
-        "deleted_count" to report.summary.deletedCount.toString(),
-        "dry_run" to report.dryRun.toString()
-      )
-    )
+    return NativeCleanupPolicy.value("health_result",buildJsonObject{
+      put("report",json.encodeToJsonElement(report));put("path",path);put("age",ageSeconds)
+    })
   }
 
-  private fun degraded(reason: String, details: Map<String, String> = emptyMap()): ModuleHealthState {
-    return ModuleHealthState(
-      healthy = false,
-      status = "degraded",
-      details = mapOf("failure_reason" to reason) + details
-    )
-  }
+  private fun degraded(reason:String,details:Map<String,String> = emptyMap()):ModuleHealthState =
+    NativeCleanupPolicy.value("degraded",buildJsonObject{put("reason",reason);put("details",json.encodeToJsonElement(details))})
 
   private fun latestReportCommand(): String {
     return """

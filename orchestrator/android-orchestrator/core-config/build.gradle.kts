@@ -16,4 +16,5 @@ dependencies {
 
 tasks.test {
   useJUnit()
+  systemProperty("pixel.store.testClasspath", sourceSets.test.get().runtimeClasspath.asPath)
 }

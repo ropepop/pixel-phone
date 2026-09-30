@@ -1,3 +1,5 @@
+import atexit
+import subprocess
 import importlib.util
 import json
 import sys
@@ -9,7 +11,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "ticket_health_monitor.py"
+ROOT = Path(__file__).resolve().parents[3]
+CONFIG_PATH = ROOT / "tools/observability/ticket_health_monitor.config.json"
+# Frozen migration oracle; production has only the native launcher.
+BASELINE_DIRECTORY = tempfile.TemporaryDirectory(prefix="ticket-monitor-baseline-")
+atexit.register(BASELINE_DIRECTORY.cleanup)
+MODULE_PATH = Path(BASELINE_DIRECTORY.name) / "ticket_health_monitor.py"
+MODULE_PATH.write_bytes(subprocess.run([
+  "git", "-C", str(ROOT), "show", "076d0ff:tools/observability/ticket_health_monitor.py"
+], check=True, capture_output=True).stdout)
 SPEC = importlib.util.spec_from_file_location("ticket_health_monitor", MODULE_PATH)
 monitor = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
@@ -209,7 +219,7 @@ class TicketHealthMonitorTest(unittest.TestCase):
         worker.join()
 
   def test_config_requires_public_operator_identity_and_forbids_tokens(self):
-    config_path = MODULE_PATH.parent / "ticket_health_monitor.config.json"
+    config_path = CONFIG_PATH
     config = json.loads(config_path.read_text(encoding="utf-8"))
     monitor.validate_config(config)
 
@@ -224,7 +234,7 @@ class TicketHealthMonitorTest(unittest.TestCase):
       monitor.validate_config(token_config)
 
   def test_config_strictly_validates_resource_thresholds(self):
-    config_path = MODULE_PATH.parent / "ticket_health_monitor.config.json"
+    config_path = CONFIG_PATH
     config = json.loads(config_path.read_text(encoding="utf-8"))
     broken_configs = []
 
@@ -257,7 +267,7 @@ class TicketHealthMonitorTest(unittest.TestCase):
           monitor.validate_config(broken)
 
   def test_config_rejects_unknown_missing_mistyped_and_nonfinite_values(self):
-    config_path = MODULE_PATH.parent / "ticket_health_monitor.config.json"
+    config_path = CONFIG_PATH
     config = json.loads(config_path.read_text(encoding="utf-8"))
     broken_configs = []
 
@@ -819,7 +829,7 @@ class TicketHealthMonitorTest(unittest.TestCase):
           self.assertTrue(any("early-warning" in value for value in result["warnings"]))
 
   def test_frame_limits_cannot_weaken_product_contract(self):
-    config = json.loads((MODULE_PATH.parent / "ticket_health_monitor.config.json").read_text())
+    config = json.loads((CONFIG_PATH).read_text())
     for value in (3000, {"warning": 3000, "failure": 3000}, {"warning": 1000, "failure": 3001},
                   {"warning": True, "failure": 3000}, {"warning": 1000, "failure": float("inf")}):
       with self.subTest(value=value):

@@ -9,6 +9,74 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TicketMonitoringTest {
+  @Test fun problemRechecksAreBoundedAndKeepTheFiveMinuteReportDeadline() {
+    for (problem in listOf(
+      ticketMonitoringObservation(null, true, 1_000L),
+      ticketMonitoringObservation(null, false, 1_000L),
+      ticketMonitoringObservation(TicketVisualPhoneState.BLOCKED, false, 1_000L)
+    )) {
+      val schedule = TicketMonitoringSchedule()
+      schedule.configure(TicketMonitoringConfig(true, "enabled"), 1_000L)
+      schedule.reported(problem, 1_000L)
+      for (check in 1..12) {
+        val now = 1_000L + check * 15_000L
+        assertFalse(schedule.checkDue(now - 1L))
+        assertTrue("Missing recheck $check for ${problem.reason}", schedule.checkDue(now))
+        assertTrue(schedule.checkDue(now, problem.copy(capturedAtMillis = now - 1L)))
+        schedule.checked(now)
+        assertFalse(schedule.shouldReport(problem.copy(capturedAtMillis = now), now))
+      }
+      assertFalse(schedule.checkDue(196_000L))
+      assertFalse(schedule.checkDue(300_999L))
+      assertTrue(schedule.checkDue(301_000L))
+      val persistent = problem.copy(capturedAtMillis = 301_000L)
+      assertTrue(schedule.shouldReport(persistent, 301_000L))
+      schedule.reported(persistent, 301_000L)
+      assertTrue(schedule.checkDue(316_000L))
+    }
+  }
+
+  @Test fun rechecksRequireNewEvidenceAndRecoveryOrConfigurationCancelsThem() {
+    val schedule = TicketMonitoringSchedule()
+    schedule.configure(TicketMonitoringConfig(true, "enabled"), 1_000L)
+    schedule.reported(ticketMonitoringObservation(null, true, 1_000L), 1_000L)
+    schedule.checked(16_000L)
+    val ready = ticketMonitoringObservation(TicketVisualPhoneState.ACTIVATED_DETAIL, false, 15_999L)
+    assertFalse(schedule.shouldReport(ready, 16_000L))
+    assertNull(ticketMonitoringProbeDispatch(1L, 16_001L))
+    assertFalse(schedule.checkDue(17_000L))
+    val fresh = ready.copy(capturedAtMillis = 17_000L)
+    assertTrue(schedule.shouldReport(fresh, 17_000L))
+    schedule.reported(fresh, 17_000L)
+    assertFalse(schedule.checkDue(31_000L))
+    assertFalse(schedule.checkDue(316_999L))
+    assertTrue(schedule.checkDue(317_000L))
+    schedule.reported(ticketMonitoringObservation(null, true, 318_000L), 318_000L)
+    assertFalse(schedule.configure(TicketMonitoringConfig(false, "disabled"), 319_000L))
+    assertTrue(schedule.configure(TicketMonitoringConfig(true, "new"), 320_000L))
+    schedule.reported(ready.copy(capturedAtMillis = 320_000L), 320_000L)
+    assertFalse(schedule.checkDue(333_000L))
+    assertTrue(schedule.checkDue(620_000L))
+  }
+
+  @Test fun delayedRechecksDoNotCatchUpOrExtendTheirWindowWhenTheProblemChanges() {
+    val schedule = TicketMonitoringSchedule()
+    schedule.configure(TicketMonitoringConfig(true, "enabled"), 1_000L)
+    schedule.reported(ticketMonitoringObservation(null, true, 1_000L), 1_000L)
+    assertTrue(schedule.checkDue(61_000L))
+    schedule.checked(61_000L)
+    assertFalse(schedule.checkDue(61_001L))
+    assertFalse(schedule.checkDue(75_999L))
+    assertTrue(schedule.checkDue(76_000L))
+    schedule.checked(176_000L)
+    val changed = ticketMonitoringObservation(null, false, 176_000L)
+    assertTrue(schedule.shouldReport(changed, 176_000L))
+    schedule.reported(changed, 176_000L)
+    assertFalse(schedule.checkDue(191_000L))
+    assertFalse(schedule.checkDue(475_999L))
+    assertTrue(schedule.checkDue(476_000L))
+  }
+
   @Test fun warmIdleProbeStaysPendingUntilRealObservationAcrossFourIntervals() {
     val schedule = TicketMonitoringSchedule()
     schedule.configure(TicketMonitoringConfig(true, "enabled"), 100L)
@@ -17,12 +85,12 @@ class TicketMonitoringTest {
     repeat(4) { interval ->
       now += TICKET_MONITOR_INTERVAL_MILLIS
       assertTrue(schedule.checkDue(now))
+      schedule.checked(now)
       // The helper can capture before dispatch returns; a fabricated unavailable result
       // here used to reject this real observation as older and keep a false incident open.
       val capturedAt = now + 10L
       now += 20L
       assertNull(ticketMonitoringProbeDispatch(interval + 1L, now))
-      schedule.checked(now)
       assertFalse(schedule.checkDue(now + 1L))
       val ready = ticketMonitoringObservation(TicketVisualPhoneState.ACTIVATED_DETAIL, false, capturedAt)
       assertTrue(schedule.shouldReport(ready, now + 1_000L))

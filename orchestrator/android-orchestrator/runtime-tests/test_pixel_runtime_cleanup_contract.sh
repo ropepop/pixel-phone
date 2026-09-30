@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SCRIPT_PATH="${REPO_ROOT}/app/src/main/assets/runtime/entrypoints/pixel-runtime-cleanup.sh"
+SCRIPT_PATH="${PIXEL_RUNTIME_CLEANUP_EXECUTABLE:-${REPO_ROOT}/app/src/main/assets/runtime/entrypoints/pixel-runtime-cleanup.sh}"
 
 if [[ ! -f "${SCRIPT_PATH}" ]]; then
   echo "FAIL: cleanup script missing at ${SCRIPT_PATH}" >&2
@@ -11,6 +11,16 @@ fi
 
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "${TEST_ROOT}"' EXIT
+
+if [[ -z "${PIXEL_RUNTIME_CLEANUP_EXECUTABLE:-}" ]]; then
+  cargo build --locked --release --manifest-path "${REPO_ROOT}/pixel-health/Cargo.toml" --bin pixel-runtime-cleanup
+  mkdir "${TEST_ROOT}/bin"
+  cp "${REPO_ROOT}/pixel-health/target/release/pixel-runtime-cleanup" "${TEST_ROOT}/bin/pixel-runtime-cleanup"
+  cp "${SCRIPT_PATH}" "${TEST_ROOT}/bin/pixel-runtime-cleanup.sh"
+  SCRIPT_PATH="${TEST_ROOT}/bin/pixel-runtime-cleanup.sh"
+fi
+CLEANUP_COMMAND=("${SCRIPT_PATH}")
+[[ "${SCRIPT_PATH}" != *.sh ]] || CLEANUP_COMMAND=(sh "${SCRIPT_PATH}")
 
 STACK_BASE="${TEST_ROOT}/stack"
 CACHE_ROOT="${TEST_ROOT}/cache"
@@ -198,7 +208,7 @@ ${TERMUX_HOME}/telegram-train-app/orchestrator/.artifacts/runtime-local/local-20
 ${TERMUX_HOME}/site-notifications-build
 EOF_PROTECTED
 
-sh "${SCRIPT_PATH}" \
+"${CLEANUP_COMMAND[@]}" \
   --dry-run \
   --protected-list "${PROTECTED_LIST}" \
   --stack-base "${STACK_BASE}" \
@@ -256,7 +266,7 @@ if grep -Fq "${LOCAL_TMP}/pixel-orchestrator-runtime-young" "${DRY_RUN_OUTPUT}";
   exit 1
 fi
 
-sh "${SCRIPT_PATH}" \
+"${CLEANUP_COMMAND[@]}" \
   --protected-list "${PROTECTED_LIST}" \
   --stack-base "${STACK_BASE}" \
   --orchestrator-cache "${CACHE_ROOT}" \
@@ -373,7 +383,7 @@ truncate -s 7 "${STACK_BASE}/vpn/logs/tailscaled.log.2"
 truncate -s 9 "${STACK_BASE}/ssh/logs/dropbear.log.bak-stale"
 truncate -s 2147483649 "${SUPERUSER_DB}"
 rm -f "${SUPERUSER_DB}-wal" "${SUPERUSER_DB}-shm"
-sh "${SCRIPT_PATH}" \
+"${CLEANUP_COMMAND[@]}" \
   --frequent \
   --dry-run \
   --protected-list "${PROTECTED_LIST}" \
@@ -405,7 +415,7 @@ if ! grep -Fq $'OBSERVE\truntime_log_total\t32' "${FREQUENT_OUTPUT}"; then
 fi
 
 truncate -s 33554432 "${SUPERUSER_DB}"
-sh "${SCRIPT_PATH}" \
+"${CLEANUP_COMMAND[@]}" \
   --frequent \
   --dry-run \
   --protected-list "${PROTECTED_LIST}" \
@@ -420,7 +430,7 @@ fi
 
 truncate -s 33554430 "${SUPERUSER_DB}"
 truncate -s 3 "${SUPERUSER_DB}-wal"
-sh "${SCRIPT_PATH}" \
+"${CLEANUP_COMMAND[@]}" \
   --frequent \
   --dry-run \
   --protected-list "${PROTECTED_LIST}" \
@@ -436,7 +446,7 @@ fi
 
 FREQUENT_PROTECTED_LIST="${TEST_ROOT}/frequent-protected.txt"
 printf '%s\n' "${SUPERUSER_DB}" > "${FREQUENT_PROTECTED_LIST}"
-sh "${SCRIPT_PATH}" \
+"${CLEANUP_COMMAND[@]}" \
   --frequent \
   --dry-run \
   --protected-list "${FREQUENT_PROTECTED_LIST}" \
@@ -451,7 +461,7 @@ if ! grep -Fq $'SKIP\tsuperuser_log_db\t33554433' "${FREQUENT_OUTPUT}" ||
 fi
 
 rm -f "${SUPERUSER_DB}" "${SUPERUSER_DB}-wal" "${SUPERUSER_DB}-shm"
-sh "${SCRIPT_PATH}" \
+"${CLEANUP_COMMAND[@]}" \
   --frequent \
   --dry-run \
   --protected-list "${PROTECTED_LIST}" \
@@ -480,7 +490,7 @@ printf 'oversize superuser database\n' > "${SUPERUSER_DB}"
 printf 'oversize wal\n' > "${SUPERUSER_DB}-wal"
 
 ROLLBACK_OUTPUT="${TEST_ROOT}/root-rollback.txt"
-sh "${SCRIPT_PATH}" \
+"${CLEANUP_COMMAND[@]}" \
   --protected-list "${PROTECTED_LIST}" \
   --stack-base "${STACK_BASE}" \
   --orchestrator-cache "${CACHE_ROOT}" \
@@ -526,9 +536,10 @@ printf 'oversize interruption wal\n' > "${SUPERUSER_DB}-wal"
 printf 'oversize interruption shm\n' > "${SUPERUSER_DB}-shm"
 
 INTERRUPTION_OUTPUT="${TEST_ROOT}/root-interruption.txt"
-PATH="${FAKE_BIN}:${PATH}" sh "${SCRIPT_PATH}" \
+PATH="${FAKE_BIN}:${PATH}" "${CLEANUP_COMMAND[@]}" \
   --frequent \
   --protected-list "${PROTECTED_LIST}" \
+  --stack-base "${STACK_BASE}" \
   --superuser-log-db "${SUPERUSER_DB}" \
   --root-recheck-command true \
   --superuser-log-max-bytes 8 > "${INTERRUPTION_OUTPUT}"

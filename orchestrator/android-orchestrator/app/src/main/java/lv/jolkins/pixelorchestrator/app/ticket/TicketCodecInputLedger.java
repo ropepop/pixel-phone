@@ -9,24 +9,17 @@ final class TicketCodecInputLedger {
   private final ArrayDeque<InputStage> pending = new ArrayDeque<>();
 
   void add(InputStage stage) {
-    if (stage == null || stage.captureAttemptId <= 0L || stage.codecGeneration <= 0L) {
-      throw new IllegalArgumentException("invalid codec input stage");
-    }
-    if (
-      stage.captureStartUs <= 0L ||
-      stage.captureCompleteUs < stage.captureStartUs ||
-      stage.codecInputUs < stage.captureCompleteUs
-    ) {
-      throw new IllegalArgumentException("invalid codec input timestamps");
-    }
-    InputStage tail = pending.peekLast();
-    if (tail != null && stage.codecInputUs < tail.codecInputUs) {
-      throw new IllegalArgumentException("codec input timestamps moved backwards");
-    }
-    if (pending.size() >= MAX_PENDING_INPUTS) {
-      throw new IllegalStateException("too many codec inputs await output");
-    }
+    int error = NativeTicketMedia.validateCodecInput(metadata(stage), metadata(pending.peekLast()), pending.size());
+    if (error == 1) throw new IllegalArgumentException("invalid codec input stage");
+    if (error == 2) throw new IllegalArgumentException("invalid codec input timestamps");
+    if (error == 3) throw new IllegalArgumentException("codec input timestamps moved backwards");
+    if (error == 4) throw new IllegalStateException("too many codec inputs await output");
     pending.addLast(stage);
+  }
+
+  private static long[] metadata(InputStage stage) {
+    return stage == null ? new long[0] : new long[] {stage.captureAttemptId, stage.codecGeneration,
+      stage.captureStartUs, stage.captureCompleteUs, stage.codecInputUs};
   }
 
   InputStage take() {

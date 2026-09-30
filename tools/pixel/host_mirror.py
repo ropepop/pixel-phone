@@ -4,13 +4,12 @@
 from __future__ import annotations
 
 import pathlib
-import runpy
+import os
 import sys
 
 
-script = pathlib.Path(__file__).resolve().parents[3] / "ops" / "tools" / "arbuzas" / "host_mirror.py"
+script = pathlib.Path(__file__).resolve().parents[3] / "ops" / "tools" / "arbuzas" / "host-mirror.sh"
 if not script.exists():
     raise SystemExit(f"shared host mirror helper not found: {script}")
 
-sys.argv[0] = str(script)
-runpy.run_path(str(script), run_name="__main__")
+os.execv(str(script), [str(script), *sys.argv[1:]])

@@ -2,6 +2,12 @@
 
 Use this file to pick a small Markdown context set for the Pixel phone archive and ticket/phone orchestration material.
 
+Current phone scope is Ticket and its required support, plus ADB/SSH access.
+Server workloads belong in the sibling canonical `ops` repository on the VPS.
+Historical phone workload directories, imported templates and old runbook
+examples must not be treated as active deployment or migration instructions.
+Start with the active scope in `../AGENTS.md` and the current architecture map.
+
 ## Always-read spine
 
 - `../AGENTS.md`: repo-wide communication, verification, and architecture-update rules.

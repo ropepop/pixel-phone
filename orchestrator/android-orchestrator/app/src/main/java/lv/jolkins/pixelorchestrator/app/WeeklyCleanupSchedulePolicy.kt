@@ -4,7 +4,6 @@ import java.time.DayOfWeek
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
-import java.time.temporal.TemporalAdjusters
 
 internal object WeeklyCleanupSchedulePolicy {
   val TARGET_DAY_OF_WEEK: DayOfWeek = DayOfWeek.MONDAY
@@ -17,15 +16,14 @@ internal object WeeklyCleanupSchedulePolicy {
     hour: Int = TARGET_HOUR,
     minute: Int = TARGET_MINUTE
   ): ZonedDateTime {
-    var candidate = now
+    val candidate = now
       .toLocalDate()
-      .with(TemporalAdjusters.nextOrSame(dayOfWeek))
+      .plusDays(NativeCleanupSchedule.daysAhead(now.dayOfWeek.value, dayOfWeek.value))
       .atTime(hour, minute)
       .atZone(now.zone)
-    if (!candidate.isAfter(now)) {
-      candidate = candidate.toLocalDate().plusWeeks(1).atTime(hour, minute).atZone(now.zone)
-    }
-    return candidate
+    return if (NativeCleanupSchedule.nextWeek(now.toEpochSecond(), now.nano, candidate.toEpochSecond(), candidate.nano)) {
+      candidate.toLocalDate().plusWeeks(1).atTime(hour, minute).atZone(now.zone)
+    } else candidate
   }
 
   fun nextRunAfter(
@@ -38,4 +36,12 @@ internal object WeeklyCleanupSchedulePolicy {
     val now = ZonedDateTime.ofInstant(Instant.ofEpochMilli(nowMillis), zoneId)
     return nextRunAfter(now, dayOfWeek, hour, minute).toInstant().toEpochMilli()
   }
+}
+
+/** Java resolves the device time-zone rules; Rust decides dates and admission. */
+internal object NativeCleanupSchedule {
+  init { System.loadLibrary("pixel_health") }
+  @JvmStatic external fun daysAhead(currentDay: Int, targetDay: Int): Long
+  @JvmStatic external fun nextWeek(nowSeconds: Long, nowNanos: Int, candidateSeconds: Long, candidateNanos: Int): Boolean
+  @JvmStatic external fun exactAlarm(sdk: Int, granted: Boolean): Boolean
 }

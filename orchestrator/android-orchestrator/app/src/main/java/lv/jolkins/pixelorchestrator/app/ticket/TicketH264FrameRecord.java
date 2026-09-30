@@ -4,8 +4,6 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 /** Length-delimited, versioned IPC record between the root encoder helper and Android service. */
 final class TicketH264FrameRecord {
@@ -61,19 +59,12 @@ final class TicketH264FrameRecord {
   }
 
   static void write(OutputStream output, TicketH264FrameRecord record) throws IOException {
-    validate(record);
-    ByteBuffer header = ByteBuffer.allocate(HEADER_BYTES).order(ByteOrder.BIG_ENDIAN);
-    header.putInt(MAGIC);
-    header.put((byte) (record.keyFrame ? FLAG_KEY_FRAME : 0));
-    header.putLong(record.captureAttemptId);
-    header.putLong(record.codecGeneration);
-    header.putLong(record.captureStartUs);
-    header.putLong(record.captureCompleteUs);
-    header.putLong(record.codecInputUs);
-    header.putLong(record.codecOutputUs);
-    header.putLong(record.recordEmissionUs);
-    header.putInt(record.payload.length);
-    output.write(header.array());
+    if (record == null || record.payload == null) throw new IOException("missing THF1 record");
+    byte[] header = NativeTicketMedia.thfHeader(record.keyFrame, new long[] {
+      record.captureAttemptId, record.codecGeneration, record.captureStartUs,
+      record.captureCompleteUs, record.codecInputUs, record.codecOutputUs, record.recordEmissionUs
+    }, record.payload.length);
+    output.write(header);
     output.write(record.payload);
   }
 
@@ -83,60 +74,10 @@ final class TicketH264FrameRecord {
     if (first < 0) return null;
     header[0] = (byte) first;
     readFully(input, header, 1, HEADER_BYTES - 1, "truncated THF1 header");
-    ByteBuffer parsed = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN);
-    if (parsed.getInt() != MAGIC) {
-      throw new IOException("invalid THF1 magic");
-    }
-    int flags = parsed.get() & 0xff;
-    if ((flags & ~FLAG_KEY_FRAME) != 0) {
-      throw new IOException("unsupported THF1 flags");
-    }
-    long captureAttemptId = parsed.getLong();
-    long codecGeneration = parsed.getLong();
-    long captureStartUs = parsed.getLong();
-    long captureCompleteUs = parsed.getLong();
-    long codecInputUs = parsed.getLong();
-    long codecOutputUs = parsed.getLong();
-    long recordEmissionUs = parsed.getLong();
-    int payloadBytes = parsed.getInt();
-    if (payloadBytes <= 0 || payloadBytes > MAX_PAYLOAD_BYTES) {
-      throw new IOException("invalid THF1 payload length");
-    }
+    int payloadBytes = NativeTicketMedia.thfPayloadLength(header);
     byte[] payload = new byte[payloadBytes];
     readFully(input, payload, 0, payloadBytes, "truncated THF1 payload");
-    TicketH264FrameRecord record = new TicketH264FrameRecord(
-      (flags & FLAG_KEY_FRAME) != 0,
-      captureAttemptId,
-      codecGeneration,
-      captureStartUs,
-      captureCompleteUs,
-      codecInputUs,
-      codecOutputUs,
-      recordEmissionUs,
-      payload
-    );
-    validate(record);
-    return record;
-  }
-
-  private static void validate(TicketH264FrameRecord record) throws IOException {
-    if (record == null || record.payload == null) {
-      throw new IOException("missing THF1 record");
-    }
-    if (record.payload.length <= 0 || record.payload.length > MAX_PAYLOAD_BYTES) {
-      throw new IOException("invalid THF1 payload length");
-    }
-    if (
-      record.captureAttemptId <= 0L ||
-      record.codecGeneration <= 0L ||
-      record.captureStartUs <= 0L ||
-      record.captureCompleteUs < record.captureStartUs ||
-      record.codecInputUs < record.captureCompleteUs ||
-      record.codecOutputUs < record.codecInputUs ||
-      record.recordEmissionUs < record.codecOutputUs
-    ) {
-      throw new IOException("invalid THF1 stage timestamps");
-    }
+    return NativeTicketMedia.thfRecord(header, payload);
   }
 
   private static void readFully(

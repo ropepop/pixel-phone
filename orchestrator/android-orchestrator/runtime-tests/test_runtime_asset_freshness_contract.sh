@@ -56,6 +56,13 @@ if ! printf '%s\n' "${ssh_specs}" | rg -Fq '/data/local/pixel-stack/bin/pixel-ma
   echo "FAIL: ssh scope is missing management health entrypoint checks" >&2
   exit 1
 fi
+for scope in ssh vpn ticket_screen; do
+  native_specs="$("${HELPER_SCRIPT}" --scope "${scope}" --print-specs)"
+  if ! printf '%s\n' "${native_specs}" | rg -Fq '/data/local/pixel-stack/bin/pixel-runtime-cleanup'; then
+    echo "FAIL: ${scope} is missing its packaged native entrypoint owner" >&2
+    exit 1
+  fi
+done
 
 ticket_specs="$("${HELPER_SCRIPT}" --scope ticket_screen --print-specs)"
 if ! printf '%s\n' "${ticket_specs}" | rg -Fq '/data/local/pixel-stack/bin/pixel-ticket-root-keyboard'; then

@@ -1293,7 +1293,11 @@ class SupervisorEngineTest {
         managementSshKeyAuthRequested = "0",
         managementSshKeyAuthReady = "0"
       )
-      assertTrue(waitFor(timeoutMs = 2_500) { ssh.startCalls >= 2 }, "coordinated ssh recovery did not trigger")
+      assertTrue(waitFor(timeoutMs = 2_500) {
+        ssh.startCalls >= 2 && store.state.operationLog.any {
+          it.component == "management" && it.action == "auto_recovery" && it.details.contains("target=ssh")
+        }
+      }, "coordinated ssh recovery did not persist")
       assertTrue(store.state.operationLog.any { it.component == "management" && it.action == "auto_recovery" && it.details.contains("target=vpn") })
       assertTrue(store.state.operationLog.any { it.component == "management" && it.action == "auto_recovery" && it.details.contains("target=ssh") })
     } finally {

@@ -60,8 +60,7 @@ class TicketMediaLifetimeRegressionTest {
       primer.classifyCompleteAccessUnit(true, true, 2000))
   }
 
-  @Test fun partialAccessUnitSurvivesImmediateCodecBufferReuse() {
-    val assembler = TicketH264EncoderOutputAssembler()
+  @Test fun partialAccessUnitSurvivesImmediateCodecBufferReuse() = TicketH264EncoderOutputAssembler().use { assembler ->
     val config = byteArrayOf(0,0,0,1,0x67,0x42,0x11,0,0,0,1,0x68,0x33)
     assembler.accept(config, false, true, false)
     var releases = 0

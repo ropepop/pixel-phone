@@ -1,5 +1,9 @@
 package lv.jolkins.pixelorchestrator.supervisor
 
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+
 class BackoffPolicy(
   private val initialSeconds: Int,
   private val maxSeconds: Int,
@@ -7,46 +11,22 @@ class BackoffPolicy(
   private val maxRapidRestarts: Int,
   private val nowEpochSeconds: () -> Long = { System.currentTimeMillis() / 1000 }
 ) {
-  private var windowStart = nowEpochSeconds()
-  private var rapidCount = 0
-  private var currentBackoff = initialSeconds
+  private var state = transition("", false)
 
   fun recordRestart(): BackoffDecision {
-    val now = nowEpochSeconds()
-    if (now - windowStart > rapidWindowSeconds) {
-      resetWindow(now)
-    }
-
-    rapidCount += 1
-    if (rapidCount > maxRapidRestarts) {
-      return BackoffDecision(
-        crashLoop = true,
-        sleepSeconds = 120,
-        rapidCount = rapidCount
-      )
-    }
-
-    val delay = currentBackoff
-    currentBackoff = (currentBackoff * 2).coerceAtMost(maxSeconds)
-
-    return BackoffDecision(
-      crashLoop = false,
-      sleepSeconds = delay,
-      rapidCount = rapidCount
-    )
+    state = transition(state, true)
+    return Json.decodeFromString<BackoffDecision>(Json.parseToJsonElement(state).jsonObject.getValue("decision").toString())
   }
 
   fun reset() {
-    resetWindow(nowEpochSeconds())
+    state = transition("", false)
   }
 
-  private fun resetWindow(now: Long) {
-    windowStart = now
-    rapidCount = 0
-    currentBackoff = initialSeconds
-  }
+  private fun transition(previous: String, restart: Boolean): String =
+    NativeSupervisor.backoff(previous, restart, nowEpochSeconds(), initialSeconds, maxSeconds, rapidWindowSeconds, maxRapidRestarts)
 }
 
+@Serializable
 data class BackoffDecision(
   val crashLoop: Boolean,
   val sleepSeconds: Int,

@@ -42,6 +42,7 @@ android {
     targetSdk = 35
     versionCode = 1
     versionName = "0.1.0"
+    ndk { abiFilters += "arm64-v8a" }
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     buildConfigField("String", "ORCHESTRATOR_RELEASE_ID", buildConfigString(orchestratorReleaseId))
     buildConfigField("String", "ORCHESTRATOR_SOURCE_COMMIT", buildConfigString(orchestratorSourceCommit))
@@ -73,9 +74,9 @@ android {
 val ticketRootKeyboardAssetDir = layout.buildDirectory.dir("generated/ticketRootKeyboardAssets")
 val ticketRootKeyboardAsset = ticketRootKeyboardAssetDir.map { it.file("ticket-root-keyboard") }
 val buildTicketRootKeyboard by tasks.registering(Exec::class) {
-  val sourceFile = layout.projectDirectory.file("src/main/cpp/ticket_root_keyboard.c")
+  val rustProject = layout.projectDirectory.dir("../ticket-root-keyboard")
   val buildScript = layout.projectDirectory.file("../../scripts/android/build_ticket_root_keyboard.sh")
-  inputs.file(sourceFile)
+  inputs.files(fileTree(rustProject) { include("src/**/*.rs", "Cargo.toml", "Cargo.lock") })
   inputs.file(buildScript)
   outputs.file(ticketRootKeyboardAsset)
   doFirst {
@@ -92,11 +93,30 @@ val checkComponentRegistry by tasks.registering(Exec::class) {
   commandLine("python3", generator.asFile.absolutePath, "--check")
 }
 
+val pixelHealthJniDir = layout.buildDirectory.dir("generated/pixelHealthJni")
+val pixelRuntimeCleanupAssetDir = layout.buildDirectory.dir("generated/pixelRuntimeCleanupAsset")
+val pixelRuntimeCleanupAsset = pixelRuntimeCleanupAssetDir.map {it.file("pixel-runtime-cleanup")}
+val buildPixelHealthAndroid by tasks.registering(Exec::class) {
+  val rustProject = layout.projectDirectory.dir("../pixel-health")
+  val buildScript = layout.projectDirectory.file("../../scripts/android/build_pixel_health.sh")
+  val library = pixelHealthJniDir.map { it.file("arm64-v8a/libpixel_health.so") }
+  inputs.files(fileTree(rustProject) { include("src/**/*.rs", "Cargo.toml", "Cargo.lock") })
+  inputs.file(buildScript)
+  outputs.file(library)
+  outputs.file(pixelRuntimeCleanupAsset)
+  commandLine(buildScript.asFile.absolutePath, library.get().asFile.absolutePath, pixelRuntimeCleanupAsset.get().asFile.absolutePath)
+}
+android.sourceSets.getByName("main").jniLibs.srcDir(pixelHealthJniDir)
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }.configureEach {
+  dependsOn(buildPixelHealthAndroid)
+}
+
 android.sourceSets.getByName("main").assets.srcDir(ticketRootKeyboardAssetDir)
+android.sourceSets.getByName("main").assets.srcDir(pixelRuntimeCleanupAssetDir)
 tasks.matching { task ->
   task.name.startsWith("merge") && task.name.endsWith("Assets") || task.name.contains("Lint", ignoreCase = true)
 }.configureEach {
-  dependsOn(buildTicketRootKeyboard, checkComponentRegistry)
+  dependsOn(buildTicketRootKeyboard, checkComponentRegistry, buildPixelHealthAndroid)
 }
 
 kotlin {

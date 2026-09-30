@@ -5,6 +5,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.time.Instant
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration
 import lv.jolkins.pixelorchestrator.coreconfig.StackConfigV1
@@ -23,6 +24,7 @@ class RuntimeInstaller(
     manifest: ArtifactManifest,
     rootfsArtifactId: String?
   ): BootstrapResult {
+    ensureRequiredArtifactsPresent(manifest, rootfsArtifactId)
     trace("bootstrap:start")
     val preflight = preflight()
     trace("bootstrap:preflight rootGranted=${preflight.rootGranted}")
@@ -48,9 +50,6 @@ class RuntimeInstaller(
         installedArtifacts = emptyList()
       )
     }
-    trace("bootstrap:ensureRequiredArtifactsPresent")
-    ensureRequiredArtifactsPresent(manifest, rootfsArtifactId)
-
     val installed = mutableListOf<String>()
     manifest.artifacts.forEach { entry ->
       try {
@@ -378,6 +377,7 @@ class RuntimeInstaller(
   private suspend fun installBundledScripts(assets: AssetProvider, component: String? = null) {
     when (component) {
       null -> {
+        installRuntimeCleanupNative(assets)
         installTemplateGroups(
           assets,
           listOf("ssh", "vpn", "ticket")
@@ -386,20 +386,25 @@ class RuntimeInstaller(
         installTicketRootKeyboard(assets)
       }
       "ssh" -> {
+        installRuntimeCleanupNative(assets)
         installTemplateGroups(assets, listOf("ssh"))
         installOrchestratorEntrypoints(assets, orchestratorEntrypoints("pixel-ssh-start.sh", "pixel-ssh-stop.sh", "pixel-management-health.sh"))
       }
       "vpn" -> {
+        installRuntimeCleanupNative(assets)
         installTemplateGroups(assets, listOf("vpn"))
         installOrchestratorEntrypoints(assets, orchestratorEntrypoints("pixel-vpn-start.sh", "pixel-vpn-stop.sh", "pixel-vpn-health.sh", "pixel-management-health.sh"))
       }
       "management" -> {
+        installRuntimeCleanupNative(assets)
         installOrchestratorEntrypoints(assets, orchestratorEntrypoints("pixel-management-health.sh"))
       }
       "runtime_cleanup" -> {
+        installRuntimeCleanupNative(assets)
         installOrchestratorEntrypoints(assets, orchestratorEntrypoints("pixel-runtime-cleanup.sh"))
       }
       "ticket_screen" -> {
+        installRuntimeCleanupNative(assets)
         installTemplateGroups(assets, listOf("ticket"))
         installOrchestratorEntrypoints(
           assets,
@@ -423,6 +428,10 @@ class RuntimeInstaller(
       targetPath = "${StackPaths.BIN}/pixel-ticket-root-keyboard",
       mode = "0755"
     )
+  }
+
+  private suspend fun installRuntimeCleanupNative(assets: AssetProvider) {
+    installSingleAsset(assets,"pixel-runtime-cleanup","${StackPaths.BIN}/pixel-runtime-cleanup",mode="0755")
   }
 
   private suspend fun installTemplateGroups(assets: AssetProvider, groups: List<String>) {
@@ -509,16 +518,24 @@ class RuntimeInstaller(
     val quotedTemp = ShellEscaper.singleQuote(tempFile.toAbsolutePath().toString())
     val quotedTarget = ShellEscaper.singleQuote(targetPath)
     val quotedParent = ShellEscaper.singleQuote(Paths.get(targetPath).parent.toString())
-    val command =
-      "mkdir -p $quotedParent && cp $quotedTemp $quotedTarget && chmod $mode $quotedTarget && " +
-        "(chcon u:object_r:shell_data_file:s0 $quotedTarget 2>/dev/null || true)"
-    val result = rootExecutor.run(command)
-    if (!result.ok) {
-      error("Failed to install asset $sourceAssetPath -> $targetPath: ${result.stderr}")
-    }
-
-    withContext(Dispatchers.IO) {
-      Files.deleteIfExists(tempFile)
+    val command = """
+      set -eu
+      mkdir -p $quotedParent
+      stage=${'$'}(mktemp $quotedTarget.asset.XXXXXX)
+      trap 'rm -f "${'$'}stage"' EXIT
+      trap 'exit 143' HUP INT TERM
+      cp $quotedTemp "${'$'}stage"
+      chmod $mode "${'$'}stage"
+      chcon u:object_r:shell_data_file:s0 "${'$'}stage" 2>/dev/null || true
+      mv -f "${'$'}stage" $quotedTarget
+    """.trimIndent()
+    try {
+      val result = rootExecutor.run(command)
+      if (!result.ok) {
+        error("Failed to install asset $sourceAssetPath -> $targetPath: ${result.stderr}")
+      }
+    } finally {
+      withContext(NonCancellable + Dispatchers.IO) { Files.deleteIfExists(tempFile) }
     }
   }
 
@@ -1273,44 +1290,15 @@ EOF_NOTIFIER_PYTHON
   }
 
   private fun ensureRequiredArtifactsPresent(manifest: ArtifactManifest, rootfsArtifactId: String?) {
-    val requiredIds = listOfNotNull(rootfsArtifactId, DROPBEAR_ARTIFACT_ID, TAILSCALE_ARTIFACT_ID)
-    requiredIds.forEach { requiredId ->
-      val entry = manifest.artifacts.firstOrNull { it.id == requiredId }
-        ?: error("Missing required artifact in manifest: $requiredId")
-      if (!entry.required) {
-        error("Required artifact must set required=true: $requiredId")
-      }
-    }
+    ArtifactAdmission.validateRequired(manifest, rootfsArtifactId)
   }
 
   private fun ensureComponentReleasePresent(component: String, manifest: ComponentReleaseManifest) {
-    require(manifest.schema == 1) { "Unsupported component release schema: ${manifest.schema}" }
-    require(manifest.componentId == component) {
-      "Component release manifest targets ${manifest.componentId}, expected $component"
-    }
-    require(manifest.signatureSchema.lowercase() == "none") {
-      "Unsupported component release signature schema: ${manifest.signatureSchema}"
-    }
-    require(manifest.releaseId.isNotBlank()) { "Component release id is required for $component" }
-    require(manifest.artifacts.isNotEmpty()) { "Component release artifacts are required for $component" }
-    if (component == "dns") {
-      val actualIds = manifest.artifacts.map { it.id }
-      val expectedIds = listOf(ROOTFS_ARTIFACT_ID, DNS_RUNTIME_ASSET_ID)
-      require(actualIds.size == expectedIds.size && actualIds.toSet() == expectedIds.toSet()) {
-        "DNS component release must contain exactly ${expectedIds.joinToString(", ")}"
-      }
-    }
+    ArtifactAdmission.validateComponent(component, manifest, false)
   }
 
-  private fun orderedComponentReleaseArtifacts(component: String, artifacts: List<ArtifactEntry>): List<ArtifactEntry> {
-    if (component != "dns") {
-      return artifacts
-    }
-    val byId = artifacts.associateBy { it.id }
-    return listOf(ROOTFS_ARTIFACT_ID, DNS_RUNTIME_ASSET_ID).map { artifactId ->
-      byId[artifactId] ?: error("Missing required dns release artifact: $artifactId")
-    }
-  }
+  private fun orderedComponentReleaseArtifacts(component: String, artifacts: List<ArtifactEntry>): List<ArtifactEntry> =
+    ArtifactAdmission.orderComponent(component, artifacts)
 
   private companion object {
     const val ROOTFS_ARTIFACT_ID = "adguardhome-rootfs"

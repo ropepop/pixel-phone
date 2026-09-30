@@ -1,12 +1,16 @@
 # Ticket Health Monitor
 
-The public page probe checks its same-site sign-in redirect directly and never follows
-authentication redirects. A connected relay may report `idle` while a proved, unexpired
+The public protection probe targets `/admin`, checks its same-site sign-in redirect
+directly and never follows authentication redirects. The signed-out root `/` serves
+the public welcome with HTTP 200; it is not the protected-navigation probe. The
+existing report field `root_http` records the configured `/admin` response for caller
+compatibility. Private viewer assets and detailed health remain membership protected.
+A connected relay may report `idle` while a proved, unexpired
 page-warm hold is demand-gated; active viewers still require fresh live pictures.
 The phone's corresponding `demand_idle` watchdog state is recognized without granting
 any picture-freshness exemption to active viewers.
 
-`tools/observability/ticket_health_monitor.py` is the repository-owned, read-only Ticket health contract. It checks the public protection boundary, kitty-gration containers and local endpoints, bounded host memory/disk/Docker usage, narrow public Spacetime state, Pixel-local health, Pixel battery/thermal/RAM/disk usage, rooted capture readiness, stream freshness, and portrait lock. The legacy `hardwareH264` field name does not establish the deployed codec.
+`tools/observability/ticket_health_monitor.py` is the existing caller path for the repository-owned, read-only Ticket health contract. Its minimal launcher replaces itself with the built native monitor in the existing `pixel-health` package. Rust owns collection, interpretation and report writing. It checks the public protection boundary, kitty-gration containers and local endpoints, bounded host memory/disk/Docker usage, narrow public Spacetime state, Pixel-local health, Pixel battery/thermal/RAM/disk usage, rooted capture readiness, stream freshness, and portrait lock. The legacy `hardwareH264` field name does not establish the deployed codec.
 
 The classifier distinguishes `healthy_live`, `healthy_warm`, and `healthy_idle`. Active browser viewing requires live transport, capture and ticket state plus pictures within the three-second product boundary. Intentional page warmth requires zero browser video clients, retained stream demand, a fresh relay report with a bounded non-expired `pageOpenWarm` count/expiry, connected phone transport and healthy capture readiness. It does not require continuing browser frame delivery and grants no fresh-picture or action proof. Missing/expired warmth, stale relay reports, disconnected transport, stopped capture and failed recovery remain failures. Active viewers never borrow the warm-state freshness exemption. Settled idle requires stopped capture and settled phone/ticket state; an older unchanged idle report alone is not a fault.
 
@@ -27,7 +31,7 @@ Spacetime reads require the current CLI login to match the configured public ope
 
 The checked-in thresholds define separate warning and failure levels for host memory, root disk, configured-container CPU/memory, and Pixel battery level, battery temperature, Android thermal status, memory, and data disk. Warning crossings remain healthy but visible; failure crossings degrade the report with a specific finding. Missing, mistyped, reversed, extra, non-finite, or out-of-range threshold settings make configuration validation fail. Resource evidence remains numeric and bounded. Subprocess output is drained to completion, decoded safely, and remains at most 256 KiB per output stream even when a command emits invalid UTF-8. Raw command output, full phone health, ticket data, private identifiers, secrets, and unrelated container state are not copied into the report.
 
-The checked-in configuration is enabled and keeps repair mode disabled. The monitor runs from this local checkout; edits to its Python/config files do not require an APK or service restart. Existing recurring callers use this canonical command; this runbook does not create a schedule. Validate it without touching production:
+The checked-in configuration is enabled and keeps repair mode disabled. Build the native command once as shown below before using the existing caller path. Source changes to the native monitor require that local rebuild; configuration changes require no build. Neither requires an APK or service restart. Existing callers keep this canonical command; this runbook does not create a schedule. Validate it without touching production:
 
 ```bash
 python3 tools/observability/ticket_health_monitor.py \
@@ -45,8 +49,60 @@ python3 tools/observability/ticket_health_monitor.py \
 Full-run exits are `0` healthy, `1` degraded, `2` invalid configuration, and `3` paused. Configuration checking and exits 2/3 do not replace `latest.json`. Confirm the completed run's embedded timestamp before citing the report. Offline regression checks are:
 
 ```bash
-python3 -B -m unittest discover -s tools/observability/tests -p 'test_ticket_health_monitor.py'
+python3 -B -m unittest discover -s tools/observability/tests -p 'test_ticket_health_monitor*.py'
 ```
+
+## Native local command
+
+The opt-in `ticket-health-monitor` binary lives in the existing `pixel-health`
+package. It is independent of the Android/JNI library and its feature is disabled
+for normal APK builds. The existing Python filename only calls `os.execv` with
+the same arguments. The native process inherits the caller's process ID, working
+directory, environment, standard streams and signal delivery. There is no runtime
+Python collector, automatic Cargo build, fallback, second schedule or recovery
+path. If the built command is missing or unavailable, the launcher prints the
+build command to standard error and exits 2 without probing or writing a report.
+
+Build the local command once:
+
+```bash
+cargo build --locked --release \
+  --manifest-path orchestrator/android-orchestrator/pixel-health/Cargo.toml \
+  --features ticket-health-monitor --bin ticket-health-monitor
+```
+
+Use the same arguments and exit meanings with the built binary:
+
+```bash
+orchestrator/android-orchestrator/pixel-health/target/release/ticket-health-monitor \
+  --config tools/observability/ticket_health_monitor.config.json --check-config
+```
+
+Omit `--check-config` only for an authorized live check. `--evaluate-snapshot`,
+`--output` and `--evidence-root` retain the existing meanings. Collection remains
+read-only and sequential: native macOS `curl` supplies HTTPS without following
+redirects or loading `.curlrc`; configured SSH, Spacetime and ADB commands use one
+bounded process owner. Timeout and interruption terminate that command's process
+group. An interrupted collection exits 130 without replacing the report. No
+raw command output, phone health, lifecycle arguments or private status fields
+are persisted. The same exact configuration and field schemas, absolute receipt
+times, thresholds, report projection, atomic replacement, retention and user
+readable modes apply.
+
+Executable migration checks load the former Python implementation from the frozen
+Git baseline `076d0ff` into a test-owned temporary directory. They exercise the
+old command, native command and canonical launcher against loopback TLS and
+local command substitutes. The test baseline is never a runtime fallback.
+These checks do not contact production or the phone:
+
+```bash
+python3 -B -m unittest discover -s tools/observability/tests \
+  -p 'test_ticket_health_monitor_rust.py'
+```
+
+The [initial candidate verification](../../ops/reports/2026-09-29-ticket-health-monitor-rust-candidate.md)
+and [canonical launcher verification](../../ops/reports/2026-09-29-ticket-health-monitor-native-launcher.md)
+record the local comparisons and separate actual-invocation acceptance requirements.
 
 Roll out the Ticket relay's warm-report projection before relying on `healthy_warm`. An older relay missing that projection is explicitly uncovered when there is demand but no browser video client; the monitor must not infer warmth from the absence of clients.
 

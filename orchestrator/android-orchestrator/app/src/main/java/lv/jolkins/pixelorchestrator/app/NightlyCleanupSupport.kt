@@ -10,7 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.*
+import kotlinx.serialization.Serializable
 import lv.jolkins.pixelorchestrator.coreconfig.StackConfigV1
 import lv.jolkins.pixelorchestrator.coreconfig.StackPaths
 import lv.jolkins.pixelorchestrator.coreconfig.StackStore
@@ -158,12 +159,7 @@ internal class NightlyCleanupSupport(
               detail = abbreviate(cleanupResult.stderr.ifBlank { cleanupResult.stdout })
             )
           }
-        val status =
-          when {
-            failures.isNotEmpty() -> CleanupReportStatus.FAILED
-            dryRun -> CleanupReportStatus.DRY_RUN
-            else -> CleanupReportStatus.COMPLETED
-          }
+        val status = CleanupReportStatus.entries.first {it.wireValue()==NativeCleanupPolicy.finishStatus(failures.size,dryRun)}
         persistReport(
           config = config,
           report = buildReport(
@@ -237,40 +233,22 @@ internal class NightlyCleanupSupport(
     report: CleanupReport
   ): FacadeOperationResult {
     val outputPath = writeCleanupReport(config, report)
-    val success = report.status != CleanupReportStatus.FAILED.wireValue()
+    val outcome=NativeCleanupPolicy.call("outcome",json.encodeToJsonElement(report)).jsonObject
     return FacadeOperationResult(
-      success = success,
-      message = buildMessage(report),
+      success = outcome.getValue("success").jsonPrimitive.boolean,
+      message = outcome.getValue("message").jsonPrimitive.content,
       outputPath = outputPath,
       cleanupSummary = report.summary
     )
   }
 
   private fun buildFrequentMaintenanceReport(
-    startedAt: Instant,
-    status: CleanupReportStatus,
-    deferred: Boolean = false,
-    failureReason: String = "",
-    output: CleanupScriptOutput = CleanupScriptOutput()
-  ): FrequentMaintenanceReport {
-    val summary = summarize(
-      protectedPaths = emptyList(),
-      candidates = output.candidates,
-      deletedPaths = output.deletedPaths,
-      skippedPaths = output.skippedPaths,
-      failurePaths = output.failures
-    )
-    return FrequentMaintenanceReport(
-      startedAt = startedAt.toString(),
-      finishedAt = Instant.now().toString(),
-      status = status.wireValue(),
-      deferred = deferred,
-      failureReason = failureReason,
-      rootHistoryBytes = output.observations["superuser_log_db"] ?: 0L,
-      stackLogBytes = output.observations["runtime_log_total"] ?: 0L,
-      summary = summary
-    )
-  }
+    startedAt: Instant, status: CleanupReportStatus, deferred: Boolean = false,
+    failureReason: String = "", output: CleanupScriptOutput = CleanupScriptOutput()
+  ): FrequentMaintenanceReport = NativeCleanupPolicy.value("frequent_report",buildJsonObject {
+    put("startedAt",startedAt.toString());put("finishedAt",Instant.now().toString());put("status",status.wireValue())
+    put("deferred",deferred);put("failureReason",failureReason);put("output",json.encodeToJsonElement(output))
+  })
 
   private suspend fun persistFrequentMaintenanceReport(
     report: FrequentMaintenanceReport
@@ -280,15 +258,10 @@ internal class NightlyCleanupSupport(
       body = json.encodeToString(FrequentMaintenanceReport.serializer(), report),
       mode = "0600"
     )
+    val outcome=NativeCleanupPolicy.call("frequent_outcome",json.encodeToJsonElement(report)).jsonObject
     return FacadeOperationResult(
-      success = report.status != CleanupReportStatus.FAILED.wireValue(),
-      message = when {
-        report.deferred -> "Frequent maintenance deferred while another runtime mutation is active"
-        report.status == CleanupReportStatus.FAILED.wireValue() -> "Frequent maintenance failed safely"
-        report.summary.deletedCount > 0 ->
-          "Frequent maintenance removed ${report.summary.deletedCount} expired or oversized items"
-        else -> "Frequent maintenance limits are satisfied"
-      },
+      success = outcome.getValue("success").jsonPrimitive.boolean,
+      message = outcome.getValue("message").jsonPrimitive.content,
       outputPath = FREQUENT_MAINTENANCE_REPORT_PATH,
       cleanupSummary = report.summary,
       deferred = report.deferred
@@ -296,99 +269,18 @@ internal class NightlyCleanupSupport(
   }
 
   private fun buildReport(
-    trigger: CleanupTrigger,
-    dryRun: Boolean,
-    status: CleanupReportStatus,
-    startedAt: Instant,
-    protectedPaths: List<CleanupPathRecord>,
-    candidates: List<CleanupPathRecord>,
-    deletedPaths: List<CleanupPathRecord>,
-    skippedPaths: List<CleanupPathRecord>,
-    failurePaths: List<CleanupPathRecord>
-  ): CleanupReport {
-    val summary = summarize(protectedPaths, candidates, deletedPaths, skippedPaths, failurePaths)
-    return CleanupReport(
-      trigger = trigger.wireValue(),
-      dryRun = dryRun,
-      status = status.wireValue(),
-      startedAt = startedAt.toString(),
-      finishedAt = Instant.now().toString(),
-      summary = summary,
-      protectedPaths = protectedPaths.sortedBy { it.path },
-      candidates = candidates.sortedBy { it.path },
-      deletedPaths = deletedPaths.sortedBy { it.path },
-      skippedPaths = skippedPaths.sortedBy { it.path },
-      failurePaths = failurePaths.sortedBy { it.path }
-    )
-  }
-
-  private fun summarize(
-    protectedPaths: List<CleanupPathRecord>,
-    candidates: List<CleanupPathRecord>,
-    deletedPaths: List<CleanupPathRecord>,
-    skippedPaths: List<CleanupPathRecord>,
-    failurePaths: List<CleanupPathRecord>
-  ): CleanupSummary {
-    val categories =
-      buildSet {
-        candidates.forEach { add(it.category) }
-        deletedPaths.forEach { add(it.category) }
-        skippedPaths.forEach { add(it.category) }
-        failurePaths.forEach { add(it.category) }
-      }
-        .sorted()
-        .map { category ->
-          CleanupCategorySummary(
-            category = category,
-            candidates = candidates.count { it.category == category },
-            candidateBytes = candidates.filter { it.category == category }.sumOf { it.bytes },
-            deleted = deletedPaths.count { it.category == category },
-            deletedBytes = deletedPaths.filter { it.category == category }.sumOf { it.bytes },
-            skipped = skippedPaths.count { it.category == category },
-            failures = failurePaths.count { it.category == category }
-          )
-        }
-    return CleanupSummary(
-      protectedCount = protectedPaths.size,
-      candidateCount = candidates.size,
-      candidateBytes = candidates.sumOf { it.bytes },
-      deletedCount = deletedPaths.size,
-      deletedBytes = deletedPaths.sumOf { it.bytes },
-      skippedCount = skippedPaths.size,
-      failureCount = failurePaths.size,
-      categories = categories
-    )
-  }
-
-  private fun buildMessage(report: CleanupReport): String {
-    return when (report.status) {
-      CleanupReportStatus.COMPLETED.wireValue() ->
-        "Cleanup complete: removed ${report.summary.deletedCount} paths and reclaimed ${report.summary.deletedBytes} bytes."
-      CleanupReportStatus.DRY_RUN.wireValue() ->
-        "Cleanup dry-run complete: ${report.summary.candidateCount} paths are eligible, totaling ${report.summary.candidateBytes} bytes."
-      CleanupReportStatus.SKIPPED.wireValue() ->
-        "Cleanup skipped: ${report.skippedPaths.firstOrNull()?.detail ?: "unknown reason"}"
-      else ->
-        "Cleanup failed: ${report.failurePaths.firstOrNull()?.detail ?: "unknown failure"}"
-    }
-  }
+    trigger: CleanupTrigger, dryRun: Boolean, status: CleanupReportStatus, startedAt: Instant,
+    protectedPaths: List<CleanupPathRecord>, candidates: List<CleanupPathRecord>, deletedPaths: List<CleanupPathRecord>,
+    skippedPaths: List<CleanupPathRecord>, failurePaths: List<CleanupPathRecord>
+  ): CleanupReport = NativeCleanupPolicy.value("report",json.encodeToJsonElement(CleanupReport(
+    trigger=trigger.wireValue(),dryRun=dryRun,status=status.wireValue(),startedAt=startedAt.toString(),finishedAt=Instant.now().toString(),
+    protectedPaths=protectedPaths,candidates=candidates,deletedPaths=deletedPaths,skippedPaths=skippedPaths,failurePaths=failurePaths
+  )))
 
   private suspend fun buildProtectedPaths(config: StackConfigV1): List<CleanupPathRecord> {
-    val protected = linkedMapOf<String, CleanupPathRecord>()
-
+    val protected = mutableListOf<CleanupPathRecord>()
     fun add(path: String, category: String, detail: String) {
-      val normalized = path.trim()
-      if (normalized.isBlank()) {
-        return
-      }
-      protected.putIfAbsent(
-        normalized,
-        CleanupPathRecord(
-          category = category,
-          path = normalized,
-          detail = detail
-        )
-      )
+      protected += CleanupPathRecord(category=category,path=path,detail=detail)
     }
 
     val runtimeManifest = loadRuntimeManifest()
@@ -427,77 +319,28 @@ internal class NightlyCleanupSupport(
     protectedReleasePaths(config).forEach { add(it.path, it.category, it.detail) }
     protectedRecentTermuxArtifacts().forEach { add(it.path, it.category, it.detail) }
 
-    return protected.values.toList()
+    return NativeCleanupPolicy.value("protected_paths",buildJsonObject{put("paths",json.encodeToJsonElement(protected))})
   }
 
   private suspend fun protectedReleasePaths(config: StackConfigV1): List<CleanupPathRecord> {
-    val runtimeRoots = listOf(
-      "train_bot" to config.trainBot.runtimeRoot,
-      "satiksme_bot" to config.satiksmeBot.runtimeRoot,
-      "site_notifier" to config.siteNotifier.runtimeRoot,
-      "subscription_bot" to config.subscriptionBot.runtimeRoot
-    )
-    return runtimeRoots.flatMap { (component, runtimeRoot) ->
-      val paths = mutableListOf<CleanupPathRecord>()
-      val releases = queryReleasePaths(runtimeRoot)
-      val current = releases.currentPath
-      val previous = releases.releasePaths.firstOrNull { it != current } ?: releases.releasePaths.firstOrNull()
-      if (current.isNotBlank()) {
-        paths += CleanupPathRecord("release_dir", current, detail = "current release:$component")
-      }
-      if (previous != null && previous != current) {
-        paths += CleanupPathRecord("release_dir", previous, detail = "rollback release:$component")
-      }
-      if (current.isBlank() && previous != null) {
-        paths += CleanupPathRecord("release_dir", previous, detail = "fallback protected release:$component")
-      }
-      paths
+    val runtimeRoots = listOf("train_bot" to config.trainBot.runtimeRoot,"satiksme_bot" to config.satiksmeBot.runtimeRoot,
+      "site_notifier" to config.siteNotifier.runtimeRoot,"subscription_bot" to config.subscriptionBot.runtimeRoot)
+    return runtimeRoots.flatMap { (component,root) ->
+      val releases=queryReleasePaths(root)
+      NativeCleanupPolicy.value<List<CleanupPathRecord>>("protect_releases",buildJsonObject{
+        put("component",component);put("currentPath",releases.currentPath);put("releasePaths",json.encodeToJsonElement(releases.releasePaths))
+      })
     }
   }
 
   private suspend fun protectedRecentTermuxArtifacts(): List<CleanupPathRecord> {
-    val protected = mutableListOf<CleanupPathRecord>()
-
-    val siteNotifierMirrorPaths =
-      listPathsSortedByMtime("$TERMUX_HOME/telegram-train-app/workloads/site-notifications/.artifacts/site-notifier/*") +
-        listPathsSortedByMtime("$TERMUX_HOME/telegram-train-app/workloads/site-notifications/.artifacts/component-releases/*")
-    val retainedSiteNotifierGroups = retainNewestGroups(siteNotifierMirrorPaths, limit = 2) { path ->
-      SITE_NOTIFIER_COHORT_REGEX.find(path)?.value?.replace('_', '-')
-    }
-    retainedSiteNotifierGroups.forEach { path ->
-      protected += CleanupPathRecord("termux_artifact", path, detail = "recent Termux notifier cohort")
-    }
-
-    listPathsSortedByMtime("$TERMUX_HOME/telegram-train-app/orchestrator/.artifacts/runtime-local/*")
-      .take(2)
-      .forEach { path ->
-        protected += CleanupPathRecord("termux_artifact", path, detail = "recent Termux orchestrator snapshot")
-      }
-
-    listPathsSortedByMtime("$TERMUX_HOME/site-notifications-build*")
-      .take(2)
-      .forEach { path ->
-        protected += CleanupPathRecord("termux_artifact", path, detail = "recent Termux build dir")
-      }
-
-    return protected
-  }
-
-  private fun retainNewestGroups(
-    paths: List<String>,
-    limit: Int,
-    keySelector: (String) -> String?
-  ): List<String> {
-    val selectedKeys = linkedSetOf<String>()
-    val retained = mutableListOf<String>()
-    for (path in paths) {
-      val key = keySelector(path) ?: continue
-      if (key in selectedKeys || selectedKeys.size < limit) {
-        selectedKeys += key
-        retained += path
-      }
-    }
-    return retained
+    val notifier=listPathsSortedByMtime("$TERMUX_HOME/telegram-train-app/workloads/site-notifications/.artifacts/site-notifier/*") +
+      listPathsSortedByMtime("$TERMUX_HOME/telegram-train-app/workloads/site-notifications/.artifacts/component-releases/*")
+    val runtime=listPathsSortedByMtime("$TERMUX_HOME/telegram-train-app/orchestrator/.artifacts/runtime-local/*")
+    val builds=listPathsSortedByMtime("$TERMUX_HOME/site-notifications-build*")
+    return NativeCleanupPolicy.value("recent_paths",buildJsonObject{
+      put("notifier",json.encodeToJsonElement(notifier));put("runtime",json.encodeToJsonElement(runtime));put("build",json.encodeToJsonElement(builds))
+    })
   }
 
   private suspend fun queryReleasePaths(runtimeRoot: String): ReleasePathQuery {
@@ -516,19 +359,7 @@ internal class NightlyCleanupSupport(
     if (!result.ok) {
       error("Failed to discover protected release paths for $runtimeRoot: ${result.stderr}")
     }
-    var currentPath = ""
-    val releasePaths = mutableListOf<String>()
-    result.stdout.lineSequence().forEach { line ->
-      val parts = line.split('\t', limit = 2)
-      if (parts.size != 2) {
-        return@forEach
-      }
-      when (parts[0]) {
-        "CURRENT" -> currentPath = parts[1]
-        "RELEASE" -> releasePaths += parts[1]
-      }
-    }
-    return ReleasePathQuery(currentPath = currentPath, releasePaths = releasePaths)
+    return NativeCleanupPolicy.value("parse_releases",buildJsonObject{put("stdout",result.stdout)})
   }
 
   private suspend fun listPathsSortedByMtime(glob: String): List<String> {
@@ -537,7 +368,7 @@ internal class NightlyCleanupSupport(
     if (!result.ok) {
       error("Failed to list cleanup paths for $glob: ${result.stderr}")
     }
-    return result.stdout.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.toList()
+    return NativeCleanupPolicy.value("list_paths",buildJsonObject{put("stdout",result.stdout)})
   }
 
   private suspend fun loadRuntimeManifest(): ArtifactManifest {
@@ -550,11 +381,7 @@ internal class NightlyCleanupSupport(
       error("Missing runtime manifest at $RUNTIME_MANIFEST_FILE")
     }
     val manifest = json.decodeFromString<ArtifactManifest>(raw)
-    require(manifest.manifestVersion.isNotBlank()) { "Runtime manifest version is required" }
-    require(manifest.artifacts.isNotEmpty()) { "Runtime manifest artifacts are required" }
-    manifest.artifacts.forEach { entry ->
-      require(isLocalArtifactUrl(entry.url)) { "Runtime artifact ${entry.id} must use a local path" }
-    }
+    validateCleanupManifest("runtime",json.encodeToJsonElement(manifest))
     return manifest
   }
 
@@ -564,10 +391,7 @@ internal class NightlyCleanupSupport(
     val raw = result.stdout.trim()
     if (raw.isBlank()) return null
     val manifest = json.decodeFromString<ArtifactManifest>(raw)
-    require(manifest.manifestVersion.isNotBlank()) { "Rollback runtime manifest version is required" }
-    manifest.artifacts.forEach { entry ->
-      require(isLocalArtifactUrl(entry.url)) { "Rollback runtime artifact must use a local path" }
-    }
+    validateCleanupManifest("rollback",json.encodeToJsonElement(manifest))
     return manifest
   }
 
@@ -589,12 +413,7 @@ internal class NightlyCleanupSupport(
       return null
     }
     val manifest = json.decodeFromString<ComponentReleaseManifest>(raw)
-    require(manifest.componentId == component) { "Component manifest mismatch for $component" }
-    require(manifest.releaseId.isNotBlank()) { "Component release id is required for $component" }
-    require(manifest.artifacts.isNotEmpty()) { "Component release artifacts are required for $component" }
-    manifest.artifacts.forEach { entry ->
-      require(isLocalArtifactUrl(entry.url)) { "Component artifact ${entry.id} must use a local path" }
-    }
+    validateCleanupManifest("component",json.encodeToJsonElement(manifest),component)
     return manifestPath to manifest
   }
 
@@ -639,13 +458,7 @@ internal class NightlyCleanupSupport(
       append(".json")
     }
     val outputPath = "$outputDir/$fileName"
-    val durableSummary = report.copy(
-      protectedPaths = emptyList(),
-      candidates = emptyList(),
-      deletedPaths = emptyList(),
-      skippedPaths = emptyList(),
-      failurePaths = emptyList()
-    )
+    val durableSummary=NativeCleanupPolicy.value<CleanupReport>("durable_report",json.encodeToJsonElement(report))
     writeRootFile(outputPath, json.encodeToString(CleanupReport.serializer(), durableSummary), mode = "0600")
     val pruneResult = rootExecutor.runScript(
       "find ${singleQuote(outputDir)} -mindepth 1 -maxdepth 1 -type f -name 'cleanup-*.json' ! -path ${singleQuote(outputPath)} -exec rm -f '{}' '+'"
@@ -692,41 +505,8 @@ internal class NightlyCleanupSupport(
     }
   }
 
-  private fun parseScriptOutput(stdout: String): CleanupScriptOutput {
-    val candidates = mutableListOf<CleanupPathRecord>()
-    val deleted = mutableListOf<CleanupPathRecord>()
-    val skipped = mutableListOf<CleanupPathRecord>()
-    val failures = mutableListOf<CleanupPathRecord>()
-    val observations = mutableMapOf<String, Long>()
-
-    stdout.lineSequence().map { it.trimEnd() }.filter { it.isNotBlank() }.forEach { line ->
-      val parts = line.split('\t', limit = 5)
-      if (parts.size < 4) {
-        return@forEach
-      }
-      val type = parts[0]
-      val category = parts[1]
-      val bytes = parts.getOrNull(2)?.toLongOrNull() ?: 0L
-      val path = parts.getOrNull(3).orEmpty()
-      val detail = parts.getOrNull(4).orEmpty()
-      val record = CleanupPathRecord(category = category, path = path, bytes = bytes, detail = detail)
-      when (type) {
-        "CANDIDATE" -> candidates += record
-        "DELETE" -> deleted += record
-        "SKIP" -> skipped += record
-        "FAIL" -> failures += record
-        "OBSERVE" -> observations[category] = bytes
-      }
-    }
-
-    return CleanupScriptOutput(
-      candidates = candidates,
-      deletedPaths = deleted,
-      skippedPaths = skipped,
-      failures = failures,
-      observations = observations
-    )
-  }
+  private fun parseScriptOutput(stdout: String): CleanupScriptOutput =
+    NativeCleanupPolicy.value("parse_script",buildJsonObject{put("stdout",stdout)})
 
   private fun componentReleaseManifestPath(component: String): String {
     return "/data/local/pixel-stack/conf/runtime/components/$component/release-manifest.json"
@@ -736,17 +516,12 @@ internal class NightlyCleanupSupport(
     return "/data/local/pixel-stack/conf/runtime/components/$component/release-manifest.previous.json"
   }
 
-  private fun localArtifactPath(rawUrl: String): String? {
-    val url = rawUrl.trim()
-    return when {
-      url.startsWith("file://", ignoreCase = true) -> url.removePrefix("file://")
-      url.startsWith("/") -> url
-      else -> null
-    }
-  }
+  private fun localArtifactPath(rawUrl:String):String? =
+    NativeCleanupPolicy.call("local_path",buildJsonObject{put("url",rawUrl)}).jsonPrimitive.contentOrNull
 
-  private fun isLocalArtifactUrl(rawUrl: String): Boolean {
-    return localArtifactPath(rawUrl)?.startsWith("/") == true
+  private fun validateCleanupManifest(kind:String,manifest:JsonElement,component:String="") {
+    val failure=NativeCleanupPolicy.call("manifest_error",buildJsonObject{put("kind",kind);put("manifest",manifest);put("component",component)}).jsonPrimitive.contentOrNull
+    require(failure==null){failure.orEmpty()}
   }
 
   private fun singleQuote(value: String): String {
@@ -761,11 +536,13 @@ internal class NightlyCleanupSupport(
     return normalized.take(MAX_LOG_FIELD_LENGTH)
   }
 
+  @Serializable
   private data class ReleasePathQuery(
     val currentPath: String,
     val releasePaths: List<String>
   )
 
+  @Serializable
   private data class CleanupScriptOutput(
     val candidates: List<CleanupPathRecord> = emptyList(),
     val deletedPaths: List<CleanupPathRecord> = emptyList(),
@@ -791,7 +568,6 @@ internal class NightlyCleanupSupport(
       "/data/local/pixel-stack/conf/runtime/runtime-manifest.previous.json"
     val REPORT_STAMP: DateTimeFormatter =
       DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'", Locale.US).withZone(ZoneOffset.UTC)
-    val SITE_NOTIFIER_COHORT_REGEX = Regex("""site[-_]notifier-\d{8}T\d{6}Z""")
     val COMPONENT_RELEASE_COMPONENTS = listOf("dns", "train_bot", "satiksme_bot", "site_notifier", "subscription_bot")
   }
 }

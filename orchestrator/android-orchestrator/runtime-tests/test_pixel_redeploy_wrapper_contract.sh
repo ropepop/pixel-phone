@@ -92,7 +92,7 @@ if ! rg -Fq 'runtime_freshness_args' "${SOURCE_SCRIPT}"; then
   exit 1
 fi
 
-if ! rg -Fq 'full|orchestrator|platform|dns|ticket_screen|train_bot' "${SOURCE_SCRIPT}"; then
+if ! rg -Fq 'ticket_screen' "${SOURCE_SCRIPT}"; then
   echo "FAIL: pixel_redeploy.sh does not expose the ticket_screen scope" >&2
   exit 1
 fi
@@ -130,19 +130,30 @@ mkdir -p \
   "${BIN_DIR}" \
   "${STATE_DIR}"
 
+mkdir -p "${ORCHESTRATOR_FIXTURE}/configs" "${TMP_ROOT}/tmp"
+printf '{"modules":{},"ddns":{"enabled":false}}\n' > "${ORCHESTRATOR_FIXTURE}/configs/orchestrator-config-v1.production.json"
+export TMPDIR="${TMP_ROOT}/tmp" PIXEL_TRANSPORT_CONTROL_DIR="${TMP_ROOT}/control" \
+  PIXEL_SSH_KNOWN_HOSTS_FILE="${TMP_ROOT}/known/hosts" DEPLOY_TIMING_REPORTER="${TMP_ROOT}/no-reporter"
+
 git -C "${WORKSPACE_FIXTURE}" init -q
 
 cp "${SOURCE_SCRIPT}" "${ORCHESTRATOR_FIXTURE}/scripts/android/pixel_redeploy.sh"
 chmod +x "${ORCHESTRATOR_FIXTURE}/scripts/android/pixel_redeploy.sh"
 cp "${WORKSPACE_ROOT}/tools/pixel/transport.sh" "${WORKSPACE_FIXTURE}/tools/pixel/transport.sh"
 cp "${RETENTION_HELPER}" "${WORKSPACE_FIXTURE}/tools/pixel/artifact_retention.sh"
-cp "${CLEANUP_SCRIPT}" "${WORKSPACE_FIXTURE}/tools/pixel/cleanup_workspace.sh"
+cat > "${WORKSPACE_FIXTURE}/tools/pixel/cleanup_workspace.sh" <<'EOF_CLEANUP'
+#!/usr/bin/env bash
+printf 'cleanup\n' >> "${FAKE_STATE_DIR}/cleanup-effects.log"
+EOF_CLEANUP
+chmod +x "${WORKSPACE_FIXTURE}/tools/pixel/cleanup_workspace.sh"
+cp "${TOOL_WRAPPER}" "${WORKSPACE_FIXTURE}/tools/pixel/redeploy.sh"
 
 cat > "${ORCHESTRATOR_FIXTURE}/scripts/android/build_orchestrator_apk.sh" <<'EOF_BUILD'
 #!/usr/bin/env bash
 set -euo pipefail
 mkdir -p "$(dirname "${FAKE_STATE_DIR}/apk-builds.log")"
 printf 'build\n' >> "${FAKE_STATE_DIR}/apk-builds.log"
+exit "${FAKE_BUILD_EXIT:-0}"
 EOF_BUILD
 chmod +x "${ORCHESTRATOR_FIXTURE}/scripts/android/build_orchestrator_apk.sh"
 
@@ -270,6 +281,7 @@ cat > "${BIN_DIR}/adb" <<'EOF_ADB'
 set -euo pipefail
 
 state_dir="${FAKE_STATE_DIR:?}"
+printf 'adb %s\n' "$*" >> "${state_dir}/transport-effects.log"
 
 if [[ "${1:-}" == "-s" ]]; then
   shift 2
@@ -284,6 +296,11 @@ case "${cmd}" in
     ;;
   get-state)
     printf 'device\n'
+    ;;
+  pull)
+    if [[ -n "${FAKE_REMOTE_TAR:-}" ]]; then
+      cp "${FAKE_REMOTE_TAR}" "$2"
+    fi
     ;;
   shell)
     shell_cmd="$*"
@@ -303,16 +320,56 @@ esac
 EOF_ADB
 chmod +x "${BIN_DIR}/adb"
 
+# A retired packager, publisher or workload must never be called by the phone
+# entrypoint, even when every old prerequisite is present.
+for retired_script in \
+  orchestrator/scripts/android/package_runtime_bundle.sh \
+  orchestrator/scripts/android/package_component_release.sh \
+  orchestrator/scripts/android/package_dns_component_release.sh \
+  workloads/train-bot/scripts/pixel/redeploy_release.sh \
+  workloads/train-bot/scripts/pixel/release_check.sh \
+  workloads/satiksme-bot/scripts/pixel/redeploy_release.sh \
+  workloads/satiksme-bot/scripts/pixel/prepare_native_release.sh \
+  workloads/satiksme-bot/scripts/pixel/release_check.sh \
+  workloads/satiksme-bot/scripts/pixel/validate_prod_readiness.sh \
+  workloads/satiksme-bot/scripts/pixel/publish_spacetime_schema.sh \
+  workloads/site-notifications/scripts/pixel/redeploy_release.sh \
+  workloads/site-notifications/scripts/pixel/release_check.sh \
+  workloads/subscription-bot/scripts/pixel/redeploy_release.sh \
+  workloads/subscription-bot/scripts/pixel/release_check.sh; do
+  mkdir -p "$(dirname "${WORKSPACE_FIXTURE}/${retired_script}")"
+  cat > "${WORKSPACE_FIXTURE}/${retired_script}" <<'EOF_RETIRED'
+#!/usr/bin/env bash
+printf '%s %s\n' "$0" "$*" >> "${FAKE_STATE_DIR}/retired-effects.log"
+exit 73
+EOF_RETIRED
+  chmod +x "${WORKSPACE_FIXTURE}/${retired_script}"
+done
+for transport in ssh scp tailscale; do
+  cat > "${BIN_DIR}/${transport}" <<'EOF_TRANSPORT'
+#!/usr/bin/env bash
+printf '%s %s\n' "$0" "$*" >> "${FAKE_STATE_DIR}/transport-effects.log"
+exit 72
+EOF_TRANSPORT
+  chmod +x "${BIN_DIR}/${transport}"
+done
+
+# The wrapper uses a deployment-effect witness above. Direct admission runs the
+# actual sibling script and stops at the owned build witness for admitted input.
+DIRECT_DEPLOY="${ORCHESTRATOR_FIXTURE}/scripts/android/deploy_orchestrator_actual.sh"
+cp "${REPO_ROOT}/scripts/android/deploy_orchestrator_apk.sh" "${DIRECT_DEPLOY}"
+chmod +x "${DIRECT_DEPLOY}"
+
 run_wrapper() {
   local log_prefix="$1"
   shift
   PATH="${BIN_DIR}:${PATH}" \
   FAKE_STATE_DIR="${STATE_DIR}" \
   FAKE_LOG_PREFIX="${log_prefix}" \
+  FAKE_TICKET_FRESHNESS_INITIAL=stale \
   PIXEL_RUN_ID="test-run-id" \
-  "${ORCHESTRATOR_FIXTURE}/scripts/android/pixel_redeploy.sh" \
+  "${WORKSPACE_FIXTURE}/tools/pixel/redeploy.sh" \
   --device fake-device \
-  --scope train_bot \
   --mode auto \
   "$@"
 }
@@ -602,6 +659,262 @@ if ! rg -q 'did not converge after redeploy' "${ticket_stuck_log}"; then
 fi
 
 echo "PASS: pixel redeploy wrapper installs a fresh APK once and fast profile reuses a current APK"
+
+PHONE_SCOPE_CASES=0
+expect_phone_denied() {
+  local label="$1"
+  shift
+  local owned="${TMP_ROOT}/deny-${label}"
+  local rc=0
+  mkdir -p "${owned}/state" "${owned}/tmp"
+  env PATH="${BIN_DIR}:${PATH}" FAKE_STATE_DIR="${owned}/state" \
+    FAKE_LOG_PREFIX="${label}" PIXEL_TRANSPORT=adb PIXEL_RUN_ID="deny-${label}" \
+    TMPDIR="${owned}/tmp" PIXEL_TRANSPORT_CONTROL_DIR="${owned}/control" \
+    PIXEL_SSH_KNOWN_HOSTS_FILE="${owned}/known/hosts" \
+    "$@" >"${owned}/command.log" 2>&1 || rc=$?
+  if [[ "${rc}" != 2 ]] || ! grep -Eq 'retired|Invalid phone' "${owned}/command.log"; then
+    echo "FAIL: ${label} must refuse retired phone input with exit 2" >&2
+    cat "${owned}/command.log" >&2
+    exit 1
+  fi
+  # transport.sh has always prepared local SSH directories while being sourced.
+  # Admission must prevent every consequential effect, including the reporter,
+  # workspace cleanup, APK build, packager/publisher and transport witnesses.
+  if [[ -n "$(find "${owned}/state" -type f -print -quit)" ]] ||
+    [[ -e "${WORKSPACE_FIXTURE}/output/pixel/redeploy/deny-${label}" ]]; then
+    echo "FAIL: ${label} reached an effect before phone-scope refusal" >&2
+    find "${owned}/state" -type f -print >&2
+    exit 1
+  fi
+  PHONE_SCOPE_CASES=$((PHONE_SCOPE_CASES + 1))
+}
+
+for retired in dns ddns remote train_bot satiksme_bot site_notifier subscription_bot; do
+  expect_phone_denied "scope-${retired}" "${WORKSPACE_FIXTURE}/tools/pixel/redeploy.sh" --scope "${retired}"
+  for action in redeploy_component start_component stop_component restart_component health_component; do
+    expect_phone_denied "${action}-${retired}" "${DIRECT_DEPLOY}" --action "${action}" --component "${retired}"
+  done
+done
+for variable in TRAIN_BOT_ENV_FILE SATIKSME_BOT_ENV_FILE SITE_NOTIFIER_ENV_FILE SUBSCRIPTION_BOT_ENV_FILE \
+  DDNS_TOKEN_FILE ADMIN_PASSWORD_FILE ACME_TOKEN_FILE IPINFO_LITE_TOKEN_FILE PIXEL_RUNTIME_ROOTFS_TARBALL \
+  PIXEL_RUNTIME_TRAIN_BOT_BUNDLE PIXEL_RUNTIME_SATIKSME_BOT_BUNDLE PIXEL_RUNTIME_SITE_NOTIFIER_BUNDLE PIXEL_RUNTIME_SUBSCRIPTION_BOT_BUNDLE; do
+  expect_phone_denied "wrapper-${variable}" env "${variable}=${TMP_ROOT}/retired-input" "${WORKSPACE_FIXTURE}/tools/pixel/redeploy.sh"
+  expect_phone_denied "direct-${variable}" env "${variable}=${TMP_ROOT}/retired-input" "${DIRECT_DEPLOY}"
+done
+for flag in ddns-token-file admin-password-file ipinfo-lite-token-file acme-token-file train-bot-env-file satiksme-bot-env-file site-notifier-env-file subscription-bot-env-file; do
+  expect_phone_denied "flag-${flag}" "${DIRECT_DEPLOY}" "--${flag}" "${TMP_ROOT}/retired-input"
+done
+expect_phone_denied rootfs-flag "${WORKSPACE_FIXTURE}/tools/pixel/redeploy.sh" --rootfs-tarball "${TMP_ROOT}/rootfs.tar"
+expect_phone_denied destructive "${WORKSPACE_FIXTURE}/tools/pixel/redeploy.sh" --destructive-e2e
+expect_phone_denied ddns-action "${DIRECT_DEPLOY}" --action sync_ddns
+expect_phone_denied bootstrap-staged-untrusted "${DIRECT_DEPLOY}" --action bootstrap
+
+for module in dns ddns remote train_bot satiksme_bot site_notifier subscription_bot; do
+  config="${TMP_ROOT}/config-${module}.json"
+  printf '{"modules":{"%s":{"enabled":true}},"ddns":{"enabled":false}}\n' "${module}" > "${config}"
+  expect_phone_denied "wrapper-config-${module}" env "ORCHESTRATOR_CONFIG_FILE=${config}" "${WORKSPACE_FIXTURE}/tools/pixel/redeploy.sh"
+  expect_phone_denied "direct-config-${module}" "${DIRECT_DEPLOY}" --config-file "${config}"
+done
+printf '{"modules":{},"ddns":{"enabled":true}}\n' > "${TMP_ROOT}/config-ddns-active.json"
+expect_phone_denied wrapper-config-ddns-active env "ORCHESTRATOR_CONFIG_FILE=${TMP_ROOT}/config-ddns-active.json" "${WORKSPACE_FIXTURE}/tools/pixel/redeploy.sh"
+expect_phone_denied direct-config-ddns-active "${DIRECT_DEPLOY}" --config-file "${TMP_ROOT}/config-ddns-active.json"
+printf 'malformed private value\n' > "${TMP_ROOT}/config-invalid.json"
+expect_phone_denied wrapper-invalid-config env "ORCHESTRATOR_CONFIG_FILE=${TMP_ROOT}/config-invalid.json" "${WORKSPACE_FIXTURE}/tools/pixel/redeploy.sh"
+if grep -q 'malformed private value' "${TMP_ROOT}/deny-wrapper-invalid-config/command.log"; then
+  echo "FAIL: invalid config refusal leaked its contents" >&2
+  exit 1
+fi
+# Use the existing legacy template itself, without exposing its contents.
+expect_phone_denied wrapper-legacy-template env "ORCHESTRATOR_CONFIG_FILE=${REPO_ROOT}/templates/orchestrator/orchestrator-config-v1.jolkins-production.json" "${WORKSPACE_FIXTURE}/tools/pixel/redeploy.sh"
+expect_phone_denied direct-legacy-template "${DIRECT_DEPLOY}" --config-file "${REPO_ROOT}/templates/orchestrator/orchestrator-config-v1.jolkins-production.json"
+
+mkdir -p "${TMP_ROOT}/mirror/data/local/pixel-stack/conf"
+cp "${TMP_ROOT}/config-train_bot.json" "${TMP_ROOT}/mirror/data/local/pixel-stack/conf/orchestrator-config-v1.json"
+for action in mirror-push deploy-config; do
+  expect_phone_denied "${action}-retired-config" env "PIXEL_HOST_MIRROR_ROOT=${TMP_ROOT}/mirror" "${WORKSPACE_FIXTURE}/tools/pixel/redeploy.sh" "${action}"
+done
+
+# Genuine packager output uses the same artifact records consumed by the
+# runtime installer. Package only owned synthetic bytes; no native build runs.
+mkdir -p "${TMP_ROOT}/dropbear"
+printf '#!/bin/sh\nexit 0\n' > "${TMP_ROOT}/dropbear/dropbearmulti"
+chmod +x "${TMP_ROOT}/dropbear/dropbearmulti"
+printf 'owned synthetic access artifact\n' > "${TMP_ROOT}/tailscale-bundle.tar"
+bash "${REPO_ROOT}/scripts/android/package_runtime_bundle.sh" --platform-only \
+  --dropbear-artifact-dir "${TMP_ROOT}/dropbear" --tailscale-bundle "${TMP_ROOT}/tailscale-bundle.tar" \
+  --manifest-version scope-fixture --out-dir "${TMP_ROOT}/access-runtime" >"${TMP_ROOT}/runtime-package.log" 2>&1
+for component in ssh vpn dns train_bot satiksme_bot site_notifier subscription_bot; do
+  bash "${REPO_ROOT}/scripts/android/package_component_release.sh" --component "${component}" \
+    --artifact "${TMP_ROOT}/tailscale-bundle.tar" --release-id scope-fixture \
+    --out-dir "${TMP_ROOT}/release-${component}" >"${TMP_ROOT}/package-${component}.log" 2>&1
+done
+
+expect_direct_admitted() {
+  local label="$1"
+  shift
+  local owned="${TMP_ROOT}/admit-${label}"
+  local rc=0
+  mkdir -p "${owned}/state" "${owned}/tmp"
+  env PATH="${BIN_DIR}:${PATH}" FAKE_STATE_DIR="${owned}/state" FAKE_LOG_PREFIX="${label}" \
+    FAKE_BUILD_EXIT=74 PIXEL_TRANSPORT=adb PIXEL_RUN_ID="admit-${label}" TMPDIR="${owned}/tmp" \
+    PIXEL_TRANSPORT_CONTROL_DIR="${owned}/control" PIXEL_SSH_KNOWN_HOSTS_FILE="${owned}/known/hosts" \
+    "${DIRECT_DEPLOY}" --profile standard "$@" >"${owned}/command.log" 2>&1 || rc=$?
+  if [[ "${rc}" != 74 ]] || [[ "$(cat "${owned}/state/apk-builds.log" 2>/dev/null)" != build ]] ||
+    grep -Eq ' install |am start' "${owned}/state/transport-effects.log" 2>/dev/null; then
+    echo "FAIL: ${label} did not admit current phone input to the owned build boundary without installing it" >&2
+    cat "${owned}/command.log" >&2
+    exit 1
+  fi
+  PHONE_SCOPE_CASES=$((PHONE_SCOPE_CASES + 1))
+}
+expect_direct_admitted runtime-access --runtime-bundle-dir "${TMP_ROOT}/access-runtime"
+for component in ssh vpn; do
+  expect_direct_admitted "release-${component}" --action redeploy_component --component "${component}" --component-release-dir "${TMP_ROOT}/release-${component}"
+done
+expect_direct_admitted ticket --action redeploy_component --component ticket_screen
+expect_direct_admitted ticket-enable --action redeploy_component --component ticket_screen --enable-ticket-service
+expect_direct_admitted config-current --action health --config-file "${ORCHESTRATOR_FIXTURE}/configs/orchestrator-config-v1.production.json"
+for component in dns train_bot satiksme_bot site_notifier subscription_bot; do
+  expect_phone_denied "release-${component}" "${DIRECT_DEPLOY}" --component-release-dir "${TMP_ROOT}/release-${component}"
+done
+expect_phone_denied release-owner-mismatch "${DIRECT_DEPLOY}" --action redeploy_component --component ssh --component-release-dir "${TMP_ROOT}/release-vpn"
+for artifact in adguardhome-rootfs dns-runtime-assets train-bot-bundle satiksme-bot-bundle site-notifier-bundle subscription-bot-bundle; do
+  bundle="${TMP_ROOT}/runtime-${artifact}"
+  release="${TMP_ROOT}/relabeled-${artifact}"
+  mkdir -p "${bundle}" "${release}"
+  python3 - "${TMP_ROOT}/access-runtime/runtime-manifest.json" "${bundle}/runtime-manifest.json" \
+    "${TMP_ROOT}/release-ssh/release-manifest.json" "${release}/release-manifest.json" "${artifact}" <<'PY_RETIRED_MANIFEST'
+import json, sys
+for source, destination in ((sys.argv[1], sys.argv[2]), (sys.argv[3], sys.argv[4])):
+    with open(source, encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    manifest["artifacts"][0]["id"] = sys.argv[5]
+    with open(destination, "w", encoding="utf-8") as handle:
+        json.dump(manifest, handle)
+PY_RETIRED_MANIFEST
+  expect_phone_denied "runtime-${artifact}" "${DIRECT_DEPLOY}" --runtime-bundle-dir "${bundle}"
+  expect_phone_denied "relabeled-${artifact}" "${DIRECT_DEPLOY}" --action redeploy_component --component ssh --component-release-dir "${release}"
+done
+
+for scope in full platform; do
+  for profile in standard fast full; do
+    label="alias-${scope}-${profile}"
+    if ! run_wrapper "${label}" --scope "${scope}" --profile "${profile}" >"${TMP_ROOT}/${label}.log" 2>&1; then
+      echo "FAIL: ${scope}/${profile} must complete current Ticket/orchestrator deployment" >&2
+      cat "${TMP_ROOT}/${label}.log" >&2
+      exit 1
+    fi
+    python3 - "${WORKSPACE_FIXTURE}/output/pixel/redeploy/test-run-id/summary.json" <<'PY_CURRENT_SCOPE'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    result = json.load(source)
+assert result["scope"] == "orchestrator", result
+assert result["status"] == "success", result
+assert result["finalState"]["ticketRuntimeFreshness"] == "fresh", result
+assert all("train_bot" not in action and "satiksme_bot" not in action and "site_notifier" not in action and "subscription_bot" not in action and "dns" not in action for action in result["actionsExecuted"]), result
+PY_CURRENT_SCOPE
+    PHONE_SCOPE_CASES=$((PHONE_SCOPE_CASES + 1))
+  done
+done
+if [[ -e "${STATE_DIR}/retired-effects.log" ]]; then
+  echo "FAIL: a current/default phone deployment invoked retired packaging, publication or workload effects" >&2
+  cat "${STATE_DIR}/retired-effects.log" >&2
+  exit 1
+fi
+
+# Mirror diff/transport are existing external owners. Supply their ordinary
+# archive and changed-path receipts; the actual entrypoint owns admission and
+# choosing which components to restart.
+cat > "${WORKSPACE_FIXTURE}/tools/pixel/host_mirror.py" <<'PY_MIRROR_WITNESS'
+import os, pathlib, sys
+root = pathlib.Path(os.environ["FAKE_STATE_DIR"])
+with (root / "mirror-effects.log").open("a") as output:
+    output.write(sys.argv[1] + "\n")
+if sys.argv[1] == "push":
+    destination = sys.argv[sys.argv.index("--changed-paths-file") + 1]
+    pathlib.Path(destination).write_text(os.environ["FAKE_CHANGED_PATHS"])
+PY_MIRROR_WITNESS
+mkdir -p "${TMP_ROOT}/remote/data/local/pixel-stack/conf"
+cp "${ORCHESTRATOR_FIXTURE}/configs/orchestrator-config-v1.production.json" "${TMP_ROOT}/remote/data/local/pixel-stack/conf/orchestrator-config-v1.json"
+tar -cf "${TMP_ROOT}/remote.tar" -C "${TMP_ROOT}/remote" data
+cp "${ORCHESTRATOR_FIXTURE}/configs/orchestrator-config-v1.production.json" "${TMP_ROOT}/mirror/data/local/pixel-stack/conf/orchestrator-config-v1.json"
+changed_paths=$'data/local/pixel-stack/conf/apps/ticket-screen.env\ndata/local/pixel-stack/conf/ssh/authorized_keys\ndata/local/pixel-stack/conf/vpn/tailscale-authkey\ndata/local/pixel-stack/conf/apps/train-bot.env\ndata/local/pixel-stack/conf/ddns/cloudflare-token\n'
+for action in mirror-pull mirror-audit mirror-push deploy-config; do
+  label="mirror-${action}"
+  env PATH="${BIN_DIR}:${PATH}" FAKE_STATE_DIR="${STATE_DIR}" FAKE_LOG_PREFIX="${label}" \
+    FAKE_REMOTE_TAR="${TMP_ROOT}/remote.tar" FAKE_CHANGED_PATHS="${changed_paths}" \
+    PIXEL_TRANSPORT=adb PIXEL_RUN_ID="${label}" PIXEL_HOST_MIRROR_ROOT="${TMP_ROOT}/mirror" \
+    "${WORKSPACE_FIXTURE}/tools/pixel/redeploy.sh" "${action}" --device fake-device >"${TMP_ROOT}/${label}.log" 2>&1
+  if [[ "${action}" == deploy-config ]]; then
+    python3 - "${STATE_DIR}/${label}-deploy-invocations.log" <<'PY_MIRROR_ACTIONS'
+import pathlib, shlex, sys
+calls = [shlex.split(line) for line in pathlib.Path(sys.argv[1]).read_text().splitlines()]
+assert len(calls) == 3, calls
+assert [call[call.index("--action") + 1] for call in calls] == ["restart_component"] * 3, calls
+assert [call[call.index("--component") + 1] for call in calls] == ["ticket_screen", "ssh", "vpn"], calls
+PY_MIRROR_ACTIONS
+  elif [[ -e "${STATE_DIR}/${label}-deploy-invocations.log" ]]; then
+    echo "FAIL: ${action} unexpectedly restarted a phone component" >&2
+    exit 1
+  fi
+  PHONE_SCOPE_CASES=$((PHONE_SCOPE_CASES + 1))
+done
+echo "PASS: ${PHONE_SCOPE_CASES} actual phone entrypoint admission cases; default/full/platform complete only Ticket/orchestrator"
+
+# Exercise the actual root-shell dispatch assembly in an ordinary owned shell.
+# The frozen caller demonstrates the old extra effect; the current caller must
+# deliver the entire hostile-looking run ID as one literal Android argument.
+git -C "${WORKSPACE_ROOT}" show 2e7e783:orchestrator/scripts/android/deploy_orchestrator_apk.sh > "${TMP_ROOT}/dispatch-former.sh"
+python3 - "${TMP_ROOT}/dispatch-former.sh" "${REPO_ROOT}/scripts/android/deploy_orchestrator_apk.sh" "${TMP_ROOT}" <<'PY_DISPATCH'
+import pathlib, sys
+for label, source in (("former", sys.argv[1]), ("current", sys.argv[2])):
+    lines = pathlib.Path(source).read_text().splitlines(keepends=True)
+    start = lines.index("dispatch_orchestrator_action() {\n")
+    end = next(i for i in range(start + 1, len(lines)) if lines[i] == "}\n")
+    pathlib.Path(sys.argv[3], f"dispatch-{label}-function.sh").write_text("".join(lines[start:end+1]))
+PY_DISPATCH
+cat > "${BIN_DIR}/am" <<'EOF_AM'
+#!/usr/bin/env bash
+python3 - "${FAKE_AM_ARGS}" "$@" <<'PY_AM'
+import json, sys
+with open(sys.argv[1], "w", encoding="utf-8") as output:
+    json.dump(sys.argv[2:], output)
+PY_AM
+printf 'Starting service: owned witness\n'
+EOF_AM
+chmod +x "${BIN_DIR}/am"
+for label in former current; do
+  owned="${TMP_ROOT}/dispatch-${label}"
+  mkdir -p "${owned}"
+  id="scope; printf owned > '${owned}/extra-effect'; # quote' dollar\$(printf ignored)"
+  env PATH="${BIN_DIR}:${PATH}" FAKE_AM_ARGS="${owned}/argv.json" \
+    PIXEL_RUN_ID="${id}" PIXEL_TRANSPORT_CONTROL_DIR="${owned}/control" \
+    PIXEL_SSH_KNOWN_HOSTS_FILE="${owned}/known/hosts" TMPDIR="${owned}" \
+    bash -c '
+set -euo pipefail
+source "$1"
+source "$2"
+pixel_transport_root_shell() { /bin/sh -c "$1"; }
+fast_ticket_redeploy_enabled() { return 1; }
+ACTION=health COMPONENT= ENABLE_TICKET_SERVICE=0 DRY_RUN=0
+SUPERVISOR=lv.jolkins.pixelorchestrator/.app.SupervisorService
+dispatch_orchestrator_action
+' -- "${WORKSPACE_ROOT}/tools/pixel/transport.sh" "${TMP_ROOT}/dispatch-${label}-function.sh" >"${owned}/command.log" 2>&1
+  if [[ "${label}" == former ]]; then
+    [[ "$(cat "${owned}/extra-effect")" == owned ]] || { echo "FAIL: frozen run-ID dispatch did not reproduce the extra owned effect" >&2; exit 1; }
+  else
+    [[ ! -e "${owned}/extra-effect" ]] || { echo "FAIL: current run-ID dispatch still executed an extra command" >&2; exit 1; }
+    python3 - "${owned}/argv.json" "${id}" <<'PY_LITERAL_ID'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    args = json.load(source)
+index = args.index("pixel_run_id")
+assert args[index + 1] == sys.argv[2], args
+assert index + 2 == len(args), args
+PY_LITERAL_ID
+  fi
+done
+echo "PASS: frozen run-ID extra effect reproduced; current Android dispatch preserves the literal argument"
 
 # DNS is retired on the target Pixel. The remaining fixture below documents the
 # legacy DNS redeploy path but is intentionally not executed by the active suite.

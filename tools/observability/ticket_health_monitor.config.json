@@ -4,7 +4,7 @@
   "paused_reason": "",
   "repair_mode": "disabled",
   "public": {
-    "page_url": "https://ticket.jolkins.id.lv/",
+    "page_url": "https://ticket.jolkins.id.lv/admin",
     "livez_url": "https://ticket.jolkins.id.lv/api/v1/livez",
     "protected_health_url": "https://ticket.jolkins.id.lv/api/v1/health",
     "timeout_seconds": 10

@@ -1,8 +1,10 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
+import kotlinx.serialization.Serializable
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 
+@Serializable
 internal data class TicketRegistrationProof(
   val status: String,
   val reason: String,

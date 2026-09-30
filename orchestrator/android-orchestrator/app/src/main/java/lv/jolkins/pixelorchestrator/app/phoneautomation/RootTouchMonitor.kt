@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import lv.jolkins.pixelorchestrator.rootexec.SuRootExecutor
 
 internal data class RootTouchDevice(
   val path: String,
@@ -587,9 +588,11 @@ internal interface RootTouchProcess {
 
 internal object DefaultRootTouchProcessFactory : RootTouchProcessFactory {
   override fun start(command: String): RootTouchProcess {
-    val process = ProcessBuilder("su", "-c", command)
-      .redirectErrorStream(false)
-      .start()
+    val process = if (command.startsWith("exec getevent -lt ")) {
+      SuRootExecutor().startInputReader(command)
+    } else {
+      ProcessBuilder("su", "-c", command).redirectErrorStream(false).start()
+    }
     return ProcessBuilderRootTouchProcess(process)
   }
 }

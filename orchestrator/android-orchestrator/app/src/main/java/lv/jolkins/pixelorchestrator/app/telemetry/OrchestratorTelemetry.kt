@@ -1,7 +1,6 @@
 package lv.jolkins.pixelorchestrator.app.telemetry
 
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.*
 import java.security.SecureRandom
 import java.util.concurrent.CancellationException
 
@@ -99,26 +98,10 @@ internal data class OrchestratorTelemetryDraft(
   val byteCount: Long = 0
 ) {
   init {
-    require(
-      if (eventType == OrchestratorTelemetryEventType.CLEANUP_RESULT) {
-        cleanupCategory != OrchestratorTelemetryCleanupCategory.NONE
-      } else {
-        cleanupCategory == OrchestratorTelemetryCleanupCategory.NONE
-      }
-    ) {
-      "cleanupCategory is required only for cleanup result events"
-    }
-    require(durationMillis in 0..MAX_DURATION_MILLIS) {
-      "durationMillis must be between zero and seven days"
-    }
-    require(count in 0..MAX_COUNT) { "count exceeds the safe limit" }
-    require(byteCount in 0..MAX_BYTE_COUNT) { "byteCount exceeds one tebibyte" }
-  }
-
-  private companion object {
-    const val MAX_DURATION_MILLIS = 7L * 24 * 60 * 60 * 1_000
-    const val MAX_COUNT = 1_000_000_000L
-    const val MAX_BYTE_COUNT = 1024L * 1024 * 1024 * 1024
+    NativeTelemetry.call("validate_draft",buildJsonObject {
+      put("eventType",eventType.name); put("cleanupCategory",cleanupCategory.name)
+      put("durationMillis",durationMillis); put("count",count); put("byteCount",byteCount)
+    })
   }
 }
 
@@ -157,23 +140,15 @@ internal class OrchestratorTelemetryPayload private constructor(
   fun reducerRequestBytes(): ByteArray = reducerRequestBody().toByteArray(Charsets.UTF_8)
 
   companion object {
-    private const val CORRELATION_ID_LENGTH = 24
-    private const val MAX_BUILD_ID_LENGTH = 96
-    private val correlationPattern = Regex("^[0-9a-f]{$CORRELATION_ID_LENGTH}$")
-    private val buildIdPattern = Regex("^[A-Za-z0-9._-]{1,$MAX_BUILD_ID_LENGTH}$")
-
     fun create(
       draft: OrchestratorTelemetryDraft,
       correlationId: String,
       buildId: String,
       createdAtEpochMillis: Long
     ): OrchestratorTelemetryPayload {
-      require(correlationPattern.matches(correlationId)) {
-        "correlationId must be 24 lowercase hexadecimal characters"
-      }
-      require(buildIdPattern.matches(buildId) && !looksLikeIpv4(buildId)) {
-        "buildId must be a bounded release token and not an IP address"
-      }
+      NativeTelemetry.call("validate_payload",buildJsonObject {
+        put("correlationId",correlationId); put("buildId",buildId)
+      })
       return OrchestratorTelemetryPayload(
         correlationId = correlationId,
         eventType = draft.eventType,
@@ -191,17 +166,7 @@ internal class OrchestratorTelemetryPayload private constructor(
     }
 
     fun validateBuildId(buildId: String) {
-      require(buildIdPattern.matches(buildId) && !looksLikeIpv4(buildId)) {
-        "buildId must be a bounded release token and not an IP address"
-      }
-    }
-
-    private fun looksLikeIpv4(value: String): Boolean {
-      val parts = value.split('.')
-      return parts.size == 4 && parts.all { part ->
-        part.isNotEmpty() && part.all(Char::isDigit) &&
-          part.toIntOrNull()?.let { it in 0..255 } == true
-      }
+      NativeTelemetry.call("validate_payload",buildJsonObject { put("buildId",buildId) })
     }
   }
 }
@@ -297,13 +262,9 @@ internal data class OrchestratorTelemetryBackoffPolicy(
   }
 
   fun delayMillis(failureCount: Int): Long {
-    require(failureCount > 0) { "failureCount must be positive" }
-    var delay = baseDelayMillis
-    repeat((failureCount - 1).coerceAtMost(62)) {
-      if (delay >= maxDelayMillis) return maxDelayMillis
-      delay = (delay * 2).coerceAtMost(maxDelayMillis)
-    }
-    return delay
+    return NativeTelemetry.call("backoff",buildJsonObject {
+      put("failureCount",failureCount); put("baseDelayMillis",baseDelayMillis); put("maxDelayMillis",maxDelayMillis)
+    }).jsonPrimitive.long
   }
 }
 
@@ -512,42 +473,19 @@ internal class OrchestratorTelemetryClient(
     trackIncomingDrop: Boolean
   ): OrchestratorTelemetryEnqueueResult {
     val serializedBytes = payload.reducerRequestBytes().size
-    if (serializedBytes > maxQueueBytes) {
-      addRecentLocked(payload, OrchestratorTelemetryDeliveryState.DROPPED)
+    val plan = queuePolicy("evict",0,buildJsonObject {
+      put("serializedBytes",serializedBytes); put("maxQueueBytes",maxQueueBytes)
+      put("queuedBytes",queuedBytes); put("priority",payload.priority.rank)
+    }).jsonObject
+    val drop = plan["drop"]!!
+    if (drop != JsonNull) {
+      addRecentLocked(payload,OrchestratorTelemetryDeliveryState.DROPPED)
       if (trackIncomingDrop) recordDropLocked()
-      return OrchestratorTelemetryEnqueueResult.Dropped(
-        OrchestratorTelemetryDropReason.EVENT_TOO_LARGE
-      )
+      return OrchestratorTelemetryEnqueueResult.Dropped(OrchestratorTelemetryDropReason.valueOf(drop.jsonPrimitive.content))
     }
-
-    val bytesToFree = (queuedBytes.toLong() + serializedBytes - maxQueueBytes)
-      .coerceAtLeast(0)
-    val evictionCandidates = queue.withIndex()
-      .filter { (_, queued) ->
-        !queued.inFlight && queued.payload.priority.rank <= payload.priority.rank
-      }
-      .sortedWith(
-        compareBy<IndexedValue<QueuedEvent>> { it.value.payload.priority.rank }
-          .thenBy { it.value.payload.createdAtEpochMillis }
-          .thenBy { it.index }
-      )
-    val selected = mutableListOf<IndexedValue<QueuedEvent>>()
-    var selectedBytes = 0L
-    for (candidate in evictionCandidates) {
-      if (selectedBytes >= bytesToFree) break
-      selected += candidate
-      selectedBytes += candidate.value.serializedBytes
-    }
-    if (selectedBytes < bytesToFree) {
-      addRecentLocked(payload, OrchestratorTelemetryDeliveryState.DROPPED)
-      if (trackIncomingDrop) recordDropLocked()
-      return OrchestratorTelemetryEnqueueResult.Dropped(
-        OrchestratorTelemetryDropReason.HIGHER_PRIORITY_BACKLOG
-      )
-    }
-
-    selected.sortedByDescending { it.index }.forEach { candidate ->
-      val removed = queue.removeAt(candidate.index)
+    val selected = plan.getValue("indices").jsonArray.map { it.jsonPrimitive.int }
+    selected.sortedDescending().forEach { index ->
+      val removed = queue.removeAt(index)
       queuedBytes -= removed.serializedBytes
       updateRecentStateLocked(
         removed.payload.correlationId,
@@ -590,29 +528,27 @@ internal class OrchestratorTelemetryClient(
   }
 
   private fun nextReadyEventLocked(now: Long): QueuedEvent? {
-    return queue.withIndex()
-      .filter { (_, queued) -> !queued.inFlight && queued.nextAttemptAtMillis <= now }
-      .minWithOrNull(
-        compareByDescending<IndexedValue<QueuedEvent>> { it.value.payload.priority.rank }
-          .thenBy { it.value.payload.createdAtEpochMillis }
-          .thenBy { it.index }
-      )
-      ?.value
+    return queuePolicy("ready",now).let { if (it == JsonNull) null else queue[it.jsonPrimitive.int] }
   }
 
   private fun pruneExpiredLocked(now: Long) {
-    val expired = queue.filter { queued ->
-      !queued.inFlight && elapsedAtLeast(now, queued.payload.createdAtEpochMillis, maxEventAgeMillis)
-    }
+    val expired = queuePolicy("expired",now,buildJsonObject { put("maxEventAgeMillis",maxEventAgeMillis) })
+      .jsonArray.map { queue[it.jsonPrimitive.int] }
     expired.forEach { queued ->
       removeQueuedLocked(queued)
-      updateRecentStateLocked(
-        queued.payload.correlationId,
-        OrchestratorTelemetryDeliveryState.EXPIRED
-      )
+      updateRecentStateLocked(queued.payload.correlationId,OrchestratorTelemetryDeliveryState.EXPIRED)
       recordDropLocked()
     }
   }
+
+  private fun queuePolicy(operation: String, now: Long, args: JsonObject = JsonObject(emptyMap())): JsonElement =
+    NativeTelemetry.call(operation,JsonObject(args + buildJsonObject {
+      put("now",now)
+      put("queue",buildJsonArray { queue.forEach { queued -> add(buildJsonObject {
+        put("priority",queued.payload.priority.rank); put("created",queued.payload.createdAtEpochMillis)
+        put("bytes",queued.serializedBytes); put("inFlight",queued.inFlight); put("next",queued.nextAttemptAtMillis)
+      }) } })
+    }))
 
   private fun removeQueuedLocked(queued: QueuedEvent) {
     if (queue.remove(queued)) {
@@ -642,18 +578,22 @@ internal class OrchestratorTelemetryClient(
     unreportedDroppedCount = saturatingAdd(unreportedDroppedCount, 1)
   }
 
-  private fun elapsedAtLeast(now: Long, then: Long, duration: Long): Boolean {
-    return now >= then && now - then >= duration
-  }
-
-  private fun saturatingAdd(left: Long, right: Long): Long {
-    if (right > 0 && left > Long.MAX_VALUE - right) return Long.MAX_VALUE
-    return left + right
-  }
+  private fun saturatingAdd(left: Long, right: Long): Long = NativeTelemetry.call("add",buildJsonObject {
+    put("left",left); put("right",right)
+  }).jsonPrimitive.long
 
   companion object {
     const val MAX_QUEUE_BYTES: Int = 4 * 1024 * 1024
     const val MAX_EVENT_AGE_MILLIS: Long = 24L * 60 * 60 * 1_000
     const val MAX_RECENT_EVENTS: Int = 20
   }
+}
+
+
+/** Pure metadata policy; no payload or private runtime content crosses this bridge. */
+internal object NativeTelemetry {
+  private val json = Json
+  init { System.loadLibrary("pixel_health") }
+  @JvmStatic private external fun decide(operation: String, payload: String): String
+  fun call(operation: String, args: JsonObject): JsonElement = json.parseToJsonElement(decide(operation,args.toString()))
 }

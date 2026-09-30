@@ -1,5 +1,17 @@
 # Ticket Streaming Architecture
 
+## Native keyboard implementation
+
+The bundled root keyboard is built from the dependency-free Rust package
+`orchestrator/android-orchestrator/ticket-root-keyboard`, using the existing NDK
+Android ARM64 API 29 linker and Gradle asset task. Its APK asset name, installed
+path, input arguments, stdin digits and exit codes are unchanged. It keeps the
+2.7-second monotonic deadline, parent-death termination, bounded child cleanup,
+secure buffer erasure, and existing InputManager event batch. The Android action
+lane, keyboard suppression lease, visual proof, panel protection and physical-touch
+preemption retain all authority; Rust does not add another input path or daemon.
+Process-contract tests are separate from live browser and physical-device acceptance.
+
 This is the deep Pixel stream and capture note. It is not the first Ticket document.
 
 ## Private viewer state (v394)
@@ -100,6 +112,47 @@ The encoding owner copies a dequeued output buffer and snapshots its flags, then
 buffer before access-unit assembly, startup filtering, output pacing or pipe I/O. Complete frame
 writes remain the single flush boundary. There is no additional delivery thread or queue.
 
+The three Ticket visual classifiers now use the same packaged Rust library for
+pixel decisions, date recognition, action/route proofs, bounds and signature
+quantization. Java keeps the result DTOs, wire format, local calendar clock and
+existing private salts/SHA-256 identity. Pixel buffers cross JNI only within the
+existing process. No capture owner, dispatcher, action clock or replay path is
+added. The existing registration, physical-touch, fresh-frame, ambiguity,
+control-result and cleanup fences remain callers of exactly the same result
+contract. Date salts retain their existing path and atomic private-file adapter;
+control signatures retain their process-only epoch. A malformed cleanup probe
+returns unknown instead of an array exception and cannot grant an action.
+Deployed verification remains a separate gate from host JNI comparisons; see
+`ops/reports/2026-09-29-pixel-visual-rust-migration.md`.
+
+The activation checkpoint's pure transition, ordinal admission, identity matching,
+failure-phase and terminal-retirement decisions also belong to the same Rust
+core. The existing Kotlin adapter owns the single SharedPreferences slot,
+unchanged preference/key names, commit and exact readback. Rust receives typed
+checkpoint data and returns a candidate or a preserved conclusive checkpoint;
+it performs no physical effect or persistent write. Failed or unconfirmed writes
+still block dispatch. An uncertain dispatch remains retained after terminal
+delivery and never admits replay. Phone-control sessions, freshness/consensus,
+physical-touch observations and dispatch ordering remain with their existing
+owners in this bounded migration. Actual deployed restart and user-facing
+verification remain separate from the host comparison;
+see `ops/reports/2026-09-29-pixel-checkpoint-rust-migration.md`.
+
+Access-unit assembly and the THF1/TSF3 byte/header contracts belong to the Rust
+core packaged in the existing orchestrator APK. Java retains stream I/O, DTOs
+and payload copying; Rust retains the same two-MiB bounds, parameter-set cache,
+framing authority, flags, overflow/reset behavior and timestamp validation.
+The assembler's native state has one synchronized AutoCloseable Java owner.
+The whole codec session uses try-with-resources so setup failure, interruption,
+normal end and teardown failure all release that state. Closed owners cannot
+reenter JNI. There is no global native registry, finalizer or new worker.
+
+The root app_process receives the native library path inside the same APK used
+for its CLASSPATH. It loads that uncompressed APK entry directly; the library is
+not extracted, mirrored or independently deployed. Ordinary app callers use
+the existing packaged-library loader. Android capture/MediaCodec/Surface and
+browser/network adapters remain outside this byte-processing boundary.
+
 Teardown attempts surface release, codec stop and codec release independently. A failed input
 picture remains pinned until codec release succeeds. Unproved surface, codec or retained-picture
 release terminates the helper with exit 70; the existing process owner observes exit/EOF and
@@ -175,6 +228,13 @@ cannot remove a replacement marker. The old JSON message bridge, lossy queue and
 unused successful-result cache are removed; command settlement and the current
 request guard still prevent a repeated physical request.
 
+After safe surface and panel finalization, local streaming and foreground checks
+resume for both successful and failed code requests. Only a generated result with
+its accepted browser acknowledgement publishes captured-result readiness. Failed
+requests and later surface recovery publish ordinary cleanup, preserving the
+server's existing failure reason or outstanding result-capture requirement. This
+prevents an unauthorized readiness message from blocking cleanup in the outbox.
+
 V2 retains the actual encoder startup primer and its capture/activation boundary.
 It removes the separate startup-phase and primer-counter diagnostic protocol.
 The capture owner remains responsible for visibility failures, cadence, and
@@ -243,11 +303,33 @@ and restored by their existing owner on every check. Cold mode still releases th
 permits subsequent bounded observations. Routine successful checks add no operational log rows;
 capture-settings failures retain existing diagnostics. Monitoring remains disabled by default.
 
+After a problem report, the same worker performs up to twelve additional checks,
+15 seconds apart within a fixed three-minute window. Each scheduled recheck
+requires evidence captured after it starts; a dispatched asynchronous probe stays
+pending. Repeated identical failures are not published between ordinary reports,
+and extra captures do not move the five-minute check/report deadline. A ready
+transition publishes immediately and cancels the remaining rechecks. Changed
+problem reasons keep their existing publication behavior without extending the
+window. A later ordinary problem report starts another bounded window; disabled
+or changed configuration clears it. Delayed wakeups never catch up in a burst.
+The server notification rules and all phone ownership guards are unchanged.
+
 In v368 the compact slider detector still proves the slider shape and detail context. The existing detailed sample then refines its unpadded orange track and attached dark thumb, excluding dark components that meet the bounded search edge. Browser placement and phone geometry use that sample-space rectangle; the change introduces no capture or image publication.
 
 In v372 the single capture owner shares one immutable picture between classification and the bounded newest-frame encoder handoff. Ordinary and Ticket-action classification may run alongside encoding; both readers retain the picture until they finish. Control-code generation probes retain classification-before-media ordering so the generated-result marker precedes its picture. It does not open a second capture loop or private startup sampling window. The observer publishes current session/context, normalized geometry, readiness/busy reason, observation sequence and source age directly to Spacetime. The module owns its three-second expiry. Since v369, the publisher renews its bounded database clock independently every fifteen seconds, including while observation publication is healthy. Safe health timings distinguish source-to-input, encoding, output pacing, and pipe-to-service delay. The encoder operating-rate resource hint is 30; capture and emitted output remain limited to one FPS. Encoder stalls and missing relay/HDR pictures do not prevent this observation or command receipt, progress and terminal publication.
 
 The command worker publishes retained progress and outcomes through an independent result publisher. Its acknowledgement ledger atomically tombstones settled IDs so late callbacks cannot revive execution. Network retry resends the recorded result only. Existing private dispatch journals and the full two-observation pre-input fence remain mandatory. Browser registration binds the current phone-context revision rather than an encoded frame.
+
+The same packaged `pixel_health` library owns bounded command-message decoding
+and selection of the existing command, desired-state and monitoring rows.
+Kotlin retains the single OkHttp subscription, identity/initial-snapshot
+handshake, reconnect policy, atomic current inbox, expiry revalidation, result
+publisher and effect/journal owners. The native decoder receives an explicit
+nanosecond clock and the existing ticket/backend scope; it preserves table/type
+allowlists, quoted command fields, wire DTOs and all existing size/capacity
+limits. It cannot dispatch an action or retain a second snapshot. Local JNI
+comparison and real loopback socket checks are documented in the
+[decoder verification](../../ops/reports/2026-09-29-pixel-command-decoder-rust-migration.md).
 
 Control-code generated state is semantic; browser result capture remains separately bound to streamed pixels. After proving original-detail restoration and completing panel protection cleanup, the phone sends a session-bound cleanup revision without requesting another encoded picture. Cleanup cannot renew current control readiness; the observation publisher is its sole owner.
 
@@ -255,6 +337,20 @@ Earlier sections describing private startup sampling, automatic browser proof di
 
 
 The local read-only [Ticket health monitor](../runbooks/TICKET_HEALTH_MONITOR.md) distinguishes active viewing, bounded page warmth with no browser video client, and settled idle. Warmth is proven from the existing server relay report; it never grants frame/action authority. Absolute capture time, relay report update time, direct phone observation time and monitor report creation time remain separate evidence. The collector is local tooling, not a phone service or another recovery owner.
+
+The local monitor has an opt-in Rust command in the existing `pixel-health`
+package. Normal Android/JNI builds exclude that binary. It retains the collector's
+bounded commands, strict schemas, safe projection, verdicts and atomic reports;
+native macOS `curl` owns credential-free HTTPS without redirects or `.curlrc`.
+The existing Python caller path is a minimal `os.execv` launcher for that built
+command; collection and decisions have one native owner. It preserves arguments,
+working directory, environment, standard streams, signals and exit status. A
+missing binary exits 2 with its build command; no runtime build or Python fallback
+exists. The frozen former Python owner is loaded only by offline comparison tests.
+This migration creates no daemon, schedule, phone action or recovery authority.
+See the [local candidate verification](../../ops/reports/2026-09-29-ticket-health-monitor-rust-candidate.md).
+Canonical invocation checks and separate live proof are recorded in the
+[launcher verification](../../ops/reports/2026-09-29-ticket-health-monitor-native-launcher.md).
 
 For live Ticket page work, start from the ops checkout `workloads/ticket-remote/CURRENT.md`. The current product is: open the signed-in page, get a live ticket picture, use one visual action engine to open or register tickets and switch briefly between the newest unactivated and recently activated views, and request a control code when needed. The browser oval is optional local authorization for the same `register_current` action as the button; it is not a second phone-control protocol.
 
@@ -572,7 +668,7 @@ SpacetimeDB is the source of truth for ticket membership, browser presence, cont
 
 Admin-scheduled latest-ticket re-detection uses a private one-shot SpacetimeDB schedule rather than a web-process timer or Android alarm. The admin submits native date and time fields that `ticket_remote` resolves in the configured Pixel IANA time zone, currently `Europe/Riga`, before storing the absolute UTC instant. Only one future schedule may be pending for a ticket/backend; replacement and cancellation are transactional and guarded by the schedule ID. At the due instant, the internal scheduled reducer emits `ticket_action_v3` with target `redetect_latest`. Pixel consumes it through the same subscription-first dispatch ledger and visual executor as immediate actions; the durable action journal and terminal projection preserve recovery across service or phone restarts without a second navigation tap. `tickets_single_use_empty` remains only an intermediate left-tab state with one proved Time-tickets target, and `tickets_time_empty` is a distinct right-tab state with one proved Single-use target. A cycle already on Time-tickets first journals and taps back to Single-use; if that tab is empty, it journals and taps forward again. A remembered Time-tickets selection reached from Home follows the same reverse-then-forward proof. An old activated card with no registration control may also leave a nonempty tab list; two agreeing list observations with proved inner-tab and bottom Tickets chrome permit only a journaled opposite-tab tap for redetection, never a card tap. The return to Time-tickets is bounded; if the nonempty list still lacks a proved eligible registration, it stops for attention rather than claiming absence. Either owned tab transition may instead reveal a non-empty ticket list and resume ordinary latest-card discovery. Only two new agreeing `tickets_time_empty` frames reached directly from a fresh, owned `tickets_single_use_empty` transition can report that nothing was found. That expected negative result is published as `failed` with reason `ticket_action_latest_not_detected`, public view `unknown`, and a positive encoded-frame watermark; it never claims `latest_unactivated`. Like a successful visual proof, this negative proof is journaled only after safe panel-lease finalization and after its watermark and generation are revalidated. Any missing tab selection, conflicting geometry, stale frame, unsafe finalization, or unknown state fails closed instead. Expired commands are never started. Schedule and outcome rows are private and reach only the authenticated admin surface through the service projection; member/public state does not expose them.
 
-The unattended repository health monitor verifies that the current CLI login matches its configured public operator identity before SQL and stores no authentication token. Its complete configuration uses an exact schema and rejects missing, extra, mistyped, unsafe, duplicate, or non-finite values before probing. Each query is accepted only with its exact columns and strict value types. Pixel live and idle health have explicit required typed fields; an incomplete report fails the Pixel surface before any derived stream verdict. A healthy idle result additionally requires matching idle/stopped session and ticket state, inactive-but-available hardware capture, no failed or blocked recovery, and a successfully collected, strictly typed Ticket lifecycle summary. Exact Ticket start/stop shells and their linked command-reading helpers become stuck after 60 seconds; an exact helper reparented to init remains detectable. The monitor saves only their counts and oldest age, never command arguments, and reports `pixel_ticket_lifecycle_stuck`. Failed Spacetime or Pixel collection stays unknown and must not generate secondary live/idle, portrait, frame, capture, pipeline, or ticket-state findings. Persisted states, including Docker and ADB status, use per-field enum maps and fixed fallbacks rather than a shared generic token rule.
+The unattended repository health monitor verifies that the current CLI login matches its configured public operator identity before SQL and stores no authentication token. Its complete configuration uses an exact schema and rejects missing, extra, mistyped, unsafe, duplicate, or non-finite values before probing. Each query is accepted only with its exact columns and strict value types. Pixel live and idle health have explicit required typed fields; an incomplete report fails the Pixel surface before any derived stream verdict. A healthy idle result additionally requires matching idle/stopped session and ticket state, inactive-but-available hardware capture, no failed or blocked recovery, and a successfully collected, strictly typed Ticket lifecycle summary. Exact Ticket start/stop shell owners, the packaged native executable with those original basename dispatch arguments, and linked command-reading helpers become stuck after 60 seconds; an exact helper reparented to init remains detectable. The monitor saves only their counts and oldest age, never command arguments, and reports `pixel_ticket_lifecycle_stuck`. Failed Spacetime or Pixel collection stays unknown and must not generate secondary live/idle, portrait, frame, capture, pipeline, or ticket-state findings. Persisted states, including Docker and ADB status, use per-field enum maps and fixed fallbacks rather than a shared generic token rule.
 
 Host and Pixel resource summaries are bounded allow-lists: host uptime, memory, root disk and configured-container CPU/memory/process counts; Pixel battery, thermal status, RAM and data-disk usage. Every collected resource has a strictly validated warning and failure threshold. Warnings preserve an otherwise healthy verdict, while failure crossings add a specific degraded finding; unavailable primary host or Pixel state suppresses derived resource findings. Command output is continuously drained and remains within the fixed per-stream ceiling after decoding. Raw CLI output, full status payloads, ticket content, private identifiers, secrets, and unrelated container or device data are excluded from saved reports. Latest state and compact degraded summaries are written atomically with user-readable modes. Compact monitor-only evidence is capped by configured count; legacy directories and evidence with operator-added files are outside automatic pruning.
 
@@ -754,3 +850,27 @@ Future agents should add short notes here when changing ticket stream flow, capt
 - 2026-07-25: Pixel idle Spacetime polling now uses the transactional command signal before reading full pending commands and maintains a one-second authoritative desired-state check. Active stream, control-code, reselect, and retained-outbox work remain on the existing 75 ms lane; idle signal checks have a 250 ms floor. Periodic unchanged desired-state verification preserves phone-report deduplication instead of producing a one-second durable-write loop. This is one final runtime path rather than a feature flag or parallel compatibility mode.
 - 2026-08-16: ViVi public and control-code flows now treat `TICKET_DETAIL` with fresh rooted `RAW_TICKET`/Aztec visual proof as the only successful resting state. The ticket list and its yellow `Reģistrēt biļeti` control are recovery sources only: normal recovery taps the selected card body, while explicit new-registration workflows retain their separate button action. Browser frozen-frame paint acknowledgement remains the cleanup barrier, followed by the existing generated-result close and a fresh live detail frame. Control-code admission also starts a request-owned root keyboard clamp asynchronously before navigation, preserves the inline input safety reassertion, and restores the exact prior secure setting in the common finally path with existing request phase telemetry.
 - 2026-08-17: After rooted generated-result proof, Pixel waits 200 ms before requesting the following H.264 watermark. This preserves the existing SpacetimeDB marker and browser paint-acknowledgement contract while allowing ViVi's fading code-entry popup to leave the frame before the browser freezes it.
+
+- 2026-09-30: The existing native library owns command inbox replacement, ordered
+  inserts/deletes/disconnect authority, expiry and start revalidation, stable
+  stream-start priority and generic-ACK versus retained-terminal delivery policy.
+  It also owns the read-only monitor's classification, freshness, epoch reset,
+  bounded recheck/report cadence and evidence cutoff. Kotlin keeps synchronized
+  calls, sockets, clocks, coroutine notifications, retained result DTOs, capture,
+  journals, physical effects and all existing server publication positions.
+  There is no extra worker, timer, persistence, fallback or phone attempt.
+  Monitoring observations continue to grant no input authority. See
+  `ops/reports/2026-09-30-pixel-command-monitoring-rust-migration.md` for proof.
+
+- 2026-09-30: Capture cadence, strict relay demand admission, proof-session
+  cleanup, phone-control context/evidence freshness and publication readiness
+  are decisions in the existing native library. Android retains one synchronized
+  state adapter and the original helper/socket/capture/input/publication effects.
+  No rejected demand advances generation and no observation grants new physical
+  attempt authority. See the capture/control migration report for comparisons.
+
+- 2026-09-30: Visual-action admission, journal reconciliation/outcome projection,
+  consensus, selection and fresh registration identity gates reside in Rust.
+  The original executor remains the only capture/journal/navigation/input effect
+  owner. Four Java UTF-16 slices retain exact wire formatting. See the visual
+  action policy migration report for the frozen previous-owner proof.

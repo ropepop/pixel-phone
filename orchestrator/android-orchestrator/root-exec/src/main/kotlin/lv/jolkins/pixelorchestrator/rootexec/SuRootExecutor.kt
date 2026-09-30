@@ -10,9 +10,13 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.InputStream
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -139,6 +143,67 @@ class SuRootExecutor internal constructor(
     return run(wrapped, timeout)
   }
 
+  /** Input readers keep stdin as an app-owned lifeline; finite commands retain run(). */
+  fun startInputReader(command: String): Process {
+    val stat = File("/proc/self/stat").readText()
+    val appPid = stat.substringBefore(' ').toLong()
+    val appStart = stat.substringAfterLast(") ").split(' ')[19].toLong()
+    val admission = UUID.randomUUID().toString()
+    val process = startProcess(inputReaderCommand(command, appPid, appStart), admission)
+    val owner = AtomicReference<Pair<Long, Long>?>(null)
+    val closed = AtomicBoolean()
+    val output = object : InputStream() {
+      private var admitted = false
+
+      @Synchronized private fun admit() {
+        if (admitted) return
+        try {
+          val header = ByteArrayOutputStream()
+          while (header.size() < 256) {
+            val next = process.inputStream.read()
+            if (next == '\n'.code || next < 0) break
+            header.write(next)
+          }
+          val fields = header.toString("UTF-8").split(':')
+          val pid = fields.getOrNull(1)?.toLongOrNull()
+          val ticks = fields.getOrNull(2)?.toLongOrNull()
+          check(fields.size == 3 && fields[0] == "root-exec-ready" && pid != null && pid > 1 && ticks != null && ticks > 0) {
+            "root command identity unavailable"
+          }
+          owner.set(pid to ticks)
+          if (closed.get()) throw IOException("root input reader is closed")
+          process.outputStream.write((admission + "\n").toByteArray())
+          process.outputStream.flush()
+          admitted = true
+        } catch (error: Throwable) {
+          if (closed.compareAndSet(false, true)) cleanupTimedOutProcess(process, owner.get())
+          throw error
+        }
+      }
+
+      override fun read(): Int { admit(); return process.inputStream.read() }
+      override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (length == 0) return 0
+        admit()
+        return process.inputStream.read(buffer, offset, length)
+      }
+      override fun close() { process.inputStream.close() }
+    }
+    return object : Process() {
+      override fun getInputStream(): InputStream = output
+      override fun getErrorStream(): InputStream = process.errorStream
+      override fun getOutputStream() = process.outputStream
+      override fun waitFor(): Int = process.waitFor()
+      override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = process.waitFor(timeout, unit)
+      override fun exitValue(): Int = process.exitValue()
+      override fun isAlive(): Boolean = process.isAlive
+      override fun destroy() {
+        if (closed.compareAndSet(false, true)) cleanupTimedOutProcess(process, owner.get())
+      }
+      override fun destroyForcibly(): Process { destroy(); return this }
+    }
+  }
+
   private fun InputStream.readTextSafely(): String {
     return runCatching {
       bufferedReader().use { it.readText() }
@@ -178,7 +243,14 @@ class SuRootExecutor internal constructor(
     """.trimIndent()
 
     internal fun processTreeStopScript(rootPid: Long, rootStart: Long): String = """
+        ${processTreeFunctions()}
         root="$rootPid"
+        start_of "${'$'}root"
+        [ "${'$'}observed_start" = "$rootStart" ] || exit 0
+        kill_tree "${'$'}root" "$rootStart"
+      """.trimIndent()
+
+    private fun processTreeFunctions(): String = """
         start_of() {
           observed_start=""
           IFS= read -r line 2>/dev/null < "/proc/${'$'}1/stat" || return 1
@@ -188,19 +260,24 @@ class SuRootExecutor internal constructor(
           shift 19
           observed_start="${'$'}1"
         }
-        start_of "${'$'}root"
-        [ "${'$'}observed_start" = "$rootStart" ] || exit 0
         children_of() {
           parent="${'$'}1"
-          child_pids="${'$'}(ps -P "${'$'}parent" -o PID=)" || return 1
-          for pid in ${'$'}child_pids; do
+          process_rows="${'$'}(ps -A -o PID=,PPID=)" || return 1
+          while read -r pid listed_parent extra; do
+            [ -n "${'$'}pid${'$'}listed_parent${'$'}extra" ] || continue
+            case "${'$'}pid" in ''|*[!0-9]*) return 1 ;; esac
+            case "${'$'}listed_parent" in ''|*[!0-9]*) return 1 ;; esac
+            [ -z "${'$'}extra" ] || return 1
+            [ "${'$'}listed_parent" = "${'$'}parent" ] || continue
             IFS= read -r line 2>/dev/null < "/proc/${'$'}pid/stat" || continue
             rest="${'$'}{line##*) }"
             set -- ${'$'}rest
             [ "${'$'}{2:-}" = "${'$'}parent" ] || continue
             shift 19
             printf '%s:%s\n' "${'$'}pid" "${'$'}1"
-          done
+          done <<ROOT_EXEC_CHILDREN
+        ${'$'}process_rows
+        ROOT_EXEC_CHILDREN
         }
         kill_tree() {
           local pid="${'$'}1"
@@ -232,8 +309,44 @@ class SuRootExecutor internal constructor(
           done
           return 1
         }
-        kill_tree "${'$'}root" "$rootStart"
       """.trimIndent()
+
+    internal fun inputReaderCommand(command: String, appPid: Long, appStart: Long): String = """
+      ${processTreeFunctions()}
+      start_of "$appPid"
+      [ "${'$'}observed_start" = "$appStart" ] || exit 125
+      guardian="${'$'}${'$'}"
+      start_of "${'$'}guardian" || exit 125
+      guardian_start="${'$'}observed_start"
+      input_child=""
+      input_start=""
+      eof_child=""
+      eof_start=""
+      finish_input() {
+        trap - EXIT HUP INT TERM
+        [ -z "${'$'}input_start" ] || kill_tree "${'$'}input_child" "${'$'}input_start"
+        [ -z "${'$'}eof_start" ] || kill_tree "${'$'}eof_child" "${'$'}eof_start"
+        [ -z "${'$'}input_child" ] || wait "${'$'}input_child" 2>/dev/null
+        [ -z "${'$'}eof_child" ] || wait "${'$'}eof_child" 2>/dev/null
+      }
+      trap finish_input EXIT
+      trap 'exit 143' HUP INT TERM
+      sh -c ${ShellEscaper.singleQuote(command)} < /dev/null &
+      input_child="${'$'}!"
+      start_of "${'$'}input_child" && input_start="${'$'}observed_start"
+      exec 3<&0
+      (
+        while IFS= read -r unused; do :; done
+        start_of "${'$'}guardian"
+        [ "${'$'}observed_start" != "${'$'}guardian_start" ] || kill -TERM "${'$'}guardian"
+      ) <&3 &
+      eof_child="${'$'}!"
+      start_of "${'$'}eof_child" && eof_start="${'$'}observed_start"
+      exec 3<&-
+      wait "${'$'}input_child"
+      input_exit="${'$'}?"
+      exit "${'$'}input_exit"
+    """.trimIndent()
 
     private fun killProcessTree(rootPid: Long, rootStart: Long) {
       val killer = ProcessBuilder("su", "-c", processTreeStopScript(rootPid, rootStart))

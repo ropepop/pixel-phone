@@ -103,6 +103,26 @@ printf 'keep evidence\n' > "${TMP_ROOT}/ops/evidence/orchestrator/keep.txt"
 cp "${HELPER_SCRIPT}" "${TMP_ROOT}/tools/pixel/artifact_retention.sh"
 cp "${CLEANUP_SCRIPT}" "${TMP_ROOT}/tools/pixel/cleanup_workspace.sh"
 cp "${PACKAGE_COMPONENT_SCRIPT}" "${TMP_ROOT}/orchestrator/scripts/android/package_component_release.sh"
+# Compile the real owner once. Only compilation is replaced inside the disposable
+# package workspace; its command contract is checked and the real executable runs.
+source "${HELPER_SCRIPT}"
+pixel_workspace_cleanup_native workspace "${WORKSPACE_ROOT}" --help >/dev/null
+fixture_crate="${TMP_ROOT}/orchestrator/android-orchestrator/pixel-health"
+mkdir -p "${fixture_crate}/target/release" "${TMP_ROOT}/compiler"
+cp "${WORKSPACE_ROOT}/orchestrator/android-orchestrator/pixel-health/target/release/pixel-workspace-cleanup" \
+  "${fixture_crate}/target/release/"
+cp "${WORKSPACE_ROOT}/orchestrator/android-orchestrator/pixel-health/Cargo.toml" "${fixture_crate}/"
+cat > "${TMP_ROOT}/compiler/cargo" <<'CARGO'
+#!/usr/bin/env bash
+set -euo pipefail
+fixture_root="$(cd "$(dirname "$0")/.." && pwd)"
+crate="${fixture_root}/orchestrator/android-orchestrator/pixel-health"
+[[ "$*" == "build --quiet --locked --release --manifest-path ${crate}/Cargo.toml --target-dir ${crate}/target --features workspace-cleanup --bin pixel-workspace-cleanup -j 1" ]]
+[[ -f "${crate}/Cargo.toml" && -x "${crate}/target/release/pixel-workspace-cleanup" ]]
+printf '%s\n' "$*" >> "${fixture_root}/compiler-receipts.txt"
+CARGO
+chmod +x "${TMP_ROOT}/compiler/cargo"
+export PATH="${TMP_ROOT}/compiler:${PATH}"
 chmod +x \
   "${TMP_ROOT}/tools/pixel/cleanup_workspace.sh" \
   "${TMP_ROOT}/orchestrator/scripts/android/package_component_release.sh"
@@ -300,4 +320,5 @@ if [[ ! -f "${full_release}/release-manifest.json" ]]; then
   exit 1
 fi
 
-echo "PASS: workspace cleanup centralizes garbage disposal and preserves protected paths"
+[[ -s "${TMP_ROOT}/compiler-receipts.txt" ]]
+echo "PASS: native workspace cleanup runs through actual full packaging and preserves protected paths"

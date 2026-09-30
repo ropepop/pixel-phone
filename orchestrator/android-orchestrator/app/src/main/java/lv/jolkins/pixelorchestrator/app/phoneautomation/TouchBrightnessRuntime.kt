@@ -9,8 +9,8 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
-import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.serialization.json.*
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -374,8 +374,7 @@ internal class AndroidTouchBrightnessDeviceController(
     }
     // Blanking does not change Android brightness. When those settings still match,
     // restore only the raw request and open the gate; there is no framework ramp to wait for.
-    val androidStateUnchanged = before?.mode == restoreState.mode &&
-      before?.value == restoreState.value && (before?.displayPercentage ?: 0f) > DISPLAY_PERCENT_TOLERANCE
+    val androidStateUnchanged = NativeTouchBrightness.call("android_unchanged",before,restoreState).jsonPrimitive.boolean
     val holdMillis = if (androidStateUnchanged) 0L else VISIBLE_HOLD_MILLIS
     val panelScript = if (restoreState.hasVisiblePanelBrightnessData()) {
       ScreenBrightnessControl.buildRestorePanelScript(restoreState, holdMillis, DIM_HOLD_INTERVAL_MILLIS)
@@ -497,126 +496,24 @@ internal class AndroidTouchBrightnessDeviceController(
     }.getOrDefault(false)
   }
 
-  private fun ScreenBrightnessState.withRemotePanelFallback(): ScreenBrightnessState {
-    val remoteState = bridge.remoteScreenBrightnessState() ?: return this
-    val remoteHasVisiblePanel = remoteState.hasVisiblePanelBrightnessData()
-    return copy(
-      displayPercentage = displayPercentage ?: remoteState.displayPercentage,
-      panelPath = panelPath ?: remoteState.panelPath.takeIf { remoteHasVisiblePanel },
-      panelBrightness = panelBrightness ?: remoteState.panelBrightness.takeIf { remoteHasVisiblePanel },
-      panelActualBrightness = panelActualBrightness ?: remoteState.panelActualBrightness.takeIf { remoteHasVisiblePanel },
-      panelMaxBrightness = panelMaxBrightness ?: remoteState.panelMaxBrightness.takeIf { remoteHasVisiblePanel }
-    )
-  }
+  private fun ScreenBrightnessState.withRemotePanelFallback(): ScreenBrightnessState =
+    NativeTouchBrightness.fallback(this, bridge.remoteScreenBrightnessState())
 
-  private fun ScreenBrightnessState.visiblePanelFallbackPercent(): Int {
-    val display = displayPercentage?.roundToInt()
-    val system = value?.let(ScreenBrightnessControl::percentFromSystemValue)
-    return (display ?: system ?: VISIBLE_PANEL_FALLBACK_PERCENT)
-      .coerceAtLeast(VISIBLE_PANEL_FALLBACK_PERCENT)
-      .coerceAtMost(100)
-  }
+  private fun ScreenBrightnessState.visiblePanelFallbackPercent(): Int =
+    NativeTouchBrightness.call("fallback_percent",this).jsonPrimitive.int
 
-  private fun ScreenBrightnessState.matchesTargetLenient(targetPercent: Int, panelOnly: Boolean): Boolean {
-    if (panelOnly) {
-      return panelPercentMatches(targetPercent)
-    }
-    if (targetPercent > PANEL_SLEEP_TARGET_PERCENT && hasPanelBrightnessData() && !panelPercentMatches(targetPercent)) {
-      return false
-    }
-    if (mode != null && mode != MANUAL_BRIGHTNESS_MODE) {
-      return false
-    }
-    if (targetPercent > PANEL_SLEEP_TARGET_PERCENT && displayPercentage != null && displayPercentage <= DISPLAY_PERCENT_TOLERANCE) {
-      return false
-    }
-    val targetSystemValue = ScreenBrightnessControl.legacySystemValue(targetPercent)
-    if (value != null && value == targetSystemValue) {
-      return true
-    }
-    if (displayPercentage != null) {
-      return abs(displayPercentage - targetPercent.toFloat()) <= DISPLAY_PERCENT_TOLERANCE
-    }
-    return value == null
-  }
+  private fun ScreenBrightnessState.matchesTargetLenient(targetPercent: Int, panelOnly: Boolean): Boolean =
+    NativeTouchBrightness.test("target_matches",this,target=targetPercent,panelOnly=panelOnly)
 
-  private fun ScreenBrightnessState.matchesRestoredStateLenient(
-    expected: ScreenBrightnessState,
-    panelOnly: Boolean
-  ): Boolean {
-    if (expected.panelBrightness != null || expected.panelActualBrightness != null) {
-      val expectedPanel = expected.panelBrightness ?: expected.panelActualBrightness
-      val actualPanel = panelActualBrightness ?: panelBrightness
-      if (expectedPanel != null && actualPanel != null && kotlin.math.abs(actualPanel - expectedPanel) <= PANEL_VALUE_TOLERANCE) {
-        if (panelOnly) {
-          return true
-        }
-      } else if (panelOnly) {
-        return false
-      } else if (expectedPanel != null && actualPanel != null) {
-        return false
-      }
-    } else if (panelOnly) {
-      return !hasPanelBrightnessData() || hasVisiblePanelBrightnessData()
-    }
-    if (!panelOnly && expected.mode != AUTOMATIC_BRIGHTNESS_MODE && hasPanelBrightnessData() && !hasVisiblePanelBrightnessData()) {
-      return false
-    }
-    val expectsVisibleAndroidBrightness =
-      (expected.displayPercentage != null && expected.displayPercentage > DISPLAY_PERCENT_TOLERANCE) ||
-        ((expected.value ?: 0) > 0)
-    if (!panelOnly && expectsVisibleAndroidBrightness && displayPercentage != null && displayPercentage <= DISPLAY_PERCENT_TOLERANCE) {
-      return false
-    }
-    if (expected.mode != null && mode != null && mode != expected.mode) {
-      return false
-    }
-    return when (expected.mode) {
-      AUTOMATIC_BRIGHTNESS_MODE -> true
-      MANUAL_BRIGHTNESS_MODE, null -> {
-        val expectedValue = expected.value ?: return true
-        when {
-          value != null && value == expectedValue -> true
-          displayPercentage != null -> {
-            abs(displayPercentage - ScreenBrightnessControl.percentFromSystemValue(expectedValue).toFloat()) <= DISPLAY_PERCENT_TOLERANCE
-          }
-          else -> true
-        }
-      }
-
-      else -> true
-    }
-  }
-
-  private fun ScreenBrightnessState.panelPercentMatches(targetPercent: Int): Boolean {
-    val max = panelMaxBrightness ?: return false
-    if (max <= 0) {
-      return false
-    }
-    val current = panelActualBrightness ?: panelBrightness ?: return false
-    if (targetPercent == PANEL_SLEEP_TARGET_PERCENT) {
-      return current == 0
-    }
-    val targetValue = ScreenBrightnessControl.panelValueFromPercent(targetPercent, max)
-    if (kotlin.math.abs(current - targetValue) <= PANEL_VALUE_TOLERANCE) {
-      return true
-    }
-    val currentPercent = (current.toFloat() / max.toFloat()) * 100.0f
-    return abs(currentPercent - targetPercent.toFloat()) <= PANEL_PERCENT_TOLERANCE
-  }
+  private fun ScreenBrightnessState.matchesRestoredStateLenient(expected: ScreenBrightnessState, panelOnly: Boolean): Boolean =
+    NativeTouchBrightness.test("restored_matches",this,expected,panelOnly=panelOnly)
 
   private fun ScreenBrightnessState.verificationFailureDetail(prefix: String): String {
     return "$prefix: mode=$mode value=$value display=$displayPercentage panel=$panelActualBrightness/$panelMaxBrightness path=$panelPath"
   }
 
-  private fun ScreenBrightnessState.hasPanelBrightnessData(): Boolean {
-    return panelMaxBrightness != null && (panelActualBrightness != null || panelBrightness != null)
-  }
-
-  private fun ScreenBrightnessState.hasVisiblePanelBrightnessData(): Boolean {
-    val panel = panelActualBrightness ?: panelBrightness ?: return false
-    return panel > PANEL_VALUE_TOLERANCE
-  }
+  private fun ScreenBrightnessState.hasPanelBrightnessData(): Boolean = NativeTouchBrightness.test("has_panel",this)
+  private fun ScreenBrightnessState.hasVisiblePanelBrightnessData(): Boolean = NativeTouchBrightness.test("visible_panel",this)
 
   companion object {
     private const val BRIGHTNESS_SETTLE_DELAY_MILLIS = 250L
@@ -1607,19 +1504,7 @@ internal class TouchBrightnessRuntime(
     )
   }
 
-  private fun ScreenBrightnessState.isPanelSleepBrightnessState(): Boolean {
-    if (panelBacklightPower == 4) return true
-    val systemBrightness = value
-    if (systemBrightness != null && systemBrightness <= 0) {
-      return true
-    }
-    val display = displayPercentage
-    if (display != null && display <= PANEL_SLEEP_DISPLAY_PERCENT_TOLERANCE) {
-      return true
-    }
-    val panel = panelActualBrightness ?: panelBrightness
-    return panel != null && panel <= PANEL_SLEEP_PANEL_VALUE_TOLERANCE
-  }
+  private fun ScreenBrightnessState.isPanelSleepBrightnessState(): Boolean = NativeTouchBrightness.test("panel_sleep",this)
 
   companion object {
     internal const val BRIGHT_PERCENT = 100

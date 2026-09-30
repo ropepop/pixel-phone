@@ -1,5 +1,9 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+
 internal enum class TicketProofStreamCleanupDecision {
   STOP,
   RETRY,
@@ -21,18 +25,14 @@ internal fun ticketProofStreamCleanupDecision(
   actionOwnershipActive: Boolean,
   reauthOwnershipActive: Boolean
 ): TicketProofStreamCleanupDecision {
-  if (!streamActive || clientCount != 0) return TicketProofStreamCleanupDecision.DROP
-  if (expectedSessionGeneration != null &&
-    (expectedSessionGeneration <= 0L || expectedSessionGeneration != currentSessionGeneration)
-  ) {
-    return TicketProofStreamCleanupDecision.DROP
-  }
-  if (startOwnershipActive ||
-    controlOwnershipActive ||
-    actionOwnershipActive ||
-    reauthOwnershipActive
-  ) {
-    return TicketProofStreamCleanupDecision.RETRY
-  }
-  return TicketProofStreamCleanupDecision.STOP
+  return TicketProofStreamCleanupDecision.valueOf(NativeTicketCapture.call("cleanup", buildJsonObject {
+    put("expectedGeneration", expectedSessionGeneration)
+    put("currentGeneration", currentSessionGeneration)
+    put("streamActive", streamActive)
+    put("clientCount", clientCount)
+    put("start", startOwnershipActive)
+    put("control", controlOwnershipActive)
+    put("action", actionOwnershipActive)
+    put("reauth", reauthOwnershipActive)
+  }).jsonPrimitive.content)
 }

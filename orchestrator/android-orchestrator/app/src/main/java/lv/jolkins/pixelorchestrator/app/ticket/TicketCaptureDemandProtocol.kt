@@ -1,10 +1,17 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
 
+@Serializable
 internal data class TicketCaptureDemandRequest(
   val streamEpoch: Long,
   val generation: Long,
@@ -19,37 +26,21 @@ internal enum class TicketCaptureDemandAdmissionResult {
   HELPER_UNAVAILABLE
 }
 
-/** Strict additive relay-to-Pixel demand message carried by the existing video WebSocket. */
+/** JSON tree transport only; strict request admission belongs to Rust. */
 internal object TicketCaptureDemandProtocol {
   const val VERSION = 1L
   const val TTL_MILLIS = 2_500L
+  fun parseRequest(element: JsonObject): TicketCaptureDemandRequest? =
+    NativeTicketCapture.json.decodeFromJsonElement<TicketCaptureDemandRequest?>(
+      NativeTicketCapture.call("parse_demand", element)
+    )
+}
 
-  private val fields = setOf("type", "version", "streamEpoch", "generation", "ttlMillis")
-
-  fun parseRequest(element: JsonObject): TicketCaptureDemandRequest? {
-    if (element.keys != fields) return null
-    val type = runCatching { element["type"]?.jsonPrimitive }.getOrNull() ?: return null
-    val version = exactPositiveLong(element, "version") ?: return null
-    val streamEpoch = exactPositiveLong(element, "streamEpoch") ?: return null
-    val generation = exactPositiveLong(element, "generation") ?: return null
-    val ttlMillis = exactPositiveLong(element, "ttlMillis") ?: return null
-    if (
-      !type.isString ||
-      type.contentOrNull != "capture_demand" ||
-      version != VERSION ||
-      ttlMillis != TTL_MILLIS
-    ) {
-      return null
-    }
-    return TicketCaptureDemandRequest(streamEpoch, generation, ttlMillis)
-  }
-
-  private fun exactPositiveLong(element: JsonObject, name: String): Long? {
-    val primitive = runCatching { element[name]?.jsonPrimitive }.getOrNull() ?: return null
-    if (primitive.isString) return null
-    val value = primitive.longOrNull ?: return null
-    return value.takeIf { it in 1L..TicketTsf3FrameEnvelope.MAX_SAFE_INTEGER }
-  }
+internal object NativeTicketCapture {
+  val json = Json { encodeDefaults = true }
+  init { System.loadLibrary("pixel_health") }
+  private external fun decide(operation: String, payload: String): String
+  fun call(operation: String, input: JsonObject): JsonElement = json.parseToJsonElement(decide(operation, input.toString()))
 }
 
 /** Monotonic generation scope owned by one exact TicketWebSocket instance. */
@@ -64,20 +55,18 @@ internal class TicketCaptureDemandSession {
     nowUptimeMillis: Long,
     deliverToHelper: (validUntilUptimeMillis: Long) -> Boolean
   ): TicketCaptureDemandAdmissionResult {
-    if (currentStreamEpoch <= 0L || request.streamEpoch != currentStreamEpoch) {
-      return TicketCaptureDemandAdmissionResult.WRONG_EPOCH
-    }
-    if (request.generation <= lastAcceptedGeneration) {
-      return TicketCaptureDemandAdmissionResult.NON_MONOTONIC_GENERATION
-    }
-    val validUntilUptimeMillis = receivedAtUptimeMillis + request.ttlMillis
-    if (
-      receivedAtUptimeMillis <= 0L ||
-      validUntilUptimeMillis < receivedAtUptimeMillis ||
-      nowUptimeMillis > validUntilUptimeMillis
-    ) {
-      return TicketCaptureDemandAdmissionResult.EXPIRED
-    }
+    val decision = NativeTicketCapture.call("admit_demand", buildJsonObject {
+      put("epoch", request.streamEpoch)
+      put("generation", request.generation)
+      put("ttlMillis", request.ttlMillis)
+      put("currentEpoch", currentStreamEpoch)
+      put("lastGeneration", lastAcceptedGeneration)
+      put("received", receivedAtUptimeMillis)
+      put("now", nowUptimeMillis)
+    }).jsonObject
+    val answer = TicketCaptureDemandAdmissionResult.valueOf(decision.getValue("answer").jsonPrimitive.content)
+    if (answer != TicketCaptureDemandAdmissionResult.ACCEPTED) return answer
+    val validUntilUptimeMillis = decision.getValue("validUntil").jsonPrimitive.long
     if (!deliverToHelper(validUntilUptimeMillis)) {
       return TicketCaptureDemandAdmissionResult.HELPER_UNAVAILABLE
     }

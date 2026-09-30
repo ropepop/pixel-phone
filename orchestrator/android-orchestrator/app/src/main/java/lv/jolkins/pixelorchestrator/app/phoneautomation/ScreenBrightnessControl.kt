@@ -17,24 +17,10 @@ internal object ScreenBrightnessControl {
   private const val MANUAL_BRIGHTNESS_MODE = 0
   private const val AUTOMATIC_BRIGHTNESS_MODE = 1
 
-  fun legacySystemValue(percent: Int): Int {
-    return ((percent.coerceIn(0, 100) / 100.0) * 255.0).toInt().coerceIn(0, 255)
-  }
-
-  fun percentFromSystemValue(value: Int): Int {
-    return ((value.coerceIn(0, 255) / 255.0) * 100.0).toInt().coerceIn(0, 100)
-  }
-
-  fun panelValueFromPercent(percent: Int, maxBrightness: Int): Int {
-    val targetPercent = percent.coerceIn(0, 100)
-    val max = maxBrightness.coerceAtLeast(1)
-    val target = ((max * targetPercent) / 100.0).roundToInt().coerceIn(0, max)
-    return if (targetPercent > 0 && target == 0) {
-      1
-    } else {
-      target
-    }
-  }
+  fun legacySystemValue(percent: Int): Int = NativeTouchBrightness.number("system_value",percent)
+  fun percentFromSystemValue(value: Int): Int = NativeTouchBrightness.number("system_percent",value)
+  fun panelValueFromPercent(percent: Int,maxBrightness: Int): Int =
+    NativeTouchBrightness.number("panel_value",percent,ScreenBrightnessState(null,null,panelMaxBrightness=maxBrightness))
 
   // Pixel's driver forces emitted brightness to zero while bl_power is blanked,
   // including subsequent Android brightness requests. Brightness readback alone

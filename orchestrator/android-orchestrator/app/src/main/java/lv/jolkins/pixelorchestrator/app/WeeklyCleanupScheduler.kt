@@ -87,7 +87,7 @@ internal class WeeklyCleanupScheduler(
 
 internal object WeeklyCleanupAlarmPolicy {
   fun mode(sdkInt: Int, canScheduleExactAlarms: Boolean): CleanupScheduleMode {
-    return if (sdkInt < Build.VERSION_CODES.S || canScheduleExactAlarms) {
+    return if (NativeCleanupSchedule.exactAlarm(sdkInt, canScheduleExactAlarms)) {
       CleanupScheduleMode.EXACT_IDLE
     } else {
       CleanupScheduleMode.APPROXIMATE_IDLE

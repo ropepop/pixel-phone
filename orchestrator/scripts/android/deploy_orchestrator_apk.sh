@@ -29,15 +29,15 @@ COMPONENT_RELEASE_DIR=""
 CONFIG_FILE=""
 SSH_PUBLIC_KEY_FILE=""
 SSH_PASSWORD_HASH_FILE=""
-DDNS_TOKEN_FILE=""
-ADMIN_PASSWORD_FILE=""
-ACME_TOKEN_FILE=""
-TRAIN_BOT_ENV_FILE=""
-SATIKSME_BOT_ENV_FILE=""
-SITE_NOTIFIER_ENV_FILE=""
-SUBSCRIPTION_BOT_ENV_FILE=""
+DDNS_TOKEN_FILE="${DDNS_TOKEN_FILE:-}"
+ADMIN_PASSWORD_FILE="${ADMIN_PASSWORD_FILE:-}"
+ACME_TOKEN_FILE="${ACME_TOKEN_FILE:-}"
+TRAIN_BOT_ENV_FILE="${TRAIN_BOT_ENV_FILE:-}"
+SATIKSME_BOT_ENV_FILE="${SATIKSME_BOT_ENV_FILE:-}"
+SITE_NOTIFIER_ENV_FILE="${SITE_NOTIFIER_ENV_FILE:-}"
+SUBSCRIPTION_BOT_ENV_FILE="${SUBSCRIPTION_BOT_ENV_FILE:-}"
 VPN_AUTH_KEY_FILE=""
-IPINFO_LITE_TOKEN_FILE=""
+IPINFO_LITE_TOKEN_FILE="${IPINFO_LITE_TOKEN_FILE:-}"
 DRY_RUN=0
 ENABLE_TICKET_SERVICE=0
 PIXEL_RUN_ID="${PIXEL_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM}"
@@ -248,17 +248,17 @@ Options:
   --ssh-host IP               Tailscale or SSH host/IP
   --ssh-port PORT             SSH port (default: 2222)
   --action NAME               orchestrator action to run after launch
-                              (bootstrap|start_all|stop_all|health|sync_ddns|export_bundle|cleanup|
+                              (bootstrap|start_all|stop_all|health|export_bundle|cleanup|
                                redeploy_component|start_component|stop_component|
                                restart_component|health_component)
   --component NAME            required when action is component-scoped
-                              (dns|ssh|vpn|ddns|remote|train_bot|satiksme_bot|site_notifier|subscription_bot|ticket_screen)
+                              (ssh|vpn|ticket_screen)
   --profile fast|standard|full
                               fast reuses unchanged APK/runtime state and, for ticket_screen redeploys,
                               proves only the local Ticket endpoint; standard preserves normal checks;
                               full preserves the strict rebuild/install/diagnostic path
                               (default: fast for ticket_screen redeploy, standard otherwise)
-  --runtime-bundle-dir PATH   local runtime bundle dir containing runtime-manifest.json and artifacts/
+  --runtime-bundle-dir PATH   required for bootstrap; access-only runtime-manifest.json and artifacts/
   --component-release-dir PATH
                               local component release dir containing release-manifest.json and artifacts/
                               (staged alongside bootstrap, or used directly with redeploy_component)
@@ -266,18 +266,6 @@ Options:
   --ssh-public-key PATH       SSH authorized_keys source file to copy to /data/local/pixel-stack/conf/ssh/authorized_keys
   --ssh-password-hash-file PATH
                               SSH password hash file to copy to /data/local/pixel-stack/conf/ssh/root_password.hash
-  --ddns-token-file PATH      Cloudflare token file to copy to /data/local/pixel-stack/conf/ddns/cloudflare-token
-  --admin-password-file PATH  AdGuard admin password file to copy to /data/local/pixel-stack/conf/adguardhome/remote-admin-password
-  --ipinfo-lite-token-file PATH
-                              IPinfo Lite token file to copy to /data/local/pixel-stack/conf/adguardhome/ipinfo-lite-token
-  --acme-token-file PATH      ACME Cloudflare token file (must match ddns token when both provided)
-  --train-bot-env-file PATH   train bot env file to copy to /data/local/pixel-stack/conf/apps/train-bot.env
-  --satiksme-bot-env-file PATH
-                              satiksme bot env file to copy to /data/local/pixel-stack/conf/apps/satiksme-bot.env
-  --site-notifier-env-file PATH
-                              site notifier env file to copy to /data/local/pixel-stack/conf/apps/site-notifications.env
-  --subscription-bot-env-file PATH
-                              subscription bot env file to copy to /data/local/pixel-stack/conf/apps/subscription-bot.env
   --vpn-auth-key-file PATH    Tailscale auth key file to copy to /data/local/pixel-stack/conf/vpn/tailscale-authkey
   --dry-run                   only valid with --action cleanup; inventory without deleting
   --enable-ticket-service     persist Ticket service reliability through the Android app;
@@ -356,37 +344,9 @@ while (( $# > 0 )); do
       shift
       SSH_PASSWORD_HASH_FILE="${1:-}"
       ;;
-    --ddns-token-file)
-      shift
-      DDNS_TOKEN_FILE="${1:-}"
-      ;;
-    --admin-password-file)
-      shift
-      ADMIN_PASSWORD_FILE="${1:-}"
-      ;;
-    --ipinfo-lite-token-file)
-      shift
-      IPINFO_LITE_TOKEN_FILE="${1:-}"
-      ;;
-    --acme-token-file)
-      shift
-      ACME_TOKEN_FILE="${1:-}"
-      ;;
-    --train-bot-env-file)
-      shift
-      TRAIN_BOT_ENV_FILE="${1:-}"
-      ;;
-    --satiksme-bot-env-file)
-      shift
-      SATIKSME_BOT_ENV_FILE="${1:-}"
-      ;;
-    --site-notifier-env-file)
-      shift
-      SITE_NOTIFIER_ENV_FILE="${1:-}"
-      ;;
-    --subscription-bot-env-file)
-      shift
-      SUBSCRIPTION_BOT_ENV_FILE="${1:-}"
+    --ddns-token-file|--admin-password-file|--ipinfo-lite-token-file|--acme-token-file|--train-bot-env-file|--satiksme-bot-env-file|--site-notifier-env-file|--subscription-bot-env-file)
+      echo "Phone input $1 is retired; only Ticket and ADB/SSH access belong on the phone; use the VPS" >&2
+      exit 2
       ;;
     --vpn-auth-key-file)
       shift
@@ -455,9 +415,12 @@ fi
 case "${ACTION}" in
   start_component|stop_component|restart_component|health_component|redeploy_component)
     case "${COMPONENT}" in
-      dns|ssh|vpn|ddns|remote|train_bot|satiksme_bot|site_notifier|subscription_bot|ticket_screen) ;;
+      ssh|vpn|ticket_screen) ;;
+      dns|ddns|remote|train_bot|satiksme_bot|site_notifier|subscription_bot)
+        echo "Phone component ${COMPONENT} is retired; use the VPS" >&2
+        exit 2 ;;
       *)
-        echo "--component must be one of: dns|ssh|vpn|ddns|remote|train_bot|satiksme_bot|site_notifier|subscription_bot|ticket_screen" >&2
+        echo "--component must be one of: ssh|vpn|ticket_screen" >&2
         exit 2
         ;;
     esac
@@ -473,6 +436,48 @@ esac
 if (( ENABLE_TICKET_SERVICE == 1 )) &&
   [[ "${ACTION}" != "redeploy_component" || "${COMPONENT}" != "ticket_screen" ]]; then
   echo "--enable-ticket-service is only valid with --action redeploy_component --component ticket_screen" >&2
+  exit 2
+fi
+
+if [[ "${ACTION}" == "sync_ddns" ]]; then
+  echo "Phone DDNS is retired; use the VPS" >&2
+  exit 2
+fi
+for retired_input in TRAIN_BOT_ENV_FILE SATIKSME_BOT_ENV_FILE SITE_NOTIFIER_ENV_FILE SUBSCRIPTION_BOT_ENV_FILE DDNS_TOKEN_FILE ADMIN_PASSWORD_FILE ACME_TOKEN_FILE IPINFO_LITE_TOKEN_FILE PIXEL_RUNTIME_ROOTFS_TARBALL PIXEL_RUNTIME_TRAIN_BOT_BUNDLE PIXEL_RUNTIME_SATIKSME_BOT_BUNDLE PIXEL_RUNTIME_SITE_NOTIFIER_BUNDLE PIXEL_RUNTIME_SUBSCRIPTION_BOT_BUNDLE; do
+  if [[ -n "${!retired_input:-}" ]]; then
+    echo "Phone input ${retired_input} is retired; use the VPS" >&2
+    exit 2
+  fi
+done
+if [[ -n "${CONFIG_FILE}${RUNTIME_BUNDLE_DIR}${COMPONENT_RELEASE_DIR}" ]]; then
+  python3 - "${CONFIG_FILE}" "${RUNTIME_BUNDLE_DIR}" "${COMPONENT_RELEASE_DIR}" "${COMPONENT}" <<'PY_PHONE_SCOPE' || exit 2
+import json, pathlib, sys
+def load(path):
+    with open(path, encoding="utf-8") as source:
+        return json.load(source)
+try:
+    config_path, runtime, release, component = sys.argv[1:]
+    if config_path:
+        config = load(config_path)
+        retired = ("dns", "ddns", "remote", "train_bot", "satiksme_bot", "site_notifier", "subscription_bot")
+        modules = config.get("modules", {})
+        if any(name in modules and modules[name].get("enabled", True) is not False for name in retired) or config.get("ddns", {}).get("enabled", False):
+            raise ValueError()
+    for directory, name in ((runtime, "runtime-manifest.json"), (release, "release-manifest.json")):
+        if not directory:
+            continue
+        manifest = load(pathlib.Path(directory) / name)
+        if name == "release-manifest.json" and (manifest.get("componentId") not in ("ssh", "vpn") or component and manifest.get("componentId") != component):
+            raise ValueError()
+        allowed = ("dropbear-bundle", "tailscale-bundle") if name == "runtime-manifest.json" else ("dropbear-bundle",) if manifest["componentId"] == "ssh" else ("tailscale-bundle",)
+        if any(entry.get("id") not in allowed for entry in manifest.get("artifacts", [])):
+            raise ValueError()
+except (OSError, ValueError, TypeError, AttributeError):
+    raise SystemExit("Invalid phone deployment input or retired workloads selected; only Ticket and ADB/SSH access belong on the phone (use the VPS)")
+PY_PHONE_SCOPE
+fi
+if [[ "${ACTION}" == "bootstrap" && -z "${RUNTIME_BUNDLE_DIR}" ]]; then
+  echo "Phone bootstrap requires --runtime-bundle-dir with only Dropbear/Tailscale access artifacts; the previously staged manifest may contain retired workloads" >&2
   exit 2
 fi
 
@@ -719,7 +724,7 @@ repair_phone_automation_permissions() {
     local service_list="$1"
     local component_name="$2"
 
-    python3 - "${service_list}" "${component_name}" <<'PY'
+    python3 - "${service_list}" "${component_name}" "${3:-add}" <<'PY'
 import sys
 
 service_list = sys.argv[1]
@@ -729,7 +734,9 @@ parts = [
     for entry in service_list.split(":")
     if entry.strip() and entry.strip().lower() != "null"
 ]
-if component_name not in parts:
+if sys.argv[3] == "remove":
+    parts = [entry for entry in parts if entry != component_name]
+elif component_name not in parts:
     parts.append(component_name)
 print(":".join(parts))
 PY
@@ -753,11 +760,19 @@ PY
     current="$(pixel_transport_root_shell "settings get secure enabled_accessibility_services" 2>/dev/null | tr -d '\r' | sed -n '1p')"
     enabled_flag="$(pixel_transport_root_shell "settings get secure accessibility_enabled" 2>/dev/null | tr -d '\r' | sed -n '1p')"
     if [[ ":${current}:" == *":${accessibility_component}:"* && "${enabled_flag}" == "1" ]]; then
-      return 0
+      if phone_automation_permissions_ready; then
+        return 0
+      fi
+      # APK replacement or instrumentation can leave an enabled service unbound.
+      # Rebind only our existing entry; retain every other service and permission.
+      next="$(merge_enabled_service_component "${current}" "${accessibility_component}" remove)"
+      pixel_transport_root_shell "settings put secure enabled_accessibility_services $(pixel_transport_single_quote "${next}")" >/dev/null
+      sleep 0.5
+      pixel_transport_root_shell "settings put secure enabled_accessibility_services $(pixel_transport_single_quote "${current}")" >/dev/null
     fi
   done
 
-  echo "Warning: accessibility permission repair did not stick" >&2
+  echo "Warning: phone input service did not become enabled and bound" >&2
   return 1
 }
 
@@ -787,8 +802,7 @@ phone_automation_permissions_ready() {
   [[ ":${accessibility_services}:" == *":${accessibility_component}:"* ]] || return 1
   [[ "${accessibility_enabled}" == "1" ]] || return 1
   if [[ "${ACTION}:${COMPONENT}" != "redeploy_component:ticket_screen" ]]; then
-    [[ ":${notification_listeners}:" == *":${notification_component}:"* ]]
-    return
+    [[ ":${notification_listeners}:" == *":${notification_component}:"* ]] || return 1
   fi
   # Settings alone do not prove Android bound the input service after APK replacement.
   state="$(pixel_transport_root_shell "dumpsys activity services ${accessibility_component}" 2>/dev/null)" || return 1
@@ -1575,7 +1589,7 @@ dispatch_orchestrator_action() {
       ;;
   esac
 
-  shell_cmd="am start-foreground-service -n ${SUPERVISOR} -a ${supervisor_action} --es orchestrator_action ${ACTION} --es pixel_run_id ${PIXEL_RUN_ID}"
+  shell_cmd="am start-foreground-service -n ${SUPERVISOR} -a ${supervisor_action} --es orchestrator_action ${ACTION} --es pixel_run_id $(pixel_transport_single_quote "${PIXEL_RUN_ID}")"
   if [[ -n "${COMPONENT}" ]]; then
     shell_cmd="${shell_cmd} --es orchestrator_component ${COMPONENT}"
   fi
@@ -1733,7 +1747,8 @@ fi
 
 run_phase runtime_postcheck verify_runtime_assets_after_action
 
-if [[ "${ACTION}:${COMPONENT}" == "redeploy_component:ticket_screen" ]] &&
+if [[ "${ACTION}:${COMPONENT}" == "redeploy_component:ticket_screen" ||
+      ( "${ACTION}" == "health" && "$(pixel_transport_selected)" == "adb" ) ]] &&
   ! phone_automation_permissions_ready; then
   echo "ERROR: Ticket deployment did not restore the enabled and bound phone input service" >&2
   exit 1

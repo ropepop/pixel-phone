@@ -1,10 +1,7 @@
 package lv.jolkins.pixelorchestrator.app.ticket
 
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonPrimitive
-import java.time.Instant
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.*
 
 internal enum class TicketVisualActionTarget(val wireName: String, val activatesTicket: Boolean = false) {
   OPEN_LATEST_UNACTIVATED("open_latest_unactivated"),
@@ -16,9 +13,7 @@ internal enum class TicketVisualActionTarget(val wireName: String, val activates
   REFRESH_CURRENT_TICKET("refresh_current_ticket");
 
   companion object {
-    fun fromWireName(value: String): TicketVisualActionTarget? = entries.firstOrNull {
-      it.wireName == value.trim().lowercase()
-    }
+    fun fromWireName(value: String): TicketVisualActionTarget? = decision("target", "value" to value.nativeJson())
   }
 }
 
@@ -29,6 +24,7 @@ internal enum class TicketVisualActionView(val wireName: String) {
   UNKNOWN("unknown")
 }
 
+@Serializable
 internal data class TicketVisualActionRequest(
   val actionId: String,
   val target: TicketVisualActionTarget,
@@ -48,6 +44,7 @@ internal data class TicketVisualActionRequest(
   val commandRevision: String = ""
 )
 
+@Serializable
 internal data class TicketVisualActionSnapshot(
   val actionId: String = "",
   val target: String = "",
@@ -70,6 +67,7 @@ internal data class TicketVisualActionSnapshot(
 )
 
 /** Only an old terminal journal may echo geometry into its original settlement fingerprint. */
+@Serializable
 internal data class RetainedTicketSliderGeometry(
   val leftBasisPoints: Int,
   val topBasisPoints: Int,
@@ -78,6 +76,7 @@ internal data class RetainedTicketSliderGeometry(
 )
 
 /** Durable phone-local handoff for one idempotent server settlement. */
+@Serializable
 internal data class TicketActionFinalizationEnvelope(
   val commandId: String,
   val commandRevision: String,
@@ -88,11 +87,13 @@ internal data class TicketActionFinalizationEnvelope(
   val retainedGeometry: RetainedTicketSliderGeometry? = null
 )
 
+@Serializable
 internal data class TicketVisualSwitchAnchors(
   val recentActivatedAnchor: String = "",
   val latestUnactivatedAnchor: String = ""
 )
 
+@Serializable
 internal data class TicketVisualActionJournalState(
   val commandId: String = "",
   val commandRevision: String = "",
@@ -128,342 +129,64 @@ internal data class TicketVisualActionJournalState(
   val sliderBottomBasisPoints: Int = -1
 ) {
   val navigationDispatchUncertain: Boolean
-    get() = actionId.isNotBlank() && phase == "navigation_dispatched"
+    get() = decision("uncertain", "journal" to nativeJson())
 
   val hasRetainedTerminal: Boolean
-    get() = actionId.isNotBlank() && phase == "terminal" && terminalStatus.isNotBlank()
+    get() = decision("retained", "journal" to nativeJson())
 }
 
-internal fun ticketVisualActionJournalWriteProved(
-  value: TicketVisualActionJournalState,
-  commit: () -> Boolean,
-  readBack: () -> TicketVisualActionJournalState
-): Boolean {
-  if (!commit()) return false
-  return readBack() == value
+internal object NativeTicketAction {
+  val json = Json { encodeDefaults = true }
+  init { System.loadLibrary("pixel_health") }
+  external fun decide(operation: String, payload: String): String
 }
 
-/**
- * A retained success only acknowledges an already proved terminal view. An older navigation
- * journal cannot reintroduce list-only success after the target's terminal contract changes.
- */
-internal fun ticketVisualTerminalViewCompatible(
-  target: TicketVisualActionTarget,
-  view: TicketVisualActionView
-): Boolean = when (target) {
-  TicketVisualActionTarget.OPEN_LATEST_UNACTIVATED,
-  TicketVisualActionTarget.RETURN_TO_LATEST_UNACTIVATED,
-  TicketVisualActionTarget.REDETECT_LATEST -> view == TicketVisualActionView.LATEST_UNACTIVATED
-  TicketVisualActionTarget.OPEN_LATEST_AND_REGISTER,
-  TicketVisualActionTarget.REGISTER_CURRENT -> view == TicketVisualActionView.ACTIVATED_CURRENT
-  TicketVisualActionTarget.SHOW_RECENT_ACTIVATED -> view == TicketVisualActionView.RECENT_ACTIVATED
-  TicketVisualActionTarget.REFRESH_CURRENT_TICKET -> view in setOf(
-    TicketVisualActionView.LATEST_UNACTIVATED, TicketVisualActionView.ACTIVATED_CURRENT
-  )
-}
+private inline fun <reified T> T.nativeJson(): JsonElement = NativeTicketAction.json.encodeToJsonElement(this)
+private inline fun <reified T> decision(operation: String, vararg args: Pair<String, JsonElement>): T =
+  NativeTicketAction.json.decodeFromString(NativeTicketAction.decide(operation, JsonObject(args.toMap()).toString()))
 
-internal fun retainedTicketVisualTerminalSnapshot(
-  journal: TicketVisualActionJournalState,
-  request: TicketVisualActionRequest,
-  streamEpoch: Long,
-  frameSequence: Long
-): TicketVisualActionSnapshot? {
-  if (!journal.hasRetainedTerminal || journal.actionId != request.actionId ||
-    journal.target != request.target.wireName
-  ) return null
-  val expectedNegativeCandidate = journal.target == TicketVisualActionTarget.REDETECT_LATEST.wireName &&
-    journal.terminalReason == "ticket_action_latest_not_detected"
-  val expectedNegativeValid = !expectedNegativeCandidate ||
-    ticketVisualLatestNotDetectedJournalHasBoundProof(journal)
-  val storedWatermarkRequired = journal.terminalOk || expectedNegativeCandidate
-  val successfulWatermarkValid = !storedWatermarkRequired ||
-    journal.semanticProof || (journal.streamEpoch > 0L && journal.frameSequence > 0L)
-  val retainedView = TicketVisualActionView.entries.firstOrNull {
-    it.wireName == journal.terminalView
-  } ?: TicketVisualActionView.UNKNOWN
-  // Failure journals are already terminal safety decisions and must be replayed unchanged. Only a
-  // retained success needs the target/view compatibility gate.
-  val successfulViewValid = !journal.terminalOk ||
-    ticketVisualTerminalViewCompatible(request.target, retainedView)
-  val retainedTerminalValid = successfulWatermarkValid && successfulViewValid &&
-    expectedNegativeValid
-  val retainedStreamEpoch = if (expectedNegativeCandidate && !expectedNegativeValid) {
-    0L
-  } else {
-    journal.streamEpoch.takeIf { it > 0L } ?: streamEpoch
-  }
-  val retainedFrameSequence = if (expectedNegativeCandidate && !expectedNegativeValid) {
-    0L
-  } else {
-    journal.frameSequence.takeIf { it > 0L } ?: frameSequence
-  }
-  return TicketVisualActionSnapshot(
-    actionId = journal.actionId,
-    target = journal.target,
-    status = when {
-      !retainedTerminalValid -> "needs_attention"
-      request.target.activatesTicket && !journal.terminalOk -> "needs_attention"
-      else -> journal.terminalStatus
-    },
-    phase = if (retainedTerminalValid && journal.terminalPhase.isNotBlank()) {
-      journal.terminalPhase
-    } else if (retainedTerminalValid && request.target.activatesTicket) {
-      if (journal.terminalOk) "activation_proven" else "outcome_unknown"
-    } else if (journal.terminalOk && retainedTerminalValid) {
-      "complete"
-    } else if (retainedTerminalValid) {
-      journal.terminalStatus
-    } else {
-      "needs_attention"
-    },
-    currentView = retainedView,
-    streamEpoch = retainedStreamEpoch,
-    frameSequence = retainedFrameSequence,
-    reason = when {
-      expectedNegativeCandidate && !expectedNegativeValid ->
-        "ticket_action_frame_watermark_unproved"
-      !successfulWatermarkValid -> "ticket_action_frame_watermark_unproved"
-      !successfulViewValid -> "ticket_action_terminal_view_unproved"
-      else -> journal.terminalReason
-    },
-    completedAt = journal.completedAt,
-    interactionRevision = journal.interactionRevision,
-    activationRevision = journal.activationRevision,
-    activationAttemptId = journal.activationAttemptId,
-    semanticProof = journal.semanticProof,
-    terminal = true,
-    ok = journal.terminalOk && retainedTerminalValid
-  )
-}
+/** Storage effects and exact read-back remain in their existing Android owner. */
+internal fun ticketVisualActionJournalWriteProved(value: TicketVisualActionJournalState, commit: () -> Boolean,
+  readBack: () -> TicketVisualActionJournalState): Boolean = commit() && readBack() == value
 
-internal fun ticketVisualLatestNotDetectedJournalHasBoundProof(
-  journal: TicketVisualActionJournalState
-): Boolean = journal.actionId.isNotBlank() && journal.hasRetainedTerminal &&
-  journal.target == TicketVisualActionTarget.REDETECT_LATEST.wireName &&
-  journal.terminalStatus == "failed" &&
-  journal.terminalReason == "ticket_action_latest_not_detected" &&
-  journal.terminalView == TicketVisualActionView.UNKNOWN.wireName &&
-  !journal.terminalOk && (journal.semanticProof || (journal.streamEpoch > 0L && journal.frameSequence > 0L)) &&
-  journal.sliderLeftBasisPoints == -1 && journal.sliderTopBasisPoints == -1 &&
-  journal.sliderRightBasisPoints == -1 && journal.sliderBottomBasisPoints == -1
+internal fun ticketVisualTerminalViewCompatible(target: TicketVisualActionTarget, view: TicketVisualActionView): Boolean =
+  decision("terminal_view", "target" to target.nativeJson(), "view" to view.nativeJson())
 
-private fun TicketVisualActionJournalState.retainedSliderGeometry(): RetainedTicketSliderGeometry? {
-  if (!terminalOk || terminalView != TicketVisualActionView.LATEST_UNACTIVATED.wireName ||
-    target !in setOf(
-      TicketVisualActionTarget.OPEN_LATEST_UNACTIVATED.wireName,
-      TicketVisualActionTarget.RETURN_TO_LATEST_UNACTIVATED.wireName,
-      TicketVisualActionTarget.REDETECT_LATEST.wireName
-    ) || streamEpoch <= 0L || frameSequence <= 0L ||
-    sliderLeftBasisPoints !in 0..10_000 || sliderTopBasisPoints !in 0..10_000 ||
-    sliderRightBasisPoints !in 0..10_000 || sliderBottomBasisPoints !in 0..10_000 ||
-    sliderLeftBasisPoints >= sliderRightBasisPoints ||
-    sliderTopBasisPoints >= sliderBottomBasisPoints
-  ) return null
-  return RetainedTicketSliderGeometry(
-    leftBasisPoints = sliderLeftBasisPoints,
-    topBasisPoints = sliderTopBasisPoints,
-    rightBasisPoints = sliderRightBasisPoints,
-    bottomBasisPoints = sliderBottomBasisPoints
-  )
-}
+internal fun retainedTicketVisualTerminalSnapshot(journal: TicketVisualActionJournalState, request: TicketVisualActionRequest,
+  streamEpoch: Long, frameSequence: Long): TicketVisualActionSnapshot? = decision("terminal", "journal" to journal.nativeJson(),
+    "request" to request.nativeJson(), "epoch" to streamEpoch.nativeJson(), "sequence" to frameSequence.nativeJson())
 
-internal fun ticketActionFinalizationEnvelope(
-  journal: TicketVisualActionJournalState
-): TicketActionFinalizationEnvelope? {
-  if (!journal.hasRetainedTerminal || journal.commandId.isBlank() ||
-    journal.commandRevision.isBlank() || journal.completedAt.isBlank()
-  ) return null
-  val view = TicketVisualActionView.entries.firstOrNull {
-    it.wireName == journal.terminalView
-  } ?: TicketVisualActionView.UNKNOWN
-  val activatesTicket = journal.target == TicketVisualActionTarget.REGISTER_CURRENT.wireName ||
-    journal.target == TicketVisualActionTarget.OPEN_LATEST_AND_REGISTER.wireName
-  return TicketActionFinalizationEnvelope(
-    commandId = journal.commandId,
-    commandRevision = journal.commandRevision,
-    flow = journal.flow,
-    refreshActivationAttemptId = journal.refreshActivationAttemptId,
-    refreshActivationRevision = journal.refreshActivationRevision,
-    action = TicketVisualActionSnapshot(
-      actionId = journal.actionId,
-      target = journal.target,
-      status = if (activatesTicket && !journal.terminalOk) {
-        "needs_attention"
-      } else {
-        journal.terminalStatus
-      },
-      phase = journal.terminalPhase.ifBlank {
-        when {
-          activatesTicket && journal.terminalOk -> "activation_proven"
-          activatesTicket -> "outcome_unknown"
-          journal.terminalOk -> "complete"
-          else -> journal.terminalStatus
-        }
-      },
-      currentView = view,
-      streamEpoch = journal.streamEpoch,
-      frameSequence = journal.frameSequence,
-      reason = journal.terminalReason,
-      completedAt = journal.completedAt,
-      interactionRevision = journal.interactionRevision,
-      activationRevision = journal.activationRevision.takeIf { journal.terminalOk }.orEmpty(),
-      activationAttemptId = journal.activationAttemptId,
-      semanticProof = journal.semanticProof,
-      terminal = true,
-      ok = journal.terminalOk
-    ),
-    retainedGeometry = journal.retainedSliderGeometry()
-  )
-}
+internal fun ticketVisualLatestNotDetectedJournalHasBoundProof(journal: TicketVisualActionJournalState): Boolean =
+  decision("negative_journal", "journal" to journal.nativeJson())
 
-internal fun ticketVisualJournalReconciled(
-  journal: TicketVisualActionJournalState,
-  request: TicketVisualActionRequest,
-  observation: TicketVisualActionObservation
-): Boolean {
-  if (!journal.navigationDispatchUncertain || journal.actionId != request.actionId ||
-    journal.target != request.target.wireName
-  ) return false
-  if (request.target == TicketVisualActionTarget.REDETECT_LATEST) {
-    if (journal.navigationToState == TICKET_ACTION_LIST_TO_SINGLE_USE) {
-      return observation.state in setOf(TicketVisualPhoneState.TICKET_LIST,
-        TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY) &&
-        observation.timeTicketsTabBounds != null && observation.ticketsTabBounds == null
-    }
-    if (journal.navigationToState == TICKET_ACTION_LIST_TO_TIME) {
-      return observation.state in setOf(TicketVisualPhoneState.TICKET_LIST,
-        TicketVisualPhoneState.TICKETS_TIME_EMPTY) &&
-        observation.ticketsTabBounds != null && observation.timeTicketsTabBounds == null
-    }
-  }
-  val recordedToState = TicketVisualPhoneState.fromWireName(journal.navigationToState)
-  if (recordedToState != TicketVisualPhoneState.UNKNOWN) {
-    if (recordedToState == TicketVisualPhoneState.TICKET_LIST &&
-      journal.navigationFromState == TicketVisualPhoneState.VIVI_HOME.wireName &&
-      observation.state == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY
-    ) return true
-    if (recordedToState == TicketVisualPhoneState.TICKET_LIST &&
-      journal.navigationFromState == TicketVisualPhoneState.VIVI_HOME.wireName &&
-      request.target == TicketVisualActionTarget.REDETECT_LATEST &&
-      observation.state == TicketVisualPhoneState.TICKETS_TIME_EMPTY
-    ) return true
-    if (recordedToState == TicketVisualPhoneState.TICKET_LIST &&
-      journal.navigationFromState == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY.wireName &&
-      request.target == TicketVisualActionTarget.REDETECT_LATEST &&
-      observation.state == TicketVisualPhoneState.TICKETS_TIME_EMPTY
-    ) return true
-    if (recordedToState == TicketVisualPhoneState.TICKET_LIST &&
-      journal.navigationFromState == TicketVisualPhoneState.TICKETS_TIME_EMPTY.wireName &&
-      request.target == TicketVisualActionTarget.REDETECT_LATEST &&
-      observation.state == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY
-    ) return true
-    if (observation.state != recordedToState) return false
-    if (recordedToState == TicketVisualPhoneState.TICKET_LIST &&
-      request.target == TicketVisualActionTarget.REDETECT_LATEST
-    ) {
-      if (journal.navigationFromState == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY.wireName &&
-        observation.ticketsTabBounds == null) return false
-      if (journal.navigationFromState == TicketVisualPhoneState.TICKETS_TIME_EMPTY.wireName &&
-        observation.timeTicketsTabBounds == null) return false
-    }
-    return when (recordedToState) {
-      TicketVisualPhoneState.TICKET_LIST -> true
-      TicketVisualPhoneState.UNACTIVATED_DETAIL,
-      TicketVisualPhoneState.ACTIVATED_DETAIL ->
-        journal.navigationAnchor.isNotBlank() &&
-          observation.currentAnchor.isNotBlank()
-      else -> false
-    }
-  }
+internal fun ticketActionFinalizationEnvelope(journal: TicketVisualActionJournalState): TicketActionFinalizationEnvelope? =
+  decision("finalize", "journal" to journal.nativeJson())
 
-  // Backward compatibility for the pre-transition journal. That journal could only describe
-  // list-to-detail taps and always required the intended card identity.
-  if (journal.intendedAnchor.isBlank()) return false
-  val expectedState = when (request.target) {
-    TicketVisualActionTarget.SHOW_RECENT_ACTIVATED -> TicketVisualPhoneState.ACTIVATED_DETAIL
-    TicketVisualActionTarget.OPEN_LATEST_UNACTIVATED,
-    TicketVisualActionTarget.OPEN_LATEST_AND_REGISTER,
-    TicketVisualActionTarget.RETURN_TO_LATEST_UNACTIVATED -> TicketVisualPhoneState.UNACTIVATED_DETAIL
-    else -> return false
-  }
-  return observation.state == expectedState && observation.currentAnchor == journal.intendedAnchor
-}
+internal fun ticketVisualJournalReconciled(journal: TicketVisualActionJournalState, request: TicketVisualActionRequest,
+  observation: TicketVisualActionObservation): Boolean = decision("reconciled", "journal" to journal.nativeJson(),
+    "request" to request.nativeJson(), "observation" to observation.nativeJson())
 
 internal class TicketVisualCaptureRecoveryBudget {
   var consumed: Boolean = false
     private set
-
-  fun consumeIfCaptureWasInterrupted(
-    baselineStreamEpoch: Long,
-    currentStreamEpoch: Long,
-    baselineRestartCount: Long,
-    currentRestartCount: Long,
-    completedProbeSeen: Boolean
-  ): Boolean {
-    if (consumed) return false
-    val interrupted = !completedProbeSeen ||
-      currentRestartCount > baselineRestartCount ||
-      baselineStreamEpoch > 0L && currentStreamEpoch > 0L &&
-      currentStreamEpoch != baselineStreamEpoch
-    if (!interrupted) return false
-    consumed = true
-    return true
+  fun consumeIfCaptureWasInterrupted(baselineStreamEpoch: Long, currentStreamEpoch: Long, baselineRestartCount: Long,
+    currentRestartCount: Long, completedProbeSeen: Boolean): Boolean {
+    val admitted: Boolean = decision("recovery", "consumed" to consumed.nativeJson(), "baselineEpoch" to baselineStreamEpoch.nativeJson(),
+      "currentEpoch" to currentStreamEpoch.nativeJson(), "baselineRestart" to baselineRestartCount.nativeJson(),
+      "currentRestart" to currentRestartCount.nativeJson(), "completed" to completedProbeSeen.nativeJson())
+    if (admitted) consumed = true
+    return admitted
   }
 }
 
-internal fun parseTicketVisualActionRequest(payload: JsonObject): TicketVisualActionRequest? {
-  val version = payload["version"]?.jsonPrimitive?.intOrNull ?: return null
-  if (version != 3) return null
-  val actionId = payload.string("actionId").trim()
-  val target = TicketVisualActionTarget.fromWireName(payload.string("target")) ?: return null
-  val attemptId = payload.string("attemptId").trim()
-  val expectedRevision = payload.string("expectedInteractionRevision").trim()
-  val policyRevision = payload.string("policyRevision").trim()
-  val switchExpiresAt = payload.string("switchExpiresAt").trim()
-  val flow = payload.string("flow").trim()
-  val refreshActivationAttemptId = payload.string("activationAttemptId").trim()
-  val refreshActivationRevision = payload.string("activationRevision").trim()
-  if (actionId.isBlank() || actionId.length > 128) return null
-  if (target == TicketVisualActionTarget.REFRESH_CURRENT_TICKET &&
-    (flow != "idle_ticket_refresh" || payload.string("source") != "ticket_remote_idle_refresh" ||
-      attemptId.isNotBlank() || expectedRevision.isNotBlank())
-  ) return null
-  if (target.activatesTicket && attemptId != actionId) return null
-  if (target == TicketVisualActionTarget.REGISTER_CURRENT && expectedRevision.isBlank()) return null
-  val switchesView = target in setOf(
-    TicketVisualActionTarget.SHOW_RECENT_ACTIVATED,
-    TicketVisualActionTarget.RETURN_TO_LATEST_UNACTIVATED
-  )
-  if (switchesView && (policyRevision.isBlank() || switchExpiresAt.isBlank())) return null
-  if (policyRevision.length > 128 || switchExpiresAt.length > 64) return null
-  if (switchExpiresAt.isNotBlank() && runCatching { Instant.parse(switchExpiresAt) }.isFailure) return null
-  if (flow.length > 64 || refreshActivationAttemptId.length > 128 ||
-    refreshActivationRevision.length > 128
-  ) return null
-  if (flow == "activation_expiry_reset" && (
-      target != TicketVisualActionTarget.OPEN_LATEST_UNACTIVATED ||
-        refreshActivationAttemptId.isBlank() || refreshActivationRevision.isBlank()
-    )
-  ) return null
-  return TicketVisualActionRequest(
-    actionId = actionId,
-    target = target,
-    source = payload.string("source").take(64),
-    reason = payload.string("reason").take(160),
-    attemptId = attemptId,
-    expectedInteractionRevision = expectedRevision.take(128),
-    scheduleId = payload.string("scheduleId").take(128),
-    policyRevision = policyRevision,
-    switchExpiresAt = switchExpiresAt,
-    flow = flow,
-    refreshActivationAttemptId = refreshActivationAttemptId,
-    refreshActivationRevision = refreshActivationRevision
-  )
-}
+internal fun parseTicketVisualActionRequest(payload: JsonObject): TicketVisualActionRequest? =
+  NativeTicketAction.json.decodeFromString<TicketVisualActionRequest?>(NativeTicketAction.decide("parse", payload.toString()))?.let {
+    // Java string slicing preserves the former UTF-16 wire representation, including split pairs.
+    it.copy(source = it.source.take(64), reason = it.reason.take(160),
+      expectedInteractionRevision = it.expectedInteractionRevision.take(128), scheduleId = it.scheduleId.take(128))
+  }
 
-private fun JsonObject.string(key: String): String =
-  this[key]?.jsonPrimitive?.contentOrNull.orEmpty()
-
+@Serializable
 internal data class TicketVisualProbeBounds(
   val left: Int,
   val top: Int,
@@ -476,6 +199,7 @@ internal data class TicketVisualProbeBounds(
   val centerY: Int get() = (top + bottom) / 2
 }
 
+@Serializable
 internal data class TicketVisualCardAnchor(
   val anchor: String,
   val bounds: TicketVisualProbeBounds,
@@ -484,15 +208,8 @@ internal data class TicketVisualCardAnchor(
   val activatedDetailBounds: TicketVisualProbeBounds? = null,
   val latest: Boolean = false
 ) {
-  fun navigationBoundsFor(target: TicketVisualActionTarget): TicketVisualProbeBounds? = when (target) {
-    TicketVisualActionTarget.OPEN_LATEST_UNACTIVATED,
-    TicketVisualActionTarget.OPEN_LATEST_AND_REGISTER,
-    TicketVisualActionTarget.RETURN_TO_LATEST_UNACTIVATED,
-    TicketVisualActionTarget.REDETECT_LATEST -> registrationBounds
-    TicketVisualActionTarget.SHOW_RECENT_ACTIVATED -> activatedDetailBounds
-    TicketVisualActionTarget.REGISTER_CURRENT,
-    TicketVisualActionTarget.REFRESH_CURRENT_TICKET -> null
-  }
+  fun navigationBoundsFor(target: TicketVisualActionTarget): TicketVisualProbeBounds? =
+    decision("navigation_bounds", "card" to nativeJson(), "target" to target.nativeJson())
 }
 
 internal enum class TicketVisualPhoneState(val wireName: String) {
@@ -529,6 +246,7 @@ internal enum class TicketViviBottomTab(val wireName: String) {
   }
 }
 
+@Serializable
 internal data class TicketVisualActionObservation(
   val probeId: Long,
   val state: TicketVisualPhoneState,
@@ -548,352 +266,82 @@ internal data class TicketVisualActionObservation(
   val detailCardAnchor: String = ""
 ) {
   fun timeTicketsNavigationBoundsFor(target: TicketVisualActionTarget): TicketVisualProbeBounds? =
-    timeTicketsTabBounds.takeIf {
-      state == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY && target in setOf(
-        TicketVisualActionTarget.OPEN_LATEST_UNACTIVATED,
-        TicketVisualActionTarget.OPEN_LATEST_AND_REGISTER,
-        TicketVisualActionTarget.SHOW_RECENT_ACTIVATED,
-        TicketVisualActionTarget.RETURN_TO_LATEST_UNACTIVATED,
-        TicketVisualActionTarget.REDETECT_LATEST
-      )
-    }
-
-  /**
-   * A repeated redetection can begin on the Time-tickets tab left selected by the prior cycle.
-   * Only redetection may use the separately proved opposite-tab target to re-check Single-use
-   * before returning to Time-tickets; no other action inherits this extra navigation authority.
-   */
+    decision("time_bounds", "observation" to nativeJson(), "target" to target.nativeJson())
   fun singleUseTicketsNavigationBoundsFor(target: TicketVisualActionTarget): TicketVisualProbeBounds? =
-    ticketsTabBounds.takeIf {
-      state == TicketVisualPhoneState.TICKETS_TIME_EMPTY &&
-        target == TicketVisualActionTarget.REDETECT_LATEST
-    }
-
-  fun cardFor(target: TicketVisualActionTarget, anchors: TicketVisualSwitchAnchors): TicketVisualCardAnchor? {
-    val anchor = when (target) {
-      TicketVisualActionTarget.SHOW_RECENT_ACTIVATED -> anchors.recentActivatedAnchor
-      TicketVisualActionTarget.RETURN_TO_LATEST_UNACTIVATED -> anchors.latestUnactivatedAnchor
-      else -> ""
-    }
-    return if (anchor.isNotBlank()) cards.singleOrNull { it.anchor == anchor } else null
-  }
-  fun latestRegistrationCard(): TicketVisualCardAnchor? = cards.singleOrNull {
-    it.latest && it.registrationBounds != null
-  }
-
-  fun uniqueActivatedDetailCard(): TicketVisualCardAnchor? = cards.singleOrNull {
-    it.activatedDetailBounds != null
-  }
-
-  fun activatedCardForRecentDetail(
-    anchors: TicketVisualSwitchAnchors
-  ): TicketVisualCardAnchor? {
-    cardFor(TicketVisualActionTarget.SHOW_RECENT_ACTIVATED, anchors)
-      ?.takeIf { it.activatedDetailBounds != null }
-      ?.let { return it }
-    // register_current can begin from prove_current without first visiting the list. That safe
-    // path retains a detail-only identity (d_...) rather than the card's date-derived identity.
-    // Current ViVi exposes the latest registration on a separate compact status target. Use only
-    // that one unique target, never the generic card body or the registration button, and let the
-    // caller require a fresh activated-detail proof after the tap.
-    if (!anchors.recentActivatedAnchor.startsWith("d_")) return null
-    return uniqueActivatedDetailCard()
-  }
-
+    decision("single_bounds", "observation" to nativeJson(), "target" to target.nativeJson())
+  fun cardFor(target: TicketVisualActionTarget, anchors: TicketVisualSwitchAnchors): TicketVisualCardAnchor? =
+    decision("card", "observation" to nativeJson(), "target" to target.nativeJson(), "anchors" to anchors.nativeJson())
+  fun latestRegistrationCard(): TicketVisualCardAnchor? = decision("latest_card", "observation" to nativeJson())
+  fun uniqueActivatedDetailCard(): TicketVisualCardAnchor? = decision("activated_card", "observation" to nativeJson())
+  fun activatedCardForRecentDetail(anchors: TicketVisualSwitchAnchors): TicketVisualCardAnchor? =
+    decision("recent_card", "observation" to nativeJson(), "anchors" to anchors.nativeJson())
 }
 
 internal const val TICKET_ACTION_LIST_TO_SINGLE_USE = "ticket_list_to_single_use"
 internal const val TICKET_ACTION_LIST_TO_TIME = "ticket_list_to_time"
 
-/** An old card supplies no ticket tap; redetection may inspect only a proved opposite tab. */
-internal fun ticketVisualRedetectListTabTarget(
-  observation: TicketVisualActionObservation,
-  returnedToTime: Boolean
-): Pair<TicketVisualProbeBounds, String>? {
-  if (observation.state != TicketVisualPhoneState.TICKET_LIST ||
-    observation.cards.any { it.registrationBounds != null }
-  ) return null
-  return when {
-    observation.ticketsTabBounds != null && observation.timeTicketsTabBounds == null &&
-      !returnedToTime -> observation.ticketsTabBounds to TICKET_ACTION_LIST_TO_SINGLE_USE
-    observation.timeTicketsTabBounds != null && observation.ticketsTabBounds == null ->
-      observation.timeTicketsTabBounds to TICKET_ACTION_LIST_TO_TIME
-    else -> null
-  }
-}
+@Serializable
+private data class RedetectTabDecision(val bounds: TicketVisualProbeBounds, val transition: String)
 
-internal fun ticketVisualObservationsAgree(
-  first: TicketVisualActionObservation,
-  second: TicketVisualActionObservation,
-  geometryTolerance: Int = 3
-): Boolean {
-  if (first.state != second.state) return false
-  val detailOverlay = first.state == TicketVisualPhoneState.UNACTIVATED_DETAIL ||
-    first.state == TicketVisualPhoneState.ACTIVATED_DETAIL
-  if (!detailOverlay && first.bottomTab != second.bottomTab) return false
-  val anchorsAgree = first.currentAnchor == second.currentAnchor
-  if (!anchorsAgree) return false
-  if (first.detailCardAnchor != second.detailCardAnchor) return false
-  if (!boundsAgree(first.sliderBounds, second.sliderBounds, geometryTolerance) ||
-    !boundsAgree(first.controlCodeBounds, second.controlCodeBounds, geometryTolerance) ||
-    !boundsAgree(first.backBounds, second.backBounds, geometryTolerance) ||
-    !detailOverlay && (
-      !boundsAgree(first.ticketsTabBounds, second.ticketsTabBounds, geometryTolerance) ||
-        !boundsAgree(first.timeTicketsTabBounds, second.timeTicketsTabBounds, geometryTolerance)
-      )
-  ) return false
-  val firstCards = first.cards.sortedWith(compareBy<TicketVisualCardAnchor> { it.anchor }
-    .thenBy { it.bounds.top })
-  val secondCards = second.cards.sortedWith(compareBy<TicketVisualCardAnchor> { it.anchor }
-    .thenBy { it.bounds.top })
-  if (firstCards.size != secondCards.size) return false
-  return firstCards.zip(secondCards).all { (left, right) ->
-    left.anchor == right.anchor && left.latest == right.latest &&
-      boundsAgree(left.bounds, right.bounds, geometryTolerance) &&
-      boundsAgree(left.registrationBounds, right.registrationBounds, geometryTolerance) &&
-      boundsAgree(left.activatedDetailBounds, right.activatedDetailBounds, geometryTolerance)
-  }
-}
+internal fun ticketVisualRedetectListTabTarget(observation: TicketVisualActionObservation, returnedToTime: Boolean): Pair<TicketVisualProbeBounds, String>? =
+  decision<RedetectTabDecision?>("redetect_tab", "observation" to observation.nativeJson(), "returned" to returnedToTime.nativeJson())?.let {it.bounds to it.transition}
 
-/**
- * Retains the last usable visual candidate while a single observation window is extended.
- * UNKNOWN animation frames never erase a candidate unless the caller explicitly accepts UNKNOWN,
- * and distinct probe ids plus the existing tap-grade agreement remain mandatory.
- */
+internal fun ticketVisualObservationsAgree(first: TicketVisualActionObservation, second: TicketVisualActionObservation, geometryTolerance: Int = 3): Boolean =
+  decision("agree", "first" to first.nativeJson(), "second" to second.nativeJson(), "tolerance" to geometryTolerance.nativeJson())
+
+@Serializable
+private data class ConsensusDecision(val prior: TicketVisualActionObservation?, val answer: TicketVisualActionObservation?)
+
 internal class TicketVisualObservationConsensus {
   private var previous: TicketVisualActionObservation? = null
-
-  fun reset() {
-    previous = null
-  }
-
-  fun offer(
-    current: TicketVisualActionObservation,
-    allowUnknown: Boolean = false
-  ): TicketVisualActionObservation? {
-    if (current.state == TicketVisualPhoneState.UNKNOWN && !allowUnknown) return null
-    val prior = previous
-    val agrees = prior != null && prior.probeId != current.probeId &&
-      ticketVisualObservationsAgree(prior, current)
-    if (!agrees) {
-      previous = current
-      return null
-    }
-    return if (current.currentAnchor.isBlank() && prior.currentAnchor.isNotBlank()) {
-      current.copy(currentAnchor = prior.currentAnchor)
-    } else {
-      current
-    }
+  fun reset() {previous = null}
+  fun offer(current: TicketVisualActionObservation, allowUnknown: Boolean = false): TicketVisualActionObservation? {
+    val result: ConsensusDecision = decision("consensus", "prior" to previous.nativeJson(), "observation" to current.nativeJson(), "allowUnknown" to allowUnknown.nativeJson())
+    previous = result.prior
+    return result.answer
   }
 }
 
-internal fun ticketVisualObservationIsFreshForDispatch(
-  observation: TicketVisualActionObservation,
-  nowMillis: Long,
-  maxAgeMillis: Long
-): Boolean {
-  val capturedAtMillis = observation.captureStartUs / 1_000L
-  return observation.probeId > 0L && observation.atMillis > 0L &&
-    observation.captureStartUs > 0L && capturedAtMillis >= observation.atMillis &&
-    nowMillis >= capturedAtMillis &&
-    nowMillis - capturedAtMillis <= maxAgeMillis.coerceAtLeast(0L)
-}
+internal fun ticketVisualObservationIsFreshForDispatch(observation: TicketVisualActionObservation, nowMillis: Long, maxAgeMillis: Long): Boolean =
+  decision("dispatch_fresh", "observation" to observation.nativeJson(), "now" to nowMillis.nativeJson(), "maxAge" to maxAgeMillis.nativeJson())
 
+internal fun ticketVisualResultView(target: TicketVisualActionTarget, finalState: TicketVisualPhoneState): TicketVisualActionView =
+  decision("result_view", "target" to target.nativeJson(), "state" to finalState.nativeJson())
 
-private fun boundsAgree(
-  first: TicketVisualProbeBounds?,
-  second: TicketVisualProbeBounds?,
-  tolerance: Int
-): Boolean {
-  if (first == null || second == null) return first == second
-  return kotlin.math.abs(first.left - second.left) <= tolerance &&
-    kotlin.math.abs(first.top - second.top) <= tolerance &&
-    kotlin.math.abs(first.right - second.right) <= tolerance &&
-    kotlin.math.abs(first.bottom - second.bottom) <= tolerance
-}
+internal fun ticketVisualRedetectLatestNotDetectedObservation(target: TicketVisualActionTarget, navigationFromState: TicketVisualPhoneState,
+  observation: TicketVisualActionObservation): Boolean = decision("negative_observation", "target" to target.nativeJson(),
+    "from" to navigationFromState.nativeJson(), "observation" to observation.nativeJson())
 
-internal fun ticketVisualResultView(
-  target: TicketVisualActionTarget,
-  finalState: TicketVisualPhoneState
-): TicketVisualActionView = when {
-  finalState == TicketVisualPhoneState.UNACTIVATED_DETAIL -> TicketVisualActionView.LATEST_UNACTIVATED
-  target == TicketVisualActionTarget.SHOW_RECENT_ACTIVATED &&
-    finalState == TicketVisualPhoneState.ACTIVATED_DETAIL -> TicketVisualActionView.RECENT_ACTIVATED
-  finalState == TicketVisualPhoneState.ACTIVATED_DETAIL -> TicketVisualActionView.ACTIVATED_CURRENT
-  else -> TicketVisualActionView.UNKNOWN
-}
+internal fun ticketVisualLatestNotDetectedTerminalHasBoundProof(snapshot: TicketVisualActionSnapshot): Boolean = decision("negative_terminal", "snapshot" to snapshot.nativeJson())
 
-/**
- * The expected negative redetection result is valid only after this command moved from the proved
- * empty Single-use tab to a separately proved empty Time-tickets tab. Its public view remains
- * unknown so no caller can mistake absence for a latest-unactivated ticket.
- */
-internal fun ticketVisualRedetectLatestNotDetectedObservation(
-  target: TicketVisualActionTarget,
-  navigationFromState: TicketVisualPhoneState,
-  observation: TicketVisualActionObservation
-): Boolean = target == TicketVisualActionTarget.REDETECT_LATEST &&
-  navigationFromState == TicketVisualPhoneState.TICKETS_SINGLE_USE_EMPTY &&
-  observation.state == TicketVisualPhoneState.TICKETS_TIME_EMPTY &&
-  observation.currentAnchor.isBlank() &&
-  observation.sliderBounds == null &&
-  observation.controlCodeBounds == null &&
-  observation.backBounds == null &&
-  observation.ticketsTabBounds != null &&
-  observation.timeTicketsTabBounds == null &&
-  observation.cards.isEmpty()
+internal fun ticketRegistrationProofMatchesVisualDetail(proof: TicketRegistrationProof, visualAnchor: String): Boolean =
+  decision("proof_matches", "proof" to proof.nativeJson(), "anchor" to visualAnchor.nativeJson())
 
-internal fun ticketVisualLatestNotDetectedTerminalHasBoundProof(
-  snapshot: TicketVisualActionSnapshot
-): Boolean = !snapshot.ok && snapshot.terminal &&
-  snapshot.target == TicketVisualActionTarget.REDETECT_LATEST.wireName &&
-  snapshot.status == "failed" && snapshot.phase == "failed" &&
-  snapshot.currentView == TicketVisualActionView.UNKNOWN &&
-  snapshot.reason == "ticket_action_latest_not_detected" &&
-  (snapshot.semanticProof || (snapshot.streamEpoch > 0L && snapshot.frameSequence > 0L))
+@Serializable
+internal data class TicketRegistrationProofGateResult(val proof: TicketRegistrationProof?, val failureReason: String?)
 
+internal fun ticketRegistrationProofRevisionForRegisterCurrent(proofRevision: String, expectedRevision: String): String? =
+  decision("proof_revision", "proof" to proofRevision.nativeJson(), "expected" to expectedRevision.nativeJson())
 
-internal fun ticketRegistrationProofMatchesVisualDetail(
-  proof: TicketRegistrationProof,
-  visualAnchor: String
-): Boolean {
-  return proof.ticketAnchor.isNotBlank() &&
-    proof.detailAnchor.isNotBlank() &&
-    visualAnchor.isNotBlank() &&
-    proof.detailAnchor == visualAnchor
-}
+internal fun ticketVisualProvenTicketAnchor(observation: TicketVisualActionObservation, exactRegistrationProof: TicketRegistrationProof?): String =
+  decision("proven_anchor", "observation" to observation.nativeJson(), "proof" to exactRegistrationProof.nativeJson())
 
-internal data class TicketRegistrationProofGateResult(
-  val proof: TicketRegistrationProof?,
-  val failureReason: String?
-)
+internal fun ticketRegistrationProofForCurrentVisualAction(proof: TicketRegistrationProof?, request: TicketVisualActionRequest,
+  observation: TicketVisualActionObservation): TicketRegistrationProofGateResult = decision("proof_gate", "proof" to proof.nativeJson(),
+    "request" to request.nativeJson(), "observation" to observation.nativeJson())
 
-/** Converts only the exact scheduled proof alias into the action revision that consumes it. */
-internal fun ticketRegistrationProofRevisionForRegisterCurrent(
-  proofRevision: String,
-  expectedRevision: String
-): String? = expectedRevision.takeIf {
-  it.isNotBlank() && (
-    proofRevision == it ||
-      !it.startsWith("schedule:") && proofRevision == "schedule:$it"
-  )
-}
+internal fun ticketVisualObservationAfterCardSelection(observation: TicketVisualActionObservation, selectedAnchor: String): TicketVisualActionObservation =
+  decision("after_card", "observation" to observation.nativeJson(), "anchor" to selectedAnchor.nativeJson())
 
+internal fun ticketVisualActivationObservationAfterCompletedGesture(observation: TicketVisualActionObservation?, provenAnchor: String): TicketVisualActionObservation? =
+  decision("after_activation", "observation" to observation.nativeJson(), "anchor" to provenAnchor.nativeJson())
 
-/** Keeps the durable list-card identity separate from the fresh phone-local detail signature. */
-internal fun ticketVisualProvenTicketAnchor(
-  observation: TicketVisualActionObservation,
-  exactRegistrationProof: TicketRegistrationProof?
-): String = exactRegistrationProof?.ticketAnchor.orEmpty().ifBlank {
-  observation.currentAnchor
-}
+internal fun ticketVisualObservationAfterRecentActivatedSelection(observation: TicketVisualActionObservation, selectedCardAnchor: String,
+  recentActivatedAnchor: String): TicketVisualActionObservation = decision("after_recent", "observation" to observation.nativeJson(),
+    "anchor" to selectedCardAnchor.nativeJson(), "recent" to recentActivatedAnchor.nativeJson())
 
-/**
- * Binds register_current to the exact proof named by the browser command or that proof's exact
- * scheduled alias. The retained proof is identity only: the gesture geometry and freshness come
- * from the new agreeing detail observation. Direct phone contexts are independent of video;
- * retained action revisions require their legacy watermark until those callers are retired.
- * The durable reducer separately rejects an expired or replaced context revision.
- */
-internal fun ticketRegistrationProofForCurrentVisualAction(
-  proof: TicketRegistrationProof?,
-  request: TicketVisualActionRequest,
-  observation: TicketVisualActionObservation
-): TicketRegistrationProofGateResult {
-  val genericFailure = TicketRegistrationProofGateResult(
-    proof = null,
-    failureReason = "ticket_action_interaction_revision_unproved"
-  )
-  if (request.target != TicketVisualActionTarget.REGISTER_CURRENT || proof == null) {
-    return genericFailure
-  }
-  val normalizedRevision = ticketRegistrationProofRevisionForRegisterCurrent(
-    proof.interactionRevision,
-    request.expectedInteractionRevision
-  ) ?: return genericFailure
-  val candidate = proof.takeIf {
-    observation.state == TicketVisualPhoneState.UNACTIVATED_DETAIL &&
-      observation.sliderBounds != null &&
-      it.status == "unactivated_ready" &&
-      it.ticketAnchor.isNotBlank() &&
-      (it.interactionRevision.startsWith("pc-") || (it.streamEpoch > 0L && it.frameSequence > 0L))
-  } ?: return genericFailure
-  if (!ticketRegistrationProofMatchesVisualDetail(candidate, observation.currentAnchor)) {
-    return TicketRegistrationProofGateResult(
-      proof = null,
-      failureReason = "ticket_action_detail_identity_conflict"
-    )
-  }
-  return TicketRegistrationProofGateResult(
-    proof = candidate.copy(interactionRevision = normalizedRevision),
-    failureReason = null
-  )
-}
+internal fun ticketVisualTerminalIntendedAnchor(prior: TicketVisualActionJournalState, observation: TicketVisualActionObservation?): String =
+  decision("intended_anchor", "journal" to prior.nativeJson(), "observation" to observation.nativeJson())
 
-/**
- * A stable ticket-list observation proves the exact card and its tap bounds. Once that single
- * tap produces the expected typed detail view, keep the card's opaque identity as the cross-view
- * identity while retaining the independently recognized detail identity in the registration proof.
- */
-internal fun ticketVisualObservationAfterCardSelection(
-  observation: TicketVisualActionObservation,
-  selectedAnchor: String
-): TicketVisualActionObservation = if (
-  selectedAnchor.isNotBlank() && observation.state in setOf(
-    TicketVisualPhoneState.UNACTIVATED_DETAIL,
-    TicketVisualPhoneState.ACTIVATED_DETAIL
-  )
-) {
-  observation.copy(currentAnchor = selectedAnchor)
-} else {
-  observation
-}
-
-/**
- * The completed gesture proves this activation. Retain its recognized list-card identity for
- * later switching across capture restarts; the pre-gesture detail signature is helper-local.
- * Missing date recognition keeps the existing exact-identity fallback and fails closed if a
- * later switch cannot prove it. Other post-gesture states never inherit registration identity.
- */
-internal fun ticketVisualActivationObservationAfterCompletedGesture(
-  observation: TicketVisualActionObservation?,
-  provenAnchor: String
-): TicketVisualActionObservation? = if (
-  observation?.state == TicketVisualPhoneState.ACTIVATED_DETAIL && provenAnchor.isNotBlank()
-) {
-  observation.copy(currentAnchor = observation.detailCardAnchor.ifBlank { provenAnchor })
-} else {
-  observation
-}
-
-
-/**
- * A registration started from prove_current has only the detail signature (d_...) as its recent
- * activated identity. In that case the unique registered-status target proves which list control
- * may be tapped, while the freshly reopened detail must retain and match that exact signature.
- * Date-derived card identities keep the normal cross-view rebinding behavior.
- */
-internal fun ticketVisualObservationAfterRecentActivatedSelection(
-  observation: TicketVisualActionObservation,
-  selectedCardAnchor: String,
-  recentActivatedAnchor: String
-): TicketVisualActionObservation = if (recentActivatedAnchor.startsWith("d_")) {
-  observation
-} else {
-  ticketVisualObservationAfterCardSelection(observation, selectedCardAnchor)
-}
-
-
-
-internal fun ticketVisualTerminalIntendedAnchor(
-  prior: TicketVisualActionJournalState,
-  observation: TicketVisualActionObservation?
-): String = prior.intendedAnchor.ifBlank { observation?.currentAnchor.orEmpty() }
-
-internal fun ticketVisualCheckpointMatchesActivatedAnchor(
-  observation: TicketVisualActionObservation,
-  anchors: TicketVisualSwitchAnchors
-): Boolean = observation.state == TicketVisualPhoneState.ACTIVATED_DETAIL &&
-  anchors.recentActivatedAnchor.isNotBlank() &&
-  (observation.currentAnchor == anchors.recentActivatedAnchor ||
-    observation.detailCardAnchor == anchors.recentActivatedAnchor)
+internal fun ticketVisualCheckpointMatchesActivatedAnchor(observation: TicketVisualActionObservation, anchors: TicketVisualSwitchAnchors): Boolean =
+  decision("checkpoint_matches", "observation" to observation.nativeJson(), "anchors" to anchors.nativeJson())
